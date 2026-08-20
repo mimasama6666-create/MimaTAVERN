@@ -44,13 +44,13 @@
   async function loadState() {
     const existing = await get(STATE_KEY);
     if (existing && typeof existing === 'object') return existing;
-    const blank = { schemaVersion: 1, sessions: [], masks: [], presets: [], worldbooks: [] };
+    const blank = { schemaVersion: 2, sessions: [], masks: [], presets: [], worldbooks: [], cssPresets: [] };
     await set(STATE_KEY, blank);
     return blank;
   }
 
   async function saveState(state) {
-    return set(STATE_KEY, { ...state, schemaVersion: 1, savedAt: new Date().toISOString() });
+    return set(STATE_KEY, { ...state, schemaVersion: 2, cssPresets: Array.isArray(state.cssPresets) ? state.cssPresets : [], savedAt: new Date().toISOString() });
   }
 
   async function exportAll() {
@@ -60,11 +60,12 @@
   async function importAll(raw) {
     const src = raw?.data || raw || {};
     const next = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       sessions: Array.isArray(src.sessions) ? src.sessions : [],
       masks: Array.isArray(src.masks) ? src.masks : [],
       presets: Array.isArray(src.presets) ? src.presets : [],
-      worldbooks: Array.isArray(src.worldbooks) ? src.worldbooks : []
+      worldbooks: Array.isArray(src.worldbooks) ? src.worldbooks : [],
+      cssPresets: Array.isArray(src.cssPresets) ? src.cssPresets : []
     };
     await saveState(next);
     return next;

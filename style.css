@@ -91,3 +91,7 @@ button { border: 0; cursor: pointer; -webkit-tap-highlight-color: transparent; }
 .api-status{margin-top:12px;padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.45);font-size:13px;line-height:1.55;min-height:18px;white-space:pre-wrap}
 .api-check{margin-top:28px}.advanced-grid{margin-top:12px}
 @media (max-width:560px){.inline-field-row{align-items:stretch}.inline-field-row .ghost-btn{white-space:nowrap}.settings-tabs{padding-bottom:4px}}
+
+/* V0.10 CSS Preset Library */
+.css-preset-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+.css-code-editor{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;min-height:320px;white-space:pre;tab-size:2}

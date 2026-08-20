@@ -7,7 +7,7 @@
   'use strict';
 
   const API_CONFIG_KEY = 'MIMAMAO_TAVERN_STANDALONE_API_V1';
-  let state = { schemaVersion: 1, sessions: [], masks: [], presets: [], worldbooks: [] };
+  let state = { schemaVersion: 2, sessions: [], masks: [], presets: [], worldbooks: [], cssPresets: [] };
 
   const nowIso = () => new Date().toISOString();
   const makeId = prefix => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
@@ -65,7 +65,7 @@
       lastSummarizedIndex: Number.isFinite(Number(s.lastSummarizedIndex)) ? Number(s.lastSummarizedIndex) : 0,
       tags: list(s.tags), lastScene: text(s.lastScene), userNotes: text(s.userNotes), aiNotes: text(s.aiNotes),
       directorNote: text(s.directorNote), storyState: s.storyState && typeof s.storyState === 'object' ? s.storyState : {},
-      promptSettings: normalizePromptSettings(s.promptSettings || {}), customCssId: s.customCssId || null,
+      promptSettings: normalizePromptSettings(s.promptSettings || {}), customCssId: s.customCssId || null, customCssEnabled: s.customCssEnabled !== false,
       renderMode: s.renderMode || 'text'
     };
   }
@@ -89,6 +89,11 @@
       enabled: p.enabled !== false, createdAt, updatedAt: p.updatedAt || createdAt };
   }
 
+  function normalizeCssPreset(p = {}) {
+    const createdAt = p.createdAt || nowIso();
+    return { id:p.id || makeId('css'), name:text(p.name || '未命名 CSS'), css:String(p.css || ''), scope:p.scope === 'global' ? 'global' : 'story', createdAt, updatedAt:p.updatedAt || createdAt };
+  }
+
   function normalizeWorldbookEntry(e = {}) {
     const createdAt = e.createdAt || nowIso();
     return { id: e.id || makeId('wbe'), name: text(e.name || '未命名条目'), content: text(e.content),
@@ -109,9 +114,9 @@
 
   function normalizeState(raw = {}) {
     return {
-      schemaVersion: 1,
+      schemaVersion: 2,
       sessions: arr(raw.sessions).map(normalizeSession), masks: arr(raw.masks).map(normalizeMask),
-      presets: arr(raw.presets).map(normalizePreset), worldbooks: arr(raw.worldbooks).map(normalizeWorldbook)
+      presets: arr(raw.presets).map(normalizePreset), worldbooks: arr(raw.worldbooks).map(normalizeWorldbook), cssPresets: arr(raw.cssPresets).map(normalizeCssPreset)
     };
   }
 
@@ -122,6 +127,7 @@
   function getMask(id) { return state.masks.find(x => x.id === id); }
   function getPreset(id) { return state.presets.find(x => x.id === id); }
   function getWorldbook(id) { return state.worldbooks.find(x => x.id === id); }
+  function getCssPreset(id) { return state.cssPresets.find(x => x.id === id); }
 
   function sessionSummaries() {
     return state.sessions.map(s => ({ id:s.id,title:s.title,mode:s.mode,canonLevel:s.canonLevel,status:s.status,updatedAt:s.updatedAt,
@@ -139,6 +145,7 @@
   async function saveMask(m) { const n=normalizeMask({ ...m, updatedAt:nowIso() }); const i=state.masks.findIndex(x=>x.id===n.id); if(i>=0)state.masks[i]=n;else state.masks.push(n); await persist(); return n; }
   async function savePreset(p) { const n=normalizePreset({ ...p, updatedAt:nowIso() }); const i=state.presets.findIndex(x=>x.id===n.id); if(i>=0)state.presets[i]=n;else state.presets.push(n); await persist(); return n; }
   async function saveWorldbook(w) { const n=normalizeWorldbook({ ...w, updatedAt:nowIso() }); const i=state.worldbooks.findIndex(x=>x.id===n.id); if(i>=0)state.worldbooks[i]=n;else state.worldbooks.push(n); await persist(); return n; }
+  async function saveCssPreset(p) { const n=normalizeCssPreset({ ...p, updatedAt:nowIso() }); const i=state.cssPresets.findIndex(x=>x.id===n.id); if(i>=0)state.cssPresets[i]=n;else state.cssPresets.push(n); await persist(); return n; }
 
   // ---------- Prompt Assembler ----------
   const asText = v => String(v || '').trim();
@@ -289,6 +296,11 @@
       if(path==='/presets'&&method==='POST')return ok(await savePreset(body||{}));
       m=path.match(/^\/presets\/([^/]+)$/);if(m&&method==='PATCH'){const old=getPreset(m[1]);return old?ok(await savePreset({...old,...body,id:m[1]})):fail('未找到预设');}
       if(m&&method==='DELETE'){state.presets=state.presets.filter(x=>x.id!==m[1]);for(const s of state.sessions)s.presetIds=s.presetIds.filter(id=>id!==m[1]);await persist();return ok({deleted:true});}
+
+      if(path==='/css-presets'&&method==='GET')return ok(state.cssPresets);
+      if(path==='/css-presets'&&method==='POST')return ok(await saveCssPreset(body||{}));
+      m=path.match(/^\/css-presets\/([^/]+)$/);if(m&&method==='PATCH'){const old=getCssPreset(m[1]);return old?ok(await saveCssPreset({...old,...body,id:m[1]})):fail('未找到 CSS Preset');}
+      if(m&&method==='DELETE'){state.cssPresets=state.cssPresets.filter(x=>x.id!==m[1]);for(const sess of state.sessions){if(sess.customCssId===m[1]){sess.customCssId=null;sess.customCssEnabled=false;}}await persist();return ok({deleted:true});}
 
       if(path==='/worldbooks'&&method==='GET')return ok(state.worldbooks);
       if(path==='/worldbooks'&&method==='POST')return ok(await saveWorldbook(body||{}));
