@@ -1,0 +1,299 @@
+/**
+ * 🍷 MIMAMAO Tavern V2 UI
+ * 独立宇宙优先 · 手机优先 · Persona / Worldbook / Prompt Inspector / Local Font Library
+ */
+let currentSessionId = null;
+let currentSessionData = null;
+let sessions = [];
+let masks = [];
+let presets = [];
+let worldbooks = [];
+let activeRequest = null;
+let isGenerating = false;
+let settingsTab = 'roles';
+let editorState = null;
+let pendingPersonaType = 'character';
+let fontRecords = [];
+
+const TEMP_KEY = 'MIMAMAO_TAVERN_TEMP';
+const LEGACY_FONT_URL_KEY = 'storyFontUrl';
+const LEGACY_FONT_FAMILY_KEY = 'storyFontFamily';
+
+function qs(id) { return document.getElementById(id); }
+function qsa(sel, root=document) { return [...root.querySelectorAll(sel)]; }
+function escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch])); }
+function arr(v) { return Array.isArray(v) ? v : []; }
+function lines(text) { return String(text || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean); }
+function csv(text) { return String(text || '').split(/[,，\n]/).map(x => x.trim()).filter(Boolean); }
+function clone(v) { return JSON.parse(JSON.stringify(v)); }
+function cleanCorruptText(text) {
+    let out = String(text ?? '');
+    try { out = out.normalize('NFC'); } catch (_) {}
+    return out.replace(/\uFFFD+/g,'').replace(/(?:ï¿½)+/g,'').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g,'').trim();
+}
+function goPhone() { toast('这是独立分享版：没有连接 MIMAMAO 手机或宅邸。'); }
+
+async function fetchStory(endpoint, method='GET', body=null, useAbort=false) {
+    if (useAbort) {
+        if (activeRequest) activeRequest.abort();
+        activeRequest = new AbortController();
+    }
+    try {
+        return await MimaStandalone.handle(endpoint, method, body, useAbort ? activeRequest.signal : null);
+    } catch (err) {
+        if (err?.name === 'AbortError') return { success:false, aborted:true };
+        return { success:false, msg:err?.message || String(err) };
+    }
+}
+
+function openDrawer(){qs('session-drawer').classList.add('open');qs('drawer-scrim').classList.remove('hidden')}
+function closeDrawer(){qs('session-drawer').classList.remove('open');qs('drawer-scrim').classList.add('hidden')}
+function openSettings(tab='roles'){settingsTab=tab;qs('settings-modal').classList.remove('hidden');renderSettings()}
+function closeSettings(){qs('settings-modal').classList.add('hidden')}
+function switchSettingsTab(tab){settingsTab=tab;renderSettings()}
+function closeEditor(){qs('editor-modal').classList.add('hidden');editorState=null}
+function openNewSessionModal(){qs('new-session-modal').classList.remove('hidden');setTimeout(()=>qs('new-session-title').focus(),50)}
+function closeNewSessionModal(){qs('new-session-modal').classList.add('hidden')}
+function toggleDirector(){qs('director-wrap').classList.toggle('collapsed')}
+
+async function loadAll() {
+    const [s,m,p,w] = await Promise.all([fetchStory('/sessions'),fetchStory('/masks'),fetchStory('/presets'),fetchStory('/worldbooks')]);
+    sessions=s.data||[]; masks=m.data||[]; presets=p.data||[]; worldbooks=w.data||[];
+    renderSessions();
+    if (currentSessionId) {
+        const exists=sessions.some(x=>x.id===currentSessionId);
+        if (exists) await openSession(currentSessionId,false);
+        else { currentSessionId=null; currentSessionData=null; refreshHeader(); refreshChatBox(); }
+    }
+    if (!currentSessionId && sessions.length) await openSession(sessions[0].id,false);
+    if (!qs('settings-modal').classList.contains('hidden')) renderSettings();
+}
+
+function renderSessions() {
+    const box=qs('session-list'); box.innerHTML='';
+    if(!sessions.length){box.innerHTML='<div class="row-sub">还没有剧情。新建一个独立宇宙吧。</div>';return}
+    sessions.forEach(s=>{
+        const div=document.createElement('button'); div.className=`session-item ${s.id===currentSessionId?'active':''}`;
+        div.innerHTML=`<div class="session-name">${escapeHtml(s.title)}</div><div class="session-meta">${escapeHtml(s.canonLevel||'alternate')} · ${s.messageCount||0} 条 · 📚 ${(s.worldbookIds||[]).length}</div>`;
+        div.onclick=()=>openSession(s.id,true); box.appendChild(div);
+    });
+}
+async function createSession(){
+    const title=qs('new-session-title').value.trim()||'未命名咪嘛宇宙';
+    const mode=qs('new-session-mode').value||'tavern';
+    const res=await fetchStory('/sessions','POST',{title,mode,characterMode:mode,canonLevel:'alternate',enabledPersonaSources:{sandalphonPersona:mode==='sandalphon',userPersona:mode==='sandalphon',telegramContext:false,longTermMemory:false,sandalphonState:false},enabledContextSources:{storySummary:true,recentMessages:true,telegramContext:false,vectorMemory:false},promptSettings:{recentMessageLimit:34,worldbookBudgetChars:16000,summaryEnabled:true,pinnedFactsEnabled:true}});
+    if(!res.success)return toast(res.msg||'创建失败');
+    closeNewSessionModal(); qs('new-session-title').value=''; await loadAll(); await openSession(res.data.id,true); openSettings('roles');
+}
+async function openSession(id, close=true){
+    const res=await fetchStory(`/sessions/${id}`); if(!res.success)return toast(res.msg||'打开失败');
+    currentSessionId=id; currentSessionData=res.data; if(close)closeDrawer(); refreshHeader(); refreshChatBox(); renderSessions(); if(!qs('settings-modal').classList.contains('hidden'))renderSettings();
+}
+async function patchCurrent(patch, quiet=false){
+    if(!currentSessionId)return null;
+    const res=await fetchStory(`/sessions/${currentSessionId}`,'PATCH',patch);
+    if(res.success){currentSessionData=res.data;await refreshSessionSummaryList();refreshHeader();if(!quiet)renderSettings();return res.data}
+    toast(res.msg||'保存失败');return null;
+}
+async function refreshSessionSummaryList(){const s=await fetchStory('/sessions');sessions=s.data||sessions;renderSessions()}
+async function deleteCurrentSession(){if(!currentSessionId||!confirm('确定删除这个剧情 Session？此操作不可撤销。'))return;await fetchStory(`/sessions/${currentSessionId}`,'DELETE');currentSessionId=null;currentSessionData=null;closeSettings();await loadAll();}
+function exportCurrentSession(){if(currentSessionData)downloadJson(`${currentSessionData.title||'咪嘛馆剧情'}.mimamao-story.json`,currentSessionData)}
+function chooseSessionImport(){qs('session-file-input').value='';qs('session-file-input').click()}
+async function importSessionFile(file){if(!file)return;try{const raw=JSON.parse(await file.text());const source=raw.data||raw;const res=await fetchStory('/sessions/import','POST',source);if(!res.success)throw new Error(res.msg||'导入失败');await loadAll();await openSession(res.data.id,true);toast(`已导入剧情 ${res.data.title}`)}catch(e){toast(`剧情导入失败：${e.message}`)}}
+
+function currentChar(){return masks.find(x=>x.id===currentSessionData?.loadedCharMaskId)||null}
+function currentUser(){return masks.find(x=>x.id===currentSessionData?.loadedUserMaskId)||null}
+function refreshHeader(){
+    const char=currentChar(); qs('current-character').textContent=char?.name||(currentSessionData?.mode==='sandalphon'?'圣德芬':'未挂载角色');
+    qs('current-title').textContent=currentSessionData?.title||'欢迎来到咪嘛馆';
+    const av=qs('top-avatar'); av.innerHTML=''; if(char?.avatar){const img=document.createElement('img');img.src=char.avatar;img.onerror=()=>{av.textContent='🎭'};av.appendChild(img)}else av.textContent=char?'🎭':'🍷';
+    const mountedBooks=(currentSessionData?.worldbookIds||[]).map(id=>worldbooks.find(w=>w.id===id)).filter(Boolean);
+    const ribbon=qs('context-ribbon');
+    if(currentSessionData&&(char||mountedBooks.length)){ribbon.classList.remove('hidden');ribbon.textContent=`独立宇宙 · ${char?`🎭 ${char.name}`:'未挂角色'}${mountedBooks.length?` · 📚 ${mountedBooks.map(w=>w.name).join(' / ')}`:''}`}
+    else ribbon.classList.add('hidden');
+}
+
+function renderSettings(){
+    qsa('.settings-tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===settingsTab));
+    const box=qs('settings-content');
+    if(!currentSessionData){box.innerHTML='<div class="empty-state"><p>请先创建或打开一个剧情。</p></div>';return}
+    if(settingsTab==='roles')renderRolesTab(box);
+    else if(settingsTab==='worldbook')renderWorldbookTab(box);
+    else if(settingsTab==='presets')renderPresetsTab(box);
+    else if(settingsTab==='context')renderContextTab(box);
+    else if(settingsTab==='appearance')renderAppearanceTab(box);
+    else if(settingsTab==='api')renderApiTab(box);
+    else if(settingsTab==='prompt')renderPromptTab(box);
+}
+
+function optionList(items, selected, placeholder){return `<option value="">${escapeHtml(placeholder)}</option>`+items.map(x=>`<option value="${escapeHtml(x.id)}" ${x.id===selected?'selected':''}>${escapeHtml(x.name)}</option>`).join('')}
+function renderRolesTab(box){
+    const chars=masks.filter(m=>m.type!=='user'), users=masks.filter(m=>m.type==='user');
+    box.innerHTML=`
+      <section class="settings-section"><h3>当前挂载</h3><p class="helper">角色卡和 User Persona 只作用于这个剧情 Session；不同宇宙可以挂不同的人。</p>
+      <div class="mount-row">
+       <div class="mount-box"><label class="form-label">🎭 Character</label><select id="mount-char" class="field">${optionList(chars,currentSessionData.loadedCharMaskId,'不挂载角色卡')}</select></div>
+       <div class="mount-box"><label class="form-label">👤 User Persona</label><select id="mount-user" class="field">${optionList(users,currentSessionData.loadedUserMaskId,'不挂载 User Persona')}</select></div>
+      </div><div class="toolbar"><button class="primary-btn" onclick="saveRoleMounts()">应用挂载</button>${currentChar()?.firstMessage&&!(currentSessionData.messages||[]).length?'<button class="ghost-btn" onclick="insertCharacterOpening()">✦ 插入角色开场白</button>':''}</div></section>
+      <section class="settings-section"><h3>角色卡库</h3><div class="toolbar"><button class="ghost-btn" onclick="openMaskEditor('character')">＋ 新建角色卡</button><button class="ghost-btn" onclick="choosePersonaImport('character')">⇧ 导入 TXT / JSON</button></div><div id="char-card-grid" class="card-grid"></div></section>
+      <section class="settings-section"><h3>User Persona 库</h3><div class="toolbar"><button class="ghost-btn" onclick="openMaskEditor('user')">＋ 新建 User Persona</button><button class="ghost-btn" onclick="choosePersonaImport('user')">⇧ 导入 TXT / JSON</button></div><div id="user-card-grid" class="card-grid"></div></section>`;
+    renderMaskCards(qs('char-card-grid'),chars,'character'); renderMaskCards(qs('user-card-grid'),users,'user');
+}
+function renderMaskCards(root,items,type){root.innerHTML='';if(!items.length){root.innerHTML='<div class="row-sub">这里还是空的。</div>';return}items.forEach(m=>{const mounted=(type==='user'?currentSessionData.loadedUserMaskId:currentSessionData.loadedCharMaskId)===m.id;const div=document.createElement('div');div.className=`library-card ${mounted?'mounted':''}`;div.innerHTML=`<div class="card-title"><span>${escapeHtml(m.name)}</span>${mounted?'<span class="tag">已挂载</span>':''}</div><div class="card-desc">${escapeHtml(m.description||m.content||'暂无简介')}</div><div class="card-actions"><button class="ghost-btn" onclick="mountMask('${type}','${m.id}')">${mounted?'卸下':'挂载'}</button><button class="ghost-btn" onclick="openMaskEditor('${type}','${m.id}')">编辑</button><button class="ghost-btn" onclick="exportMask('${m.id}')">导出</button></div>`;root.appendChild(div)})}
+async function saveRoleMounts(){await patchCurrent({loadedCharMaskId:qs('mount-char').value||null,loadedUserMaskId:qs('mount-user').value||null});refreshChatBox()}
+async function mountMask(type,id){const key=type==='user'?'loadedUserMaskId':'loadedCharMaskId';const now=currentSessionData?.[key];await patchCurrent({[key]:now===id?null:id});refreshChatBox()}
+async function insertCharacterOpening(){const c=currentChar();if(!c?.firstMessage)return;const res=await fetchStory(`/sessions/${currentSessionId}/opening`,'POST',{content:c.firstMessage});if(res.success){currentSessionData=res.data;closeSettings();refreshChatBox()}else toast(res.msg||'插入失败')}
+
+function openMaskEditor(type,id=null){
+    const old=id?masks.find(x=>x.id===id):null; editorState={type:'mask',maskType:type,id,old};
+    qs('editor-title').textContent=id?`编辑 ${old?.name||'Persona'}`:(type==='user'?'新建 User Persona':'新建 Character Card'); qs('editor-eyebrow').textContent=type==='user'?'USER PERSONA':'CHARACTER CARD';
+    const m=old||{name:'',description:'',content:'',scenario:'',firstMessage:'',exampleDialogue:'',creatorNotes:'',avatar:'',aliases:[],tags:[]};
+    qs('editor-body').innerHTML=`<div class="form-grid">
+      <div><label class="form-label">名称</label><input id="mask-name" class="field" value="${escapeHtml(m.name||'')}"></div>
+      <div><label class="form-label">头像 URL（可选）</label><input id="mask-avatar" class="field" value="${escapeHtml(m.avatar||'')}"></div>
+      <div class="form-full"><label class="form-label">简介</label><textarea id="mask-description" class="field textarea">${escapeHtml(m.description||'')}</textarea></div>
+      <div class="form-full"><label class="form-label">Persona / 核心设定</label><textarea id="mask-content" class="field textarea tall">${escapeHtml(m.content||'')}</textarea></div>
+      ${type==='character'?`<div class="form-full"><label class="form-label">Scenario</label><textarea id="mask-scenario" class="field textarea">${escapeHtml(m.scenario||'')}</textarea></div><div class="form-full"><label class="form-label">First Message / 开场白</label><textarea id="mask-first" class="field textarea">${escapeHtml(m.firstMessage||'')}</textarea></div><div class="form-full"><label class="form-label">Example Dialogue</label><textarea id="mask-example" class="field textarea">${escapeHtml(m.exampleDialogue||'')}</textarea></div><div class="form-full"><label class="form-label">Creator Notes</label><textarea id="mask-notes" class="field textarea">${escapeHtml(m.creatorNotes||'')}</textarea></div>`:''}
+      <div><label class="form-label">Aliases（逗号分隔）</label><input id="mask-aliases" class="field" value="${escapeHtml(arr(m.aliases).join(', '))}"></div>
+      <div><label class="form-label">Tags（逗号分隔）</label><input id="mask-tags" class="field" value="${escapeHtml(arr(m.tags).join(', '))}"></div></div>`;
+    setupEditorButtons(id?()=>deleteMask(id):null,saveMaskEditor); qs('editor-modal').classList.remove('hidden');
+}
+async function saveMaskEditor(){const type=editorState.maskType;const body={type,name:qs('mask-name').value.trim()||'未命名 Persona',avatar:qs('mask-avatar').value.trim(),description:qs('mask-description').value,content:qs('mask-content').value,aliases:csv(qs('mask-aliases').value),tags:csv(qs('mask-tags').value)};if(type==='character')Object.assign(body,{scenario:qs('mask-scenario').value,firstMessage:qs('mask-first').value,exampleDialogue:qs('mask-example').value,creatorNotes:qs('mask-notes').value});const path=editorState.id?`/masks/${editorState.id}`:'/masks';const res=await fetchStory(path,editorState.id?'PATCH':'POST',body);if(res.success){closeEditor();await loadAll();openSettings('roles')}else toast(res.msg||'保存失败')}
+async function deleteMask(id){if(!confirm('删除这张 Persona 卡？'))return;await fetchStory(`/masks/${id}`,'DELETE');if(currentSessionData?.loadedCharMaskId===id)await patchCurrent({loadedCharMaskId:null},true);if(currentSessionData?.loadedUserMaskId===id)await patchCurrent({loadedUserMaskId:null},true);closeEditor();await loadAll()}
+function choosePersonaImport(type){pendingPersonaType=type;qs('persona-file-input').value='';qs('persona-file-input').click()}
+async function importPersonaFile(file){
+    if(!file)return;
+    const text=await file.text();
+    let data={};
+    if(file.name.toLowerCase().endsWith('.json')){
+        try{
+            const raw=JSON.parse(text), d=raw.data||raw;
+            const desc=d.description||'', personality=d.personality||d.persona||d.content||'';
+            data={type:pendingPersonaType,name:d.name||file.name.replace(/\.json$/i,''),description:desc,content:personality,scenario:d.scenario||'',firstMessage:d.first_mes||d.firstMessage||'',exampleDialogue:d.mes_example||d.exampleDialogue||'',creatorNotes:d.creator_notes||d.creatorNotes||'',avatar:d.avatar||'',tags:d.tags||[],aliases:d.aliases||[],source:'import_json'};
+            if(pendingPersonaType==='user') data.content=d.content||d.persona||data.content;
+        }catch(_){return toast('JSON 角色卡解析失败猫')}
+    }else{
+        data={type:pendingPersonaType,name:file.name.replace(/\.txt$/i,''),content:text,source:'import_txt'};
+    }
+    const res=await fetchStory('/masks','POST',data);
+    if(res.success){await loadAll();openSettings('roles');toast(`已导入 ${res.data.name}`)}else toast(res.msg||'导入失败');
+}
+function exportMask(id){const m=masks.find(x=>x.id===id);if(m)downloadJson(`${m.name}.mimamao-persona.json`,m)}
+
+function renderWorldbookTab(box){
+    const mounted=new Set(currentSessionData.worldbookIds||[]);
+    box.innerHTML=`<section class="settings-section"><h3>📚 世界书</h3><p class="helper">Depth 0 = System Prompt；可选前 / 中 / 后插槽。Depth &gt; 0 会插进最近聊天历史指定深度。本轮命中情况可去“🔬 Prompt”查看。</p><div class="toolbar"><button class="primary-btn" onclick="openWorldbookEditor()">＋ 新建世界书</button><button class="ghost-btn" onclick="chooseWorldbookImport()">⇧ 导入 JSON</button></div><div id="worldbook-list"></div></section>`;
+    const root=qs('worldbook-list'); if(!worldbooks.length){root.innerHTML='<div class="row-sub">还没有世界书。</div>';return}
+    worldbooks.forEach(w=>{const row=document.createElement('div');row.className='worldbook-row';row.innerHTML=`<input type="checkbox" ${mounted.has(w.id)?'checked':''} onchange="toggleWorldbookMount('${w.id}',this.checked)"><div class="row-main"><div class="row-title">${escapeHtml(w.name)}</div><div class="row-sub">${w.entries?.length||0} 条 · ${escapeHtml(w.description||'无说明')}</div></div><button class="ghost-btn" onclick="openWorldbookEditor('${w.id}')">编辑</button><button class="ghost-btn" onclick="exportWorldbook('${w.id}')">导出</button>`;root.appendChild(row)})
+}
+async function toggleWorldbookMount(id,on){const set=new Set(currentSessionData.worldbookIds||[]);on?set.add(id):set.delete(id);await patchCurrent({worldbookIds:[...set]},true);refreshHeader();renderSettings()}
+function defaultEntry(){return {name:'新条目',content:'',keywords:[],secondaryKeywords:[],enabled:true,alwaysActive:false,matchMode:'any',caseSensitive:false,useRegex:false,priority:50,scanDepth:12,depth:0,position:'middle',maxChars:0}}
+function openWorldbookEditor(id=null){const old=id?worldbooks.find(x=>x.id===id):null;editorState={type:'worldbook',id,draft:clone(old||{name:'新世界书',description:'',tags:[],enabled:true,entries:[]})};qs('editor-title').textContent=id?`编辑世界书 · ${old.name}`:'新建世界书';qs('editor-eyebrow').textContent='WORLDBOOK';renderWorldbookEditorBody();setupEditorButtons(id?()=>deleteWorldbook(id):null,saveWorldbookEditor);qs('editor-modal').classList.remove('hidden')}
+function renderWorldbookEditorBody(){const w=editorState.draft;qs('editor-body').innerHTML=`<div class="form-grid"><div><label class="form-label">世界书名称</label><input id="wb-name" class="field" value="${escapeHtml(w.name||'')}"></div><div><label class="form-label">Tags</label><input id="wb-tags" class="field" value="${escapeHtml(arr(w.tags).join(', '))}"></div><div class="form-full"><label class="form-label">说明</label><textarea id="wb-desc" class="field textarea">${escapeHtml(w.description||'')}</textarea></div></div><div class="toolbar" style="margin-top:14px"><button class="ghost-btn" onclick="addWorldbookEntry()">＋ 新增条目</button></div><div id="wb-entry-list" class="entry-list"></div>`;const root=qs('wb-entry-list');(w.entries||[]).forEach((e,i)=>{const d=document.createElement('details');d.className='entry-card';d.open=(w.entries.length<=3);d.dataset.entryIndex=i;d.innerHTML=`<summary><strong>${escapeHtml(e.name||`条目 ${i+1}`)}</strong><div class="entry-meta">Depth ${e.depth??0} · ${escapeHtml(e.position||'middle')} · priority ${e.priority??50}${e.alwaysActive?' · Always':''}</div></summary><div class="form-grid" style="margin-top:10px">
+<div><label class="form-label">条目名称</label><input data-f="name" class="field" value="${escapeHtml(e.name||'')}"></div><div><label class="form-label">主关键词（逗号分隔）</label><input data-f="keywords" class="field" value="${escapeHtml(arr(e.keywords).join(', '))}"></div><div><label class="form-label">次关键词（可选）</label><input data-f="secondaryKeywords" class="field" value="${escapeHtml(arr(e.secondaryKeywords).join(', '))}"></div><div><label class="form-label">匹配</label><select data-f="matchMode" class="field"><option value="any" ${e.matchMode!=='all'?'selected':''}>任一关键词</option><option value="all" ${e.matchMode==='all'?'selected':''}>全部关键词</option></select></div>
+<div><label class="form-label">Depth（0=System）</label><input data-f="depth" class="field" type="number" min="0" max="100" value="${Number(e.depth||0)}"></div><div><label class="form-label">注入位置</label><select data-f="position" class="field"><option value="front" ${e.position==='front'?'selected':''}>前</option><option value="middle" ${e.position==='middle'?'selected':''}>中</option><option value="back" ${e.position==='back'?'selected':''}>后</option></select></div><div><label class="form-label">Priority（小=优先）</label><input data-f="priority" class="field" type="number" value="${Number(e.priority??50)}"></div><div><label class="form-label">扫描最近消息数</label><input data-f="scanDepth" class="field" type="number" min="1" max="100" value="${Number(e.scanDepth||12)}"></div><div><label class="form-label">条目最大字符（0=不限）</label><input data-f="maxChars" class="field" type="number" min="0" value="${Number(e.maxChars||0)}"></div>
+<div class="form-full"><label class="check-row"><input data-f="enabled" type="checkbox" ${e.enabled!==false?'checked':''}> 启用</label><label class="check-row"><input data-f="alwaysActive" type="checkbox" ${e.alwaysActive?'checked':''}> Always Active</label><label class="check-row"><input data-f="caseSensitive" type="checkbox" ${e.caseSensitive?'checked':''}> 大小写敏感</label><label class="check-row"><input data-f="useRegex" type="checkbox" ${e.useRegex?'checked':''}> Regex 关键词</label></div><div class="form-full"><label class="form-label">注入内容</label><textarea data-f="content" class="field textarea tall">${escapeHtml(e.content||'')}</textarea></div><div class="form-full"><button class="danger-btn" onclick="removeWorldbookEntry(${i})">删除此条目</button></div></div>`;root.appendChild(d)})}
+function captureWorldbookDraft(){if(!editorState||editorState.type!=='worldbook')return;const w=editorState.draft;w.name=qs('wb-name')?.value||w.name;w.description=qs('wb-desc')?.value||'';w.tags=csv(qs('wb-tags')?.value||'');w.entries=qsa('[data-entry-index]',qs('wb-entry-list')).map(block=>{const get=f=>block.querySelector(`[data-f="${f}"]`);return {id:w.entries[Number(block.dataset.entryIndex)]?.id,name:get('name').value,keywords:csv(get('keywords').value),secondaryKeywords:csv(get('secondaryKeywords').value),matchMode:get('matchMode').value,depth:Number(get('depth').value||0),position:get('position').value,priority:Number(get('priority').value||50),scanDepth:Number(get('scanDepth').value||12),maxChars:Number(get('maxChars').value||0),enabled:get('enabled').checked,alwaysActive:get('alwaysActive').checked,caseSensitive:get('caseSensitive').checked,useRegex:get('useRegex').checked,content:get('content').value}})}
+function addWorldbookEntry(){captureWorldbookDraft();editorState.draft.entries.push(defaultEntry());renderWorldbookEditorBody()}
+function removeWorldbookEntry(i){captureWorldbookDraft();editorState.draft.entries.splice(i,1);renderWorldbookEditorBody()}
+async function saveWorldbookEditor(){captureWorldbookDraft();const res=await fetchStory(editorState.id?`/worldbooks/${editorState.id}`:'/worldbooks',editorState.id?'PATCH':'POST',editorState.draft);if(res.success){closeEditor();await loadAll();openSettings('worldbook')}else toast(res.msg||'保存失败')}
+async function deleteWorldbook(id){if(!confirm('删除整个世界书？'))return;await fetchStory(`/worldbooks/${id}`,'DELETE');closeEditor();await loadAll();openSettings('worldbook')}
+function chooseWorldbookImport(){qs('worldbook-file-input').value='';qs('worldbook-file-input').click()}
+function normalizeImportedWorldbook(raw,name){const src=raw.data||raw;let rawEntries=src.entries||[];if(!Array.isArray(rawEntries)&&rawEntries&&typeof rawEntries==='object')rawEntries=Object.values(rawEntries);const entries=arr(rawEntries).map((e,i)=>({name:e.name||e.comment||`条目 ${i+1}`,content:e.content||'',keywords:e.keywords||e.key||e.keys||[],secondaryKeywords:e.secondaryKeywords||e.keysecondary||[],enabled:e.enabled!==false&&e.disable!==true,alwaysActive:!!(e.alwaysActive||e.constant),matchMode:e.matchMode||'any',caseSensitive:!!e.caseSensitive,useRegex:!!e.useRegex,priority:Number(e.priority??e.order??50),scanDepth:Number(e.scanDepth??12),depth:Number(e.depth??0),position:['front','middle','back'].includes(e.position)?e.position:'middle',maxChars:Number(e.maxChars||0)}));return {name:src.name||name||'导入世界书',description:src.description||'',tags:src.tags||[],entries}}
+async function importWorldbookFile(file){if(!file)return;try{const raw=JSON.parse(await file.text());const body=normalizeImportedWorldbook(raw,file.name.replace(/\.json$/i,''));const res=await fetchStory('/worldbooks','POST',body);if(!res.success)throw new Error(res.msg);await loadAll();openSettings('worldbook');toast(`已导入世界书 ${res.data.name}`)}catch(e){toast(`世界书导入失败：${e.message}`)}}
+function exportWorldbook(id){const w=worldbooks.find(x=>x.id===id);if(w)downloadJson(`${w.name}.mimamao-worldbook.json`,w)}
+
+function renderPresetsTab(box){const active=new Set(currentSessionData.presetIds||[]);box.innerHTML=`<section class="settings-section"><h3>🧩 酒馆预设</h3><p class="helper">可同时挂多个。Priority 越小越先进入 Prompt。</p><div class="toolbar"><button class="primary-btn" onclick="openPresetEditor()">＋ 新建预设</button></div><div id="preset-list"></div></section>`;const root=qs('preset-list');if(!presets.length){root.innerHTML='<div class="row-sub">暂无预设。</div>';return}presets.slice().sort((a,b)=>(a.priority||50)-(b.priority||50)).forEach(p=>{const r=document.createElement('div');r.className='preset-row';r.innerHTML=`<input type="checkbox" ${active.has(p.id)?'checked':''} onchange="togglePreset('${p.id}',this.checked)"><div class="row-main"><div class="row-title">${escapeHtml(p.name)}</div><div class="row-sub">${escapeHtml(p.type||'style')} · priority ${p.priority||50}</div></div><button class="ghost-btn" onclick="openPresetEditor('${p.id}')">编辑</button>`;root.appendChild(r)})}
+async function togglePreset(id,on){const set=new Set(currentSessionData.presetIds||[]);on?set.add(id):set.delete(id);await patchCurrent({presetIds:[...set]},true);renderSettings()}
+function openPresetEditor(id=null){const p=id?presets.find(x=>x.id===id):{name:'',type:'style',description:'',content:'',priority:50};editorState={type:'preset',id};qs('editor-title').textContent=id?`编辑预设 · ${p.name}`:'新建预设';qs('editor-eyebrow').textContent='PRESET';qs('editor-body').innerHTML=`<div class="form-grid"><div><label class="form-label">名称</label><input id="pre-name" class="field" value="${escapeHtml(p.name||'')}"></div><div><label class="form-label">类型</label><select id="pre-type" class="field">${['style','format','behavior','model'].map(x=>`<option ${p.type===x?'selected':''}>${x}</option>`).join('')}</select></div><div><label class="form-label">Priority</label><input id="pre-priority" type="number" class="field" value="${Number(p.priority||50)}"></div><div class="form-full"><label class="form-label">说明</label><input id="pre-desc" class="field" value="${escapeHtml(p.description||'')}"></div><div class="form-full"><label class="form-label">内容</label><textarea id="pre-content" class="field textarea tall">${escapeHtml(p.content||'')}</textarea></div></div>`;setupEditorButtons(id?()=>deletePreset(id):null,savePresetEditor);qs('editor-modal').classList.remove('hidden')}
+async function savePresetEditor(){const body={name:qs('pre-name').value||'未命名预设',type:qs('pre-type').value,priority:Number(qs('pre-priority').value||50),description:qs('pre-desc').value,content:qs('pre-content').value};const res=await fetchStory(editorState.id?`/presets/${editorState.id}`:'/presets',editorState.id?'PATCH':'POST',body);if(res.success){closeEditor();await loadAll();openSettings('presets')}else toast(res.msg||'保存失败')}
+async function deletePreset(id){if(!confirm('删除这个预设？'))return;await fetchStory(`/presets/${id}`,'DELETE');closeEditor();await loadAll();openSettings('presets')}
+
+function renderContextTab(box){const ps=currentSessionData.promptSettings||{};box.innerHTML=`<section class="settings-section"><h3>🪐 Session</h3><div class="form-grid"><div class="form-full"><label class="form-label">标题</label><input id="ctx-title" class="field" value="${escapeHtml(currentSessionData.title||'')}"></div><div><label class="form-label">Canon Level</label><select id="ctx-canon" class="field">${['temporary','alternate','soft','core'].map(x=>`<option ${currentSessionData.canonLevel===x?'selected':''}>${x}</option>`).join('')}</select></div><div><label class="form-label">Temperature</label><input id="ctx-temp" class="field" type="number" min="0.1" max="2" step="0.05" value="${getTemp()}"></div></div><p class="helper">Standalone 中所有 Session 都是浏览器本地独立宇宙，不会写入任何 MIMAMAO / Telegram 世界。</p></section>
+<section class="settings-section"><h3>🧠 长剧情 Context</h3><div class="form-grid"><div><label class="form-label">最近原文消息数</label><input id="ctx-recent" class="field" type="number" min="6" max="200" value="${Number(ps.recentMessageLimit||34)}"></div><div><label class="form-label">世界书总预算（字符）</label><input id="ctx-wbbudget" class="field" type="number" min="1000" max="160000" value="${Number(ps.worldbookBudgetChars||16000)}"></div><div class="form-full"><label class="check-row"><input id="ctx-summary" type="checkbox" ${ps.summaryEnabled!==false?'checked':''}> 自动 Rolling Summary</label><label class="check-row"><input id="ctx-pinned-on" type="checkbox" ${ps.pinnedFactsEnabled!==false?'checked':''}> 注入 Pinned Facts</label></div><div class="form-full"><label class="form-label">📌 Pinned Facts（一行一条）</label><textarea id="ctx-pinned" class="field textarea">${escapeHtml(arr(currentSessionData.pinnedFacts).join('\n'))}</textarea></div><div class="form-full"><label class="form-label">User 备注</label><textarea id="ctx-usernotes" class="field textarea">${escapeHtml(currentSessionData.userNotes||'')}</textarea></div><div class="form-full"><label class="form-label">AI 备注</label><textarea id="ctx-ainotes" class="field textarea">${escapeHtml(currentSessionData.aiNotes||'')}</textarea></div></div></section>
+<section class="settings-section"><h3>💾 本地档案</h3><p class="helper">剧情、角色卡、世界书、预设保存在当前浏览器 IndexedDB。建议偶尔导出剧情资料备份；字体与 API Key 不会被打进备份。</p><div class="toolbar"><button class="ghost-btn" onclick="exportCurrentSession()">⇩ 导出当前剧情</button><button class="ghost-btn" onclick="exportWholeLibrary()">⇩ 完整剧情资料备份</button><button class="ghost-btn" onclick="chooseLibraryImport()">⇧ 导入剧情资料备份</button><button class="danger-btn" onclick="deleteCurrentSession()">删除当前剧情</button></div></section>`}
+async function saveContextSettings(){const temp=Math.max(.1,Math.min(2,Number(qs('ctx-temp').value||.85)));localStorage.setItem(TEMP_KEY,String(temp));await patchCurrent({title:qs('ctx-title').value||'未命名咪嘛宇宙',canonLevel:qs('ctx-canon').value,pinnedFacts:lines(qs('ctx-pinned').value),userNotes:qs('ctx-usernotes').value,aiNotes:qs('ctx-ainotes').value,enabledPersonaSources:{sandalphonPersona:false,userPersona:false,telegramContext:false,longTermMemory:false,sandalphonState:false},promptSettings:{...(currentSessionData.promptSettings||{}),recentMessageLimit:Number(qs('ctx-recent').value||34),worldbookBudgetChars:Number(qs('ctx-wbbudget').value||16000),summaryEnabled:qs('ctx-summary').checked,pinnedFactsEnabled:qs('ctx-pinned-on').checked}});toast('Context 已保存')}
+async function exportWholeLibrary(){const data=await MimaStandalone.exportLibrary();downloadJson('mimamao-tavern-full-backup.json',{format:'mimamao-tavern-standalone',version:1,exportedAt:new Date().toISOString(),data});}
+function chooseLibraryImport(){qs('library-file-input').value='';qs('library-file-input').click()}
+async function importWholeLibrary(file){if(!file)return;if(!confirm('导入完整酒馆备份会覆盖当前浏览器里的剧情/角色卡/世界书/预设。继续吗？'))return;try{const raw=JSON.parse(await file.text());await MimaStandalone.importLibrary(raw);currentSessionId=null;currentSessionData=null;await loadAll();toast('完整酒馆备份已导入')}catch(e){toast(`备份导入失败：${e.message}`)}}
+
+async function renderAppearanceTab(box){fontRecords=await MimaFontManager.all();const ui=MimaFontManager.getSelected('ui'),story=MimaFontManager.getSelected('story');const opts=`<option value="">系统默认字体</option>`+fontRecords.map(f=>`<option value="${escapeHtml(f.family)}">${escapeHtml(f.family)} · ${formatBytes(f.size)}</option>`).join('');box.innerHTML=`<section class="settings-section"><h3>🎨 本地字体库</h3><p class="helper">直接导入 TTF / OTF / WOFF / WOFF2。文件保存在当前浏览器 IndexedDB，不需要转 URL，也不会上传到服务器。</p><div class="toolbar"><button class="primary-btn" onclick="chooseFontImport()">＋ 导入字体文件</button></div><div class="form-grid"><div><label class="form-label">UI 字体</label><select id="font-ui-select" class="field" onchange="changeFont('ui',this.value)">${opts}</select></div><div><label class="form-label">剧情正文字体</label><select id="font-story-select" class="field" onchange="changeFont('story',this.value)">${opts}</select></div></div><div id="font-list" style="margin-top:14px"></div></section>
+<section class="settings-section"><h3>兼容旧版 URL 字体</h3><p class="helper">旧功能保留。如果某个字体只能用网页链接，也仍然可以加载。</p><div class="form-grid"><div><label class="form-label">字体 URL</label><input id="legacy-font-url" class="field" value="${escapeHtml(localStorage.getItem(LEGACY_FONT_URL_KEY)||'')}"></div><div><label class="form-label">Font Family</label><input id="legacy-font-family" class="field" value="${escapeHtml(localStorage.getItem(LEGACY_FONT_FAMILY_KEY)||'')}"></div><div class="form-full"><button class="ghost-btn" onclick="applyLegacyUrlFont()">应用 URL 字体</button></div></div></section>
+<section class="settings-section"><h3>显示</h3><label class="check-row"><input id="render-html-setting" type="checkbox" ${currentSessionData.renderMode==='safe_html'?'checked':''} onchange="toggleSafeHtml(this.checked)"> 允许安全 HTML 状态栏渲染</label></section>`;qs('font-ui-select').value=ui;qs('font-story-select').value=story;const root=qs('font-list');if(!fontRecords.length)root.innerHTML='<div class="row-sub">还没有本地字体。</div>';fontRecords.forEach(f=>{const r=document.createElement('div');r.className='font-row';r.innerHTML=`<div class="row-main"><div class="row-title" style="font-family:'${escapeHtml(f.family)}'">Aa　${escapeHtml(f.family)}</div><div class="row-sub">${escapeHtml(f.name)} · ${formatBytes(f.size)}</div></div><button class="danger-btn" onclick="deleteLocalFont('${f.id}')">删除</button>`;root.appendChild(r)})}
+function chooseFontImport(){qs('font-file-input').value='';qs('font-file-input').click()}
+async function importFontFile(file){try{const r=await MimaFontManager.importFile(file);fontRecords=await MimaFontManager.all();if(!MimaFontManager.getSelected('story'))MimaFontManager.setSelected('story',r.family);renderAppearanceTab(qs('settings-content'));toast(`字体 ${r.family} 已导入`) }catch(e){toast(e.message)}}
+function changeFont(kind,family){MimaFontManager.setSelected(kind,family)}
+async function deleteLocalFont(id){if(!confirm('从这个浏览器删除字体？'))return;await MimaFontManager.deleteFont(id);renderAppearanceTab(qs('settings-content'))}
+async function toggleSafeHtml(on){await patchCurrent({renderMode:on?'safe_html':'text'},true);refreshChatBox()}
+function formatBytes(n){if(!Number.isFinite(Number(n)))return'';if(n<1024)return`${n} B`;if(n<1024*1024)return`${(n/1024).toFixed(1)} KB`;return`${(n/1024/1024).toFixed(1)} MB`}
+function fontFormat(url){const c=String(url).split('?')[0].toLowerCase();if(c.endsWith('.woff2'))return'woff2';if(c.endsWith('.woff'))return'woff';if(c.endsWith('.ttf'))return'truetype';if(c.endsWith('.otf'))return'opentype';return''}
+function applyLegacyUrlFont(){const url=qs('legacy-font-url').value.trim().replace(/[\n\r\t'"()\\]/g,'');const family=(qs('legacy-font-family').value.trim()||'MimaUrlFont').replace(/['"\\;\n\r{}]/g,'');let tag=qs('legacy-url-font-style');if(!tag){tag=document.createElement('style');tag.id='legacy-url-font-style';document.head.appendChild(tag)}if(!url){tag.textContent='';localStorage.removeItem(LEGACY_FONT_URL_KEY);return}const fmt=fontFormat(url);tag.textContent=url.includes('fonts.googleapis.com')||url.endsWith('.css')?`@import url('${url}');`: `@font-face{font-family:'${family}';src:url('${url}')${fmt?` format('${fmt}')`:''};font-display:swap;} body,button,input,textarea,select{font-family:'${family}',var(--font-ui)!important}`;localStorage.setItem(LEGACY_FONT_URL_KEY,url);localStorage.setItem(LEGACY_FONT_FAMILY_KEY,family);toast('URL 字体已应用')}
+
+function renderApiTab(box){
+    const c=MimaStandalone.getApiConfig();
+    box.innerHTML=`<section class="settings-section"><h3>🔌 API 设置</h3><p class="helper">使用你自己的 OpenAI-compatible API。Key 只保存在当前浏览器 localStorage，不会进入剧情/角色卡/世界书导出文件，也不会发送给咪嘛馆作者。</p>
+    <div class="form-grid"><div class="form-full"><label class="form-label">API Base URL</label><input id="api-base" class="field" placeholder="https://example.com/v1" value="${escapeHtml(c.apiBase||'')}"><div class="row-sub">支持直接填 .../v1，也支持完整 .../chat/completions 地址。</div></div>
+    <div class="form-full"><label class="form-label">API Key</label><input id="api-key" class="field" type="password" autocomplete="off" placeholder="sk-..." value="${escapeHtml(c.apiKey||'')}"></div>
+    <div class="form-full"><label class="form-label">Model</label><div class="inline-field-row"><input id="api-model" class="field" list="api-model-list" placeholder="模型名，可手填" value="${escapeHtml(c.model||'')}"><button class="ghost-btn" onclick="loadApiModels()">拉取模型</button></div><datalist id="api-model-list"></datalist></div>
+    <div><label class="form-label">Max Tokens（0=不发送）</label><input id="api-max-tokens" class="field" type="number" min="0" value="${Number(c.maxTokens||0)}"></div><div><label class="check-row api-check"><input id="api-send-temp" type="checkbox" ${c.sendTemperature!==false?'checked':''}> 发送 Temperature</label></div>
+    <div class="form-full"><details><summary>高级设置</summary><div class="form-grid advanced-grid"><div class="form-full"><label class="form-label">Chat Endpoint Override（可空）</label><input id="api-chat-endpoint" class="field" placeholder="例如 /v1/chat/completions" value="${escapeHtml(c.chatEndpoint||'')}"></div><div class="form-full"><label class="form-label">Models Endpoint Override（可空）</label><input id="api-models-endpoint" class="field" placeholder="例如 /v1/models" value="${escapeHtml(c.modelsEndpoint||'')}"></div><div class="form-full"><label class="form-label">Extra Headers JSON（可空）</label><textarea id="api-extra-headers" class="field textarea" placeholder='{"X-Custom-Key":"value"}'>${escapeHtml(c.extraHeaders||'')}</textarea></div></div></details></div></div>
+    <div class="toolbar"><button class="primary-btn" onclick="saveApiSettings()">保存 API</button><button class="ghost-btn" onclick="testApiConnection()">测试连接</button><button class="ghost-btn" onclick="chooseApiImport()">⇧ 导入 API 配置</button></div><div id="api-status" class="api-status"></div></section>
+    <section class="settings-section"><h3>🌐 浏览器直连说明</h3><p class="helper">Standalone 是纯前端，因此 API 服务必须允许浏览器跨域（CORS）。如果出现 “Failed to fetch / CORS” 而地址和 Key 都正确，是 API 站点禁止网页直连，不是咪嘛馆配置错误。此时需要换支持 CORS 的中转，或把本静态前端部署到该服务允许的来源。</p></section>`;
+}
+function collectApiForm(){return{apiBase:qs('api-base').value.trim(),apiKey:qs('api-key').value.trim(),model:qs('api-model').value.trim(),chatEndpoint:qs('api-chat-endpoint').value.trim(),modelsEndpoint:qs('api-models-endpoint').value.trim(),extraHeaders:qs('api-extra-headers').value.trim(),sendTemperature:qs('api-send-temp').checked,maxTokens:Number(qs('api-max-tokens').value||0)}}
+function saveApiSettings(){try{const c=collectApiForm();if(c.extraHeaders)JSON.parse(c.extraHeaders);MimaStandalone.saveApiConfig(c);toast('API 配置只保存到了这个浏览器');const el=qs('api-status');if(el)el.textContent='✅ 已保存。'}catch(e){toast(`API 配置错误：${e.message}`)}}
+async function loadApiModels(){saveApiSettings();const status=qs('api-status');status.textContent='正在拉取模型……';try{const models=await MimaStandalone.listModels();const dl=qs('api-model-list');dl.innerHTML=models.map(x=>`<option value="${escapeHtml(x)}"></option>`).join('');status.textContent=`✅ 拉到 ${models.length} 个模型，可以直接选择或继续手填。`;if(models.length&&!qs('api-model').value){qs('api-model').value=models[0];MimaStandalone.saveApiConfig({...collectApiForm(),model:models[0]})}}catch(e){status.textContent=`❌ ${friendlyApiError(e)}`}}
+async function testApiConnection(){saveApiSettings();const status=qs('api-status');status.textContent='正在测试 API……';try{const r=await MimaStandalone.testApi();status.textContent=`✅ API 可访问，模型列表 ${r.count} 个。`;const dl=qs('api-model-list');dl.innerHTML=r.models.map(x=>`<option value="${escapeHtml(x)}"></option>`).join('')}catch(e){status.textContent=`❌ ${friendlyApiError(e)}`}}
+function friendlyApiError(e){const m=e?.message||String(e);if(/Failed to fetch|NetworkError|Load failed|CORS/i.test(m))return `${m}。如果地址/Key正确，通常是 API 没开放浏览器 CORS。`;return m}
+function chooseApiImport(){qs('api-config-file-input').value='';qs('api-config-file-input').click()}
+async function importApiConfigFile(file){if(!file)return;try{const raw=JSON.parse(await file.text()),src=raw.data||raw;MimaStandalone.saveApiConfig({apiBase:src.apiBase||src.baseUrl||src.base_url||'',apiKey:src.apiKey||src.api_key||src.key||'',model:src.model||'',chatEndpoint:src.chatEndpoint||'',modelsEndpoint:src.modelsEndpoint||'',extraHeaders:typeof src.extraHeaders==='string'?src.extraHeaders:src.extraHeaders?JSON.stringify(src.extraHeaders):'',sendTemperature:src.sendTemperature!==false,maxTokens:Number(src.maxTokens||0)});renderApiTab(qs('settings-content'));toast('API 配置已导入到当前浏览器')}catch(e){toast(`API 配置导入失败：${e.message}`)}}
+
+function renderPromptTab(box){box.innerHTML=`<section class="settings-section"><h3>🔬 Prompt Inspector</h3><p class="helper">使用当前输入框草稿进行“只预览、不调用 LLM”的组装。可以直接看到世界书命中、System 插槽和 Depth 注入。</p><div class="toolbar"><button class="primary-btn" onclick="refreshPromptInspector()">扫描本轮 Prompt</button></div><div id="prompt-inspector"><div class="row-sub">点击上方按钮生成预览。</div></div></section>`}
+async function refreshPromptInspector(){const root=qs('prompt-inspector');root.innerHTML='<div class="row-sub">正在组装……</div>';const res=await fetchStory(`/sessions/${currentSessionId}/prompt-preview`,'POST',{draft:qs('story-input').value,directorNote:qs('director-note').value});if(!res.success){root.textContent=res.msg||'预览失败';return}const d=res.data;root.innerHTML=`<div class="prompt-stats"><div class="stat-card"><div class="stat-num">${d.systemChars}</div><div class="stat-label">System 字符</div></div><div class="stat-card"><div class="stat-num">${d.matchedWorldbookEntries.length}</div><div class="stat-label">世界书命中</div></div><div class="stat-card"><div class="stat-num">${d.finalMessageCount}</div><div class="stat-label">最终 Messages</div></div></div><h4>本轮世界书</h4><div class="hit-list">${d.matchedWorldbookEntries.length?d.matchedWorldbookEntries.map(x=>`<div class="hit-item">✅ ${escapeHtml(x.bookName)} / ${escapeHtml(x.entryName)} · Depth ${x.depth} · ${escapeHtml(x.position)} · ${escapeHtml(x.reason)}${x.hits?.length?` · 命中：${escapeHtml(x.hits.join(', '))}`:''}</div>`).join(''):'<div class="hit-item">本轮没有触发世界书条目。</div>'}</div><h4 style="margin-top:16px">System Prompt</h4><pre class="prompt-pre">${escapeHtml(d.systemPreview)}</pre><details style="margin-top:12px"><summary>查看完整 Message 队列</summary><pre class="prompt-pre">${escapeHtml(d.messagePreview.map(x=>`#${x.index} ${x.role}\n${x.content}`).join('\n\n'))}</pre></details>`}
+
+function setupEditorButtons(deleteFn,saveFn){qs('editor-save').textContent='保存';const del=qs('editor-delete');if(deleteFn){del.classList.remove('hidden');del.onclick=deleteFn}else{del.classList.add('hidden');del.onclick=null}qs('editor-save').onclick=saveFn}
+function downloadJson(name,obj){const blob=new Blob([JSON.stringify(obj,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
+function toast(text){let t=document.getElementById('mima-toast');if(!t){t=document.createElement('div');t.id='mima-toast';t.style.cssText='position:fixed;z-index:2000;left:50%;bottom:120px;transform:translateX(-50%);background:rgba(52,43,50,.92);color:white;padding:10px 14px;border-radius:999px;font-size:13px;max-width:85vw;text-align:center;transition:.2s';document.body.appendChild(t)}t.textContent=text;t.style.opacity='1';clearTimeout(t._timer);t._timer=setTimeout(()=>t.style.opacity='0',2200)}
+
+function getTemp(){const n=Number(localStorage.getItem(TEMP_KEY)||.85);return Number.isFinite(n)?n:.85}
+function toggleUIState(generating){isGenerating=generating;qs('send-btn').disabled=generating;qsa('.quick-actions .chip-btn').forEach(b=>{if(b.id!=='stop-btn')b.disabled=generating});qs('stop-btn').classList.toggle('hidden',!generating);qs('story-input').disabled=generating}
+async function triggerChat(text,actionType='send'){
+    if(!currentSessionId)return toast('请先创建一个剧情。');const directorNote=qs('director-note').value.trim();toggleUIState(true);
+    try{const res=await fetchStory(`/sessions/${currentSessionId}/chat`,'POST',{text,action:actionType,temperature:getTemp(),directorNote},true);toggleUIState(false);if(res.aborted){toast('生成已停止，主人消息已保留。');await openSession(currentSessionId,false);return}if(res.success){currentSessionData=res.data;qs('story-input').value='';autoResizeInput();refreshChatBox();await refreshSessionSummaryList();refreshHeader()}else{toast('通讯出错：'+(res.msg||'未知错误'));await openSession(currentSessionId,false)}}catch(e){toggleUIState(false);toast(e.message)}
+}
+function stopGeneration(){if(activeRequest){activeRequest.abort();activeRequest=null}toggleUIState(false)}
+function sendMsg(){const txt=qs('story-input').value.trim();if(txt)triggerChat(txt,'send')}
+function regenerateMsg(){triggerChat('','regenerate')}
+function continueMsg(){triggerChat('','continue')}
+function autoAdvance(){triggerChat(qs('director-note').value.trim()||'请自然推进下一段剧情。','auto_advance')}
+function autoResizeInput(){const el=qs('story-input');el.style.height='auto';el.style.height=Math.min(170,Math.max(46,el.scrollHeight))+'px'}
+
+function refreshChatBox(){const box=qs('story-chat-box');box.innerHTML='';if(!currentSessionData||!currentSessionData.messages?.length){box.innerHTML=`<div class="empty-state"><div class="empty-icon">${currentChar()?'🎭':'🍷'}</div><h2>${escapeHtml(currentChar()?.name||'这个宇宙还是空的')}</h2><p>${currentChar()?.firstMessage?'角色卡里有 First Message，可在 🎭 角色设置中一键插入。':'写下第一句话，剧情从这里开始。'}</p></div>`;return}currentSessionData.messages.forEach(renderMessageToUI);requestAnimationFrame(()=>box.scrollTop=box.scrollHeight)}
+function renderMessageToUI(msg){const box=qs('story-chat-box');const role=msg.role||'system';const div=document.createElement('article');div.className=`message ${role}-msg`;div.dataset.msgId=msg.id||'';const header=document.createElement('div');header.className='msg-header';const roleName=role==='user'?(currentUser()?.name||'你 / User'):(role==='assistant'?(currentChar()?.name||(currentSessionData?.mode==='sandalphon'?'圣德芬':'Character')):'系统');header.textContent=`${roleName}${msg.isEdited?' · 已编辑':''}${msg.versions?.length?` · ${msg.versions.length} 个旧版本`:''}`;div.appendChild(header);const content=document.createElement('div');content.className='msg-content';appendRenderedContent(content,cleanCorruptText(msg.content||''),currentSessionData?.renderMode==='safe_html');div.appendChild(content);if(role==='user'||role==='assistant'){const tools=document.createElement('div');tools.className='msg-tools';tools.append(makeToolButton('编辑',()=>openMessageEditor(msg,false)),makeToolButton('从这里分支',()=>openMessageEditor(msg,true)));if(role==='assistant'&&msg.versions?.length)tools.append(makeToolButton('看旧版本',()=>showVersions(msg)));div.appendChild(tools)}box.appendChild(div)}
+function makeToolButton(text,fn){const b=document.createElement('button');b.className='tool-mini';b.textContent=text;b.onclick=fn;return b}
+function openMessageEditor(msg,truncateAfter=false){editorState={type:'message',msg,truncateAfter};qs('editor-title').textContent=truncateAfter?'编辑并从这里建立新时间线':'编辑消息';qs('editor-eyebrow').textContent='STORY MESSAGE';qs('editor-body').innerHTML=`<label class="form-label">消息内容</label><textarea id="message-edit-content" class="field textarea tall">${escapeHtml(msg.content||'')}</textarea>${truncateAfter?'<p class="helper">保存后，这条消息之后的旧剧情会进入 archivedBranches，不会直接丢失。</p>':''}`;setupEditorButtons(null,saveMessageEditor);qs('editor-modal').classList.remove('hidden')}
+async function saveMessageEditor(){const {msg,truncateAfter}=editorState;const res=await fetchStory(`/sessions/${currentSessionId}/messages/${msg.id}`,'PATCH',{content:qs('message-edit-content').value,truncateAfter});if(res.success){currentSessionData=res.data;closeEditor();refreshChatBox();if(truncateAfter&&msg.role==='user'&&confirm('现在从这条 User 消息重新生成后续吗？'))await triggerChat('','regenerate')}else toast(res.msg||'编辑失败')}
+function showVersions(msg){editorState={type:'versions'};qs('editor-title').textContent='旧版本';qs('editor-eyebrow').textContent='MESSAGE VERSIONS';qs('editor-body').innerHTML=arr(msg.versions).slice().reverse().map((v,i)=>`<div class="entry-card"><div class="entry-meta">${escapeHtml(v.reason||'version')} · ${escapeHtml(v.time||'')}</div><div style="white-space:pre-wrap;line-height:1.6;margin-top:8px">${escapeHtml(v.content||'')}</div></div>`).join('');setupEditorButtons(null,closeEditor);qs('editor-save').textContent='关闭';qs('editor-modal').classList.remove('hidden')}
+function appendRenderedContent(node,text,allowHtml=false){if(allowHtml){node.innerHTML=sanitizeAllowedHtml(text||'');return}String(text||'').split('\n').forEach((part,i)=>{if(i)node.appendChild(document.createElement('br'));node.appendChild(document.createTextNode(part))})}
+function sanitizeAllowedHtml(html){const template=document.createElement('template');template.innerHTML=cleanCorruptText(html);const allowedTags=new Set(['DIV','SPAN','P','BR','STRONG','B','EM','I','SMALL','UL','OL','LI','TABLE','THEAD','TBODY','TR','TD','TH','HR']);const allowedAttrs=new Set(['class','data-label','data-value','aria-label']);const walk=document.createTreeWalker(template.content,NodeFilter.SHOW_ELEMENT);const remove=[];while(walk.nextNode()){const el=walk.currentNode;if(!allowedTags.has(el.tagName)){remove.push(el);continue}[...el.attributes].forEach(a=>{const n=a.name.toLowerCase(),v=a.value||'';if(!allowedAttrs.has(n)||/javascript:|on\w+=/i.test(v))el.removeAttribute(a.name)})}remove.forEach(el=>el.replaceWith(document.createTextNode(el.textContent||'')));return template.innerHTML}
+
+function restoreLegacyFont(){const url=localStorage.getItem(LEGACY_FONT_URL_KEY);if(!url)return;let tag=document.createElement('style');tag.id='legacy-url-font-style';document.head.appendChild(tag);const fam=localStorage.getItem(LEGACY_FONT_FAMILY_KEY)||'MimaUrlFont';const fmt=fontFormat(url);const apply=`body,button,input,textarea,select{font-family:'${fam}',-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif}`;tag.textContent=url.includes('fonts.googleapis.com')||url.endsWith('.css')?`@import url('${url}'); ${apply}`:`@font-face{font-family:'${fam}';src:url('${url}')${fmt?` format('${fmt}')`:''};font-display:swap;} ${apply}`}
+
+// Expose inline handlers
+Object.assign(window,{goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,saveContextSettings,exportWholeLibrary,chooseLibraryImport,chooseFontImport,changeFont,deleteLocalFont,toggleSafeHtml,applyLegacyUrlFont,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,refreshPromptInspector,closeEditor,sendMsg,regenerateMsg,continueMsg,autoAdvance,stopGeneration});
+
+window.addEventListener('load',async()=>{
+    restoreLegacyFont();
+    try{await MimaStandalone.init()}catch(e){console.error('Standalone 本地数据库启动失败',e);alert('咪嘛馆本地数据库启动失败：'+e.message);return}
+    try{fontRecords=await MimaFontManager.init()}catch(e){console.warn('本地字体库启动失败',e)}
+    qs('story-input').addEventListener('input',autoResizeInput);
+    qs('story-input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();sendMsg()}});
+    qs('session-file-input').addEventListener('change',e=>importSessionFile(e.target.files?.[0]));
+    qs('persona-file-input').addEventListener('change',e=>importPersonaFile(e.target.files?.[0]));
+    qs('worldbook-file-input').addEventListener('change',e=>importWorldbookFile(e.target.files?.[0]));
+    qs('font-file-input').addEventListener('change',e=>importFontFile(e.target.files?.[0]));
+    qs('api-config-file-input').addEventListener('change',e=>importApiConfigFile(e.target.files?.[0]));
+    qs('library-file-input').addEventListener('change',e=>importWholeLibrary(e.target.files?.[0]));
+    await loadAll();
+    if(!MimaStandalone.getApiConfig().apiBase) setTimeout(()=>{ if(currentSessionData) openSettings('api'); },250);
+});

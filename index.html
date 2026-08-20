@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#f4eef2">
+    <title>咪嘛馆 Standalone · MIMAMAO Tavern</title>
+    <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+<div id="drawer-scrim" class="scrim hidden" onclick="closeDrawer()"></div>
+<aside id="session-drawer" class="session-drawer">
+    <div class="drawer-head">
+        <div>
+            <div class="eyebrow">MIMAMAO TAVERN · STANDALONE</div>
+            <h1>🍷 咪嘛馆</h1>
+        </div>
+        <button class="icon-btn" onclick="closeDrawer()">✕</button>
+    </div>
+    <div class="toolbar"><button class="primary-btn" style="flex:1" onclick="openNewSessionModal()">＋ 新建剧情</button><button class="ghost-btn" onclick="chooseSessionImport()">⇧ 导入</button></div>
+    <div id="session-list" class="session-list"></div>
+    <div class="drawer-footer">
+        <button class="ghost-btn" onclick="openSettings('api')">🔌 API 设置</button>
+        <div class="standalone-note">Standalone · 数据仅保存在本机浏览器</div>
+    </div>
+</aside>
+
+<div class="app-shell">
+    <header class="topbar glass-bar">
+        <button class="icon-btn" onclick="openDrawer()" aria-label="剧情列表">☰</button>
+        <div id="top-avatar" class="top-avatar">🍷</div>
+        <div class="top-title-wrap">
+            <div id="current-character" class="top-character">未挂载角色</div>
+            <div id="current-title" class="top-title">欢迎来到咪嘛馆</div>
+        </div>
+        <button class="icon-btn" onclick="openSettings('roles')" aria-label="角色设置">🎭</button>
+        <button class="icon-btn" onclick="openSettings('worldbook')" aria-label="酒馆设置">⚙️</button>
+    </header>
+
+    <div id="context-ribbon" class="context-ribbon hidden"></div>
+
+    <main id="story-chat-box" class="chat-box">
+        <div class="empty-state">
+            <div class="empty-icon">🍷</div>
+            <h2>咪嘛馆已经开门</h2>
+            <p>创建一个独立宇宙，挂载角色卡与世界书，然后开始长剧情。</p>
+        </div>
+    </main>
+
+    <footer class="composer-shell glass-bar">
+        <div id="director-wrap" class="director-wrap collapsed">
+            <input id="director-note" class="field" placeholder="导演指令：只影响演绎，不算 User 台词">
+        </div>
+        <div class="quick-actions">
+            <button class="chip-btn" onclick="toggleDirector()">🎬 导演</button>
+            <button class="chip-btn" onclick="regenerateMsg()">↻ 重说</button>
+            <button class="chip-btn" onclick="continueMsg()">» 续写</button>
+            <button class="chip-btn" onclick="autoAdvance()">✦ 推进</button>
+            <button id="stop-btn" class="chip-btn danger hidden" onclick="stopGeneration()">■ 停止</button>
+        </div>
+        <div class="composer-row">
+            <textarea id="story-input" rows="1" placeholder="写下你的动作、语言或剧情……"></textarea>
+            <button id="send-btn" class="send-btn" onclick="sendMsg()">➤</button>
+        </div>
+    </footer>
+</div>
+
+<!-- 设置中心 -->
+<div id="settings-modal" class="modal hidden">
+    <div class="modal-panel settings-panel">
+        <div class="modal-head sticky-head">
+            <div>
+                <div class="eyebrow">独立宇宙设置</div>
+                <h2 id="settings-title">咪嘛馆设置</h2>
+            </div>
+            <button class="icon-btn" onclick="closeSettings()">✕</button>
+        </div>
+        <nav class="settings-tabs">
+            <button data-tab="roles" onclick="switchSettingsTab('roles')">🎭 角色</button>
+            <button data-tab="worldbook" onclick="switchSettingsTab('worldbook')">📚 世界书</button>
+            <button data-tab="presets" onclick="switchSettingsTab('presets')">🧩 预设</button>
+            <button data-tab="context" onclick="switchSettingsTab('context')">🧠 Context</button>
+            <button data-tab="appearance" onclick="switchSettingsTab('appearance')">🎨 外观</button>
+            <button data-tab="api" onclick="switchSettingsTab('api')">🔌 API</button>
+            <button data-tab="prompt" onclick="switchSettingsTab('prompt')">🔬 Prompt</button>
+        </nav>
+        <div id="settings-content" class="settings-content"></div>
+    </div>
+</div>
+
+<!-- 通用编辑器 -->
+<div id="editor-modal" class="modal hidden">
+    <div class="modal-panel editor-panel">
+        <div class="modal-head sticky-head">
+            <div><div class="eyebrow" id="editor-eyebrow">EDITOR</div><h2 id="editor-title">编辑</h2></div>
+            <button class="icon-btn" onclick="closeEditor()">✕</button>
+        </div>
+        <div id="editor-body" class="editor-body"></div>
+        <div class="editor-actions sticky-bottom">
+            <button id="editor-delete" class="danger-btn hidden">删除</button>
+            <div class="spacer"></div>
+            <button class="ghost-btn" onclick="closeEditor()">取消</button>
+            <button id="editor-save" class="primary-btn">保存</button>
+        </div>
+    </div>
+</div>
+
+<!-- 新剧情 -->
+<div id="new-session-modal" class="modal hidden">
+    <div class="modal-panel compact-panel">
+        <div class="modal-head"><h2>开辟新宇宙</h2><button class="icon-btn" onclick="closeNewSessionModal()">✕</button></div>
+        <label class="form-label">剧情标题</label>
+        <input id="new-session-title" class="field" placeholder="例如：末日后的巴比伦">
+        <label class="form-label">模式</label>
+        <select id="new-session-mode" class="field">
+            <option value="tavern" selected>Standalone · 完全独立宇宙</option>
+        </select>
+        <button class="primary-btn wide" onclick="createSession()">创建并进入</button>
+    </div>
+</div>
+
+<input id="session-file-input" class="hidden" type="file" accept=".json,application/json">
+<input id="persona-file-input" class="hidden" type="file" accept=".txt,.json,application/json,text/plain">
+<input id="worldbook-file-input" class="hidden" type="file" accept=".json,application/json">
+<input id="font-file-input" class="hidden" type="file" accept=".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2">
+<input id="api-config-file-input" class="hidden" type="file" accept=".json,application/json">
+<input id="library-file-input" class="hidden" type="file" accept=".json,application/json">
+
+<script src="./local-store.js"></script>
+<script src="./standalone-core.js"></script>
+<script src="./font-manager.js"></script>
+<script src="./app.js"></script>
+</body>
+</html>
