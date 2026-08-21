@@ -47,4 +47,15 @@ API 配置 JSON（可选导入）示例：
 - 字体：IndexedDB（咪嘛馆字体库）
 - API 配置：localStorage
 
-版本：MIMAMAO Tavern Standalone 1.0
+版本：MIMAMAO Tavern Standalone 1.0.2
+
+
+=== V1.0.2 补丁说明 ===
+- 修复模型“空回”被当作成功并写入空白 assistant 消息的问题：空正文现在会被拦截并返回 E_API_EMPTY_REPLY。
+- 加强 OpenAI-compatible 响应解析；加入结构化错误码、HTTP 状态和常见原因提示。
+- API 模型改为可真正展开的原生下拉选择器，同时保留手动模型名输入。
+- 新增 Temperature（温度）选择与 Streaming（流式传输）开关。
+- 新增剧情生成动画、阶段状态与进度条；流式模式会显示已接收字符进度。
+- 顶部控制栏压缩并贴近屏幕顶部，为剧情正文让出更多空间。
+- 默认 UI 调整为灰色 iOS 27 风格液态玻璃/磨砂；角色面具图标替换为 🤍。
+- 可见英文 UI 标签补充中文括注；原剧情/角色卡/世界书/预设/字体/CSS/导入导出等旧功能保留。

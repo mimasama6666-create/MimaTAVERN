@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <meta name="theme-color" content="#f4eef2">
-    <title>咪嘛馆 Standalone · MIMAMAO Tavern</title>
+    <meta name="theme-color" content="#dfe1e4">
+    <title>咪嘛馆 · MIMAMAO Tavern（酒馆） · Standalone（独立版）</title>
     <link rel="stylesheet" href="./style.css">
 </head>
 <body>
@@ -12,7 +12,7 @@
 <aside id="session-drawer" class="session-drawer">
     <div class="drawer-head">
         <div>
-            <div class="eyebrow">MIMAMAO TAVERN · STANDALONE</div>
+            <div class="eyebrow">MIMAMAO TAVERN（咪嘛馆） · STANDALONE（独立版）</div>
             <h1>🍷 咪嘛馆</h1>
         </div>
         <button class="icon-btn" onclick="closeDrawer()">✕</button>
@@ -20,20 +20,20 @@
     <div class="toolbar"><button class="primary-btn" style="flex:1" onclick="openNewSessionModal()">＋ 新建剧情</button><button class="ghost-btn" onclick="chooseSessionImport()">⇧ 导入</button></div>
     <div id="session-list" class="session-list"></div>
     <div class="drawer-footer">
-        <button class="ghost-btn" onclick="openSettings('api')">🔌 API 设置</button>
-        <div class="standalone-note">Standalone · 数据仅保存在本机浏览器</div>
+        <button class="ghost-btn" onclick="openSettings('api')">🔌 API（接口）设置</button>
+        <div class="standalone-note">Standalone（独立版） · 数据仅保存在本机浏览器</div>
     </div>
 </aside>
 
 <div class="app-shell">
     <header class="topbar glass-bar">
         <button class="icon-btn" onclick="openDrawer()" aria-label="剧情列表">☰</button>
-        <div id="top-avatar" class="top-avatar">🍷</div>
+        <div id="top-avatar" class="top-avatar">🤍</div>
         <div class="top-title-wrap">
             <div id="current-character" class="top-character">未挂载角色</div>
             <div id="current-title" class="top-title">欢迎来到咪嘛馆</div>
         </div>
-        <button class="icon-btn" onclick="openSettings('roles')" aria-label="角色设置">🎭</button>
+        <button class="icon-btn" onclick="openSettings('roles')" aria-label="角色设置">🤍</button>
         <button class="icon-btn" onclick="openSettings('worldbook')" aria-label="酒馆设置">⚙️</button>
     </header>
 
@@ -48,8 +48,13 @@
     </main>
 
     <footer class="composer-shell glass-bar">
+        <div id="generation-panel" class="generation-panel hidden" aria-live="polite">
+            <div class="generation-head"><span id="generation-label">🤍 正在生成剧情</span><span id="generation-percent">0%</span><button class="generation-close" onclick="dismissGenerationPanel()" aria-label="关闭状态">×</button></div>
+            <div class="generation-track"><div id="generation-progress-bar" class="generation-progress-bar"></div></div>
+            <div id="generation-detail" class="generation-detail">正在准备本轮剧情…</div>
+        </div>
         <div id="director-wrap" class="director-wrap collapsed">
-            <input id="director-note" class="field" placeholder="导演指令：只影响演绎，不算 User 台词">
+            <input id="director-note" class="field" placeholder="导演指令：只影响演绎，不算 User（用户）台词">
         </div>
         <div class="quick-actions">
             <button class="chip-btn" onclick="toggleDirector()">🎬 导演</button>
@@ -76,13 +81,13 @@
             <button class="icon-btn" onclick="closeSettings()">✕</button>
         </div>
         <nav class="settings-tabs">
-            <button data-tab="roles" onclick="switchSettingsTab('roles')">🎭 角色</button>
+            <button data-tab="roles" onclick="switchSettingsTab('roles')">🤍 角色</button>
             <button data-tab="worldbook" onclick="switchSettingsTab('worldbook')">📚 世界书</button>
             <button data-tab="presets" onclick="switchSettingsTab('presets')">🧩 预设</button>
-            <button data-tab="context" onclick="switchSettingsTab('context')">🧠 Context</button>
+            <button data-tab="context" onclick="switchSettingsTab('context')">🧠 Context（上下文）</button>
             <button data-tab="appearance" onclick="switchSettingsTab('appearance')">🎨 外观</button>
-            <button data-tab="api" onclick="switchSettingsTab('api')">🔌 API</button>
-            <button data-tab="prompt" onclick="switchSettingsTab('prompt')">🔬 Prompt</button>
+            <button data-tab="api" onclick="switchSettingsTab('api')">🔌 API（接口）</button>
+            <button data-tab="prompt" onclick="switchSettingsTab('prompt')">🔬 Prompt（提示词）</button>
         </nav>
         <div id="settings-content" class="settings-content"></div>
     </div>
@@ -92,7 +97,7 @@
 <div id="editor-modal" class="modal hidden">
     <div class="modal-panel editor-panel">
         <div class="modal-head sticky-head">
-            <div><div class="eyebrow" id="editor-eyebrow">EDITOR</div><h2 id="editor-title">编辑</h2></div>
+            <div><div class="eyebrow" id="editor-eyebrow">EDITOR（编辑器）</div><h2 id="editor-title">编辑</h2></div>
             <button class="icon-btn" onclick="closeEditor()">✕</button>
         </div>
         <div id="editor-body" class="editor-body"></div>
@@ -113,7 +118,7 @@
         <input id="new-session-title" class="field" placeholder="例如：末日后的巴比伦">
         <label class="form-label">模式</label>
         <select id="new-session-mode" class="field">
-            <option value="tavern" selected>Standalone · 完全独立宇宙</option>
+            <option value="tavern" selected>Standalone（独立版） · 完全独立宇宙</option>
         </select>
         <button class="primary-btn wide" onclick="createSession()">创建并进入</button>
     </div>
