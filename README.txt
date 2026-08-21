@@ -59,3 +59,19 @@ API 配置 JSON（可选导入）示例：
 - 顶部控制栏压缩并贴近屏幕顶部，为剧情正文让出更多空间。
 - 默认 UI 调整为灰色 iOS 27 风格液态玻璃/磨砂；角色面具图标替换为 🤍。
 - 可见英文 UI 标签补充中文括注；原剧情/角色卡/世界书/预设/字体/CSS/导入导出等旧功能保留。
+
+V1.0.3 数据安全补丁：
+- CSS / JS 加入 ?v=1.0.3 资源版本号，缓解 GitHub Pages / Safari 混合缓存旧资源问题。
+- 新增 💾 Data（数据）页：保存本机设置快照、恢复快照、导出完整设置、导入完整设置。
+- 完整设置备份包含：剧情、角色卡、世界书、预设、CSS Preset、API 参数、温度、Streaming、字体选择；可选包含本地字体二进制和 API Key。
+- 注意：强制刷新不会删除 IndexedDB/localStorage；“清除网站数据”会删除，请先导出 JSON 备份。
+
+
+=== v1.0.4 Safe HTML + CSS Studio 补丁 ===
+- 修复 Safe HTML 开启后换行和连续空格被浏览器折叠的问题。
+- Safe HTML 新增 system / details / summary / section / article / pre / code / table 等安全结构支持。
+- 不支持标签不再把整棵子节点拍平成纯文本；危险 script/style/iframe/form 等仍会被移除。
+- CSS Preset 新增三档 Scope：自定义 HTML 内容 / 剧情聊天区域 / 咪嘛馆全局 UI + HTML。
+- 纯 CSS 可直接粘贴或导入，不需要 <style> 包裹。
+- 新增“一键复制默认 CSS”“导出默认 CSS”“默认 CSS 二改”按钮。
+- 全局 CSS 可覆盖咪嘛馆顶栏、设置中心、输入框、剧情内容等；旧 CSS Preset 与旧功能保持兼容。

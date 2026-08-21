@@ -171,3 +171,57 @@ body::before{
 @media(max-width:620px){
     .topbar{min-height:48px;padding:4px 8px}.topbar .icon-btn{min-width:34px;height:34px}.top-avatar{width:34px;height:34px;border-radius:12px}.top-character{font-size:.90rem}.top-title{font-size:.67rem}.chat-box{padding-top:14px}.composer-shell{padding-top:7px}.temperature-row{grid-template-columns:minmax(0,1fr) 82px}
 }
+
+/* ============================================================
+   v1.0.3 · Data Backup（数据备份）补丁
+   ============================================================ */
+.data-backup-card{
+  padding:14px;
+  margin:12px 0;
+  border:1px solid rgba(255,255,255,.62);
+  border-radius:18px;
+  background:linear-gradient(145deg,rgba(255,255,255,.54),rgba(226,229,232,.36));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.72),0 10px 30px rgba(35,39,43,.07);
+  backdrop-filter:blur(22px) saturate(125%);
+  -webkit-backdrop-filter:blur(22px) saturate(125%);
+}
+.data-backup-card .toolbar{margin-top:12px}
+.data-backup-card .check-row{margin-top:10px}
+.settings-section code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em;background:rgba(80,84,88,.08);padding:.12em .35em;border-radius:6px}
+
+
+/* ============================================================
+   v1.0.4 · Safe HTML + CSS Studio（样式工作台）补丁
+   Additive only: preserve legacy theme and selectors.
+   ============================================================ */
+.tavern-story-content.safe-html-content{
+  white-space:pre-wrap;
+  tab-size:4;
+}
+.tavern-story-content.safe-html-content system{
+  display:block;
+  min-width:0;
+}
+.tavern-story-content.safe-html-content details,
+.tavern-story-content.safe-html-content section,
+.tavern-story-content.safe-html-content article,
+.tavern-story-content.safe-html-content blockquote,
+.tavern-story-content.safe-html-content pre,
+.tavern-story-content.safe-html-content table{
+  max-width:100%;
+}
+.tavern-story-content.safe-html-content summary{cursor:pointer}
+.tavern-story-content.safe-html-content pre,
+.tavern-story-content.safe-html-content code{
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+}
+.tavern-story-content.safe-html-content table{border-collapse:collapse;width:100%}
+.css-default-tools{align-items:center}
+.css-scope-note{
+  padding:10px 12px;
+  border:1px solid rgba(255,255,255,.50);
+  border-radius:13px;
+  background:rgba(255,255,255,.30);
+  line-height:1.55;
+}

@@ -91,7 +91,7 @@
 
   function normalizeCssPreset(p = {}) {
     const createdAt = p.createdAt || nowIso();
-    return { id:p.id || makeId('css'), name:text(p.name || '未命名 CSS'), css:String(p.css || ''), scope:p.scope === 'global' ? 'global' : 'story', createdAt, updatedAt:p.updatedAt || createdAt };
+    return { id:p.id || makeId('css'), name:text(p.name || '未命名 CSS'), css:String(p.css || ''), scope:['story','global','app'].includes(p.scope) ? p.scope : 'story', createdAt, updatedAt:p.updatedAt || createdAt };
   }
 
   function normalizeWorldbookEntry(e = {}) {

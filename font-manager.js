@@ -88,6 +88,52 @@ window.MimaFontManager = (() => {
         root.style.setProperty('--font-ui', ui ? `'${String(ui).replace(/'/g,'')}', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif` : '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif');
         root.style.setProperty('--font-story', story ? `'${String(story).replace(/'/g,'')}', var(--font-ui)` : 'var(--font-ui)');
     }
+    function bufferToBase64(buffer) {
+        const bytes = new Uint8Array(buffer || new ArrayBuffer(0));
+        let binary = '';
+        const chunk = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+        return btoa(binary);
+    }
+    function base64ToBuffer(base64='') {
+        const binary = atob(String(base64 || ''));
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        return bytes.buffer;
+    }
+    async function exportPortable() {
+        const records = await all();
+        return records.map(r => ({
+            id:r.id, name:r.name, family:r.family, format:r.format, size:r.size, createdAt:r.createdAt,
+            bufferBase64: bufferToBase64(r.buffer)
+        }));
+    }
+    async function importPortable(records, { replace=false } = {}) {
+        const incoming = Array.isArray(records) ? records : [];
+        if (replace) {
+            const old = await all();
+            for (const r of old) await remove(r.id);
+            loaded.clear();
+        }
+        let imported = 0;
+        for (const raw of incoming) {
+            if (!raw?.bufferBase64) continue;
+            const record = {
+                id: raw.id || `font_${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
+                name: raw.name || `${raw.family || 'MimaFont'}.${raw.format || 'woff2'}`,
+                family: raw.family || safeFamily(raw.name),
+                format: raw.format || extension(raw.name) || 'woff2',
+                size: Number(raw.size || 0),
+                createdAt: raw.createdAt || new Date().toISOString(),
+                buffer: base64ToBuffer(raw.bufferBase64)
+            };
+            await put(record);
+            try { await loadRecord(record); } catch (e) { console.warn('导入字体后加载失败', record.name, e); }
+            imported++;
+        }
+        applySelected();
+        return imported;
+    }
     async function deleteFont(id) {
         const records = await all();
         const record = records.find(x => x.id === id);
@@ -97,5 +143,5 @@ window.MimaFontManager = (() => {
         if (record && getSelected('ui') === record.family) setSelected('ui','');
         if (record && getSelected('story') === record.family) setSelected('story','');
     }
-    return { init, all, importFile, deleteFont, getSelected, setSelected, applySelected };
+    return { init, all, importFile, deleteFont, getSelected, setSelected, applySelected, exportPortable, importPortable };
 })();

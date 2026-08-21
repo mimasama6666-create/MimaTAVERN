@@ -7,6 +7,7 @@
   const DB_VERSION = 1;
   const STORE = 'kv';
   const STATE_KEY = 'state';
+  const SETTINGS_SNAPSHOT_KEY = 'settings_snapshot_v1';
 
   function openDb() {
     return new Promise((resolve, reject) => {
@@ -71,5 +72,24 @@
     return next;
   }
 
-  window.MimaLocalStore = { loadState, saveState, exportAll, importAll };
+  async function saveSettingsSnapshot(snapshot) {
+    return set(SETTINGS_SNAPSHOT_KEY, { ...(snapshot || {}), savedAt: new Date().toISOString() });
+  }
+
+  async function loadSettingsSnapshot() {
+    const existing = await get(SETTINGS_SNAPSHOT_KEY);
+    return existing && typeof existing === 'object' ? existing : null;
+  }
+
+  async function clearSettingsSnapshot() {
+    const db = await openDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      tx.objectStore(STORE).delete(SETTINGS_SNAPSHOT_KEY);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => reject(tx.error || new Error('本机设置快照删除失败'));
+    });
+  }
+
+  window.MimaLocalStore = { loadState, saveState, exportAll, importAll, saveSettingsSnapshot, loadSettingsSnapshot, clearSettingsSnapshot };
 })();
