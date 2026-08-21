@@ -352,6 +352,24 @@
   function archiveVersion(msg,reason){msg.versions=arr(msg.versions);msg.versions.push({content:msg.content,time:nowIso(),reason:reason||'regenerate'});}
   function actionOptions(action,userText,options={}){const o={};if(action==='continue')o.continuation=true;else if(action==='regenerate')o.regenerate=true;else if(action==='auto_advance'){o.autoAdvance=true;o.directorNote=options.directorNote||userText||'请自然推进下一段剧情。';}else if(options.directorNote)o.directorNote=options.directorNote;return o;}
   function actionTail(messages,action,o){if(action==='continue')messages.push({role:'user',content:'请继续上一条 assistant 回复，不要重复已经写过的内容。'});else if(action==='regenerate')messages.push({role:'user',content:'请重说/重新生成最后一条 assistant 回复。不要复读上一版。'});else if(action==='auto_advance')messages.push({role:'user',content:`【导演自动推进】${o.directorNote}`});}
+  function lastIndexByRole(messages,role){for(let i=messages.length-1;i>=0;i--){if(messages[i]?.role===role)return i;}return -1;}
+  function resolveRegenerationTarget(session,requestedId=''){
+    const messages=arr(session?.messages);
+    const latestUserIndex=lastIndexByRole(messages,'user');
+    const latestAssistantIndex=lastIndexByRole(messages,'assistant');
+    const requested=text(requestedId);
+    if(requested){
+      const requestedIndex=messages.findIndex(m=>m?.id===requested);
+      if(requestedIndex<0||messages[requestedIndex]?.role!=='assistant')throw new ApiError('E_STORY_REGEN_TARGET_MISSING','要重说的那条回复已经不存在，已阻止覆盖其他剧情。',{hint:'请刷新剧情后再点一次“重说”。'});
+      if(requestedIndex!==latestAssistantIndex||requestedIndex<latestUserIndex)throw new ApiError('E_STORY_REGEN_TARGET_STALE','剧情在点击“重说”后发生了变化，已阻止覆盖更早的回复。',{hint:'请刷新剧情后重新点击“重说”，系统只会替换当前最后一轮 Assistant（助手）回复。'});
+      return messages[requestedIndex];
+    }
+    // 只有最后一条 assistant 确实属于当前最后一轮 user 时才允许原位替换。
+    // 如果最新消息是 user（例如编辑并截断后的新时间线），则返回 null，后续只追加新回复，绝不误伤上一轮。
+    if(latestAssistantIndex>=0&&latestAssistantIndex>latestUserIndex)return messages[latestAssistantIndex];
+    if(latestUserIndex<0&&latestAssistantIndex>=0)return messages[latestAssistantIndex];
+    return null;
+  }
   async function refreshSummary(session,temp,signal,progress){
     if(session.promptSettings?.summaryEnabled===false)return session;
     const msgs=session.messages||[];const safeWindow=Math.max(18,Number(session.promptSettings?.recentMessageLimit||34)-4);const unsummarizedEnd=msgs.length-safeWindow;
@@ -382,14 +400,22 @@
       session=await saveSession(session);
       emitProgress(progress,{phase:'saved_user',percent:14,detail:'主人消息已安全写入本地剧情。'});
     }
+    // “重说”必须在任何摘要/异步保存之前锁定目标消息 ID，避免后续状态变化后误替换上一轮剧情。
+    const requestedTargetId=action==='regenerate'?text(options?.targetMessageId):'';
+    const lockedTargetId=action==='regenerate'?(resolveRegenerationTarget(session,requestedTargetId)?.id||null):null;
     session=await refreshSummary(session,temp,signal,progress);
     let target=null;
-    if(action==='continue'||action==='regenerate'){
+    if(action==='continue'){
       target=[...session.messages].reverse().find(m=>m.role==='assistant');
-      if(!target&&action==='continue')throw new ApiError('E_STORY_NO_ASSISTANT','还没有 Assistant（助手）回复，无法续写猫！',{hint:'先生成一条角色回复，再使用续写。'});
+      if(!target)throw new ApiError('E_STORY_NO_ASSISTANT','还没有 Assistant（助手）回复，无法续写猫！',{hint:'先生成一条角色回复，再使用续写。'});
+    }else if(action==='regenerate'&&lockedTargetId){
+      target=session.messages.find(m=>m.id===lockedTargetId&&m.role==='assistant')||null;
+      if(!target)throw new ApiError('E_STORY_REGEN_TARGET_MISSING','要重说的那条回复在生成前消失了，已阻止覆盖其他剧情。',{hint:'请刷新剧情后再点一次“重说”。'});
     }
-    const opts=actionOptions(action,userText,options),built=assemble(session,opts),messages=built.messages.slice();
-    actionTail(messages,action,opts);
+    // 当前最后一轮还没有 assistant 时，“重说”退化为生成该轮回复；不会去覆盖上一轮 assistant。
+    const promptAction=(action==='regenerate'&&!target)?'respond':action;
+    const opts=actionOptions(promptAction,userText,options),built=assemble(session,opts),messages=built.messages.slice();
+    actionTail(messages,promptAction,opts);
     emitProgress(progress,{phase:'prompt_ready',percent:34,detail:`Prompt（提示词）已组装 · ${messages.length} 条消息`});
     const reply=await callModel(messages,temp,signal,{onProgress:progress});
     // Hard invariant: never persist a blank assistant message.
@@ -398,7 +424,9 @@
     if(action==='continue'&&target){
       const i=session.messages.findIndex(m=>m.id===target.id);archiveVersion(session.messages[i],'continue_before_append');session.messages[i].content=`${session.messages[i].content}\n${reply}`;session.messages[i].rawContent=session.messages[i].content;session.messages[i].metadata={...(session.messages[i].metadata||{}),continuedAt:nowIso()};session.messages[i].tokenEstimate=estimateTokens(session.messages[i].content);
     }else if(action==='regenerate'&&target){
-      const i=session.messages.findIndex(m=>m.id===target.id);archiveVersion(session.messages[i],'regenerate');session.messages[i].content=reply;session.messages[i].rawContent=reply;session.messages[i].isEdited=false;session.messages[i].metadata={...(session.messages[i].metadata||{}),regeneratedAt:nowIso()};session.messages[i].tokenEstimate=estimateTokens(reply);
+      const i=session.messages.findIndex(m=>m.id===target.id);
+      if(i<0)throw new ApiError('E_STORY_REGEN_TARGET_MISSING','要重说的那条回复在保存前消失了，已阻止覆盖其他剧情。');
+      archiveVersion(session.messages[i],'regenerate');session.messages[i].content=reply;session.messages[i].rawContent=reply;session.messages[i].isEdited=false;session.messages[i].metadata={...(session.messages[i].metadata||{}),regeneratedAt:nowIso(),regeneratedTargetId:target.id};session.messages[i].tokenEstimate=estimateTokens(reply);
     }else{
       session.messages.push(makeMessage('assistant',reply,session,action==='auto_advance'?{source:'auto_advance',directorNote:opts.directorNote}:{source:'model_reply'}));
     }
@@ -423,7 +451,7 @@
       let m=path.match(/^\/sessions\/([^/]+)$/);if(m&&method==='GET'){const s=getSession(m[1]);return s?ok(s):fail('未找到剧本');}
       if(m&&method==='PATCH'){const s=getSession(m[1]);return s?ok(await saveSession({...s,...body,id:s.id,createdAt:s.createdAt})):fail('未找到剧本');}
       if(m&&method==='DELETE'){const before=state.sessions.length;state.sessions=state.sessions.filter(x=>x.id!==m[1]);await persist();return ok({deleted:state.sessions.length<before});}
-      m=path.match(/^\/sessions\/([^/]+)\/chat$/);if(m&&method==='POST')return ok(await processStoryTurn(m[1],body?.text,body?.action||'send',signal,body?.temperature,{directorNote:body?.directorNote||''},progress));
+      m=path.match(/^\/sessions\/([^/]+)\/chat$/);if(m&&method==='POST')return ok(await processStoryTurn(m[1],body?.text,body?.action||'send',signal,body?.temperature,{directorNote:body?.directorNote||'',targetMessageId:body?.targetMessageId||null},progress));
       m=path.match(/^\/sessions\/([^/]+)\/prompt-preview$/);if(m&&method==='POST')return ok(previewPrompt(m[1],body||{}));
       m=path.match(/^\/sessions\/([^/]+)\/opening$/);if(m&&method==='POST')return ok(await addOpening(m[1],body?.content||''));
       m=path.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)$/);if(m&&method==='PATCH')return ok(await editMessage(m[1],m[2],body?.content,{truncateAfter:!!body?.truncateAfter}));

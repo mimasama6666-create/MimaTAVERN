@@ -314,7 +314,7 @@ async function renderDataTab(box){
     <div class="data-backup-card"><div class="row-title">本机设置快照</div><div class="row-sub">${snap?`最近保存：${escapeHtml(snap.savedAt||snap.exportedAt||'已保存')}`:'尚未保存本机快照'}</div><div class="toolbar"><button class="primary-btn" onclick="saveFullSettingsSnapshot()">保存咪嘛馆设置数据</button><button class="ghost-btn" onclick="restoreSavedSettingsSnapshot()">恢复本机快照</button></div></div>
     <div class="data-backup-card"><div class="row-title">可迁移完整备份</div><div class="row-sub">导出的文件可以在清缓存、换浏览器、换设备或重新部署后再导入。</div><label class="check-row"><input id="backup-fonts" type="checkbox" checked> 把本地字体文件也加入备份（文件可能变大）</label><label class="check-row"><input id="backup-api-key" type="checkbox"> 把 API Key（接口密钥）加入导出/快照 <strong>（敏感）</strong></label><div class="toolbar"><button class="primary-btn" onclick="exportFullSettingsBackup()">⇩ 导出完整设置</button><button class="ghost-btn" onclick="chooseFullSettingsImport()">⇧ 导入完整设置</button></div><div class="row-sub">当前 API（接口）：${cfg.apiBase?escapeHtml(cfg.apiBase):'未配置'} · Model（模型）：${cfg.model?escapeHtml(cfg.model):'未选择'}</div></div>
     <div id="data-backup-status" class="api-status">${snap?'✅ 当前浏览器已有本机快照。':'建议先保存一次本机快照，再导出一份文件备份。'}</div></section>
-    <section class="settings-section"><h3>🧹 Cache（缓存）说明</h3><p class="helper"><strong>只想让 GitHub Pages 加载新代码时，不需要先清除网站数据。</strong>本版已经给 CSS / JS 资源加入版本号 <code>?v=1.0.4</code>，部署后浏览器会把它们当成新资源重新拉取。若仍显示旧页面，先关闭该标签页再重新打开，或做一次强制刷新；不要直接使用会删除网站数据的清理方式，除非你已经导出了完整设置备份。</p></section>`;
+    <section class="settings-section"><h3>🧹 Cache（缓存）说明</h3><p class="helper"><strong>只想让 GitHub Pages 加载新代码时，不需要先清除网站数据。</strong>本版已经给 CSS / JS 资源加入版本号 <code>?v=1.0.5</code>，部署后浏览器会把它们当成新资源重新拉取。若仍显示旧页面，先关闭该标签页再重新打开，或做一次强制刷新；不要直接使用会删除网站数据的清理方式，除非你已经导出了完整设置备份。</p></section>`;
 }
 
 async function renderAppearanceTab(box){fontRecords=await MimaFontManager.all();const ui=MimaFontManager.getSelected('ui'),story=MimaFontManager.getSelected('story');const opts=`<option value="">系统默认字体</option>`+fontRecords.map(f=>`<option value="${escapeHtml(f.family)}">${escapeHtml(f.family)} · ${formatBytes(f.size)}</option>`).join('');box.innerHTML=`<section class="settings-section"><h3>🎨 本地字体库</h3><p class="helper">直接导入 TTF / OTF / WOFF / WOFF2（字体文件格式）。文件保存在当前浏览器 IndexedDB，不需要转 URL（链接），也不会上传到服务器。</p><div class="toolbar"><button class="primary-btn" onclick="chooseFontImport()">＋ 导入字体文件</button></div><div class="form-grid"><div><label class="form-label">UI（界面）字体</label><select id="font-ui-select" class="field" onchange="changeFont('ui',this.value)">${opts}</select></div><div><label class="form-label">剧情正文字体</label><select id="font-story-select" class="field" onchange="changeFont('story',this.value)">${opts}</select></div></div><div id="font-list" style="margin-top:14px"></div></section>
@@ -345,7 +345,7 @@ let defaultCssSourceCache='';
 async function loadDefaultCssSource(){
     if(defaultCssSourceCache)return defaultCssSourceCache;
     try{
-        const res=await fetch('./style.css?v=1.0.4',{cache:'no-store'});
+        const res=await fetch('./style.css?v=1.0.5',{cache:'no-store'});
         if(!res.ok)throw new Error(`HTTP ${res.status}`);
         defaultCssSourceCache=await res.text();
     }catch(fetchErr){
@@ -362,7 +362,7 @@ async function copyTextPortable(text){
     const ta=document.createElement('textarea');ta.value=text;ta.setAttribute('readonly','');ta.style.cssText='position:fixed;left:-9999px;top:0';document.body.appendChild(ta);ta.select();const ok=document.execCommand('copy');ta.remove();if(!ok)throw new Error('浏览器拒绝复制到剪贴板');
 }
 async function copyDefaultCss(){try{const css=await loadDefaultCssSource();await copyTextPortable(css);toast(`默认 CSS（样式）已复制 · ${css.length} 字符`)}catch(e){toast(`复制默认 CSS 失败：${e.message}`)}}
-async function exportDefaultCss(){try{const css=await loadDefaultCssSource();downloadText('mimamao-default-v1.0.4.css',css,'text/css;charset=utf-8');toast('咪嘛馆默认 CSS（样式）已导出')}catch(e){toast(`导出默认 CSS 失败：${e.message}`)}}
+async function exportDefaultCss(){try{const css=await loadDefaultCssSource();downloadText('mimamao-default-v1.0.5.css',css,'text/css;charset=utf-8');toast('咪嘛馆默认 CSS（样式）已导出')}catch(e){toast(`导出默认 CSS 失败：${e.message}`)}}
 async function forkDefaultCss(){try{const css=await loadDefaultCssSource();openCssPresetEditor();qs('css-pre-name').value='咪嘛馆默认主题 · 二改';qs('css-pre-scope').value='app';qs('css-pre-code').value=css;toast('默认 CSS 已装进编辑器，可直接全局二改')}catch(e){toast(`载入默认 CSS 失败：${e.message}`)}}
 function chooseFontImport(){qs('font-file-input').value='';qs('font-file-input').click()}
 async function importFontFile(file){try{const r=await MimaFontManager.importFile(file);fontRecords=await MimaFontManager.all();if(!MimaFontManager.getSelected('story'))MimaFontManager.setSelected('story',r.family);renderAppearanceTab(qs('settings-content'));toast(`字体 ${r.family} 已导入`) }catch(e){toast(e.message)}}
@@ -419,8 +419,19 @@ function showGenerationError(err){const info=describeApiError(err),panel=qs('gen
 诊断：${info.details}`:''}`}
 function dismissGenerationPanel(){qs('generation-panel')?.classList.add('hidden')}
 async function triggerChat(text,actionType='send'){
-    if(!currentSessionId)return toast('请先创建一个剧情。');const directorNote=qs('director-note').value.trim();toggleUIState(true);beginGenerationProgress(actionType);
-    try{const res=await fetchStory(`/sessions/${currentSessionId}/chat`,'POST',{text,action:actionType,temperature:getTemp(),directorNote},true,handleGenerationProgress);toggleUIState(false);if(res.aborted){toast('生成已停止，主人消息已保留。');setGenerationProgress({percent:100,label:'已停止生成',detail:'主人消息仍然保存在剧情里，可以直接重试。'});setTimeout(()=>dismissGenerationPanel(),900);await openSession(currentSessionId,false);return}if(res.success){currentSessionData=res.data;qs('story-input').value='';autoResizeInput();refreshChatBox();await refreshSessionSummaryList();refreshHeader();finishGenerationProgress()}else{showGenerationError(res);toast(`生成失败 · ${res.code||'E_UNKNOWN'}`);await openSession(currentSessionId,false)}}catch(e){toggleUIState(false);showGenerationError(e);toast(`生成失败 · ${e?.code||'E_UNKNOWN'}`)}
+    if(!currentSessionId)return toast('请先创建一个剧情。');
+    const directorNote=qs('director-note').value.trim();
+    // 在 UI 当前可见状态下锁定“重说”的确切 assistant 消息。只锁定最后一轮的回复；
+    // 如果当前最后一条是 user，则不提供 targetMessageId，Core 会生成新回复而不是误覆盖上一轮。
+    let targetMessageId=null;
+    if(actionType==='regenerate'){
+        const msgs=arr(currentSessionData?.messages);
+        let lastUser=-1,lastAssistant=-1;
+        for(let i=msgs.length-1;i>=0&&(lastUser<0||lastAssistant<0);i--){if(lastUser<0&&msgs[i]?.role==='user')lastUser=i;if(lastAssistant<0&&msgs[i]?.role==='assistant')lastAssistant=i}
+        if(lastAssistant>=0&&(lastUser<0||lastAssistant>lastUser))targetMessageId=msgs[lastAssistant]?.id||null;
+    }
+    toggleUIState(true);beginGenerationProgress(actionType);
+    try{const res=await fetchStory(`/sessions/${currentSessionId}/chat`,'POST',{text,action:actionType,temperature:getTemp(),directorNote,targetMessageId},true,handleGenerationProgress);toggleUIState(false);if(res.aborted){toast('生成已停止，主人消息已保留。');setGenerationProgress({percent:100,label:'已停止生成',detail:'主人消息仍然保存在剧情里，可以直接重试。'});setTimeout(()=>dismissGenerationPanel(),900);await openSession(currentSessionId,false);return}if(res.success){currentSessionData=res.data;qs('story-input').value='';autoResizeInput();refreshChatBox();await refreshSessionSummaryList();refreshHeader();finishGenerationProgress()}else{showGenerationError(res);toast(`生成失败 · ${res.code||'E_UNKNOWN'}`);await openSession(currentSessionId,false)}}catch(e){toggleUIState(false);showGenerationError(e);toast(`生成失败 · ${e?.code||'E_UNKNOWN'}`)}
 }
 function stopGeneration(){if(activeRequest){activeRequest.abort();activeRequest=null}toggleUIState(false)}
 function sendMsg(){const txt=qs('story-input').value.trim();if(txt)triggerChat(txt,'send')}
