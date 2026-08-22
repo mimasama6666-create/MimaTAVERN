@@ -268,3 +268,9 @@ body::before{
   .typography-control-row{grid-template-columns:minmax(0,1fr) 72px auto}
   .assistant-msg .story-prose{font-size:var(--story-font-size);line-height:var(--story-line-height)}
 }
+
+/* =========================================================
+   V1.0.7 · Manual Memory Summary
+   ========================================================= */
+.memory-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0}.memory-global-grid{margin-top:12px}.memory-quick-targets{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}.memory-list{display:grid;gap:9px;margin-top:14px}.memory-card{border:1px solid var(--line);border-radius:16px;padding:12px;background:rgba(255,255,255,.56)}.memory-card-head{display:flex;gap:10px;align-items:flex-start;justify-content:space-between}.memory-text{white-space:pre-wrap;line-height:1.65;font-size:.86rem;margin-top:9px;color:var(--text)}.memory-empty{border:1px dashed var(--line);border-radius:15px;padding:16px;color:var(--muted);font-size:.82rem;text-align:center;background:rgba(255,255,255,.35)}.memory-progress{margin-top:12px;padding:11px 12px;border:1px solid var(--line);border-radius:15px;background:rgba(255,255,255,.56)}.memory-progress-head{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:.78rem;font-weight:700}.memory-progress-track{height:5px;border-radius:999px;background:rgba(91,96,103,.12);overflow:hidden;margin:8px 0 5px}.memory-progress-bar{height:100%;width:2%;border-radius:inherit;background:linear-gradient(90deg,#777c83,#a4a8ad,#686d74);transition:width .28s ease}.memory-progress .tool-mini{margin-top:8px}.memory-overview .stat-card{min-height:68px}
+@media (max-width:560px){.memory-stats{grid-template-columns:repeat(3,1fr);gap:6px}.memory-stats .stat-card{padding:9px 6px}.memory-stats .stat-num{font-size:1.05rem}.memory-card{padding:10px}}

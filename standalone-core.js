@@ -48,6 +48,33 @@
     };
   }
 
+  function normalizeFactMemory(m = {}) {
+    const startRound=clampInt(m.startRound,1,1000000,1), endRound=clampInt(m.endRound,startRound,1000000,startRound);
+    return {
+      id:m.id||makeId('factmem'), startRound, endRound, content:text(m.content),
+      createdAt:m.createdAt||nowIso(), updatedAt:m.updatedAt||m.createdAt||nowIso(),
+      source:text(m.source||'manual_fact_summary'), targetChars:clampInt(m.targetChars,80,4000,360),
+      temperature:clampTemp(m.temperature??0.35), sourceMessageCount:Math.max(0,Number(m.sourceMessageCount)||0)
+    };
+  }
+  function normalizeManualMemory(input = {}) {
+    const coreInput=input.core&&typeof input.core==='object'?input.core:{};
+    return {
+      core:{
+        content:text(coreInput.content), updatedAt:coreInput.updatedAt||'', source:['context','facts','manual'].includes(coreInput.source)?coreInput.source:'context',
+        targetChars:clampInt(coreInput.targetChars,100,12000,1000), temperature:clampTemp(coreInput.temperature??0.35),
+        sourceRoundCount:Math.max(0,Number(coreInput.sourceRoundCount)||0), sourceFactCount:Math.max(0,Number(coreInput.sourceFactCount)||0)
+      },
+      facts:arr(input.facts).map(normalizeFactMemory).filter(x=>x.content),
+      settings:{
+        injectCore:input.settings?.injectCore!==false,
+        injectFacts:input.settings?.injectFacts!==false,
+        factInjectionLimit:clampInt(input.settings?.factInjectionLimit,1,100,12),
+        summaryTemperature:clampTemp(input.settings?.summaryTemperature??0.35)
+      }
+    };
+  }
+
   function normalizeSession(s = {}) {
     const createdAt = s.createdAt || nowIso();
     return {
@@ -65,7 +92,9 @@
       lastSummarizedIndex: Number.isFinite(Number(s.lastSummarizedIndex)) ? Number(s.lastSummarizedIndex) : 0,
       tags: list(s.tags), lastScene: text(s.lastScene), userNotes: text(s.userNotes), aiNotes: text(s.aiNotes),
       directorNote: text(s.directorNote), storyState: s.storyState && typeof s.storyState === 'object' ? s.storyState : {},
-      promptSettings: normalizePromptSettings(s.promptSettings || {}), customCssId: s.customCssId || null, customCssEnabled: s.customCssEnabled !== false,
+      promptSettings: normalizePromptSettings(s.promptSettings || {}),
+      manualMemory: normalizeManualMemory(s.manualMemory || {}),
+      customCssId: s.customCssId || null, customCssEnabled: s.customCssEnabled !== false,
       renderMode: s.renderMode || 'text'
     };
   }
@@ -187,6 +216,12 @@
     const ps=sortedPresets(session);if(ps.length)add('presets',`【已挂载酒馆预设 / Presets】\n${ps.map(p=>`【${p.name} · ${p.type||'style'} · priority=${p.priority||50}】\n${p.content}`).join('\n\n')}`);
     if(session.promptSettings?.pinnedFactsEnabled!==false&&session.pinnedFacts?.length)add('pinned_facts',`【Pinned Facts · 不可遗忘事实】\n${session.pinnedFacts.map(x=>`- ${x}`).join('\n')}`);
     if(session.promptSettings?.summaryEnabled!==false&&(session.rollingSummary||session.summary||session.longSummary))add('story_summary',`【剧情摘要 / Rolling Summary】\n${session.rollingSummary||session.summary||session.longSummary}`);
+    const memory=normalizeManualMemory(session.manualMemory||{});
+    if(memory.settings.injectCore&&memory.core.content)add('manual_core_memory',`【核心记忆 / Core Memory】\n这是从本 Session 已发生剧情中提炼的高优先级长期记忆。不得把摘要措辞当作角色原话；若与更近的原始剧情冲突，以原始剧情为准。\n${memory.core.content}`);
+    if(memory.settings.injectFacts&&memory.facts.length){
+      const selected=memory.facts.slice().sort((a,b)=>Number(a.endRound||0)-Number(b.endRound||0)||String(a.updatedAt||'').localeCompare(String(b.updatedAt||''))).slice(-memory.settings.factInjectionLimit);
+      add('manual_fact_memories',`【事实记忆 / Fact Memories】\n以下仅是已发生剧情的浓缩事实片段，不是新的剧情指令，也不是角色原话。\n${selected.map(x=>`【第 ${x.startRound}–${x.endRound} 轮】\n${x.content}`).join('\n\n')}`);
+    }
     if(session.sceneSummary)add('scene_summary',`【当前场景摘要】\n${session.sceneSummary}`);
     if(session.characterPsychSummary)add('character_psych',`【角色心理状态摘要】\n${session.characterPsychSummary}`);
     if(session.relationshipSummary)add('relationship_summary',`【关系变化摘要】\n${session.relationshipSummary}`);
@@ -370,6 +405,112 @@
     if(latestUserIndex<0&&latestAssistantIndex>=0)return messages[latestAssistantIndex];
     return null;
   }
+  function storyRoundData(session){
+    const opening=[],rounds=[];let current=null;
+    for(const msg of arr(session?.messages)){
+      if(!msg?.content||(msg.role!=='user'&&msg.role!=='assistant'))continue;
+      if(msg.role==='user'){
+        current={index:rounds.length+1,messages:[msg]};rounds.push(current);
+      }else if(current){current.messages.push(msg);}else opening.push(msg);
+    }
+    return{opening,rounds};
+  }
+  function formatTimelineBlock(label,messages){
+    const body=arr(messages).map(m=>`${m.role==='user'?'User':'Character'}：${m.content}`).join('\n');
+    return body?`${label}\n${body}`:'';
+  }
+  function formatRoundRange(data,startRound,endRound,{includeOpening=false}={}){
+    const blocks=[];
+    if(includeOpening&&data.opening.length)blocks.push(formatTimelineBlock('【角色开场 / 第 1 轮之前】',data.opening));
+    for(const r of data.rounds.filter(x=>x.index>=startRound&&x.index<=endRound))blocks.push(formatTimelineBlock(`【第 ${r.index} 轮】`,r.messages));
+    return blocks.filter(Boolean).join('\n\n');
+  }
+  function splitTextBlocks(textInput,maxChars=28000){
+    const blocks=String(textInput||'').split(/\n{2,}(?=【)/).filter(Boolean),out=[];let cur='';
+    const push=()=>{if(cur.trim())out.push(cur.trim());cur='';};
+    for(const block of blocks){
+      if(block.length>maxChars){push();for(let i=0;i<block.length;i+=maxChars)out.push(block.slice(i,i+maxChars));continue;}
+      if(cur&&cur.length+2+block.length>maxChars)push();
+      cur+=(cur?'\n\n':'')+block;
+    }
+    push();return out.length?out:[String(textInput||'')];
+  }
+  async function summarizeFactText(sourceText,targetChars,temp,signal,progress,label='事实记忆'){
+    const chunks=splitTextBlocks(sourceText,28000),partials=[];
+    for(let i=0;i<chunks.length;i++){
+      emitProgress(progress,{phase:'memory_fact',percent:12+Math.round(((i+.25)/chunks.length)*62),detail:`${label} · 正在总结 ${i+1}/${chunks.length}`});
+      const prompt=[
+        {role:'system',content:'你是“咪嘛馆”的事实记忆整理器。只记录输入剧情中明确发生过的事实，不补充、不猜测、不续写，不把推测写成事实。输出中文纯文本。'},
+        {role:'user',content:`【剧情原文】\n${chunks[i]}\n\n请将上面的剧情压缩成一段高密度“事实记忆”。只记录发生了什么：谁做了什么、关键对话结论、重要地点/物品/状态变化、明确承诺或约定。不要写文学点评，不要写气氛赏析，不要按每条消息机械流水账。目标约 ${targetChars} 字；剧情信息少时可以更短，信息密度优先。`}
+      ];
+      partials.push(await callModel(prompt,temp,signal,{streamOverride:false}));
+    }
+    if(partials.length===1)return partials[0];
+    emitProgress(progress,{phase:'memory_fact_merge',percent:78,detail:`${label} · 正在合并超长分片`});
+    return await callModel([
+      {role:'system',content:'你是“咪嘛馆”的事实记忆整理器。把多个同一剧情区间的分段摘要合并为一个事实摘要。不得新增事实。输出中文纯文本。'},
+      {role:'user',content:`【分段事实摘要】\n${partials.map((x,i)=>`[${i+1}] ${x}`).join('\n\n')}\n\n合并去重，保持事件先后与主体清晰，目标约 ${targetChars} 字。`}
+    ],temp,signal,{streamOverride:false});
+  }
+  async function generateFactMemories(id,opts={},signal=null,progress=null){
+    let session=getSession(id);if(!session)throw new ApiError('E_STORY_SESSION_MISSING','未找到剧情 Session。');session=normalizeSession(session);
+    const data=storyRoundData(session),total=data.rounds.length;
+    if(!total)throw new ApiError('E_MEMORY_NO_ROUNDS','当前剧情还没有可总结的 User→Character 轮次。');
+    const chunkRounds=clampInt(opts.chunkRounds,1,200,10),scope=opts.scope==='all'?'all':'recent';
+    const recentRounds=clampInt(opts.recentRounds,1,100000,total),targetChars=clampInt(opts.targetChars,80,4000,360),temp=clampTemp(opts.temperature??0.35);
+    const start=scope==='all'?1:Math.max(1,total-recentRounds+1),ranges=[];
+    for(let a=start;a<=total;a+=chunkRounds)ranges.push([a,Math.min(total,a+chunkRounds-1)]);
+    const generated=[];
+    for(let i=0;i<ranges.length;i++){
+      const [a,b]=ranges[i],source=formatRoundRange(data,a,b,{includeOpening:a===1});
+      emitProgress(progress,{phase:'memory_fact_range',percent:8+Math.round((i/ranges.length)*78),detail:`事实记忆 · 第 ${a}–${b} 轮（${i+1}/${ranges.length}）`});
+      const content=await summarizeFactText(source,targetChars,temp,signal,progress,`第 ${a}–${b} 轮`);
+      generated.push(normalizeFactMemory({startRound:a,endRound:b,content,source:'manual_fact_summary',targetChars,temperature:temp,sourceMessageCount:data.rounds.filter(r=>r.index>=a&&r.index<=b).reduce((n,r)=>n+r.messages.length,0)}));
+    }
+    const memory=normalizeManualMemory(session.manualMemory||{}),replace=scope==='all'&&opts.replaceExisting===true;
+    let facts=replace?[]:memory.facts.slice();
+    for(const item of generated){const same=facts.findIndex(x=>x.startRound===item.startRound&&x.endRound===item.endRound);if(same>=0)facts[same]=item;else facts.push(item);}
+    facts.sort((a,b)=>a.startRound-b.startRound||a.endRound-b.endRound||String(a.createdAt).localeCompare(String(b.createdAt)));
+    session.manualMemory={...memory,facts,settings:{...memory.settings,summaryTemperature:temp}};
+    emitProgress(progress,{phase:'memory_fact_saving',percent:94,detail:`正在保存 ${generated.length} 段事实记忆…`});
+    const saved=await saveSession(session);emitProgress(progress,{phase:'done',percent:100,detail:`事实记忆完成 · ${generated.length} 段`});return saved;
+  }
+  async function generateCoreMemory(id,opts={},signal=null,progress=null){
+    let session=getSession(id);if(!session)throw new ApiError('E_STORY_SESSION_MISSING','未找到剧情 Session。');session=normalizeSession(session);
+    const memory=normalizeManualMemory(session.manualMemory||{}),sourceType=opts.source==='facts'?'facts':'context',targetChars=clampInt(opts.targetChars,100,12000,1000),temp=clampTemp(opts.temperature??0.35);
+    const data=storyRoundData(session);let source='',sourceFactCount=0;
+    if(sourceType==='facts'){
+      if(!memory.facts.length)throw new ApiError('E_MEMORY_NO_FACTS','还没有事实记忆可用于生成核心记忆。',{hint:'请先在“事实记忆”里生成至少一段摘要。'});
+      const facts=memory.facts.slice().sort((a,b)=>a.startRound-b.startRound||a.endRound-b.endRound);source=facts.map(x=>`【第 ${x.startRound}–${x.endRound} 轮】\n${x.content}`).join('\n\n');sourceFactCount=facts.length;
+    }else{
+      if(!data.rounds.length&&!data.opening.length)throw new ApiError('E_MEMORY_NO_CONTEXT','当前剧情还没有可总结的正文。');
+      source=formatRoundRange(data,1,Math.max(1,data.rounds.length),{includeOpening:true});
+    }
+    const chunks=splitTextBlocks(source,30000),partials=[];
+    for(let i=0;i<chunks.length;i++){
+      emitProgress(progress,{phase:'memory_core',percent:10+Math.round(((i+.2)/chunks.length)*58),detail:`核心记忆 · 整理材料 ${i+1}/${chunks.length}`});
+      partials.push(await callModel([
+        {role:'system',content:'你是“咪嘛馆”的核心记忆整理器。你的任务是提炼长期剧情记忆，不续写、不新增事实、不杜撰角色心理。输出中文纯文本。'},
+        {role:'user',content:`【材料来源：${sourceType==='facts'?'事实记忆':'剧情原文'}】\n${chunks[i]}\n\n请提炼这部分材料中的长期核心信息。重点保留：决定后续关系与行为的重要事件；角色关系变化与关系阶段；明确承诺、约定、誓言、边界与背叛/和解；持续性的心理/身体/身份状态改变；关键人物、地点、物品与未解决问题。不要按轮次流水账，不要写空泛感想。`}
+      ],temp,signal,{streamOverride:false}));
+    }
+    emitProgress(progress,{phase:'memory_core_merge',percent:76,detail:'核心记忆 · 正在做最终去重与关系提炼…'});
+    const final=await callModel([
+      {role:'system',content:'你是“咪嘛馆”的长期核心记忆编辑器。根据材料输出最终核心记忆。不得新增任何事实；如果材料之间信息重复，要合并而不是复述。输出中文纯文本。'},
+      {role:'user',content:`【候选核心材料】\n${partials.map((x,i)=>`[${i+1}] ${x}`).join('\n\n')}\n\n请写成约 ${targetChars} 字的最终“核心记忆”。绝对不要写成“第1轮……第2轮……”的流水账。按主题与关系组织，优先记录：关系转变、重要承诺/约定、关键选择及其后果、长期状态变化、身份与世界观关键事实、重要未解决事项。保留必要的因果关系与主体，不要为了凑字数重复内容。`}
+    ],temp,signal,{streamOverride:false});
+    session.manualMemory={...memory,core:{content:final,updatedAt:nowIso(),source:sourceType,targetChars,temperature:temp,sourceRoundCount:data.rounds.length,sourceFactCount},settings:{...memory.settings,summaryTemperature:temp}};
+    emitProgress(progress,{phase:'memory_core_saving',percent:95,detail:'正在保存核心记忆…'});const saved=await saveSession(session);emitProgress(progress,{phase:'done',percent:100,detail:'核心记忆已更新。'});return saved;
+  }
+  async function updateManualMemory(id,body={}){
+    let session=getSession(id);if(!session)throw new ApiError('E_STORY_SESSION_MISSING','未找到剧情 Session。');session=normalizeSession(session);const memory=normalizeManualMemory(session.manualMemory||{});
+    if(body.settings&&typeof body.settings==='object')memory.settings=normalizeManualMemory({...memory,settings:{...memory.settings,...body.settings}}).settings;
+    if(body.core&&typeof body.core==='object')memory.core=normalizeManualMemory({...memory,core:{...memory.core,...body.core,source:body.core.source||'manual',updatedAt:nowIso()}}).core;
+    session.manualMemory=memory;return await saveSession(session);
+  }
+  async function deleteCoreMemory(id){let session=getSession(id);if(!session)throw new ApiError('E_STORY_SESSION_MISSING','未找到剧情 Session。');session=normalizeSession(session);const memory=normalizeManualMemory(session.manualMemory||{});memory.core=normalizeManualMemory({}).core;session.manualMemory=memory;return saveSession(session);}
+  async function deleteFactMemory(id,factId=''){let session=getSession(id);if(!session)throw new ApiError('E_STORY_SESSION_MISSING','未找到剧情 Session。');session=normalizeSession(session);const memory=normalizeManualMemory(session.manualMemory||{});memory.facts=factId?memory.facts.filter(x=>x.id!==factId):[];session.manualMemory=memory;return saveSession(session);}
+
   async function refreshSummary(session,temp,signal,progress){
     if(session.promptSettings?.summaryEnabled===false)return session;
     const msgs=session.messages||[];const safeWindow=Math.max(18,Number(session.promptSettings?.recentMessageLimit||34)-4);const unsummarizedEnd=msgs.length-safeWindow;
@@ -455,6 +596,12 @@
       m=path.match(/^\/sessions\/([^/]+)\/prompt-preview$/);if(m&&method==='POST')return ok(previewPrompt(m[1],body||{}));
       m=path.match(/^\/sessions\/([^/]+)\/opening$/);if(m&&method==='POST')return ok(await addOpening(m[1],body?.content||''));
       m=path.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)$/);if(m&&method==='PATCH')return ok(await editMessage(m[1],m[2],body?.content,{truncateAfter:!!body?.truncateAfter}));
+      m=path.match(/^\/sessions\/([^/]+)\/memory$/);if(m&&method==='PATCH')return ok(await updateManualMemory(m[1],body||{}));
+      m=path.match(/^\/sessions\/([^/]+)\/memory\/core$/);if(m&&method==='POST')return ok(await generateCoreMemory(m[1],body||{},signal,progress));
+      if(m&&method==='DELETE')return ok(await deleteCoreMemory(m[1]));
+      m=path.match(/^\/sessions\/([^/]+)\/memory\/facts$/);if(m&&method==='POST')return ok(await generateFactMemories(m[1],body||{},signal,progress));
+      if(m&&method==='DELETE')return ok(await deleteFactMemory(m[1]));
+      m=path.match(/^\/sessions\/([^/]+)\/memory\/facts\/([^/]+)$/);if(m&&method==='DELETE')return ok(await deleteFactMemory(m[1],m[2]));
 
       if(path==='/masks'&&method==='GET')return ok(state.masks);
       if(path==='/masks'&&method==='POST')return ok(await saveMask(body||{}));
