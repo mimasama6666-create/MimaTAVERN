@@ -236,6 +236,7 @@ body::before{
   --story-line-height:1.78;
   --story-paragraph-gap:1.05em;
   --story-letter-spacing:0em;
+  --story-first-line-indent:0em;
 }
 .msg-content{font-family:var(--font-ui)}
 .assistant-msg .story-prose{
@@ -246,7 +247,13 @@ body::before{
   white-space:pre-wrap;
   overflow-wrap:anywhere;
 }
-.assistant-msg .story-paragraph{margin:0 0 var(--story-paragraph-gap)}
+.assistant-msg .msg-content.safe-html-content{
+  font-family:var(--font-story);
+  font-size:var(--story-font-size);
+  line-height:var(--story-line-height);
+  letter-spacing:var(--story-letter-spacing);
+}
+.assistant-msg .story-paragraph{margin:0 0 var(--story-paragraph-gap);text-indent:var(--story-first-line-indent)}
 .assistant-msg .story-paragraph:last-child{margin-bottom:0}
 .composer-row textarea{font-family:var(--font-ui)}
 .typography-grid{display:grid;gap:12px}
@@ -263,11 +270,23 @@ body::before{
 .typography-range{width:100%;accent-color:#777c83}
 .typography-number{padding:7px 8px;text-align:center;min-width:0}
 .typography-unit{font-size:.70rem;color:var(--muted);min-width:20px}
-.typography-actions{margin-top:10px}
+.typography-indent-hint{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:10px;padding:9px 11px;border-radius:13px;background:rgba(255,255,255,.25);color:var(--muted);font-size:.72rem}.typography-quick-buttons{display:flex;gap:6px;flex-wrap:wrap}.typography-actions{margin-top:10px}
 @media(max-width:620px){
   .typography-control-row{grid-template-columns:minmax(0,1fr) 72px auto}
   .assistant-msg .story-prose{font-size:var(--story-font-size);line-height:var(--story-line-height)}
 }
+
+/* ============================================================
+   v1.0.9 · Live Reader Preview + Safe HTML typography bridge
+   ============================================================ */
+.settings-panel.appearance-preview-mode{grid-template-rows:auto auto minmax(230px,38%) minmax(0,1fr);width:min(980px,100%)}
+.appearance-preview-stage{min-height:0;overflow:hidden;display:grid;grid-template-rows:auto minmax(0,1fr);border-bottom:1px solid var(--line);background:linear-gradient(180deg,rgba(242,244,246,.82),rgba(251,248,250,.58))}
+.appearance-preview-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 18px 8px;border-bottom:1px solid rgba(88,91,96,.08)}
+.appearance-preview-head>div:first-child{display:grid;gap:2px}.appearance-preview-head strong{font-size:.88rem}.appearance-preview-badges{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}.appearance-preview-badges .tag{white-space:nowrap}.preview-safe-on{background:rgba(111,145,124,.14);color:#526f5b}.preview-safe-off{background:rgba(122,125,130,.10);color:var(--muted)}
+.appearance-preview-scroll{min-height:0;overflow:auto;padding:13px 16px 18px}.typography-preview-page{width:min(740px,100%);margin:0 auto}.typography-preview-message,.typography-preview-safe-demo{animation:none;margin-bottom:14px}.typography-preview-message .msg-tools,.typography-preview-safe-demo .msg-tools{display:none}
+.typography-preview-html-prose{margin:0 0 12px;padding:0}.typography-preview-statusbar{display:grid;gap:7px;padding:10px 12px;border:1px solid rgba(92,95,101,.16);border-radius:14px;background:rgba(255,255,255,.56);font-family:var(--font-ui);font-size:.72rem;line-height:1.42;letter-spacing:.015em;text-indent:0}.typography-preview-statusbar>strong{font-size:.66rem;letter-spacing:.12em;color:var(--muted)}.typography-preview-status-row{display:flex;justify-content:space-between;gap:10px;color:var(--muted)}
+.typography-preview-safe-placeholder{width:min(740px,100%);margin:0 auto;padding:10px 12px;border:1px dashed var(--line);border-radius:14px;color:var(--muted);font-size:.74rem;line-height:1.5;background:rgba(255,255,255,.34)}
+@media(max-width:620px){.settings-panel.appearance-preview-mode{grid-template-rows:auto auto minmax(210px,32dvh) minmax(0,1fr)}.appearance-preview-head{padding:9px 13px 7px}.appearance-preview-scroll{padding:10px 11px 14px}.appearance-preview-badges .tag:first-child{display:none}.typography-preview-status-row{font-size:.68rem}}
 
 /* =========================================================
    V1.0.7 · Manual Memory Summary
