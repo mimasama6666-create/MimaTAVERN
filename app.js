@@ -19,6 +19,42 @@ let fontRecords = [];
 const TEMP_KEY = 'MIMAMAO_TAVERN_TEMP';
 const LEGACY_FONT_URL_KEY = 'storyFontUrl';
 const LEGACY_FONT_FAMILY_KEY = 'storyFontFamily';
+const STORY_TYPO_KEY = 'MIMAMAO_TAVERN_STORY_TYPO_V1';
+const DEFAULT_STORY_TYPO = Object.freeze({ fontSize:16, lineHeight:1.78, paragraphGap:1.05, letterSpacing:0 });
+
+function clampNumber(value,min,max,fallback){const n=Number(value);return Number.isFinite(n)?Math.max(min,Math.min(max,n)):fallback}
+function getStoryTypography(){
+    try{
+        const raw=JSON.parse(localStorage.getItem(STORY_TYPO_KEY)||'{}');
+        return {
+            fontSize:clampNumber(raw.fontSize,12,26,DEFAULT_STORY_TYPO.fontSize),
+            lineHeight:clampNumber(raw.lineHeight,1.2,2.6,DEFAULT_STORY_TYPO.lineHeight),
+            paragraphGap:clampNumber(raw.paragraphGap,0,3,DEFAULT_STORY_TYPO.paragraphGap),
+            letterSpacing:clampNumber(raw.letterSpacing,-0.04,0.18,DEFAULT_STORY_TYPO.letterSpacing)
+        };
+    }catch(_){return {...DEFAULT_STORY_TYPO}}
+}
+function applyStoryTypography(cfg=getStoryTypography()){
+    const root=document.documentElement;
+    root.style.setProperty('--story-font-size',`${cfg.fontSize}px`);
+    root.style.setProperty('--story-line-height',String(cfg.lineHeight));
+    root.style.setProperty('--story-paragraph-gap',`${cfg.paragraphGap}em`);
+    root.style.setProperty('--story-letter-spacing',`${cfg.letterSpacing}em`);
+}
+function storyTypoDisplay(key,value){const n=Number(value);if(key==='fontSize')return `${n.toFixed(n%1?1:0)}px`;if(key==='lineHeight')return n.toFixed(2);return `${n.toFixed(key==='letterSpacing'?3:2)}em`}
+function syncStoryTypographyControls(cfg=getStoryTypography()){
+    for(const key of Object.keys(DEFAULT_STORY_TYPO)){
+        const range=qs(`typo-${key}-range`),num=qs(`typo-${key}-number`),pill=qs(`typo-${key}-value`);
+        if(range)range.value=cfg[key];if(num)num.value=cfg[key];if(pill)pill.textContent=storyTypoDisplay(key,cfg[key]);
+    }
+}
+function updateStoryTypography(key,value){
+    if(!Object.prototype.hasOwnProperty.call(DEFAULT_STORY_TYPO,key))return;
+    const cfg=getStoryTypography(),limits={fontSize:[12,26],lineHeight:[1.2,2.6],paragraphGap:[0,3],letterSpacing:[-.04,.18]};
+    cfg[key]=clampNumber(value,limits[key][0],limits[key][1],DEFAULT_STORY_TYPO[key]);
+    localStorage.setItem(STORY_TYPO_KEY,JSON.stringify(cfg));applyStoryTypography(cfg);syncStoryTypographyControls(cfg);
+}
+function resetStoryTypography(){localStorage.removeItem(STORY_TYPO_KEY);applyStoryTypography(DEFAULT_STORY_TYPO);syncStoryTypographyControls(DEFAULT_STORY_TYPO);toast('剧情正文排版已恢复默认')}
 
 function qs(id) { return document.getElementById(id); }
 function qsa(sel, root=document) { return [...root.querySelectorAll(sel)]; }
@@ -226,7 +262,7 @@ async function importWholeLibrary(file){if(!file)return;if(!confirm('导入完�
 
 const FULL_SETTINGS_FORMAT = 'mimamao-tavern-full-settings';
 const FULL_SETTINGS_VERSION = 2;
-const FULL_SETTINGS_KEYS = [TEMP_KEY, LEGACY_FONT_URL_KEY, LEGACY_FONT_FAMILY_KEY, 'mimamao_tavern_ui_font', 'mimamao_tavern_story_font'];
+const FULL_SETTINGS_KEYS = [TEMP_KEY, LEGACY_FONT_URL_KEY, LEGACY_FONT_FAMILY_KEY, STORY_TYPO_KEY, 'mimamao_tavern_ui_font', 'mimamao_tavern_story_font'];
 
 function collectPortableLocalPrefs(){
     const out={};
@@ -285,6 +321,7 @@ async function applyFullSettingsBackup(raw,{fromSnapshot=false}={}){
         MimaStandalone.saveApiConfig({...old,...incoming});
     }
     restorePortableLocalPrefs(src.localPrefs||{});
+    applyStoryTypography();
     if(Array.isArray(src.fonts)&&src.fonts.length&&MimaFontManager.importPortable) await MimaFontManager.importPortable(src.fonts,{replace:false});
     if(src.selectedFonts?.ui!==undefined)MimaFontManager.setSelected('ui',src.selectedFonts.ui||'');
     if(src.selectedFonts?.story!==undefined)MimaFontManager.setSelected('story',src.selectedFonts.story||'');
@@ -314,13 +351,21 @@ async function renderDataTab(box){
     <div class="data-backup-card"><div class="row-title">本机设置快照</div><div class="row-sub">${snap?`最近保存：${escapeHtml(snap.savedAt||snap.exportedAt||'已保存')}`:'尚未保存本机快照'}</div><div class="toolbar"><button class="primary-btn" onclick="saveFullSettingsSnapshot()">保存咪嘛馆设置数据</button><button class="ghost-btn" onclick="restoreSavedSettingsSnapshot()">恢复本机快照</button></div></div>
     <div class="data-backup-card"><div class="row-title">可迁移完整备份</div><div class="row-sub">导出的文件可以在清缓存、换浏览器、换设备或重新部署后再导入。</div><label class="check-row"><input id="backup-fonts" type="checkbox" checked> 把本地字体文件也加入备份（文件可能变大）</label><label class="check-row"><input id="backup-api-key" type="checkbox"> 把 API Key（接口密钥）加入导出/快照 <strong>（敏感）</strong></label><div class="toolbar"><button class="primary-btn" onclick="exportFullSettingsBackup()">⇩ 导出完整设置</button><button class="ghost-btn" onclick="chooseFullSettingsImport()">⇧ 导入完整设置</button></div><div class="row-sub">当前 API（接口）：${cfg.apiBase?escapeHtml(cfg.apiBase):'未配置'} · Model（模型）：${cfg.model?escapeHtml(cfg.model):'未选择'}</div></div>
     <div id="data-backup-status" class="api-status">${snap?'✅ 当前浏览器已有本机快照。':'建议先保存一次本机快照，再导出一份文件备份。'}</div></section>
-    <section class="settings-section"><h3>🧹 Cache（缓存）说明</h3><p class="helper"><strong>只想让 GitHub Pages 加载新代码时，不需要先清除网站数据。</strong>本版已经给 CSS / JS 资源加入版本号 <code>?v=1.0.5</code>，部署后浏览器会把它们当成新资源重新拉取。若仍显示旧页面，先关闭该标签页再重新打开，或做一次强制刷新；不要直接使用会删除网站数据的清理方式，除非你已经导出了完整设置备份。</p></section>`;
+    <section class="settings-section"><h3>🧹 Cache（缓存）说明</h3><p class="helper"><strong>只想让 GitHub Pages 加载新代码时，不需要先清除网站数据。</strong>本版已经给 CSS / JS 资源加入版本号 <code>?v=1.0.6</code>，部署后浏览器会把它们当成新资源重新拉取。若仍显示旧页面，先关闭该标签页再重新打开，或做一次强制刷新；不要直接使用会删除网站数据的清理方式，除非你已经导出了完整设置备份。</p></section>`;
 }
 
-async function renderAppearanceTab(box){fontRecords=await MimaFontManager.all();const ui=MimaFontManager.getSelected('ui'),story=MimaFontManager.getSelected('story');const opts=`<option value="">系统默认字体</option>`+fontRecords.map(f=>`<option value="${escapeHtml(f.family)}">${escapeHtml(f.family)} · ${formatBytes(f.size)}</option>`).join('');box.innerHTML=`<section class="settings-section"><h3>🎨 本地字体库</h3><p class="helper">直接导入 TTF / OTF / WOFF / WOFF2（字体文件格式）。文件保存在当前浏览器 IndexedDB，不需要转 URL（链接），也不会上传到服务器。</p><div class="toolbar"><button class="primary-btn" onclick="chooseFontImport()">＋ 导入字体文件</button></div><div class="form-grid"><div><label class="form-label">UI（界面）字体</label><select id="font-ui-select" class="field" onchange="changeFont('ui',this.value)">${opts}</select></div><div><label class="form-label">剧情正文字体</label><select id="font-story-select" class="field" onchange="changeFont('story',this.value)">${opts}</select></div></div><div id="font-list" style="margin-top:14px"></div></section>
+async function renderAppearanceTab(box){fontRecords=await MimaFontManager.all();const ui=MimaFontManager.getSelected('ui'),story=MimaFontManager.getSelected('story'),typo=getStoryTypography();const opts=`<option value="">系统默认字体</option>`+fontRecords.map(f=>`<option value="${escapeHtml(f.family)}">${escapeHtml(f.family)} · ${formatBytes(f.size)}</option>`).join('');box.innerHTML=`<section class="settings-section"><h3>🎨 本地字体库</h3><p class="helper">直接导入 TTF / OTF / WOFF / WOFF2（字体文件格式）。文件保存在当前浏览器 IndexedDB，不需要转 URL（链接），也不会上传到服务器。剧情正文字体只作用于模型输出的普通小说正文，不会改动 Safe HTML（安全 HTML）状态栏自己的字体。</p><div class="toolbar"><button class="primary-btn" onclick="chooseFontImport()">＋ 导入字体文件</button></div><div class="form-grid"><div><label class="form-label">UI（界面）字体</label><select id="font-ui-select" class="field" onchange="changeFont('ui',this.value)">${opts}</select></div><div><label class="form-label">剧情正文字体</label><select id="font-story-select" class="field" onchange="changeFont('story',this.value)">${opts}</select></div></div><div id="font-list" style="margin-top:14px"></div></section>
+<section class="settings-section"><h3>📖 Novel Typography（小说正文排版）</h3><p class="helper">只调整 AI 剧情的普通正文：字号、行间距、段间距、字间距。模型输出的 &lt;system&gt; / &lt;details&gt; / 自定义 HTML 状态栏不会继承这些数值，因此你的额外状态栏 CSS 不会被挤坏。</p>
+<div class="typography-grid">
+${typographyControlHtml('字号','fontSize',12,26,.5,typo.fontSize,'px')}
+${typographyControlHtml('行间距','lineHeight',1.2,2.6,.05,typo.lineHeight,'')}
+${typographyControlHtml('段间距','paragraphGap',0,3,.05,typo.paragraphGap,'em')}
+${typographyControlHtml('字间距','letterSpacing',-.04,.18,.005,typo.letterSpacing,'em')}
+</div><div class="toolbar typography-actions"><button class="ghost-btn" onclick="resetStoryTypography()">恢复默认排版</button></div></section>
 <section class="settings-section"><h3>兼容旧版 URL（链接）字体</h3><p class="helper">旧功能保留。如果某个字体只能用网页链接，也仍然可以加载。</p><div class="form-grid"><div><label class="form-label">字体 URL（链接）</label><input id="legacy-font-url" class="field" value="${escapeHtml(localStorage.getItem(LEGACY_FONT_URL_KEY)||'')}"></div><div><label class="form-label">Font Family（字体族名）</label><input id="legacy-font-family" class="field" value="${escapeHtml(localStorage.getItem(LEGACY_FONT_FAMILY_KEY)||'')}"></div><div class="form-full"><button class="ghost-btn" onclick="applyLegacyUrlFont()">应用 URL（链接）字体</button></div></div></section>
 <section class="settings-section"><h3>🪄 CSS Preset Library（CSS 预设库）</h3><p class="helper">支持直接粘贴或导入<strong>纯 CSS</strong>，不需要手动包 &lt;style&gt;。CSS 可以只美化模型输出的自定义 HTML，也可以覆盖剧情区域，或选择“咪嘛馆全局”直接二改整个 UI（界面）。模型输出本身仍经过 Safe HTML sanitizer（安全 HTML 清洗器），不会执行 &lt;script&gt; / &lt;style&gt;。</p><div class="toolbar css-default-tools"><button class="primary-btn" onclick="openCssPresetEditor()">＋ 新建 CSS（样式）</button><button class="ghost-btn" onclick="chooseCssImport()">⇧ 导入 .css（样式文件）</button><button class="ghost-btn" onclick="copyDefaultCss()">⧉ 一键复制默认 CSS（样式）</button><button class="ghost-btn" onclick="exportDefaultCss()">⇩ 导出默认 CSS（样式）</button><button class="ghost-btn" onclick="forkDefaultCss()">✦ 默认 CSS 二改</button><button class="danger-btn" onclick="emergencyDisableCss()">🚑 临时禁用自定义 CSS（样式）</button></div><div class="row-sub css-scope-note">Scope（作用域）：自定义 HTML = 只影响每条剧情正文；剧情区域 = 整个聊天面板；咪嘛馆全局 = 顶栏、设置、输入框、剧情 HTML 等全部可改。</div><div class="row-sub" style="margin:8px 0 12px">当前：${currentCssPreset()?escapeHtml(currentCssPreset().name):'未挂载'} · ${currentSessionData.customCssEnabled===false?'已禁用':'已启用'}</div><div class="toolbar">${currentSessionData.customCssId?'<button class="ghost-btn" onclick="unapplyCss()">取消应用</button>':''}${currentSessionData.customCssId&&currentSessionData.customCssEnabled===false?'<button class="ghost-btn" onclick="reenableCss()">重新启用</button>':''}</div><div id="css-preset-list" class="card-grid css-preset-grid" style="margin-top:12px"></div></section>
-<section class="settings-section"><h3>显示</h3><label class="check-row"><input id="render-html-setting" type="checkbox" ${currentSessionData.renderMode==='safe_html'?'checked':''} onchange="toggleSafeHtml(this.checked)"> 允许 Safe HTML（安全 HTML）状态栏渲染</label><p class="helper">开启后会保留正文原有换行与空格，并支持 &lt;system&gt;、&lt;details&gt;、&lt;summary&gt;、区块、表格等安全结构，方便 CSS 状态栏直接生效。</p></section>`;qs('font-ui-select').value=ui;qs('font-story-select').value=story;const root=qs('font-list');if(!fontRecords.length)root.innerHTML='<div class="row-sub">还没有本地字体。</div>';fontRecords.forEach(f=>{const r=document.createElement('div');r.className='font-row';r.innerHTML=`<div class="row-main"><div class="row-title" style="font-family:'${escapeHtml(f.family)}'">Aa　${escapeHtml(f.family)}</div><div class="row-sub">${escapeHtml(f.name)} · ${formatBytes(f.size)}</div></div><button class="danger-btn" onclick="deleteLocalFont('${f.id}')">删除</button>`;root.appendChild(r)});renderCssPresetLibrary(qs('css-preset-list'))}
+<section class="settings-section"><h3>显示</h3><label class="check-row"><input id="render-html-setting" type="checkbox" ${currentSessionData.renderMode==='safe_html'?'checked':''} onchange="toggleSafeHtml(this.checked)"> 允许 Safe HTML（安全 HTML）状态栏渲染</label><p class="helper">开启后会保留正文原有换行与空格，并支持 &lt;system&gt;、&lt;details&gt;、&lt;summary&gt;、区块、表格等安全结构，方便 CSS 状态栏直接生效。</p></section>`;qs('font-ui-select').value=ui;qs('font-story-select').value=story;const root=qs('font-list');if(!fontRecords.length)root.innerHTML='<div class="row-sub">还没有本地字体。</div>';fontRecords.forEach(f=>{const r=document.createElement('div');r.className='font-row';r.innerHTML=`<div class="row-main"><div class="row-title" style="font-family:'${escapeHtml(f.family)}'">Aa　${escapeHtml(f.family)}</div><div class="row-sub">${escapeHtml(f.name)} · ${formatBytes(f.size)}</div></div><button class="danger-btn" onclick="deleteLocalFont('${f.id}')">删除</button>`;root.appendChild(r)});renderCssPresetLibrary(qs('css-preset-list'));syncStoryTypographyControls(typo)}
+function typographyControlHtml(label,key,min,max,step,value,unit){return `<div class="typography-control"><div class="typography-control-head"><label class="form-label" for="typo-${key}-range">${label}</label><span id="typo-${key}-value" class="value-pill">${storyTypoDisplay(key,value)}</span></div><div class="typography-control-row"><input id="typo-${key}-range" class="typography-range" type="range" min="${min}" max="${max}" step="${step}" value="${value}" oninput="updateStoryTypography('${key}',this.value)"><input id="typo-${key}-number" class="field typography-number" type="number" inputmode="decimal" min="${min}" max="${max}" step="${step}" value="${value}" onchange="updateStoryTypography('${key}',this.value)"><span class="typography-unit">${unit}</span></div></div>`}
 function currentCssPreset(){return cssPresets.find(x=>x.id===currentSessionData?.customCssId)||null}
 function ensureCustomCssStyle(){let tag=qs('mima-custom-css-style');if(!tag){tag=document.createElement('style');tag.id='mima-custom-css-style';document.head.appendChild(tag)}return tag}
 function stripEmbeddedStyleTags(css){return String(css||'').replace(/<\/?style\b[^>]*>/gi,'')}
@@ -345,7 +390,7 @@ let defaultCssSourceCache='';
 async function loadDefaultCssSource(){
     if(defaultCssSourceCache)return defaultCssSourceCache;
     try{
-        const res=await fetch('./style.css?v=1.0.5',{cache:'no-store'});
+        const res=await fetch('./style.css?v=1.0.6',{cache:'no-store'});
         if(!res.ok)throw new Error(`HTTP ${res.status}`);
         defaultCssSourceCache=await res.text();
     }catch(fetchErr){
@@ -362,7 +407,7 @@ async function copyTextPortable(text){
     const ta=document.createElement('textarea');ta.value=text;ta.setAttribute('readonly','');ta.style.cssText='position:fixed;left:-9999px;top:0';document.body.appendChild(ta);ta.select();const ok=document.execCommand('copy');ta.remove();if(!ok)throw new Error('浏览器拒绝复制到剪贴板');
 }
 async function copyDefaultCss(){try{const css=await loadDefaultCssSource();await copyTextPortable(css);toast(`默认 CSS（样式）已复制 · ${css.length} 字符`)}catch(e){toast(`复制默认 CSS 失败：${e.message}`)}}
-async function exportDefaultCss(){try{const css=await loadDefaultCssSource();downloadText('mimamao-default-v1.0.5.css',css,'text/css;charset=utf-8');toast('咪嘛馆默认 CSS（样式）已导出')}catch(e){toast(`导出默认 CSS 失败：${e.message}`)}}
+async function exportDefaultCss(){try{const css=await loadDefaultCssSource();downloadText('mimamao-default-v1.0.6.css',css,'text/css;charset=utf-8');toast('咪嘛馆默认 CSS（样式）已导出')}catch(e){toast(`导出默认 CSS 失败：${e.message}`)}}
 async function forkDefaultCss(){try{const css=await loadDefaultCssSource();openCssPresetEditor();qs('css-pre-name').value='咪嘛馆默认主题 · 二改';qs('css-pre-scope').value='app';qs('css-pre-code').value=css;toast('默认 CSS 已装进编辑器，可直接全局二改')}catch(e){toast(`载入默认 CSS 失败：${e.message}`)}}
 function chooseFontImport(){qs('font-file-input').value='';qs('font-file-input').click()}
 async function importFontFile(file){try{const r=await MimaFontManager.importFile(file);fontRecords=await MimaFontManager.all();if(!MimaFontManager.getSelected('story'))MimaFontManager.setSelected('story',r.family);renderAppearanceTab(qs('settings-content'));toast(`字体 ${r.family} 已导入`) }catch(e){toast(e.message)}}
@@ -371,7 +416,7 @@ async function deleteLocalFont(id){if(!confirm('从这个浏览器删除字体�
 async function toggleSafeHtml(on){await patchCurrent({renderMode:on?'safe_html':'text'},true);refreshChatBox()}
 function formatBytes(n){if(!Number.isFinite(Number(n)))return'';if(n<1024)return`${n} B`;if(n<1024*1024)return`${(n/1024).toFixed(1)} KB`;return`${(n/1024/1024).toFixed(1)} MB`}
 function fontFormat(url){const c=String(url).split('?')[0].toLowerCase();if(c.endsWith('.woff2'))return'woff2';if(c.endsWith('.woff'))return'woff';if(c.endsWith('.ttf'))return'truetype';if(c.endsWith('.otf'))return'opentype';return''}
-function applyLegacyUrlFont(){const url=qs('legacy-font-url').value.trim().replace(/[\n\r\t'"()\\]/g,'');const family=(qs('legacy-font-family').value.trim()||'MimaUrlFont').replace(/['"\\;\n\r{}]/g,'');let tag=qs('legacy-url-font-style');if(!tag){tag=document.createElement('style');tag.id='legacy-url-font-style';document.head.appendChild(tag)}if(!url){tag.textContent='';localStorage.removeItem(LEGACY_FONT_URL_KEY);return}const fmt=fontFormat(url);tag.textContent=url.includes('fonts.googleapis.com')||url.endsWith('.css')?`@import url('${url}');`: `@font-face{font-family:'${family}';src:url('${url}')${fmt?` format('${fmt}')`:''};font-display:swap;} body,button,input,textarea,select{font-family:'${family}',var(--font-ui)!important}`;localStorage.setItem(LEGACY_FONT_URL_KEY,url);localStorage.setItem(LEGACY_FONT_FAMILY_KEY,family);toast('URL 字体已应用')}
+function applyLegacyUrlFont(){const url=qs('legacy-font-url').value.trim().replace(/[\n\r\t'"()\\]/g,'');const family=(qs('legacy-font-family').value.trim()||'MimaUrlFont').replace(/['"\\;\n\r{}]/g,'');let tag=qs('legacy-url-font-style');if(!tag){tag=document.createElement('style');tag.id='legacy-url-font-style';document.head.appendChild(tag)}if(!url){tag.textContent='';localStorage.removeItem(LEGACY_FONT_URL_KEY);return}const fmt=fontFormat(url);const apply=`.assistant-msg .story-prose{font-family:'${family}',var(--font-ui)!important}`;tag.textContent=url.includes('fonts.googleapis.com')||url.endsWith('.css')?`@import url('${url}'); ${apply}`: `@font-face{font-family:'${family}';src:url('${url}')${fmt?` format('${fmt}')`:''};font-display:swap;} ${apply}`;localStorage.setItem(LEGACY_FONT_URL_KEY,url);localStorage.setItem(LEGACY_FONT_FAMILY_KEY,family);toast('URL 字体已应用')}
 
 function renderApiTab(box){
     const c=MimaStandalone.getApiConfig();
@@ -446,7 +491,23 @@ function makeToolButton(text,fn){const b=document.createElement('button');b.clas
 function openMessageEditor(msg,truncateAfter=false){editorState={type:'message',msg,truncateAfter};qs('editor-title').textContent=truncateAfter?'编辑并从这里建立新时间线':'编辑消息';qs('editor-eyebrow').textContent='STORY MESSAGE（剧情消息）';qs('editor-body').innerHTML=`<label class="form-label">消息内容</label><textarea id="message-edit-content" class="field textarea tall">${escapeHtml(msg.content||'')}</textarea>${truncateAfter?'<p class="helper">保存后，这条消息之后的旧剧情会进入 archivedBranches（归档分支），不会直接丢失。</p>':''}`;setupEditorButtons(null,saveMessageEditor);qs('editor-modal').classList.remove('hidden')}
 async function saveMessageEditor(){const {msg,truncateAfter}=editorState;const res=await fetchStory(`/sessions/${currentSessionId}/messages/${msg.id}`,'PATCH',{content:qs('message-edit-content').value,truncateAfter});if(res.success){currentSessionData=res.data;closeEditor();refreshChatBox();if(truncateAfter&&msg.role==='user'&&confirm('现在从这条 User（用户）消息重新生成后续吗？'))await triggerChat('','regenerate')}else toast(res.msg||'编辑失败')}
 function showVersions(msg){editorState={type:'versions'};qs('editor-title').textContent='旧版本';qs('editor-eyebrow').textContent='MESSAGE VERSIONS（消息旧版本）';qs('editor-body').innerHTML=arr(msg.versions).slice().reverse().map((v,i)=>`<div class="entry-card"><div class="entry-meta">${escapeHtml(v.reason||'version（版本）')} · ${escapeHtml(v.time||'')}</div><div style="white-space:pre-wrap;line-height:1.6;margin-top:8px">${escapeHtml(v.content||'')}</div></div>`).join('');setupEditorButtons(null,closeEditor);qs('editor-save').textContent='关闭';qs('editor-modal').classList.remove('hidden')}
-function appendRenderedContent(node,text,allowHtml=false){if(allowHtml){node.innerHTML=sanitizeAllowedHtml(text||'');return}String(text||'').split('\n').forEach((part,i)=>{if(i)node.appendChild(document.createElement('br'));node.appendChild(document.createTextNode(part))})}
+function appendProseText(parent,text){
+    const raw=String(text??'').replace(/\r\n?/g,'\n');if(!raw.trim())return;
+    const chunks=raw.split(/\n{2,}/);
+    chunks.forEach(chunk=>{if(!chunk.trim())return;const p=document.createElement('div');p.className='story-prose story-paragraph';p.textContent=chunk.trim();parent.appendChild(p)});
+}
+function appendSafeHtmlWithProse(node,text){
+    const template=document.createElement('template');template.innerHTML=sanitizeAllowedHtml(text||'');
+    let prose='';
+    const flush=()=>{if(prose.trim())appendProseText(node,prose);prose=''};
+    for(const child of [...template.content.childNodes]){
+        if(child.nodeType===Node.TEXT_NODE){prose+=child.nodeValue||'';continue}
+        if(child.nodeType===Node.ELEMENT_NODE&&child.tagName==='BR'){prose+='\n';continue}
+        flush();node.appendChild(child);
+    }
+    flush();
+}
+function appendRenderedContent(node,text,allowHtml=false){if(allowHtml){appendSafeHtmlWithProse(node,text);return}appendProseText(node,text)}
 function sanitizeAllowedHtml(html){
     const template=document.createElement('template');template.innerHTML=cleanCorruptText(html);
     const allowedTags=new Set(['SYSTEM','DIV','SPAN','P','BR','STRONG','B','EM','I','SMALL','MARK','S','U','SUB','SUP','KBD','SECTION','ARTICLE','HEADER','FOOTER','MAIN','ASIDE','NAV','DETAILS','SUMMARY','BLOCKQUOTE','PRE','CODE','H1','H2','H3','H4','H5','H6','UL','OL','LI','DL','DT','DD','TABLE','CAPTION','COLGROUP','COL','THEAD','TBODY','TFOOT','TR','TD','TH','HR']);
@@ -465,12 +526,13 @@ function sanitizeAllowedHtml(html){
     return template.innerHTML;
 }
 
-function restoreLegacyFont(){const url=localStorage.getItem(LEGACY_FONT_URL_KEY);if(!url)return;let tag=document.createElement('style');tag.id='legacy-url-font-style';document.head.appendChild(tag);const fam=localStorage.getItem(LEGACY_FONT_FAMILY_KEY)||'MimaUrlFont';const fmt=fontFormat(url);const apply=`body,button,input,textarea,select{font-family:'${fam}',-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif}`;tag.textContent=url.includes('fonts.googleapis.com')||url.endsWith('.css')?`@import url('${url}'); ${apply}`:`@font-face{font-family:'${fam}';src:url('${url}')${fmt?` format('${fmt}')`:''};font-display:swap;} ${apply}`}
+function restoreLegacyFont(){const url=localStorage.getItem(LEGACY_FONT_URL_KEY);if(!url)return;let tag=document.createElement('style');tag.id='legacy-url-font-style';document.head.appendChild(tag);const fam=localStorage.getItem(LEGACY_FONT_FAMILY_KEY)||'MimaUrlFont';const fmt=fontFormat(url);const apply=`.assistant-msg .story-prose{font-family:'${fam}',-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif!important}`;tag.textContent=url.includes('fonts.googleapis.com')||url.endsWith('.css')?`@import url('${url}'); ${apply}`:`@font-face{font-family:'${fam}';src:url('${url}')${fmt?` format('${fmt}')`:''};font-display:swap;} ${apply}`}
 
 // Expose inline handlers
-Object.assign(window,{goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,saveContextSettings,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,syncTemperature,dismissGenerationPanel,refreshPromptInspector,closeEditor,sendMsg,regenerateMsg,continueMsg,autoAdvance,stopGeneration});
+Object.assign(window,{goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,saveContextSettings,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,syncTemperature,updateStoryTypography,resetStoryTypography,dismissGenerationPanel,refreshPromptInspector,closeEditor,sendMsg,regenerateMsg,continueMsg,autoAdvance,stopGeneration});
 
 window.addEventListener('load',async()=>{
+    applyStoryTypography();
     restoreLegacyFont();
     try{await MimaStandalone.init()}catch(e){console.error('Standalone（独立版）本地数据库启动失败',e);alert('咪嘛馆本地数据库启动失败：'+e.message);return}
     try{fontRecords=await MimaFontManager.init()}catch(e){console.warn('本地字体库启动失败',e)}
