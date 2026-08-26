@@ -45,6 +45,66 @@
   function notify(msg){if(typeof window.toast==='function')window.toast(msg);else console.log(msg);}
   function formatTime(v){try{return new Date(v).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false})}catch(_){return''}}
 
+  // v1.1.5 Artifact Protocol V2: large regex/HTML/CSS payloads are transported as
+  // segmented text blocks instead of one giant JSON string. Legacy V1 JSON remains readable.
+  function extractArtifactV2(raw){
+    const text=String(raw||'');
+    const marker=text.match(/<MIMA_ARTIFACT_V2\b([^>]*)>([\s\S]*?)<\/MIMA_ARTIFACT_V2>/i);
+    if(!marker)return {found:false,source:'',attrs:'',candidate:'',full:''};
+    return {found:true,source:'v2',attrs:marker[1]||'',candidate:marker[2]||'',full:marker[0]};
+  }
+  function artifactV2Kind(attrs){
+    const m=String(attrs||'').match(/\bkind\s*=\s*["']([^"']+)["']/i);
+    return String(m?.[1]||'').trim();
+  }
+  function unwrapArtifactBlockValue(raw,{trim=true}={}){
+    let text=String(raw??'');
+    const cdata=text.match(/^\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*$/i);
+    if(cdata){
+      text=cdata[1];
+      if(text.startsWith('\r\n'))text=text.slice(2);else if(text.startsWith('\n'))text=text.slice(1);
+      if(text.endsWith('\r\n'))text=text.slice(0,-2);else if(text.endsWith('\n'))text=text.slice(0,-1);
+      return text;
+    }
+    return trim?text.trim():text;
+  }
+  function firstTaggedBlock(text,tag,{required=false,trim=true}={}){
+    const re=new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}>`,'i');
+    const m=String(text||'').match(re);
+    if(!m){if(required)throw new Error(`V2 工件缺少 <${tag}>`);return ''}
+    return unwrapArtifactBlockValue(m[1],{trim});
+  }
+  function allTaggedBlocks(text,tag){
+    const out=[],re=new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}>`,'ig');let m;
+    while((m=re.exec(String(text||''))))out.push(m[1]);
+    return out;
+  }
+  function artifactNumber(v,fallback=50){const n=Number(String(v??'').trim());return Number.isFinite(n)?n:fallback;}
+  function artifactBool(v,fallback=true){const x=String(v??'').trim().toLowerCase();if(x==='true'||x==='1'||x==='yes')return true;if(x==='false'||x==='0'||x==='no')return false;return fallback;}
+  function parseV2Preset(block){
+    return {name:firstTaggedBlock(block,'NAME',{required:true}),type:firstTaggedBlock(block,'TYPE')||'style',description:firstTaggedBlock(block,'DESCRIPTION'),priority:artifactNumber(firstTaggedBlock(block,'PRIORITY'),50),content:firstTaggedBlock(block,'CONTENT',{required:true,trim:false})};
+  }
+  function parseV2RegexPack(block){
+    const ruleBlocks=allTaggedBlocks(block,'RULE');
+    const rules=ruleBlocks.map((ruleBlock,idx)=>({name:firstTaggedBlock(ruleBlock,'NAME')||`Rule ${idx+1}`,pattern:firstTaggedBlock(ruleBlock,'PATTERN',{required:true,trim:false}),replacement:firstTaggedBlock(ruleBlock,'REPLACEMENT',{required:true,trim:false}),flags:firstTaggedBlock(ruleBlock,'FLAGS')||'g',phase:firstTaggedBlock(ruleBlock,'PHASE')||'display',priority:artifactNumber(firstTaggedBlock(ruleBlock,'PRIORITY'),50),enabled:artifactBool(firstTaggedBlock(ruleBlock,'ENABLED'),true),description:firstTaggedBlock(ruleBlock,'DESCRIPTION')}));
+    if(!rules.length)throw new Error('V2 Regex Bundle 没有任何 <RULE>');
+    const header=String(block||'').replace(/<RULE\b[^>]*>[\s\S]*?<\/RULE>/ig,'');
+    return {name:firstTaggedBlock(header,'NAME',{required:true}),description:firstTaggedBlock(header,'DESCRIPTION'),priority:artifactNumber(firstTaggedBlock(header,'PRIORITY'),50),enabled:artifactBool(firstTaggedBlock(header,'ENABLED'),true),rules};
+  }
+  function parseV2Artifact(raw){
+    const extracted=extractArtifactV2(raw);if(!extracted.found)return {found:false,artifact:null,error:'',source:'',protocol:''};
+    try{
+      const kind=artifactV2Kind(extracted.attrs);if(!kind)throw new Error('V2 工件缺少 kind 属性');
+      let artifact;
+      if(kind==='regex_bundle')artifact={kind,preset:parseV2Preset(firstTaggedBlock(extracted.candidate,'PRESET',{required:true,trim:false})),regexPack:parseV2RegexPack(firstTaggedBlock(extracted.candidate,'REGEX_PACK',{required:true,trim:false}))};
+      else if(kind==='preset')artifact={kind,preset:parseV2Preset(firstTaggedBlock(extracted.candidate,'PRESET',{required:true,trim:false}))};
+      else if(kind==='css_preset'){
+        const block=firstTaggedBlock(extracted.candidate,'CSS_PRESET',{required:true,trim:false});artifact={kind,cssPreset:{name:firstTaggedBlock(block,'NAME',{required:true}),scope:firstTaggedBlock(block,'SCOPE')||'story',css:firstTaggedBlock(block,'CSS',{required:true,trim:false})}};
+      }else throw new Error(`不支持的 V2 kind：${kind}`);
+      return {found:true,artifact,error:'',source:'v2',protocol:'v2',repaired:false,repairLevel:'',full:extracted.full};
+    }catch(e){return {found:true,artifact:null,error:e?.message||String(e),source:'v2',protocol:'v2',repaired:false,repairLevel:'',full:extracted.full};}
+  }
+
   function extractArtifactCandidate(raw){
     const text=String(raw||'');
     const marker=text.match(/<MIMA_ARTIFACT>\s*([\s\S]*?)\s*<\/MIMA_ARTIFACT>/i);
@@ -181,7 +241,8 @@
     return text.trim();
   }
   function parseArtifactDetailed(raw){
-    const extracted=extractArtifactCandidate(raw);if(!extracted.found)return {found:false,artifact:null,error:'',source:'',repaired:false,repairLevel:''};
+    const v2=parseV2Artifact(raw);if(v2.found)return v2;
+    const extracted=extractArtifactCandidate(raw);if(!extracted.found)return {found:false,artifact:null,error:'',source:'',protocol:'',repaired:false,repairLevel:'',full:''};
     const candidates=[
       {text:String(extracted.candidate||'').trim(),repaired:false,repairLevel:'strict'},
       {text:normalizeArtifactJson(extracted.candidate),repaired:true,repairLevel:'safe'},
@@ -190,25 +251,25 @@
     const seen=new Set();let lastError='';
     for(const attempt of candidates){
       if(!attempt.text||seen.has(attempt.text))continue;seen.add(attempt.text);
-      try{const obj=JSON.parse(attempt.text);if(obj&&typeof obj==='object'&&!Array.isArray(obj)&&obj.kind)return {found:true,artifact:obj,error:'',source:extracted.source,repaired:attempt.repaired,repairLevel:attempt.repairLevel};lastError='JSON 已解析，但缺少 kind 字段。'}catch(e){lastError=e?.message||String(e)}
+      try{const obj=JSON.parse(attempt.text);if(obj&&typeof obj==='object'&&!Array.isArray(obj)&&obj.kind)return {found:true,artifact:obj,error:'',source:extracted.source,protocol:'v1',repaired:attempt.repaired,repairLevel:attempt.repairLevel,full:extracted.full};lastError='JSON 已解析，但缺少 kind 字段。'}catch(e){lastError=e?.message||String(e)}
     }
-    return {found:true,artifact:null,error:lastError||'无法解析工件 JSON。',source:extracted.source,repaired:false,repairLevel:''};
+    return {found:true,artifact:null,error:lastError||'无法解析工件 JSON。',source:extracted.source,protocol:'v1',repaired:false,repairLevel:'',full:extracted.full};
   }
   function parseArtifact(raw){return parseArtifactDetailed(raw).artifact;}
-  function visibleAssistantText(raw){return String(raw||'').replace(/<MIMA_ARTIFACT>[\s\S]*?<\/MIMA_ARTIFACT>/ig,'').trim();}
-  function artifactJsonProtocol(){return `【MIMA_ARTIFACT 严格 JSON 协议】\n当输出 <MIMA_ARTIFACT> 时，内部必须是严格 RFC 8259 JSON。\n1. 所有对象属性名与字符串都必须使用英文双引号；禁止单引号属性、裸属性名。\n2. 禁止 JavaScript Object Literal、JSON5、JSONC、尾逗号、// 注释、/* */ 注释、RegExp literal。\n3. 正则 pattern/ replacement 必须作为 JSON 字符串；反斜杠必须符合 JSON 转义，例如正则 \\s 在 JSON 源文本中写成 \\\\s。\n4. HTML 字符串内部的双引号必须进行 JSON 转义。\n5. <MIMA_ARTIFACT> 内只能有一个完整 JSON object，不套 Markdown code fence。\n6. 输出前自行确认 JSON.parse(工件内容) 可以成功。若不确定，请先修正语法，不得输出半成品。`;}
-
+  function visibleAssistantText(raw){let text=String(raw||'').replace(/<MIMA_ARTIFACT_V2\b[^>]*>[\s\S]*?<\/MIMA_ARTIFACT_V2>/ig,'').replace(/<MIMA_ARTIFACT>[\s\S]*?<\/MIMA_ARTIFACT>/ig,'');const cutV2=text.search(/<MIMA_ARTIFACT_V2\b/i),cutV1=text.search(/<MIMA_ARTIFACT>/i);const cuts=[cutV2,cutV1].filter(n=>n>=0);if(cuts.length)text=text.slice(0,Math.min(...cuts));return text.trim();}
+  function artifactJsonProtocol(){return `【Legacy MIMA_ARTIFACT V1 兼容说明】\n咪嘛馆仍能读取旧的 <MIMA_ARTIFACT>{...JSON...}</MIMA_ARTIFACT> 历史工件，但新工件不要再使用巨大 JSON。不得使用 eval / Function 执行任何工件。`;}
+  function artifactV2Protocol(){return `【MIMA_ARTIFACT_V2 · Zero-Escape 工件协议】\n大型 Regex / HTML / CSS 必须使用 V2 分段工件，禁止把整包重新塞进 JSON 字符串。\n\n通用硬规则：\n1. 最外层必须是 <MIMA_ARTIFACT_V2 kind="..."></MIMA_ARTIFACT_V2>。\n2. PATTERN / REPLACEMENT / CONTENT / CSS 的正文必须放在 <![CDATA[ ... ]]> 中；其中的双引号、反斜杠、HTML 标签、$1/$2 都按原文书写，不做 JSON 转义。\n3. 不要套 Markdown code fence。不要额外再输出 V1 JSON 工件。\n4. 名称、说明、flags、phase 等小字段写普通标签文本。\n5. Regex rule 顺序必须与设计顺序一致。\n6. Replacement 仍禁止 script、onerror/onload 等可执行代码。\n7. 输出前检查所有开始/结束标签成对。\n\nRegex Bundle 结构：\n<MIMA_ARTIFACT_V2 kind="regex_bundle">\n<PRESET>\n<NAME>名称</NAME><TYPE>format</TYPE><DESCRIPTION>说明</DESCRIPTION><PRIORITY>50</PRIORITY>\n<CONTENT><![CDATA[\n完整配套预设，可自由包含 \"、\\、HTML 示例\n]]></CONTENT>\n</PRESET>\n<REGEX_PACK>\n<NAME>正则包名称</NAME><DESCRIPTION>说明</DESCRIPTION><PRIORITY>50</PRIORITY><ENABLED>true</ENABLED>\n<RULE>\n<NAME>规则名</NAME>\n<PATTERN><![CDATA[\n浏览器 JavaScript RegExp pattern 原文\n]]></PATTERN>\n<REPLACEMENT><![CDATA[\n<div class="mima-panel">$1</div>\n]]></REPLACEMENT>\n<FLAGS>g</FLAGS><PHASE>display</PHASE><PRIORITY>50</PRIORITY><ENABLED>true</ENABLED><DESCRIPTION>说明</DESCRIPTION>\n</RULE>\n</REGEX_PACK>\n</MIMA_ARTIFACT_V2>\n\nPreset 使用 kind="preset" + <PRESET>...</PRESET>；CSS 使用 kind="css_preset" + <CSS_PRESET><NAME>...</NAME><SCOPE>story</SCOPE><CSS><![CDATA[...]]></CSS></CSS_PRESET>。`;}
 
   function baseSystem(type){
-    if(type==='regex')return `你是“咪嘛馆 Regex 正则助手”。你帮助用户设计正则包，并把冗长 HTML 输出规范转换成“模型输出短协议 + 前端 display 正则展开完整 HTML”的省 Token 方案。\n\n硬规则：\n1. 不删除用户原有输出字段，只压缩重复 HTML 壳。\n2. 优先使用 phase=display，让 compact 原文保留在剧情 Prompt 中，完整 HTML 只在前端显示时展开。只有用户明确需要时才使用 input/prompt/output。\n3. 正则必须是浏览器 JavaScript RegExp 可用语法；flags 通常为 g 或 gi；replacement 可以使用 $1/$2。\n4. Replacement 只能是文本/HTML，不得包含 script、事件处理器或可执行代码。\n5. 如果用户提供 HTML 状态栏：先抽取真正动态字段，再设计短标签协议。协议应明显短于 HTML，例如 <ST>...字段...</ST> 或固定分隔符。\n6. “配套预设”必须明确告诉剧情模型只输出短协议，而不是完整 HTML。\n7. 需要交付可保存成果时，在解释后输出且只输出一个结构化工件块：\n<MIMA_ARTIFACT>\n{"kind":"regex_bundle","preset":{"name":"...","type":"format","description":"...","priority":50,"content":"...转换后的短协议输出规范..."},"regexPack":{"name":"...","description":"...","priority":50,"enabled":true,"rules":[{"name":"...","pattern":"...","replacement":"...","flags":"g","phase":"display","priority":50,"enabled":true,"description":"..."}]}}\n</MIMA_ARTIFACT>\n工件块必须是严格 JSON，不要放进 Markdown code fence。`;
-    if(type==='preset')return `你是“咪嘛馆 Preset 预设助手”。你负责写作/改写 AIRP 预设、文风规则、角色行为约束、输出格式协议与模型控制提示。\n\n硬规则：\n1. 用户已有规则一律保留，除非用户明确要求删除。\n2. 把审美要求转换成可执行、可判断、低歧义的提示词；避免空泛“写得更好”。\n3. 可以设计 style / format / behavior / model 类型预设。\n4. 需要交付可保存预设时，在解释后输出：\n<MIMA_ARTIFACT>\n{"kind":"preset","preset":{"name":"...","type":"style","description":"...","priority":50,"content":"...完整预设内容..."}}\n</MIMA_ARTIFACT>\n工件块必须是严格 JSON。`;
-    return `你是“咪嘛馆 CSS 美化助手”。你负责为咪嘛馆 UI、剧情区域与 Safe HTML 状态栏设计纯 CSS。\n\n硬规则：\n1. 只生成 CSS，不使用 JavaScript，不要求修改旧 HTML 结构，除非用户明确说可以。\n2. 默认移动端/iOS Safari 优先，保持按钮可点、文字可读、输入框可用。\n3. 若用户给现有 CSS，优先增量覆盖，不顺手重构或删掉正常规则。\n4. scope 可选 story（自定义 HTML/剧情内容）、global（剧情聊天区域）、app（全局 UI + HTML）。\n5. 需要交付可保存 CSS 时，在解释后输出：\n<MIMA_ARTIFACT>\n{"kind":"css_preset","cssPreset":{"name":"...","scope":"story","css":"...完整 CSS..."}}\n</MIMA_ARTIFACT>\n工件块必须是严格 JSON。`;
+    if(type==='regex')return `你是“咪嘛馆 Regex 正则助手”。你帮助用户设计正则包，并把冗长 HTML 输出规范转换成“模型输出短协议 + 前端 display 正则展开完整 HTML”的省 Token 方案。\n\n硬规则：\n1. 不删除用户原有输出字段，只压缩重复 HTML 壳。\n2. 优先使用 phase=display，让 compact 原文保留在剧情 Prompt 中，完整 HTML 只在前端显示时展开。只有用户明确需要时才使用 input/prompt/output。\n3. 正则必须是浏览器 JavaScript RegExp 可用语法；flags 通常为 g 或 gi；replacement 可以使用 $1/$2。\n4. Replacement 只能是文本/HTML，不得包含 script、事件处理器或可执行代码。\n5. 如果用户提供 HTML 状态栏：先抽取真正动态字段，再设计短标签协议。协议应明显短于 HTML。\n6. “配套预设”必须明确告诉剧情模型只输出短协议，而不是完整 HTML。\n7. 需要交付可保存成果时，解释后输出且只输出一个 MIMA_ARTIFACT_V2 regex_bundle。大型 pattern / replacement / preset content 必须直接写在 CDATA 段中，绝对不要再手写巨大 JSON escape。`;
+    if(type==='preset')return `你是“咪嘛馆 Preset 预设助手”。你负责写作/改写 AIRP 预设、文风规则、角色行为约束、输出格式协议与模型控制提示。\n\n硬规则：\n1. 用户已有规则一律保留，除非用户明确要求删除。\n2. 把审美要求转换成可执行、可判断、低歧义的提示词；避免空泛“写得更好”。\n3. 可以设计 style / format / behavior / model 类型预设。\n4. 需要交付可保存预设时，使用 MIMA_ARTIFACT_V2 kind="preset"；完整预设内容直接放 CONTENT 的 CDATA，不做 JSON escape。`;
+    return `你是“咪嘛馆 CSS 美化助手”。你负责为咪嘛馆 UI、剧情区域与 Safe HTML 状态栏设计纯 CSS。\n\n硬规则：\n1. 只生成 CSS，不使用 JavaScript，不要求修改旧 HTML 结构，除非用户明确说可以。\n2. 默认移动端/iOS Safari 优先，保持按钮可点、文字可读、输入框可用。\n3. 若用户给现有 CSS，优先增量覆盖，不顺手重构或删掉正常规则。\n4. scope 可选 story（自定义 HTML/剧情内容）、global（剧情聊天区域）、app（全局 UI + HTML）。\n5. 需要交付可保存 CSS 时，使用 MIMA_ARTIFACT_V2 kind="css_preset"；CSS 直接放 CSS 的 CDATA，不做 JSON escape。`;
   }
-  function systemPrompt(type){const p=state.profiles[type];return `${baseSystem(type)}\n\n${artifactJsonProtocol()}\n\n【助手 Persona】\n${p.persona||'(无额外 persona)'}\n\n【设计风格】\n${p.style||'(无额外风格)'}`;}
+  function systemPrompt(type){const p=state.profiles[type];return `${baseSystem(type)}\n\n${artifactV2Protocol()}\n\n${artifactJsonProtocol()}\n\n【助手 Persona】\n${p.persona||'(无额外 persona)'}\n\n【设计风格】\n${p.style||'(无额外风格)'}`;}
   function quickInstruction(type){
-    if(type==='regex')return '【快捷任务：HTML 状态栏 → 正则省 Token】请把我下面提供的输出规范中重复、冗长的 HTML 壳转换为短协议，并生成配套 format 预设 + display 正则包。动态字段必须完整保留。务必输出 regex_bundle 工件。';
-    if(type==='preset')return '【快捷任务：生成可保存预设】请把我的需求写成一个可以直接挂载到咪嘛馆的预设，并输出 preset 工件。';
-    return '【快捷任务：生成可保存 CSS】请按我的要求设计一份可直接保存的咪嘛馆 CSS Preset，并输出 css_preset 工件。';
+    if(type==='regex')return '【快捷任务：HTML 状态栏 → 正则省 Token】请把我下面提供的输出规范中重复、冗长的 HTML 壳转换为短协议，并生成配套 format 预设 + display 正则包。动态字段必须完整保留。务必输出 MIMA_ARTIFACT_V2 regex_bundle 工件。';
+    if(type==='preset')return '【快捷任务：生成可保存预设】请把我的需求写成一个可以直接挂载到咪嘛馆的预设，并输出 MIMA_ARTIFACT_V2 preset 工件。';
+    return '【快捷任务：生成可保存 CSS】请按我的要求设计一份可直接保存的咪嘛馆 CSS Preset，并输出 MIMA_ARTIFACT_V2 css_preset 工件。';
   }
 
   function open(type='regex'){
@@ -222,22 +283,26 @@
 
   function profileFormHtml(){const p=profile(),storyCfg=window.MimaStandalone?.getApiConfig?.()||{};const model=p.model||storyCfg.model||'未选择';return `<details class="assistant-config-card" ${state.ui.configOpen?'open':''} ontoggle="MimaAssistantStudio.setConfigOpen(this.open)"><summary class="assistant-config-summary"><span><strong>⚙ 助手模型设置</strong><span class="assistant-config-summary-model">${esc(model)} · T ${Number(p.temperature).toFixed(2)}</span></span></summary><div class="assistant-config-body"><div class="assistant-config-head"><strong>独立助手模型</strong><span class="tag">正文模型不受影响</span></div><label class="form-label">Model（模型）</label><div class="inline-field-row"><select id="assistant-model-select" class="field" onchange="MimaAssistantStudio.selectModel(this.value)"><option value="">${p.model?esc(p.model):`沿用当前名称：${esc(storyCfg.model||'未选择')}`}</option>${cachedModels.map(m=>`<option value="${esc(m)}" ${m===p.model?'selected':''}>${esc(m)}</option>`).join('')}</select><button class="ghost-btn" onclick="MimaAssistantStudio.loadModels()">拉取模型</button></div><input id="assistant-model-manual" class="field" placeholder="也可以手动填写，例如 gpt-5.6-sol" value="${esc(p.model||'')}" onchange="MimaAssistantStudio.setProfileField('model',this.value)"><label class="form-label">Temperature（温度） <span id="assistant-temp-value" class="value-pill">${Number(p.temperature).toFixed(2)}</span></label><input class="temp-range" type="range" min="0.1" max="2" step="0.05" value="${Number(p.temperature)}" oninput="MimaAssistantStudio.setProfileField('temperature',this.value);document.getElementById('assistant-temp-value').textContent=Number(this.value).toFixed(2)"><label class="form-label">Assistant Max Tokens（助手独立最大输出，0=不发送限制）</label><input class="field" type="number" min="0" max="131072" step="256" value="${Number(p.maxTokens||0)}" onchange="MimaAssistantStudio.setProfileField('maxTokens',this.value)"><div class="row-sub">不会再继承正文的 Max Tokens。建议先保持 0；若中转站要求显式限制，可填 4096–8192。</div><label class="check-row"><input type="checkbox" ${p.stream?'checked':''} onchange="MimaAssistantStudio.setProfileField('stream',this.checked)"> 助手 Streaming（流式）</label><label class="check-row"><input type="checkbox" ${p.sendTemperature!==false?'checked':''} onchange="MimaAssistantStudio.setProfileField('sendTemperature',this.checked)"> 向助手模型发送 Temperature</label><details class="assistant-persona-details"><summary>Persona / 设计风格</summary><label class="form-label">助手 Persona</label><textarea class="field textarea" onchange="MimaAssistantStudio.setProfileField('persona',this.value)">${esc(p.persona||'')}</textarea><label class="form-label">设计风格</label><textarea class="field textarea" onchange="MimaAssistantStudio.setProfileField('style',this.value)">${esc(p.style||'')}</textarea></details><div class="row-sub">助手继承正文 API 的 Base URL / Key / Headers，但 <strong>Model、Temperature 与 Max Tokens 分开保存</strong>。正文的巨大输出上限不会再被助手请求继承。</div></div></details>`;}
 
-  function artifactButtons(detail,index){
+  function artifactButtons(detail,index,msg){
     const artifact=detail?.artifact||null;
     if(!artifact){
       if(!detail?.found)return'';
-      return `<div class="assistant-artifact-card assistant-artifact-error"><strong>⚠️ 检测到 MIMA 工件，但 JSON 没有成功解析</strong><div class="row-sub">工件原文仍完整保留在这条本地助手历史里，没有丢失。咪嘛馆不会再把“识别失败”静默伪装成“什么都没有”。</div><div class="assistant-artifact-error-detail">${esc(detail.error||'未知解析错误')}</div><div class="toolbar"><button class="primary-btn" onclick="MimaAssistantStudio.repairArtifact(${index})">🩹 修复此工件</button><button class="ghost-btn" onclick="MimaAssistantStudio.regenerate(${index})">↻ 让助手重做</button><button class="ghost-btn" onclick="MimaAssistantStudio.startEdit(${index})">编辑原文</button></div></div>`;
+      const attempts=Array.isArray(msg?.repairAttempts)?msg.repairAttempts:[];
+      const latest=attempts[attempts.length-1];
+      const attemptHtml=latest?`<details class="assistant-repair-attempt"><summary>查看最近 AI 修复结果 · ${latest.success?'成功':'未通过本地验收'}</summary><div class="row-sub">${esc(latest.time||'')} · ${esc(latest.model||'未知模型')}${latest.error?` · ${esc(latest.error)}`:''}</div><pre class="prompt-pre">${esc(latest.content||'(空回复)')}</pre></details>`:'';
+      const heading=detail.protocol==='v2'?'⚠️ 检测到 MIMA V2 工件，但结构没有成功解析':'⚠️ 检测到 MIMA 工件，但 JSON 没有成功解析';
+      return `<div class="assistant-artifact-card assistant-artifact-error"><strong>${heading}</strong><div class="row-sub">已经先执行本地安全解析/自愈（免费），仍无法确定结构。原工件完整保留，不会写入半残正则。</div><div class="assistant-artifact-error-detail">${esc(detail.error||'未知解析错误')}</div><div class="assistant-artifact-billing-note">✨ AI 救援修复会真实调用当前助手模型，可能产生 API 费用；不会自动重试第二次。</div><div class="toolbar"><button class="primary-btn" onclick="MimaAssistantStudio.repairArtifact(${index})" title="🩹 修复此工件">✨ AI 救援修复（会计费）</button><button class="ghost-btn" onclick="MimaAssistantStudio.regenerate(${index})">↻ 让助手重做</button><button class="ghost-btn" onclick="MimaAssistantStudio.startEdit(${index})">编辑原文</button></div>${attemptHtml}</div>`;
     }
+    const protocol=detail?.protocol==='v2'?'<span class="tag">V2 Zero-Escape</span>':'<span class="tag">Legacy V1</span>';
     const repaired=detail?.repaired?`<span class="tag">${detail.repairLevel==='self_heal'?'已自愈 JSON':'已自动修复 JSON 格式'}</span>`:'';
-    if(artifact.kind==='regex_bundle')return `<div class="assistant-artifact-card"><div class="assistant-artifact-title"><strong>🧬 已识别 Regex Bundle</strong>${repaired}</div><div class="row-sub">包含配套预设 + 正则包，可一键保存并挂载到当前剧情。</div><div class="toolbar"><button class="primary-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'all')">一键保存 + 挂载</button><button class="ghost-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'regex')">只存正则</button><button class="ghost-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'preset')">只存预设</button></div><details><summary>查看工件 JSON</summary><pre class="prompt-pre">${esc(JSON.stringify(artifact,null,2))}</pre></details></div>`;
-    if(artifact.kind==='preset')return `<div class="assistant-artifact-card"><div class="assistant-artifact-title"><strong>🧩 已识别 Preset</strong>${repaired}</div><div class="toolbar"><button class="primary-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'preset')">保存并挂载预设</button></div><details><summary>查看工件 JSON</summary><pre class="prompt-pre">${esc(JSON.stringify(artifact,null,2))}</pre></details></div>`;
-    if(artifact.kind==='css_preset')return `<div class="assistant-artifact-card"><div class="assistant-artifact-title"><strong>🎨 已识别 CSS Preset</strong>${repaired}</div><div class="toolbar"><button class="primary-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'css')">保存并应用 CSS</button></div><details><summary>查看工件 JSON</summary><pre class="prompt-pre">${esc(JSON.stringify(artifact,null,2))}</pre></details></div>`;
+    if(artifact.kind==='regex_bundle')return `<div class="assistant-artifact-card"><div class="assistant-artifact-title"><strong>🧬 已识别 Regex Bundle</strong>${protocol}${repaired}</div><div class="row-sub">包含配套预设 + 正则包，可一键保存并挂载到当前剧情。</div><div class="toolbar"><button class="primary-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'all')">一键保存 + 挂载</button><button class="ghost-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'regex')">只存正则</button><button class="ghost-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'preset')">只存预设</button></div><details><summary>查看解析后的 canonical 工件</summary><pre class="prompt-pre">${esc(JSON.stringify(artifact,null,2))}</pre></details></div>`;
+    if(artifact.kind==='preset')return `<div class="assistant-artifact-card"><div class="assistant-artifact-title"><strong>🧩 已识别 Preset</strong>${protocol}${repaired}</div><div class="toolbar"><button class="primary-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'preset')">保存并挂载预设</button></div><details><summary>查看解析后的 canonical 工件</summary><pre class="prompt-pre">${esc(JSON.stringify(artifact,null,2))}</pre></details></div>`;
+    if(artifact.kind==='css_preset')return `<div class="assistant-artifact-card"><div class="assistant-artifact-title"><strong>🎨 已识别 CSS Preset</strong>${protocol}${repaired}</div><div class="toolbar"><button class="primary-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'css')">保存并应用 CSS</button></div><details><summary>查看解析后的 canonical 工件</summary><pre class="prompt-pre">${esc(JSON.stringify(artifact,null,2))}</pre></details></div>`;
     return `<div class="assistant-artifact-card assistant-artifact-error"><strong>⚠️ 未支持的工件类型</strong><div class="row-sub">kind = ${esc(artifact.kind||'(empty)')}。原文未删除。</div></div>`;
   }
-
   function messagesHtml(){
     const items=thread();
-    let html=items.map((m,i)=>{const artifactDetail=m.role==='assistant'?parseArtifactDetailed(m.content):{found:false,artifact:null,error:'',repaired:false};const shown=m.role==='assistant'?visibleAssistantText(m.content):m.content;const editing=editingIndex===i;const actions=generating?'':`<span class="assistant-msg-actions">${m.role==='assistant'?`<button onclick="MimaAssistantStudio.regenerate(${i})">↻ 重说</button>`:''}<button onclick="MimaAssistantStudio.startEdit(${i})">编辑</button><button class="danger" onclick="MimaAssistantStudio.deleteMessage(${i})">删除</button></span>`;const body=editing?`<div class="assistant-history-editor"><textarea id="assistant-edit-${i}" class="field textarea">${esc(m.content)}</textarea><div class="assistant-history-edit-actions"><button class="ghost-btn" onclick="MimaAssistantStudio.cancelEdit()">取消</button><button class="primary-btn" onclick="MimaAssistantStudio.saveEdit(${i})">保存编辑</button></div><div class="row-sub">只修改本地助手历史，不会自动调用模型，也不会删除已经保存的预设 / 正则 / CSS。</div></div>`:`<div class="assistant-chat-text">${esc(shown).replace(/\n/g,'<br>')}</div>${artifactButtons(artifactDetail,i)}`;let card=`<article class="assistant-chat-msg ${m.role==='user'?'assistant-chat-user':'assistant-chat-ai'}"><div class="assistant-chat-meta"><span>${m.role==='user'?'你':META[activeType].title} · ${formatTime(m.time)}${m.editedAt?' · 已编辑':''}</span>${actions}</div>${body}</article>`;if(generating&&(generationMode==='regenerate'||generationMode==='repair')&&regeneratingIndex===i)card+=`<article class="assistant-chat-msg assistant-chat-ai assistant-chat-streaming"><div class="assistant-chat-meta"><span>${META[activeType].title} · ${generationMode==='repair'?'正在修复工件':'正在重说'}</span></div><div class="assistant-chat-text">${esc(visibleAssistantText(draftAssistantText)||'…').replace(/\n/g,'<br>')}</div></article>`;return card}).join('');
+    let html=items.map((m,i)=>{const artifactDetail=m.role==='assistant'?parseArtifactDetailed(m.content):{found:false,artifact:null,error:'',repaired:false};const shown=m.role==='assistant'?visibleAssistantText(m.content):m.content;const editing=editingIndex===i;const actions=generating?'':`<span class="assistant-msg-actions">${m.role==='assistant'?`<button onclick="MimaAssistantStudio.regenerate(${i})">↻ 重说</button>`:''}<button onclick="MimaAssistantStudio.startEdit(${i})">编辑</button><button class="danger" onclick="MimaAssistantStudio.deleteMessage(${i})">删除</button></span>`;const body=editing?`<div class="assistant-history-editor"><textarea id="assistant-edit-${i}" class="field textarea">${esc(m.content)}</textarea><div class="assistant-history-edit-actions"><button class="ghost-btn" onclick="MimaAssistantStudio.cancelEdit()">取消</button><button class="primary-btn" onclick="MimaAssistantStudio.saveEdit(${i})">保存编辑</button></div><div class="row-sub">只修改本地助手历史，不会自动调用模型，也不会删除已经保存的预设 / 正则 / CSS。</div></div>`:`<div class="assistant-chat-text">${esc(shown).replace(/\n/g,'<br>')}</div>${artifactButtons(artifactDetail,i,m)}`;let card=`<article class="assistant-chat-msg ${m.role==='user'?'assistant-chat-user':'assistant-chat-ai'}"><div class="assistant-chat-meta"><span>${m.role==='user'?'你':META[activeType].title} · ${formatTime(m.time)}${m.editedAt?' · 已编辑':''}</span>${actions}</div>${body}</article>`;if(generating&&(generationMode==='regenerate'||generationMode==='repair')&&regeneratingIndex===i)card+=`<article class="assistant-chat-msg assistant-chat-ai assistant-chat-streaming"><div class="assistant-chat-meta"><span>${META[activeType].title} · ${generationMode==='repair'?'正在修复工件':'正在重说'}</span></div><div class="assistant-chat-text">${esc(visibleAssistantText(draftAssistantText)||'…').replace(/\n/g,'<br>')}</div></article>`;return card}).join('');
     if(generating&&generationMode==='send'){html+=`<article class="assistant-chat-msg assistant-chat-ai assistant-chat-streaming"><div class="assistant-chat-meta"><span>${META[activeType].title} · 正在生成</span></div><div class="assistant-chat-text">${esc(visibleAssistantText(draftAssistantText)||'…').replace(/\n/g,'<br>')}</div></article>`;}
     if(!html)html='<div class="assistant-empty"><div class="empty-icon">'+META[activeType].icon+'</div><strong>'+META[activeType].title+'已就位</strong><p>它有独立模型、温度、Persona 与聊天记录。你可以把素材直接贴进下面的大输入框。</p></div>';
     return html;
@@ -305,25 +370,40 @@
   async function repairArtifact(index){
     if(generating)return;
     const items=thread();index=Number(index);const target=items[index];if(!target||target.role!=='assistant')return notify('没有找到要修复的助手工件。');
-    const extracted=extractArtifactCandidate(target.content);if(!extracted.found)return notify('这条回复没有 MIMA 工件标记。');
+    const detailBefore=parseArtifactDetailed(target.content);if(!detailBefore.found)return notify('这条回复没有 MIMA 工件标记。');
+    if(detailBefore.artifact)return notify('这条工件已经能被本地解析，不需要再调用 AI 修复。');
+    if(typeof confirm==='function'&&!confirm('AI 救援修复会真实调用当前助手模型并可能产生 API 费用。只调用一次，不会自动重试。继续吗？'))return;
+    const legacy=extractArtifactCandidate(target.content),v2=extractArtifactV2(target.content);
+    const originalBlock=v2.found?v2.full:(legacy.found?legacy.full:'');if(!originalBlock)return notify('没有找到可送修的完整工件块。');
     const p=profile(),storyCfg=window.MimaStandalone.getApiConfig();const model=(p.model||storyCfg.model||'').trim();if(!storyCfg.apiBase||!model)return notify('先配置 API，并给助手选择模型猫。');
-    const repairSystem=`你是 MIMA_ARTIFACT JSON 语法修复器。你只能修复 JSON 语法，绝对不得重写、删减、总结、优化或改变任何业务字段、pattern、replacement、HTML、CSS、提示词语义与数组顺序。禁止 eval/Function。输出且只输出一个 <MIMA_ARTIFACT>...</MIMA_ARTIFACT>，内部必须能被标准 JSON.parse 解析。\n\n${artifactJsonProtocol()}`;
-    const repairUser=`下面是原始工件。保持所有内容与顺序，只修 JSON 语法：\n\n<MIMA_ARTIFACT>\n${extracted.candidate}\n</MIMA_ARTIFACT>`;
+    const repairSystem=`你是 MIMA 工件“运输层救援器”。输入可能是坏掉的 Legacy JSON，也可能是不完整的 V2。你的唯一任务是：在不改变任何业务语义的前提下，把它重新封装成 MIMA_ARTIFACT_V2 Zero-Escape 格式。\n\n绝对禁止：删除规则、合并规则、改写 pattern、改写 replacement、改写 HTML/CSS、缩短 preset、改变字段顺序、重新设计内容。\n允许且必须做的只有：恢复明显的字符串边界/字段归属，并把大文本原样放进对应 CDATA。\n输出且只输出一个完整 <MIMA_ARTIFACT_V2 ...>...</MIMA_ARTIFACT_V2>，不要解释，不要 Markdown code fence，不要再输出 JSON。\n\n${artifactV2Protocol()}`;
+    const repairUser=`下面是原始工件。把它逐字段搬运到 V2；业务内容与规则顺序全部保持原样：\n\n${originalBlock}`;
     generating=true;generationMode='repair';regeneratingIndex=index;editingIndex=-1;draftAssistantText='';assistantFollowTail=true;render();controller=new AbortController();
-    const cfg={...storyCfg,model,temperature:p.temperature,stream:false,sendTemperature:p.sendTemperature!==false,maxTokens:Number(p.maxTokens)||0};
+    const repairTemp=Math.min(.2,Math.max(.1,Number(p.temperature)||.1));
+    const cfg={...storyCfg,model,temperature:repairTemp,stream:false,sendTemperature:p.sendTemperature!==false,maxTokens:Number(p.maxTokens)||0};
+    let reply='';
     try{
-      const reply=await window.MimaStandalone.callModelWithConfig([{role:'system',content:repairSystem},{role:'user',content:repairUser}],cfg,p.temperature,controller.signal,{streamOverride:false});
-      const detail=parseArtifactDetailed(reply);if(!detail.artifact)throw new Error(`修复模型返回的工件仍无法解析：${detail.error||'未知错误'}`);
-      const canonical=`<MIMA_ARTIFACT>\n${JSON.stringify(detail.artifact)}\n</MIMA_ARTIFACT>`;
+      reply=await window.MimaStandalone.callModelWithConfig([{role:'system',content:repairSystem},{role:'user',content:repairUser}],cfg,repairTemp,controller.signal,{streamOverride:false});
       const current=thread()[index];if(!current||current.role!=='assistant')throw new Error('历史位置已经变化，为避免覆盖错误消息，本次修复未写入。');
-      current.versions=Array.isArray(current.versions)?current.versions:[];current.versions.push({content:current.content,time:new Date().toISOString(),reason:'artifact_json_repair'});
-      current.content=String(current.content||'').replace(extracted.full,canonical);current.editedAt=new Date().toISOString();current.artifactRepairedAt=current.editedAt;
-      saveState();generating=false;generationMode='send';regeneratingIndex=-1;draftAssistantText='';controller=null;render();notify('工件 JSON 已修复并重新校验 ✨');
-    }catch(e){generating=false;generationMode='send';regeneratingIndex=-1;draftAssistantText='';controller=null;if(e?.name==='AbortError'){notify('工件修复已停止，原工件完整保留');render();return}notify(`修复工件失败：${e.message||e}；原工件完整保留。`);render();}
+      const parsed=parseArtifactDetailed(reply),repairAccepted=!!parsed.artifact&&parsed.protocol==='v2';
+      current.repairAttempts=Array.isArray(current.repairAttempts)?current.repairAttempts:[];
+      const repairError=repairAccepted?'':(parsed.artifact?'AI 返回了 Legacy V1，而不是要求的 V2 Zero-Escape 工件':(parsed.error||'AI 返回的 V2 工件仍无法解析'));
+      const attempt={time:new Date().toISOString(),model,content:reply,success:repairAccepted,error:repairError};
+      current.repairAttempts.push(attempt);if(current.repairAttempts.length>5)current.repairAttempts=current.repairAttempts.slice(-5);
+      if(!repairAccepted){saveState();throw new Error(`AI 已返回内容并完成计费，但本地验收未通过：${repairError}。修复结果已保存，可展开查看；不会自动再次调用模型。`)}
+      const repairedV2=extractArtifactV2(reply);if(!repairedV2.found)throw new Error('AI 修复结果通过解析，但没有可保存的 V2 原始块。');
+      current.versions=Array.isArray(current.versions)?current.versions:[];current.versions.push({content:current.content,time:new Date().toISOString(),reason:'artifact_v2_ai_rescue'});
+      current.content=String(current.content||'').replace(originalBlock,repairedV2.full);current.editedAt=new Date().toISOString();current.artifactRepairedAt=current.editedAt;current.artifactProtocol='v2';
+      saveState();generating=false;generationMode='send';regeneratingIndex=-1;draftAssistantText='';controller=null;render();notify('工件已转换为 V2 Zero-Escape，并通过本地校验 ✨');
+    }catch(e){
+      const current=thread()[index];if(reply&&current&&current.role==='assistant'&&!(current.repairAttempts||[]).some(a=>a.content===reply)){
+        current.repairAttempts=Array.isArray(current.repairAttempts)?current.repairAttempts:[];current.repairAttempts.push({time:new Date().toISOString(),model,content:reply,success:false,error:e?.message||String(e)});current.repairAttempts=current.repairAttempts.slice(-5);saveState();
+      }
+      generating=false;generationMode='send';regeneratingIndex=-1;draftAssistantText='';controller=null;if(e?.name==='AbortError'){notify('AI 救援修复已停止，原工件完整保留');render();return}notify(`修复工件失败：${e.message||e}；原工件完整保留。`);render();
+    }
   }
-
   async function saveArtifact(index,mode){
-    const msg=thread()[index];const detail=parseArtifactDetailed(msg?.content);const artifact=detail.artifact;if(!artifact)return notify(detail.found?`检测到工件标记，但 JSON 解析失败：${detail.error}`:'这条消息里没有可保存的结构化工件。');
+    const msg=thread()[index];const detail=parseArtifactDetailed(msg?.content);const artifact=detail.artifact;if(!artifact)return notify(detail.found?`检测到工件标记，但工件解析失败：${detail.error}`:'这条消息里没有可保存的结构化工件。');
     const bridge=window.MimaTavernBridge,session=bridge?.getSession?.();
     try{
       if(artifact.kind==='regex_bundle'&&mode==='all'&&!artifact.preset?.content)throw new Error('工件缺少 preset.content，未写入任何新工件。');

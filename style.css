@@ -560,3 +560,31 @@ body::before{
 .cache-insight-card{margin:0 0 14px;padding:10px 12px;border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.56)}
 .cache-insight-card>strong{display:block;margin-bottom:4px}
 @media(max-width:620px){.prompt-stats{grid-template-columns:1fr 1fr}}
+
+/* ============================================================
+   v1.1.5 · ARTIFACT PROTOCOL V2 / AI REPAIR TRANSPARENCY
+   ============================================================ */
+.assistant-artifact-billing-note{
+  margin-top:8px;
+  padding:8px 10px;
+  border-radius:10px;
+  background:rgba(112,116,124,.055);
+  font-size:.68rem;
+  line-height:1.5;
+  color:var(--text-soft,#777);
+}
+.assistant-repair-attempt{
+  margin-top:10px;
+  padding-top:8px;
+  border-top:1px solid var(--line);
+}
+.assistant-repair-attempt>summary{
+  cursor:pointer;
+  font-size:.72rem;
+  color:var(--text-soft,#777);
+}
+.assistant-repair-attempt .prompt-pre{
+  max-height:280px;
+  overflow:auto;
+  -webkit-overflow-scrolling:touch;
+}
