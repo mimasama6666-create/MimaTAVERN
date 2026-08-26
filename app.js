@@ -147,9 +147,9 @@ function renderSessions() {
     const box=qs('session-list'); box.innerHTML='';
     if(!sessions.length){box.innerHTML='<div class="row-sub">还没有剧情。新建一个独立宇宙吧。</div>';return}
     sessions.forEach(s=>{
-        const div=document.createElement('button'); div.className=`session-item ${s.id===currentSessionId?'active':''}`;
-        div.innerHTML=`<div class="session-name">${escapeHtml(s.title)}</div><div class="session-meta">${escapeHtml(canonLabel(s.canonLevel||'alternate'))} · ${s.messageCount||0} 条 · 📚 ${(s.worldbookIds||[]).length}</div>`;
-        div.onclick=()=>openSession(s.id,true); box.appendChild(div);
+        const div=document.createElement('div'); div.className=`session-item ${s.id===currentSessionId?'active':''}`;div.setAttribute('role','button');div.tabIndex=0;
+        div.innerHTML=`<div class="session-item-main"><div class="session-name">${escapeHtml(s.title)}</div><div class="session-meta">${escapeHtml(canonLabel(s.canonLevel||'alternate'))} · ${s.messageCount||0} 条 · 📚 ${(s.worldbookIds||[]).length}</div></div><div class="session-item-actions"><button class="session-mini-btn" onclick="event.stopPropagation();openSessionHistoryEditor('${s.id}')">编辑</button><button class="session-mini-btn danger" onclick="event.stopPropagation();deleteSessionFromHistory('${s.id}')">删除</button></div>`;
+        div.onclick=()=>openSession(s.id,true);div.onkeydown=e=>{if(e.target===div&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openSession(s.id,true)}}; box.appendChild(div);
     });
 }
 async function createSession(){
@@ -171,6 +171,9 @@ async function patchCurrent(patch, quiet=false){
 }
 async function refreshSessionSummaryList(){const s=await fetchStory('/sessions');sessions=s.data||sessions;renderSessions()}
 async function deleteCurrentSession(){if(!currentSessionId||!confirm('确定删除这个剧情 Session（剧情会话）？此操作不可撤销。'))return;await fetchStory(`/sessions/${currentSessionId}`,'DELETE');currentSessionId=null;currentSessionData=null;closeSettings();await loadAll();}
+function openSessionHistoryEditor(id){const old=sessions.find(x=>x.id===id);if(!old)return;editorState={type:'session-history',id,old};qs('editor-title').textContent='编辑历史剧情';qs('editor-eyebrow').textContent='STORY HISTORY（历史剧情）';qs('editor-body').innerHTML=`<label class="form-label">剧情标题</label><input id="session-history-title" class="field" value="${escapeHtml(old.title||'')}"><p class="helper">这里只修改剧情标题，不会改动剧情消息、角色、世界书、预设、正则或其他存档内容。</p>`;setupEditorButtons(()=>deleteSessionFromHistory(id),saveSessionHistoryEditor);qs('editor-modal').classList.remove('hidden')}
+async function saveSessionHistoryEditor(){const id=editorState?.id;if(!id)return;const old=sessions.find(x=>x.id===id);const title=qs('session-history-title').value.trim()||old?.title||'未命名咪嘛宇宙';const res=await fetchStory(`/sessions/${id}`,'PATCH',{title});if(!res.success)return toast(res.msg||'剧情标题保存失败');closeEditor();await loadAll();toast('历史剧情标题已保存')}
+async function deleteSessionFromHistory(id){const old=sessions.find(x=>x.id===id);if(!old)return;if(!confirm(`确定删除「${old.title||'未命名咪嘛宇宙'}」？\n\n这会删除该剧情会话与其中的消息，操作不可撤销；角色卡、世界书、预设、正则和 CSS 库不会一起删除。`))return;const res=await fetchStory(`/sessions/${id}`,'DELETE');if(!res.success)return toast(res.msg||'删除剧情失败');if(currentSessionId===id){currentSessionId=null;currentSessionData=null;}if(editorState?.type==='session-history'&&editorState.id===id)closeEditor();await loadAll();toast('历史剧情已删除')}
 function exportCurrentSession(){if(currentSessionData)downloadJson(`${currentSessionData.title||'咪嘛馆剧情'}.mimamao-story.json`,currentSessionData)}
 function chooseSessionImport(){qs('session-file-input').value='';qs('session-file-input').click()}
 async function importSessionFile(file){if(!file)return;try{const raw=JSON.parse(await file.text());const source=raw.data||raw;const res=await fetchStory('/sessions/import','POST',source);if(!res.success)throw new Error(res.msg||'导入失败');await loadAll();await openSession(res.data.id,true);toast(`已导入剧情 ${res.data.title}`)}catch(e){toast(`剧情导入失败：${e.message}`)}}

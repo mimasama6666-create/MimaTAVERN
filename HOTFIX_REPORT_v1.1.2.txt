@@ -1,0 +1,93 @@
+MIMAMAO TAVERN · v1.1.2
+ASSISTANT HISTORY / SESSION HISTORY / COMPACT MODEL PANEL HOTFIX
+Date: 2026-08-26
+Baseline: MimaTAVERN-main-v1.1.1-FULL
+
+施工原则
+- 以 v1.1.1 当前真实源码为唯一母体。
+- 增量补丁；未重写 Store / Runtime / Regex / Prompt / Streaming / Preset / CSS / Font / API 基础设施。
+- 旧功能与旧数据继续保留；不做顺手 cleanup/refactor。
+
+本轮完成
+
+1. 历史剧情列表：编辑 / 删除
+- 左侧“咪嘛馆”历史剧情卡片新增“编辑”“删除”。
+- 编辑只 PATCH 当前剧情标题，不改剧情消息、角色、世界书、预设、正则、CSS 等内容。
+- 删除只删除目标 Session；若删除当前 Session，会安全清空当前指针并重新载入剩余剧情。
+- 删除前二次确认，并明确角色卡/世界书/预设/正则/CSS 库不会随 Session 删除。
+- 原点击整个卡片打开剧情的入口继续保留，同时保留键盘 Enter / Space 打开能力。
+
+2. 助手历史消息：逐条编辑 / 删除
+- 正则助手、预设助手、CSS 助手的每条本地历史消息均有“编辑 / 删除”。
+- 编辑为原位文本编辑；保存只改本地助手历史，不自动请求模型。
+- 删除只删这一条助手历史，不删除已经保存出的 Regex / Preset / CSS 工件。
+- 若是快捷任务 User 消息，v1.1.2 起会保存 requestContent / quickMode 元数据；以后编辑后重说时可重新构造真实快捷任务 Prompt。
+- v1.1.1 及更早的历史数据不要求迁移；缺少新元数据时继续按原 content 工作。
+
+3. 助手模型设置改为折叠面板
+- 原占据大量移动端空间的独立模型设置改为 <details> 折叠卡。
+- 旧数据首次进入 v1.1.2 时默认折叠。
+- 折叠标题直接显示当前助手模型 + Temperature，平时不展开也能确认配置。
+- 展开/折叠状态写入原 MIMAMAO_TAVERN_ASSISTANT_STUDIO_V1 的 additive ui.configOpen 字段。
+- Model / Temperature / Assistant Max Tokens / Streaming / Persona / Style 原能力全部保留。
+
+4. 助手“重说”
+- Composer 增加“↻ 重说上一条”。
+- 每条 Assistant 历史回复旁也提供“↻ 重说”。
+- 重说使用助手自己当前的 Model / Temperature / Max Tokens / Streaming，不影响正文模型。
+- 重说使用目标回复之前的助手历史重新请求，并“原位替换”目标 Assistant 消息，不追加重复消息。
+- 生成期间原回复先保留；只有新回复成功返回才替换。
+- Abort / API 失败 / billing 拒绝时原回复继续保留，避免失败导致历史丢失。
+
+缓存更新
+- style.css?v=1.1.2
+- app.js?v=1.1.2
+- assistant-studio.js?v=1.1.2
+
+修改文件
+- app.js
+- assistant-studio.js
+- style.css
+- index.html
+- tests/smoke-v1.1.1.js（仅更新 cache-version 回归断言以允许 v1.1.2）
+- tests/smoke-v1.1.2.js（新增）
+- tests/smoke-session-history-v1.1.2.js（新增）
+- HOTFIX_REPORT_v1.1.2.txt（新增）
+
+未触碰的成熟器官
+- standalone-core.js
+- local-store.js
+- regex-engine.js
+- font-manager.js
+- 两份 Standalone 使用手册 DOCX
+- 原 v1.1.0 / v1.1.1 施工报告
+
+测试
+1. node --check：全部项目 JS + tests JS 通过。
+2. tests/smoke-v1.1.0.js：PASS
+   - v2→v3 additive migration
+   - Regex fail-closed / display token-saving
+   - multiline input
+   - real SSE story streaming
+3. tests/smoke-v1.1.1.js：PASS
+   - Assistant Max Tokens 与正文隔离
+4. tests/smoke-v1.1.2.js：PASS
+   - legacy assistant local state 默认折叠
+   - config fold state 持久化
+   - assistant history edit
+   - quick request 重建
+   - regenerate 原位替换、不追加
+   - delete 单条助手历史
+5. tests/smoke-session-history-v1.1.2.js：PASS
+   - Session rename 保留剧情消息
+   - Session delete 只删除目标 Session
+   - Character / Preset / Worldbook / CSS library 不被连带删除
+
+数据安全
+- 本轮没有 schema reset。
+- 没有空 Store 覆盖路径。
+- 没有修改导入/备份真源语义。
+- Session rename = PATCH 原 Session。
+- Session delete = 用户明确点击 + 二次确认后才 DELETE。
+- Assistant history delete/edit 仅作用于助手 localStorage thread；不自动删除任何已落盘工件。
+- Assistant regenerate 采用“成功后替换”，失败不销毁旧回复。
