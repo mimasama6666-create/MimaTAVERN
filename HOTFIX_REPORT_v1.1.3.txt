@@ -1,0 +1,51 @@
+MIMAMAO Tavern v1.1.3 · Assistant Artifact Import Visibility Hotfix
+Date: 2026-08-26
+Baseline: v1.1.2 FULL
+
+ROOT CAUSE
+- v1.1.2 had two independent paths:
+  1) parseArtifact() attempted JSON.parse() and silently returned null on any malformed JSON.
+  2) visibleAssistantText() always hid <MIMA_ARTIFACT>...</MIMA_ARTIFACT> from the chat view.
+- Therefore a model reply with a recognizable MIMA_ARTIFACT marker but even a tiny JSON-format defect produced the worst possible UX:
+  * the raw artifact was hidden;
+  * the one-click artifact card was not rendered;
+  * the parse exception was swallowed;
+  * the user saw only the explanation text and reasonably assumed manual import was required.
+
+PATCH (ADDITIVE ONLY)
+1. Added detailed artifact detection state: found / parsed / repaired / error.
+2. Added safe, code-first repair for common LLM JSON glitches only:
+   - UTF-8 BOM / NBSP outside formatting;
+   - accidental Markdown JSON fence wrapping;
+   - explanatory text surrounding the first/last JSON object braces;
+   - raw newline / CR / tab characters inside JSON strings;
+   - trailing commas before } or ].
+3. Successful repair still produces the original one-click save/mount controls and is visibly tagged “已自动修复 JSON 格式”.
+4. Irreparable artifacts now FAIL CLOSED:
+   - no preset/regex/CSS is saved;
+   - no old artifact is overwritten;
+   - a visible diagnostic card appears with the parse error;
+   - user can “重做工件” or edit the original local message.
+5. saveArtifact() now uses the same repaired parser and returns an explicit parse error instead of “没有工件”.
+6. Added inspectArtifact() diagnostic API for regression testing.
+7. Added cache-busting query parameter without modifying unrelated mature JS modules.
+
+UNCHANGED
+- standalone-core.js
+- local-store.js
+- regex-engine.js
+- font-manager.js
+- app.js
+- both existing DOCX manuals
+- existing session/preset/worldbook/CSS/regex stores and semantics
+
+REGRESSION
+PASS v1.1.0: migration + regex fail-closed/token-saving + multiline story input + real SSE story streaming
+PASS v1.1.1: assistant model isolation / maxTokens billing guard
+PASS v1.1.2: collapsed assistant model panel + edit/delete + in-place regenerate
+PASS v1.1.2 session history: rename/delete safety
+PASS v1.1.3: strict artifact parse + common JSON auto-repair + irreparable diagnostic fail-closed
+PASS node --check for all project/test JS files
+
+IMPORTANT
+The screenshot proves the prior UI fell into the “marker exists but parseArtifact() returned null” path. v1.1.2 swallowed the exact JSON.parse exception, so that historical build cannot tell us which specific character caused the failure after the fact. v1.1.3 intentionally surfaces that error instead of hiding it.

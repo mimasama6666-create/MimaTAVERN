@@ -44,14 +44,61 @@
   function notify(msg){if(typeof window.toast==='function')window.toast(msg);else console.log(msg);}
   function formatTime(v){try{return new Date(v).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false})}catch(_){return''}}
 
-  function parseArtifact(raw){
+  function extractArtifactCandidate(raw){
     const text=String(raw||'');
     const marker=text.match(/<MIMA_ARTIFACT>\s*([\s\S]*?)\s*<\/MIMA_ARTIFACT>/i);
-    if(marker){try{return JSON.parse(marker[1])}catch(_){return null}}
+    if(marker)return {found:true,source:'marker',candidate:marker[1],full:marker[0]};
     const fenced=text.match(/```json\s*([\s\S]*?)```/i);
-    if(fenced){try{const obj=JSON.parse(fenced[1]);if(obj?.kind)return obj}catch(_){}}
-    return null;
+    if(fenced)return {found:true,source:'fence',candidate:fenced[1],full:fenced[0]};
+    return {found:false,source:'',candidate:'',full:''};
   }
+  function escapeRawJsonControls(text){
+    let out='',inString=false,escaped=false;
+    for(let i=0;i<text.length;i++){
+      const ch=text[i];
+      if(inString){
+        if(escaped){out+=ch;escaped=false;continue}
+        if(ch==='\\'){out+=ch;escaped=true;continue}
+        if(ch==='"'){out+=ch;inString=false;continue}
+        if(ch==='\n'){out+='\\n';continue}
+        if(ch==='\r'){out+='\\r';continue}
+        if(ch==='\t'){out+='\\t';continue}
+        out+=ch;continue;
+      }
+      out+=ch;if(ch==='"')inString=true;
+    }
+    return out;
+  }
+  function removeTrailingJsonCommas(text){
+    let out='',inString=false,escaped=false;
+    for(let i=0;i<text.length;i++){
+      const ch=text[i];
+      if(inString){out+=ch;if(escaped){escaped=false;continue}if(ch==='\\'){escaped=true;continue}if(ch==='"')inString=false;continue}
+      if(ch==='"'){inString=true;out+=ch;continue}
+      if(ch===','){let j=i+1;while(j<text.length&&/\s/.test(text[j]))j++;if(text[j]==='}'||text[j]===']')continue}
+      out+=ch;
+    }
+    return out;
+  }
+  function normalizeArtifactJson(raw){
+    let text=String(raw||'').replace(/^\uFEFF/,'').replace(/\u00a0/g,' ').trim();
+    text=text.replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'').trim();
+    const first=text.indexOf('{'),last=text.lastIndexOf('}');if(first>=0&&last>first)text=text.slice(first,last+1);
+    text=escapeRawJsonControls(text);
+    text=removeTrailingJsonCommas(text);
+    return text.trim();
+  }
+  function parseArtifactDetailed(raw){
+    const extracted=extractArtifactCandidate(raw);if(!extracted.found)return {found:false,artifact:null,error:'',source:'',repaired:false};
+    const attempts=[{text:String(extracted.candidate||'').trim(),repaired:false},{text:normalizeArtifactJson(extracted.candidate),repaired:true}];
+    let lastError='';
+    for(const attempt of attempts){
+      if(!attempt.text)continue;
+      try{const obj=JSON.parse(attempt.text);if(obj?.kind)return {found:true,artifact:obj,error:'',source:extracted.source,repaired:attempt.repaired};lastError='JSON 已解析，但缺少 kind 字段。'}catch(e){lastError=e?.message||String(e)}
+    }
+    return {found:true,artifact:null,error:lastError||'无法解析工件 JSON。',source:extracted.source,repaired:false};
+  }
+  function parseArtifact(raw){return parseArtifactDetailed(raw).artifact;}
   function visibleAssistantText(raw){return String(raw||'').replace(/<MIMA_ARTIFACT>[\s\S]*?<\/MIMA_ARTIFACT>/ig,'').trim();}
 
   function baseSystem(type){
@@ -77,17 +124,22 @@
 
   function profileFormHtml(){const p=profile(),storyCfg=window.MimaStandalone?.getApiConfig?.()||{};const model=p.model||storyCfg.model||'未选择';return `<details class="assistant-config-card" ${state.ui.configOpen?'open':''} ontoggle="MimaAssistantStudio.setConfigOpen(this.open)"><summary class="assistant-config-summary"><span><strong>⚙ 助手模型设置</strong><span class="assistant-config-summary-model">${esc(model)} · T ${Number(p.temperature).toFixed(2)}</span></span></summary><div class="assistant-config-body"><div class="assistant-config-head"><strong>独立助手模型</strong><span class="tag">正文模型不受影响</span></div><label class="form-label">Model（模型）</label><div class="inline-field-row"><select id="assistant-model-select" class="field" onchange="MimaAssistantStudio.selectModel(this.value)"><option value="">${p.model?esc(p.model):`沿用当前名称：${esc(storyCfg.model||'未选择')}`}</option>${cachedModels.map(m=>`<option value="${esc(m)}" ${m===p.model?'selected':''}>${esc(m)}</option>`).join('')}</select><button class="ghost-btn" onclick="MimaAssistantStudio.loadModels()">拉取模型</button></div><input id="assistant-model-manual" class="field" placeholder="也可以手动填写，例如 gpt-5.6-sol" value="${esc(p.model||'')}" onchange="MimaAssistantStudio.setProfileField('model',this.value)"><label class="form-label">Temperature（温度） <span id="assistant-temp-value" class="value-pill">${Number(p.temperature).toFixed(2)}</span></label><input class="temp-range" type="range" min="0.1" max="2" step="0.05" value="${Number(p.temperature)}" oninput="MimaAssistantStudio.setProfileField('temperature',this.value);document.getElementById('assistant-temp-value').textContent=Number(this.value).toFixed(2)"><label class="form-label">Assistant Max Tokens（助手独立最大输出，0=不发送限制）</label><input class="field" type="number" min="0" max="131072" step="256" value="${Number(p.maxTokens||0)}" onchange="MimaAssistantStudio.setProfileField('maxTokens',this.value)"><div class="row-sub">不会再继承正文的 Max Tokens。建议先保持 0；若中转站要求显式限制，可填 4096–8192。</div><label class="check-row"><input type="checkbox" ${p.stream?'checked':''} onchange="MimaAssistantStudio.setProfileField('stream',this.checked)"> 助手 Streaming（流式）</label><label class="check-row"><input type="checkbox" ${p.sendTemperature!==false?'checked':''} onchange="MimaAssistantStudio.setProfileField('sendTemperature',this.checked)"> 向助手模型发送 Temperature</label><details class="assistant-persona-details"><summary>Persona / 设计风格</summary><label class="form-label">助手 Persona</label><textarea class="field textarea" onchange="MimaAssistantStudio.setProfileField('persona',this.value)">${esc(p.persona||'')}</textarea><label class="form-label">设计风格</label><textarea class="field textarea" onchange="MimaAssistantStudio.setProfileField('style',this.value)">${esc(p.style||'')}</textarea></details><div class="row-sub">助手继承正文 API 的 Base URL / Key / Headers，但 <strong>Model、Temperature 与 Max Tokens 分开保存</strong>。正文的巨大输出上限不会再被助手请求继承。</div></div></details>`;}
 
-  function artifactButtons(artifact,index){
-    if(!artifact)return'';
-    if(artifact.kind==='regex_bundle')return `<div class="assistant-artifact-card"><strong>🧬 已识别 Regex Bundle</strong><div class="row-sub">包含配套预设 + 正则包，可一键保存并挂载到当前剧情。</div><div class="toolbar"><button class="primary-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'all')">一键保存 + 挂载</button><button class="ghost-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'regex')">只存正则</button><button class="ghost-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'preset')">只存预设</button></div><details><summary>查看工件 JSON</summary><pre class="prompt-pre">${esc(JSON.stringify(artifact,null,2))}</pre></details></div>`;
-    if(artifact.kind==='preset')return `<div class="assistant-artifact-card"><strong>🧩 已识别 Preset</strong><div class="toolbar"><button class="primary-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'preset')">保存并挂载预设</button></div><details><summary>查看工件 JSON</summary><pre class="prompt-pre">${esc(JSON.stringify(artifact,null,2))}</pre></details></div>`;
-    if(artifact.kind==='css_preset')return `<div class="assistant-artifact-card"><strong>🎨 已识别 CSS Preset</strong><div class="toolbar"><button class="primary-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'css')">保存并应用 CSS</button></div><details><summary>查看工件 JSON</summary><pre class="prompt-pre">${esc(JSON.stringify(artifact,null,2))}</pre></details></div>`;
-    return'';
+  function artifactButtons(detail,index){
+    const artifact=detail?.artifact||null;
+    if(!artifact){
+      if(!detail?.found)return'';
+      return `<div class="assistant-artifact-card assistant-artifact-error"><strong>⚠️ 检测到 MIMA 工件，但 JSON 没有成功解析</strong><div class="row-sub">工件原文仍完整保留在这条本地助手历史里，没有丢失。咪嘛馆不会再把“识别失败”静默伪装成“什么都没有”。</div><div class="assistant-artifact-error-detail">${esc(detail.error||'未知解析错误')}</div><div class="toolbar"><button class="primary-btn" onclick="MimaAssistantStudio.regenerate(${index})">↻ 让助手重做工件</button><button class="ghost-btn" onclick="MimaAssistantStudio.startEdit(${index})">编辑原文</button></div></div>`;
+    }
+    const repaired=detail?.repaired?'<span class="tag">已自动修复 JSON 格式</span>':'';
+    if(artifact.kind==='regex_bundle')return `<div class="assistant-artifact-card"><div class="assistant-artifact-title"><strong>🧬 已识别 Regex Bundle</strong>${repaired}</div><div class="row-sub">包含配套预设 + 正则包，可一键保存并挂载到当前剧情。</div><div class="toolbar"><button class="primary-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'all')">一键保存 + 挂载</button><button class="ghost-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'regex')">只存正则</button><button class="ghost-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'preset')">只存预设</button></div><details><summary>查看工件 JSON</summary><pre class="prompt-pre">${esc(JSON.stringify(artifact,null,2))}</pre></details></div>`;
+    if(artifact.kind==='preset')return `<div class="assistant-artifact-card"><div class="assistant-artifact-title"><strong>🧩 已识别 Preset</strong>${repaired}</div><div class="toolbar"><button class="primary-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'preset')">保存并挂载预设</button></div><details><summary>查看工件 JSON</summary><pre class="prompt-pre">${esc(JSON.stringify(artifact,null,2))}</pre></details></div>`;
+    if(artifact.kind==='css_preset')return `<div class="assistant-artifact-card"><div class="assistant-artifact-title"><strong>🎨 已识别 CSS Preset</strong>${repaired}</div><div class="toolbar"><button class="primary-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'css')">保存并应用 CSS</button></div><details><summary>查看工件 JSON</summary><pre class="prompt-pre">${esc(JSON.stringify(artifact,null,2))}</pre></details></div>`;
+    return `<div class="assistant-artifact-card assistant-artifact-error"><strong>⚠️ 未支持的工件类型</strong><div class="row-sub">kind = ${esc(artifact.kind||'(empty)')}。原文未删除。</div></div>`;
   }
 
   function messagesHtml(){
     const items=thread();
-    let html=items.map((m,i)=>{const artifact=m.role==='assistant'?parseArtifact(m.content):null;const shown=m.role==='assistant'?visibleAssistantText(m.content):m.content;const editing=editingIndex===i;const actions=generating?'':`<span class="assistant-msg-actions">${m.role==='assistant'?`<button onclick="MimaAssistantStudio.regenerate(${i})">↻ 重说</button>`:''}<button onclick="MimaAssistantStudio.startEdit(${i})">编辑</button><button class="danger" onclick="MimaAssistantStudio.deleteMessage(${i})">删除</button></span>`;const body=editing?`<div class="assistant-history-editor"><textarea id="assistant-edit-${i}" class="field textarea">${esc(m.content)}</textarea><div class="assistant-history-edit-actions"><button class="ghost-btn" onclick="MimaAssistantStudio.cancelEdit()">取消</button><button class="primary-btn" onclick="MimaAssistantStudio.saveEdit(${i})">保存编辑</button></div><div class="row-sub">只修改本地助手历史，不会自动调用模型，也不会删除已经保存的预设 / 正则 / CSS。</div></div>`:`<div class="assistant-chat-text">${esc(shown).replace(/\n/g,'<br>')}</div>${artifactButtons(artifact,i)}`;let card=`<article class="assistant-chat-msg ${m.role==='user'?'assistant-chat-user':'assistant-chat-ai'}"><div class="assistant-chat-meta"><span>${m.role==='user'?'你':META[activeType].title} · ${formatTime(m.time)}${m.editedAt?' · 已编辑':''}</span>${actions}</div>${body}</article>`;if(generating&&generationMode==='regenerate'&&regeneratingIndex===i)card+=`<article class="assistant-chat-msg assistant-chat-ai assistant-chat-streaming"><div class="assistant-chat-meta"><span>${META[activeType].title} · 正在重说</span></div><div class="assistant-chat-text">${esc(visibleAssistantText(draftAssistantText)||'…').replace(/\n/g,'<br>')}</div></article>`;return card}).join('');
+    let html=items.map((m,i)=>{const artifactDetail=m.role==='assistant'?parseArtifactDetailed(m.content):{found:false,artifact:null,error:'',repaired:false};const shown=m.role==='assistant'?visibleAssistantText(m.content):m.content;const editing=editingIndex===i;const actions=generating?'':`<span class="assistant-msg-actions">${m.role==='assistant'?`<button onclick="MimaAssistantStudio.regenerate(${i})">↻ 重说</button>`:''}<button onclick="MimaAssistantStudio.startEdit(${i})">编辑</button><button class="danger" onclick="MimaAssistantStudio.deleteMessage(${i})">删除</button></span>`;const body=editing?`<div class="assistant-history-editor"><textarea id="assistant-edit-${i}" class="field textarea">${esc(m.content)}</textarea><div class="assistant-history-edit-actions"><button class="ghost-btn" onclick="MimaAssistantStudio.cancelEdit()">取消</button><button class="primary-btn" onclick="MimaAssistantStudio.saveEdit(${i})">保存编辑</button></div><div class="row-sub">只修改本地助手历史，不会自动调用模型，也不会删除已经保存的预设 / 正则 / CSS。</div></div>`:`<div class="assistant-chat-text">${esc(shown).replace(/\n/g,'<br>')}</div>${artifactButtons(artifactDetail,i)}`;let card=`<article class="assistant-chat-msg ${m.role==='user'?'assistant-chat-user':'assistant-chat-ai'}"><div class="assistant-chat-meta"><span>${m.role==='user'?'你':META[activeType].title} · ${formatTime(m.time)}${m.editedAt?' · 已编辑':''}</span>${actions}</div>${body}</article>`;if(generating&&generationMode==='regenerate'&&regeneratingIndex===i)card+=`<article class="assistant-chat-msg assistant-chat-ai assistant-chat-streaming"><div class="assistant-chat-meta"><span>${META[activeType].title} · 正在重说</span></div><div class="assistant-chat-text">${esc(visibleAssistantText(draftAssistantText)||'…').replace(/\n/g,'<br>')}</div></article>`;return card}).join('');
     if(generating&&generationMode==='send'){html+=`<article class="assistant-chat-msg assistant-chat-ai assistant-chat-streaming"><div class="assistant-chat-meta"><span>${META[activeType].title} · 正在生成</span></div><div class="assistant-chat-text">${esc(visibleAssistantText(draftAssistantText)||'…').replace(/\n/g,'<br>')}</div></article>`;}
     if(!html)html='<div class="assistant-empty"><div class="empty-icon">'+META[activeType].icon+'</div><strong>'+META[activeType].title+'已就位</strong><p>它有独立模型、温度、Persona 与聊天记录。你可以把素材直接贴进下面的大输入框。</p></div>';
     return html;
@@ -146,7 +198,7 @@
   }
 
   async function saveArtifact(index,mode){
-    const msg=thread()[index];const artifact=parseArtifact(msg?.content);if(!artifact)return notify('这条消息里没有可保存的结构化工件。');
+    const msg=thread()[index];const detail=parseArtifactDetailed(msg?.content);const artifact=detail.artifact;if(!artifact)return notify(detail.found?`检测到工件标记，但 JSON 解析失败：${detail.error}`:'这条消息里没有可保存的结构化工件。');
     const bridge=window.MimaTavernBridge,session=bridge?.getSession?.();
     try{
       if(artifact.kind==='regex_bundle'&&mode==='all'&&!artifact.preset?.content)throw new Error('工件缺少 preset.content，未写入任何新工件。');
@@ -170,5 +222,5 @@
     }catch(e){notify(`保存工件失败：${e.message||e}`)}
   }
 
-  window.MimaAssistantStudio={open,close,switchType,setQuickMode,setConfigOpen,setProfileField,selectModel,loadModels,clearThread,startEdit,cancelEdit,saveEdit,deleteMessage,stop,send,regenerate,saveArtifact,getState:()=>clone(state)};
+  window.MimaAssistantStudio={open,close,switchType,setQuickMode,setConfigOpen,setProfileField,selectModel,loadModels,clearThread,startEdit,cancelEdit,saveEdit,deleteMessage,stop,send,regenerate,saveArtifact,inspectArtifact:raw=>clone(parseArtifactDetailed(raw)),getState:()=>clone(state)};
 })();
