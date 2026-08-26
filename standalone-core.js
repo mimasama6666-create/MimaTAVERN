@@ -274,6 +274,7 @@
     if(code==='E_API_UNRECOGNIZED_RESPONSE')return '接口返回成功，但响应结构不是咪嘛馆可识别的 OpenAI-compatible 文本格式。可检查中转站是否使用了自定义响应结构。';
     if(code==='E_STREAM_PARSE')return '流式数据没有按 SSE/NDJSON 的常见格式返回，可能是中转站的流式兼容实现异常。可暂时关闭 Streaming（流式传输）再试。';
     if(status===400)return '请求参数不被接口接受。常见原因是模型名错误、该模型不支持 temperature / stream / max_tokens，或接口格式不兼容。';
+    if(status===402)return '上游/中转站计费网关拒绝了本次请求。余额非零也可能因为模型倍率、分组额度、预授权或请求的最大输出额度过高而被拒绝。';
     if(status===401)return 'API Key（密钥）无效、过期，或 Authorization 认证格式不被服务端接受。';
     if(status===403)return '服务端拒绝访问。可能是账号权限、来源限制、地区限制、模型权限或 CORS 策略。';
     if(status===404)return '请求端点或模型不存在。请重点检查 Base URL（基础地址）、Chat Endpoint（聊天端点）以及模型名。';

@@ -1,0 +1,24 @@
+MIMAMAO Tavern v1.1.1 · Assistant Billing Guard Hotfix
+
+Root cause found in v1.1.0:
+- Assistant Studio correctly kept Model / Temperature separate.
+- However cfg was built by spreading the story API config first, so story maxTokens was also inherited.
+- If the main story used a large Max Tokens value, the assistant request sent the same max_tokens to a different/more expensive model. Some relays pre-authorize against the requested maximum output and may answer with “用户余额不足” even when the account balance is non-zero.
+
+Fix (additive only):
+1. Added independent Assistant Max Tokens per assistant profile.
+2. Default is 0 = do not send max_tokens; this avoids inheriting the story output ceiling.
+3. The assistant request explicitly overrides storyCfg.maxTokens.
+4. Added clearer billing-error diagnostics; upstream billing errors never mutate local artifacts or story data.
+5. Added HTTP 402 billing hint to the shared API diagnostics.
+6. Bumped assistant-studio cache query to v1.1.1.
+
+Unchanged:
+- Story model/API behavior
+- Existing API Base URL / Key / Headers inheritance
+- Assistant independent Model / Temperature / Persona / Streaming
+- Regex engine, presets, CSS, session persistence, legacy routes
+
+Recommended assistant setting:
+- Assistant Max Tokens: 0 first.
+- If a relay requires an explicit cap, try 4096–8192.
