@@ -1,0 +1,131 @@
+MIMAMAO Tavern · v1.1.6
+PERSONA MACRO RESOLVER HOTFIX
+
+基线
+----
+唯一施工基线：MimaTAVERN-main-v1.1.5-FULL.zip
+本轮为增量 Hotfix；未重构成熟 Store / Regex / Assistant Studio / Font / CSS / 使用手册。
+
+问题
+----
+旧版虽然在 Preset / Regex / Persona 中允许书写 {{user}} / {{char}}，但 Core 没有真正的 Persona Macro Resolver。
+因此：
+1. {{user}} / {{char}} 可能原样进入模型 Prompt；
+2. Base System 长期使用 “User Persona / Character Persona / 不要替 User …” 等内部术语，容易让模型把 User 当人物姓名；
+3. display-phase Regex replacement 中的 {{user}} / {{char}} 不会在前端展开；
+4. Worldbook depth injection、Memory / Summary 材料也可能继续携带未解析占位符或内部 User/Character 标签。
+
+v1.1.6 施工
+--------------
+1. 新增 persona-macro-resolver.js Sidecar
+   - {{user}} -> 当前已挂载 User Persona 的 name
+   - {{char}} -> 当前已挂载 Character Persona 的 name
+   - 大小写与宏内部空格兼容，例如 {{USER}} / {{ char }}
+   - 未挂玩家 Persona 时 fail-soft 为“你”
+   - 未挂角色 Persona 时 fail-soft 为“角色”
+   - 只处理自然语言字符串；不触碰 API role、ID、Store key、schema、transport 字段。
+
+2. Prompt Assembler 接入 Macro Resolver
+   - Persona description/content/scenario/example dialogue
+   - Preset content
+   - Worldbook Front / Middle / Back
+   - Worldbook depth injection
+   - Pinned Facts
+   - Rolling Summary / Scene Summary / Relationship Summary
+   - Core Memory / Fact Memories
+   - User Notes / AI Notes / Director Note
+   - 最近剧情消息在 prompt-phase Regex 后再解析宏
+   均以“读取/组装时解析”的方式工作；源 Store 不做破坏性迁移。
+
+3. Base System 去除会教坏模型的自然语言 User/Character 称呼
+   - 改为“当前玩家 Persona / 当前角色 Persona”
+   - 明确当前玩家名与当前角色名
+   - 明确接口内部玩家消息角色标识只是 transport metadata，不是人物姓名
+   - 明确旧剧情中残留的英文接口称呼属于旧格式错误，只继承事实，不继承称呼
+   - 自动推进 / 导演注释改用解析后的玩家名
+
+4. Display Regex 接入 Macro Resolver
+   执行顺序：
+   raw assistant output
+   -> display Regex
+   -> Persona Macro Resolver
+   -> Safe HTML renderer
+   因此 replacement 中：
+   <span>{{user}}</span>
+   会真正显示当前玩家 Persona 名称，而不是 {{user}} 或 User。
+
+5. Memory summary 输入去内部角色标签
+   事实记忆 / 核心记忆所使用的剧情时间线改用实际 Persona name 标记双方，不再把自然语言材料写成 User： / Character：。
+   API 本身 role:'user' / role:'assistant' 仍保持 canonical，不做任何改名。
+
+6. UI 小型一致性修复
+   - 玩家消息 Header 无 Persona 时显示“你”，不再显示“你 / User（用户）”
+   - 角色 Header fallback 改为“角色”
+   - “User（用户）备注”显示文案改为“玩家备注”
+   - 编辑分支确认文案改为“玩家消息”
+   只改显示文字，不改机器 role。
+
+数据安全 / 兼容
+---------------
+- Schema Version 未改变。
+- 没有迁移或覆写既有 Preset / Worldbook / Persona / Memory / Regex 内容。
+- {{user}} / {{char}} 仍保留在源配置中，方便同一 Preset / Regex 跨 Persona 复用。
+- API messages 仍使用 canonical role:'user' / role:'assistant'。
+- Regex IDs / Store keys / Session IDs / Mask IDs 均未改变。
+- local-store.js 未修改。
+- regex-engine.js 未修改。
+- assistant-studio.js 未修改。
+- font-manager.js 未修改。
+- style.css 未修改。
+- 两份既有 DOCX 使用手册未修改。
+
+修改文件
+--------
+NEW  persona-macro-resolver.js
+MOD  standalone-core.js
+MOD  app.js
+MOD  index.html
+NEW  tests/smoke-v1.1.6.js
+NEW  HOTFIX_REPORT_v1.1.6.txt
+
+验证
+----
+1. JS syntax / node --check：PASS
+2. smoke-session-history-v1.1.2.js：PASS
+3. smoke-v1.1.0.js：PASS
+4. smoke-v1.1.1.js：PASS
+5. smoke-v1.1.2.js：PASS
+6. smoke-v1.1.3.js：PASS
+7. smoke-v1.1.4.js：PASS
+8. smoke-v1.1.5.js：PASS
+9. smoke-v1.1.5-repair.js：PASS
+10. smoke-v1.1.5-repair-failure.js：PASS
+11. smoke-v1.1.6.js：PASS
+
+v1.1.6 行为测试实际验证：
+- User Persona = 天束みま；Character Persona = 闻千屿
+- Persona 内 {{user}} / {{char}} 正确解析
+- Preset 内 {{user}} / {{char}} 正确解析
+- Front Worldbook 正确解析
+- Depth Worldbook 正确解析
+- Core Memory 正确解析
+- History prompt 正确解析
+- display Regex replacement 正确解析为 <div>天束みま / 闻千屿</div>
+- 最终 Prompt 不残留 {{user}} / {{char}}
+- Prompt Inspector 读取的就是解析后的最终 Prompt
+- Store 中原始 Preset / Worldbook / Regex replacement 仍保留 {{user}}，没有被改写
+- API canonical role:'user' / role:'assistant' 仍存在，没有被 Macro Resolver 污染
+- 无 Persona fallback：{{user}} / {{char}} -> 你 / 角色
+
+旧文件 byte-level SHA256 对照：PASS
+- local-store.js
+- regex-engine.js
+- font-manager.js
+- assistant-studio.js
+- style.css
+- 两份 DOCX 使用手册
+
+结论
+----
+v1.1.6 把 {{user}} / {{char}} 从“写在 Prompt 里的约定”升级为真正的运行时 Persona 宏。
+机器层 canonical identity 不变；自然语言 Prompt 与 display 层使用当前 Persona 名称。
