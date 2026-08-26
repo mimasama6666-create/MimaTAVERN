@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="theme-color" content="#dfe1e4">
     <title>咪嘛馆 · MIMAMAO Tavern（酒馆） · Standalone（独立版）</title>
-    <link rel="stylesheet" href="./style.css?v=1.0.9">
+    <link rel="stylesheet" href="./style.css?v=1.1.0">
 </head>
 <body>
 <div id="drawer-scrim" class="scrim hidden" onclick="closeDrawer()"></div>
@@ -34,6 +34,7 @@
             <div id="current-title" class="top-title">欢迎来到咪嘛馆</div>
         </div>
         <button class="icon-btn" onclick="openSettings('roles')" aria-label="角色设置">🤍</button>
+        <button class="icon-btn" onclick="MimaAssistantStudio.open('regex')" aria-label="咪嘛助手">✦</button>
         <button class="icon-btn" onclick="openSettings('worldbook')" aria-label="酒馆设置">⚙️</button>
     </header>
 
@@ -84,6 +85,7 @@
             <button data-tab="roles" onclick="switchSettingsTab('roles')">🤍 角色</button>
             <button data-tab="worldbook" onclick="switchSettingsTab('worldbook')">📚 世界书</button>
             <button data-tab="presets" onclick="switchSettingsTab('presets')">🧩 预设</button>
+            <button data-tab="regex" onclick="switchSettingsTab('regex')">🧬 正则</button>
             <button data-tab="context" onclick="switchSettingsTab('context')">🧠 Context（上下文）</button>
             <button data-tab="memory" onclick="switchSettingsTab('memory')">🗃️ 记忆</button>
             <button data-tab="appearance" onclick="switchSettingsTab('appearance')">🎨 外观</button>
@@ -112,6 +114,18 @@
     </div>
 </div>
 
+
+<!-- 咪嘛助手 · Regex / Preset / CSS Studio -->
+<div id="assistant-modal" class="modal hidden">
+    <div class="modal-panel assistant-studio-panel">
+        <div class="modal-head sticky-head assistant-studio-head">
+            <div><div class="eyebrow">MIMA ASSISTANT STUDIO（咪嘛助手工作室）</div><h2 id="assistant-studio-title">正则助手</h2></div>
+            <button class="icon-btn" onclick="MimaAssistantStudio.close()">✕</button>
+        </div>
+        <div id="assistant-studio-root" class="assistant-studio-root"></div>
+    </div>
+</div>
+
 <!-- 新剧情 -->
 <div id="new-session-modal" class="modal hidden">
     <div class="modal-panel compact-panel">
@@ -129,15 +143,18 @@
 <input id="session-file-input" class="hidden" type="file" accept=".json,application/json">
 <input id="persona-file-input" class="hidden" type="file" accept=".txt,.json,application/json,text/plain">
 <input id="worldbook-file-input" class="hidden" type="file" accept=".json,application/json">
+<input id="regex-file-input" class="hidden" type="file" accept=".json,application/json">
 <input id="font-file-input" class="hidden" type="file" accept=".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2">
 <input id="css-file-input" class="hidden" type="file" accept=".css,text/css">
 <input id="api-config-file-input" class="hidden" type="file" accept=".json,application/json">
 <input id="library-file-input" class="hidden" type="file" accept=".json,application/json">
 <input id="full-settings-file-input" class="hidden" type="file" accept=".json,application/json">
 
-<script src="./local-store.js?v=1.0.9"></script>
-<script src="./standalone-core.js?v=1.0.9"></script>
-<script src="./font-manager.js?v=1.0.9"></script>
-<script src="./app.js?v=1.0.9"></script>
+<script src="./local-store.js?v=1.1.0"></script>
+<script src="./regex-engine.js?v=1.1.0"></script>
+<script src="./standalone-core.js?v=1.1.0"></script>
+<script src="./font-manager.js?v=1.1.0"></script>
+<script src="./app.js?v=1.1.0"></script>
+<script src="./assistant-studio.js?v=1.1.0"></script>
 </body>
 </html>

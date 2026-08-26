@@ -1,0 +1,123 @@
+MIMAMAO Tavern Standalone v1.1.0
+Regex + Assistant Studio + Live Streaming · 增量施工报告
+=========================================================
+
+一、施工原则
+- 唯一母体：用户上传的 MimaTAVERN-main(2).zip 当前源码。
+- 保留原 Session / Persona / Worldbook / Preset / CSS / Memory / API / Safe HTML / Font / Backup 等入口与调用链。
+- 新功能以 Sidecar / Bridge / 新 Route / 新 Store 字段方式增加，不进行架构重写或“顺手清理”。
+- 数据 schema 从 v2 增量到 v3，仅新增 regexPacks / regexPackIds；旧字段不删除。
+
+二、施工蓝图与落地
+
+A. Composer UX Hotfix
+1. 有内容的主输入框：使用 has-content 状态类，覆盖旧酒红 focus 色为银白发光边框。
+2. 删除主输入框 Enter-to-send 监听。textarea 恢复原生 Enter 换行。
+3. 发送仍只由原 send 按钮调用 sendMsg()；原 sendMsg / triggerChat 调用链保留。
+4. 生成前的主人消息只显示临时 pending bubble，不伪造可编辑的持久消息工具栏。
+
+B. True Frontend Streaming
+1. 保留原 API streaming / SSE reader。
+2. Core 在每个有效 SSE delta 事件中额外上报 delta + streamText（当前累计完整文本）。
+3. app.js 增加临时 Assistant live-stream bubble，并将已到达的 streamText 以逐字/小步追赶方式显示。
+4. 生成完成后仍回到原 Session 持久化结果，不以临时流式气泡作为真源。
+5. 非 Streaming / JSON 响应路径不伪造 streamText，保持旧行为。
+
+C. Regex Engine DLC
+新增 regex-engine.js，不依赖 eval，不执行脚本，仅使用 JavaScript RegExp + String.replace。
+支持：
+- Regex Pack / Rule
+- enabled
+- priority
+- pattern / replacement / flags
+- display / prompt / input / output 四阶段
+- compile validation
+- 导入 / 导出
+- 即时测试
+- Session 挂载
+
+其中 display 阶段是省 Token 主路径：
+模型历史保存短协议，例如 <ST>动态字段</ST>；前端显示时再展开为完整 HTML。display 展开内容不会回灌到 Prompt。
+
+D. Assistant Studio DLC
+新增 assistant-studio.js，大型聊天式工作区，三个独立助手：
+- 正则助手
+- 预设助手
+- CSS 美化助手
+
+每个助手分别保存：
+- Model
+- Temperature
+- 是否发送 Temperature
+- Streaming
+- Persona
+- 设计风格
+- 独立聊天记录
+
+助手只复用正文 API 的 Base URL / API Key / Headers / Endpoint 连接层；正文 Model 与正文 Temperature 不会因助手选择而被修改。
+
+正则助手：
+- 快捷模式「HTML 状态栏 → 正则省 Token」
+- 生成 compact output protocol + format preset + display regex pack
+- 结构化工件必须为严格 JSON
+- 保存前 code-first 校验 RegExp
+- 一键保存 + 挂载预设与正则包
+
+预设助手：
+- 写文风 / 行为约束 / 输出格式 / model preset
+- 一键保存并挂载
+
+CSS 美化助手：
+- 生成纯 CSS Preset
+- 保留现有 scope 语义
+- 一键保存并应用
+
+E. Backup / Compatibility
+- library schemaVersion = 3
+- 原 v2 数据初始化时会被 normalize 为 v3，旧 Sessions / Masks / Presets / Worldbooks / CSS Presets 原样保留。
+- 完整设置备份加入 Assistant Studio 本地偏好与聊天记录。
+- 助手本地状态不额外复制/保存 API Key；Key 仍只存在原 API 配置位置。
+- Regex Packs 纳入完整资料备份。
+
+三、主要修改文件
+- app.js
+- index.html
+- local-store.js
+- standalone-core.js
+- style.css
+- README.txt
+
+新增：
+- regex-engine.js
+- assistant-studio.js
+- tests/smoke-v1.1.0.js
+
+未修改：
+- font-manager.js
+- 原两份使用手册 docx
+
+四、验收结果
+1. node --check：所有 JS 文件通过。
+2. git diff --check：通过，无 whitespace error。
+3. tests/smoke-v1.1.0.js：通过。
+   - v2 -> v3 增量数据迁移
+   - Regex Pack 保存与 Session 挂载
+   - display 正则展开
+   - display 展开 HTML 不回灌 Prompt（验证省 Token 路径）
+   - 非法 RegExp 保存 fail closed
+   - 模拟 SSE 两段增量回复，验证 streamText 依次可见并正确拼接最终正文
+4. Static UI invariants：通过。
+   - 主输入框无 Enter-to-send listener
+   - send 按钮仍为发送入口
+   - 有内容银白发光 selector 存在
+   - Regex / Preset / CSS 三个助手入口存在
+5. Assistant profile smoke：通过。
+   - 独立 Model / Temperature / sendTemperature 能独立持久化
+6. Static-server startup smoke：index.html / CSS / 所有 JS 资源均返回 HTTP 200。
+
+五、Streaming 边界说明
+咪嘛馆现在会立刻显示“浏览器实际收到”的 SSE chunk。如果某个中转站或上游模型本身把生成内容缓存到最后才一次性返回，则浏览器无法显示尚未从网络收到的文字；这属于上游 buffering，不是前端等待完整结果后才渲染。
+
+六、版本
+MIMAMAO Tavern Standalone 1.1.0
+Static asset cache: ?v=1.1.0

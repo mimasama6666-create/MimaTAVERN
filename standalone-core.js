@@ -7,7 +7,7 @@
   'use strict';
 
   const API_CONFIG_KEY = 'MIMAMAO_TAVERN_STANDALONE_API_V1';
-  let state = { schemaVersion: 2, sessions: [], masks: [], presets: [], worldbooks: [], cssPresets: [] };
+  let state = { schemaVersion: 3, sessions: [], masks: [], presets: [], worldbooks: [], cssPresets: [], regexPacks: [] };
 
   const nowIso = () => new Date().toISOString();
   const makeId = prefix => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
@@ -95,6 +95,7 @@
       promptSettings: normalizePromptSettings(s.promptSettings || {}),
       manualMemory: normalizeManualMemory(s.manualMemory || {}),
       customCssId: s.customCssId || null, customCssEnabled: s.customCssEnabled !== false,
+      regexPackIds: list(s.regexPackIds),
       renderMode: s.renderMode || 'text'
     };
   }
@@ -134,6 +135,13 @@
       maxChars: clampInt(e.maxChars, 0, 100000, 0), createdAt, updatedAt: e.updatedAt || createdAt };
   }
 
+
+  function normalizeRegexPack(p = {}) {
+    if (window.MimaRegexEngine?.normalizePack) return window.MimaRegexEngine.normalizePack(p);
+    const createdAt = p.createdAt || nowIso();
+    return { id:p.id||makeId('regexp'), name:text(p.name||'未命名正则包'), description:text(p.description), priority:Number.isFinite(Number(p.priority))?Number(p.priority):50, enabled:p.enabled!==false, rules:arr(p.rules), createdAt, updatedAt:p.updatedAt||createdAt };
+  }
+
   function normalizeWorldbook(w = {}) {
     const createdAt = w.createdAt || nowIso();
     return { id: w.id || makeId('wb'), name: text(w.name || '未命名世界书'), description: text(w.description),
@@ -143,9 +151,10 @@
 
   function normalizeState(raw = {}) {
     return {
-      schemaVersion: 2,
+      schemaVersion: 3,
       sessions: arr(raw.sessions).map(normalizeSession), masks: arr(raw.masks).map(normalizeMask),
-      presets: arr(raw.presets).map(normalizePreset), worldbooks: arr(raw.worldbooks).map(normalizeWorldbook), cssPresets: arr(raw.cssPresets).map(normalizeCssPreset)
+      presets: arr(raw.presets).map(normalizePreset), worldbooks: arr(raw.worldbooks).map(normalizeWorldbook), cssPresets: arr(raw.cssPresets).map(normalizeCssPreset),
+      regexPacks: arr(raw.regexPacks).map(normalizeRegexPack)
     };
   }
 
@@ -157,11 +166,12 @@
   function getPreset(id) { return state.presets.find(x => x.id === id); }
   function getWorldbook(id) { return state.worldbooks.find(x => x.id === id); }
   function getCssPreset(id) { return state.cssPresets.find(x => x.id === id); }
+  function getRegexPack(id) { return state.regexPacks.find(x => x.id === id); }
 
   function sessionSummaries() {
     return state.sessions.map(s => ({ id:s.id,title:s.title,mode:s.mode,canonLevel:s.canonLevel,status:s.status,updatedAt:s.updatedAt,
       createdAt:s.createdAt,messageCount:s.messages.length,presetIds:s.presetIds,worldbookIds:s.worldbookIds,
-      loadedUserMaskId:s.loadedUserMaskId,loadedCharMaskId:s.loadedCharMaskId }))
+      loadedUserMaskId:s.loadedUserMaskId,loadedCharMaskId:s.loadedCharMaskId,regexPackIds:s.regexPackIds }))
       .sort((a,b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
   }
 
@@ -175,10 +185,14 @@
   async function savePreset(p) { const n=normalizePreset({ ...p, updatedAt:nowIso() }); const i=state.presets.findIndex(x=>x.id===n.id); if(i>=0)state.presets[i]=n;else state.presets.push(n); await persist(); return n; }
   async function saveWorldbook(w) { const n=normalizeWorldbook({ ...w, updatedAt:nowIso() }); const i=state.worldbooks.findIndex(x=>x.id===n.id); if(i>=0)state.worldbooks[i]=n;else state.worldbooks.push(n); await persist(); return n; }
   async function saveCssPreset(p) { const n=normalizeCssPreset({ ...p, updatedAt:nowIso() }); const i=state.cssPresets.findIndex(x=>x.id===n.id); if(i>=0)state.cssPresets[i]=n;else state.cssPresets.push(n); await persist(); return n; }
+  async function saveRegexPack(p) { const checked=window.MimaRegexEngine?.validatePack?window.MimaRegexEngine.validatePack(p):{ok:true,pack:normalizeRegexPack(p),invalid:[]}; if(!checked.ok)throw new ApiError('E_REGEX_INVALID',`正则包含无效规则：${checked.invalid.map(x=>`${x.name}: ${x.error}`).join('；')}`,{hint:'请检查 Pattern（匹配式）与 Flags（标志）；无效规则不会被静默保存。'}); const n=normalizeRegexPack({ ...checked.pack, updatedAt:nowIso() }); const i=state.regexPacks.findIndex(x=>x.id===n.id); if(i>=0)state.regexPacks[i]=n;else state.regexPacks.push(n); await persist(); return n; }
 
   // ---------- Prompt Assembler ----------
   const asText = v => String(v || '').trim();
   const clip = (t,max=0) => { const s=asText(t); return max>0&&s.length>max ? `${s.slice(0,max)}\n[…已按条目预算截断…]` : s; };
+  function activeRegexPacks(session){return arr(session?.regexPackIds).map(getRegexPack).filter(p=>p&&p.enabled!==false).sort((a,b)=>Number(a.priority||50)-Number(b.priority||50));}
+  function applyRegexForSession(sessionOrId,input,phase='display',diagnostics=null){const session=typeof sessionOrId==='string'?getSession(sessionOrId):sessionOrId;if(!session||!window.MimaRegexEngine?.apply)return String(input??'');return window.MimaRegexEngine.apply(String(input??''),activeRegexPacks(session),phase,diagnostics);}
+  function messagePromptContent(m,session){return applyRegexForSession(session,m?.content||'', 'prompt');}
   function keywordMatches(hay, keyword, entry) {
     const k=String(keyword||'').trim(); if(!k)return false;
     if(entry.useRegex){ try{return new RegExp(k,entry.caseSensitive?'u':'iu').test(String(hay||''));}catch(_){return false;} }
@@ -235,10 +249,10 @@
     if(options.autoAdvance)add('auto_advance_rule','【自动推进要求】请在不替 User 做重大决定的前提下自然推进下一段剧情。可以写环境、动作、角色反应、氛围变化，但不要代替 User 说关键台词。');
     return {prompt:chunks.join('\n\n'),sections};
   }
-  function toHistoryMessage(m){if(!m?.content)return null;if(m.role==='assistant')return{role:'assistant',content:m.content};if(m.role==='user')return{role:'user',content:m.content};return{role:'user',content:`【${m.role}】${m.content}`};}
+  function toHistoryMessage(m,session){if(!m?.content)return null;const content=messagePromptContent(m,session);if(m.role==='assistant')return{role:'assistant',content};if(m.role==='user')return{role:'user',content};return{role:'user',content:`【${m.role}】${content}`};}
   function applyDepth(history,items){const result=history.slice(),debug=[];const sorted=items.slice().sort((a,b)=>Number(b.entry.depth||0)-Number(a.entry.depth||0)||Number(a.entry.priority||50)-Number(b.entry.priority||50));for(const item of sorted){const {book,entry}=item;const depth=Math.max(1,Number(entry.depth||1));const anchor=Math.max(0,result.length-depth);let index=anchor;if(entry.position==='front')index=Math.max(0,anchor-1);else if(entry.position==='back')index=Math.min(result.length,anchor+1);const content=`【Worldbook Context · ${book.name} / ${entry.name} · depth=${depth}】\n${clip(entry.content,entry.maxChars)}`;result.splice(index,0,{role:'user',content});debug.push({bookId:book.id,bookName:book.name,entryId:entry.id,entryName:entry.name,depth,position:entry.position,insertedAt:index,chars:content.length});}return{messages:result,debug};}
   function enforceBudget(matched,budget){let used=0;const kept=[],dropped=[];const sorted=matched.slice().sort((a,b)=>Number(a.entry.priority||50)-Number(b.entry.priority||50)||Number(a.entry.depth||0)-Number(b.entry.depth||0));for(const item of sorted){const cost=clip(item.entry.content,item.entry.maxChars).length;if(used+cost<=budget||!kept.length){kept.push(item);used+=cost}else dropped.push({...item,activation:{...item.activation,reason:'budget'}});}return{kept,dropped,used};}
-  function assemble(sessionInput,options={}){const session=normalizeSession(sessionInput);const activation=collectWorldbookEntries(session);const budget=Math.max(1000,Number(session.promptSettings?.worldbookBudgetChars||16000));const budgeted=enforceBudget(activation.matched,budget),matched=budgeted.kept;const sys=buildSystemPrompt(session,options,matched);const limit=Math.max(6,Number(session.promptSettings?.recentMessageLimit||34));const recent=session.messages.filter(m=>m.role!=='director').slice(-limit).map(toHistoryMessage).filter(Boolean);const depthApplied=applyDepth(recent,matched.filter(x=>Number(x.entry.depth||0)>0));const messages=[{role:'system',content:sys.prompt},...depthApplied.messages];return{messages,inspector:{systemChars:sys.prompt.length,recentMessageCount:recent.length,finalMessageCount:messages.length,worldbookBudgetChars:budget,worldbookUsedChars:budgeted.used,sections:sys.sections.map(({name,chars})=>({name,chars})),matchedWorldbookEntries:matched.map(({book,entry,activation:a})=>({bookId:book.id,bookName:book.name,entryId:entry.id,entryName:entry.name,depth:entry.depth,position:entry.position,priority:entry.priority,reason:a.reason,hits:a.hits||[],secondaryHits:a.secondaryHits||[]})),skippedWorldbookEntries:[...activation.skipped,...budgeted.dropped].map(({book,entry,activation:a})=>({bookId:book.id,bookName:book.name,entryId:entry.id,entryName:entry.name,reason:a.reason})),depthInjections:depthApplied.debug,systemPreview:sys.prompt,messagePreview:messages.map((m,index)=>({index,role:m.role,content:m.content}))}};}
+  function assemble(sessionInput,options={}){const session=normalizeSession(sessionInput);const activation=collectWorldbookEntries(session);const budget=Math.max(1000,Number(session.promptSettings?.worldbookBudgetChars||16000));const budgeted=enforceBudget(activation.matched,budget),matched=budgeted.kept;const sys=buildSystemPrompt(session,options,matched);const limit=Math.max(6,Number(session.promptSettings?.recentMessageLimit||34));const recent=session.messages.filter(m=>m.role!=='director').slice(-limit).map(m=>toHistoryMessage(m,session)).filter(Boolean);const depthApplied=applyDepth(recent,matched.filter(x=>Number(x.entry.depth||0)>0));const messages=[{role:'system',content:sys.prompt},...depthApplied.messages];return{messages,inspector:{systemChars:sys.prompt.length,recentMessageCount:recent.length,finalMessageCount:messages.length,worldbookBudgetChars:budget,worldbookUsedChars:budgeted.used,sections:sys.sections.map(({name,chars})=>({name,chars})),matchedWorldbookEntries:matched.map(({book,entry,activation:a})=>({bookId:book.id,bookName:book.name,entryId:entry.id,entryName:entry.name,depth:entry.depth,position:entry.position,priority:entry.priority,reason:a.reason,hits:a.hits||[],secondaryHits:a.secondaryHits||[]})),skippedWorldbookEntries:[...activation.skipped,...budgeted.dropped].map(({book,entry,activation:a})=>({bookId:book.id,bookName:book.name,entryId:entry.id,entryName:entry.name,reason:a.reason})),depthInjections:depthApplied.debug,systemPreview:sys.prompt,messagePreview:messages.map((m,index)=>({index,role:m.role,content:m.content}))}};}
 
   // ---------- API ----------
   // V1.0.2 patch: keep the old OpenAI-compatible route, but add strict empty-reply protection,
@@ -346,7 +360,7 @@
       const payloadText=raw.startsWith('data:')?raw.slice(5).trim():raw;
       if(!payloadText||payloadText==='[DONE]')return;
       let payload;try{payload=JSON.parse(payloadText)}catch(_){return;}
-      eventCount++;finalPayload=payload;const piece=extractStreamDelta(payload);if(piece){reply+=piece;emitProgress(onProgress,{phase:'streaming',percent:Math.min(90,58+Math.log10(reply.length+1)*12),receivedChars:reply.length,detail:`已接收 ${reply.length} 个字符`});}
+      eventCount++;finalPayload=payload;const piece=extractStreamDelta(payload);if(piece){reply+=piece;emitProgress(onProgress,{phase:'streaming',percent:Math.min(90,58+Math.log10(reply.length+1)*12),receivedChars:reply.length,delta:piece,streamText:reply,detail:`已接收 ${reply.length} 个字符`});}
     };
     while(true){const {done,value}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});const lines=buffer.split(/\r?\n/);buffer=lines.pop()||'';for(const line of lines)consumeLine(line);}
     buffer+=decoder.decode();if(buffer.trim())for(const line of buffer.split(/\r?\n/))consumeLine(line);
@@ -354,8 +368,8 @@
     if(!text(reply))throw new ApiError('E_API_EMPTY_REPLY','流式请求结束，但模型没有返回可见正文。',{status:res.status,details:`stream events: ${eventCount}`});
     return text(reply);
   }
-  async function callModel(messages,temperature=0.85,signal,options={}){
-    const cfg=getApiConfig();if(!cfg.model)throw new ApiError('E_API_CONFIG','还没有选择/填写 Model（模型）');const {chat}=buildEndpoints(cfg);
+  async function callModelWithConfig(messages,cfgInput,temperature=0.85,signal,options={}){
+    const cfg={...defaultApiConfig(),...(cfgInput||{})};if(!cfg.model)throw new ApiError('E_API_CONFIG','还没有选择/填写 Model（模型）');const {chat}=buildEndpoints(cfg);
     const streamEnabled=options.streamOverride===undefined?!!cfg.stream:!!options.streamOverride;
     const body={model:cfg.model,messages};if(streamEnabled)body.stream=true;if(cfg.sendTemperature!==false)body.temperature=clampTemp(temperature);if(Number(cfg.maxTokens)>0)body.max_tokens=Math.floor(Number(cfg.maxTokens));
     emitProgress(options.onProgress,{phase:'requesting',percent:42,detail:`正在请求 ${cfg.model}`});
@@ -374,12 +388,9 @@
     emitProgress(options.onProgress,{phase:'received',percent:90,receivedChars:reply.length,detail:`正文接收完成 · ${reply.length} 字符`});
     return reply;
   }
-  async function listModels(){
-    const cfg=getApiConfig(),{models}=buildEndpoints(cfg);let res;try{res=await fetch(models,{headers:apiHeaders(cfg)});}catch(e){throw asApiError(e,'E_MODELS_NETWORK');}
-    const data=await parseJsonResponse(res,'模型列表');const raw=arr(data?.data||data?.models||data);const modelsOut=raw.map(x=>typeof x==='string'?x:(x?.id||x?.name)).filter(Boolean).sort();
-    if(!modelsOut.length)throw new ApiError('E_MODELS_EMPTY','接口可访问，但没有返回可选择的模型。',{status:res.status,hint:'可能是模型列表端点不兼容、账号没有模型权限，或需要在 Models Endpoint（模型端点）中手动指定路径。'});
-    return modelsOut;
-  }
+  async function callModel(messages,temperature=0.85,signal,options={}){return callModelWithConfig(messages,getApiConfig(),temperature,signal,options);}
+  async function listModelsWithConfig(cfgInput){const cfg={...defaultApiConfig(),...(cfgInput||{})},{models}=buildEndpoints(cfg);let res;try{res=await fetch(models,{headers:apiHeaders(cfg)});}catch(e){throw asApiError(e,'E_MODELS_NETWORK');}const data=await parseJsonResponse(res,'模型列表');const raw=arr(data?.data||data?.models||data);const modelsOut=raw.map(x=>typeof x==='string'?x:(x?.id||x?.name)).filter(Boolean).sort();if(!modelsOut.length)throw new ApiError('E_MODELS_EMPTY','接口可访问，但没有返回可选择的模型。',{status:res.status,hint:'可能是模型列表端点不兼容、账号没有模型权限，或需要在 Models Endpoint（模型端点）中手动指定路径。'});return modelsOut;}
+  async function listModels(){return listModelsWithConfig(getApiConfig());}
   async function testApi(){const models=await listModels();return{ok:true,models,count:models.length};}
 
   // ---------- Story Engine ----------
@@ -537,7 +548,8 @@
     emitProgress(progress,{phase:'preparing',percent:8,detail:'正在整理本轮上下文…'});
     if(action==='send'){
       if(!String(userText||'').trim())throw new ApiError('E_STORY_EMPTY_INPUT','还没有输入内容猫！',{hint:'请输入动作、语言或剧情后再发送。'});
-      session.messages.push(makeMessage('user',userText,session,{source:'manual_send'}));
+      const originalUserText=String(userText||'');const transformedUserText=applyRegexForSession(session,originalUserText,'input');
+      const userMsg=makeMessage('user',transformedUserText,session,{source:'manual_send',regexInputApplied:transformedUserText!==originalUserText});userMsg.rawContent=originalUserText;session.messages.push(userMsg);
       session=await saveSession(session);
       emitProgress(progress,{phase:'saved_user',percent:14,detail:'主人消息已安全写入本地剧情。'});
     }
@@ -558,25 +570,27 @@
     const opts=actionOptions(promptAction,userText,options),built=assemble(session,opts),messages=built.messages.slice();
     actionTail(messages,promptAction,opts);
     emitProgress(progress,{phase:'prompt_ready',percent:34,detail:`Prompt（提示词）已组装 · ${messages.length} 条消息`});
-    const reply=await callModel(messages,temp,signal,{onProgress:progress});
+    const replyRaw=await callModel(messages,temp,signal,{onProgress:progress});
     // Hard invariant: never persist a blank assistant message.
-    if(!text(reply))throw new ApiError('E_API_EMPTY_REPLY','模型返回空白正文，已阻止写入剧情。');
+    if(!text(replyRaw))throw new ApiError('E_API_EMPTY_REPLY','模型返回空白正文，已阻止写入剧情。');
+    const reply=applyRegexForSession(session,replyRaw,'output');
+    const renderedReply=applyRegexForSession(session,reply,'display');
     emitProgress(progress,{phase:'saving',percent:95,detail:'正在保存角色回复…'});
     if(action==='continue'&&target){
-      const i=session.messages.findIndex(m=>m.id===target.id);archiveVersion(session.messages[i],'continue_before_append');session.messages[i].content=`${session.messages[i].content}\n${reply}`;session.messages[i].rawContent=session.messages[i].content;session.messages[i].metadata={...(session.messages[i].metadata||{}),continuedAt:nowIso()};session.messages[i].tokenEstimate=estimateTokens(session.messages[i].content);
+      const i=session.messages.findIndex(m=>m.id===target.id),previousContent=session.messages[i].content,previousRaw=session.messages[i].rawContent||previousContent;archiveVersion(session.messages[i],'continue_before_append');session.messages[i].content=`${previousContent}\n${reply}`;session.messages[i].rawContent=`${previousRaw}\n${replyRaw}`;session.messages[i].renderedContent=applyRegexForSession(session,session.messages[i].content,'display');session.messages[i].metadata={...(session.messages[i].metadata||{}),continuedAt:nowIso()};session.messages[i].tokenEstimate=estimateTokens(session.messages[i].content);
     }else if(action==='regenerate'&&target){
       const i=session.messages.findIndex(m=>m.id===target.id);
       if(i<0)throw new ApiError('E_STORY_REGEN_TARGET_MISSING','要重说的那条回复在保存前消失了，已阻止覆盖其他剧情。');
-      archiveVersion(session.messages[i],'regenerate');session.messages[i].content=reply;session.messages[i].rawContent=reply;session.messages[i].isEdited=false;session.messages[i].metadata={...(session.messages[i].metadata||{}),regeneratedAt:nowIso(),regeneratedTargetId:target.id};session.messages[i].tokenEstimate=estimateTokens(reply);
+      archiveVersion(session.messages[i],'regenerate');session.messages[i].content=reply;session.messages[i].rawContent=replyRaw;session.messages[i].renderedContent=renderedReply;session.messages[i].isEdited=false;session.messages[i].metadata={...(session.messages[i].metadata||{}),regeneratedAt:nowIso(),regeneratedTargetId:target.id};session.messages[i].tokenEstimate=estimateTokens(reply);
     }else{
-      session.messages.push(makeMessage('assistant',reply,session,action==='auto_advance'?{source:'auto_advance',directorNote:opts.directorNote}:{source:'model_reply'}));
+      const assistantMsg=makeMessage('assistant',reply,session,action==='auto_advance'?{source:'auto_advance',directorNote:opts.directorNote}:{source:'model_reply'});assistantMsg.rawContent=replyRaw;assistantMsg.renderedContent=renderedReply;session.messages.push(assistantMsg);
     }
     const saved=await saveSession(session);
     emitProgress(progress,{phase:'done',percent:100,detail:'剧情生成完成。'});
     return saved;
   }
-  async function editMessage(id,msgId,content,opts={}){const s=getSession(id);if(!s)throw new Error('未找到剧本');const i=s.messages.findIndex(m=>m.id===msgId);if(i<0)throw new Error('未找到消息');const msg=s.messages[i];archiveVersion(msg,'manual_edit');msg.content=String(content||'');msg.rawContent=msg.content;msg.isEdited=true;msg.editedAt=nowIso();msg.tokenEstimate=estimateTokens(msg.content);if(opts.truncateAfter){const removed=s.messages.slice(i+1);if(removed.length){s.archivedBranches=arr(s.archivedBranches);s.archivedBranches.push({id:makeId('branch'),fromMessageId:msg.id,reason:'edit_truncate_after',archivedAt:nowIso(),messages:removed});s.messages=s.messages.slice(0,i+1);}}return saveSession(s);}
-  async function addOpening(id,content){const s=getSession(id);if(!s)throw new Error('未找到剧本');if(!String(content||'').trim())throw new Error('开场白为空');s.messages.push(makeMessage('assistant',content,s,{source:'character_first_message'}));return saveSession(s);}
+  async function editMessage(id,msgId,content,opts={}){const s=getSession(id);if(!s)throw new Error('未找到剧本');const i=s.messages.findIndex(m=>m.id===msgId);if(i<0)throw new Error('未找到消息');const msg=s.messages[i];archiveVersion(msg,'manual_edit');msg.content=String(content||'');msg.rawContent=msg.content;msg.renderedContent=msg.role==='assistant'?applyRegexForSession(s,msg.content,'display'):msg.content;msg.isEdited=true;msg.editedAt=nowIso();msg.tokenEstimate=estimateTokens(msg.content);if(opts.truncateAfter){const removed=s.messages.slice(i+1);if(removed.length){s.archivedBranches=arr(s.archivedBranches);s.archivedBranches.push({id:makeId('branch'),fromMessageId:msg.id,reason:'edit_truncate_after',archivedAt:nowIso(),messages:removed});s.messages=s.messages.slice(0,i+1);}}return saveSession(s);}
+  async function addOpening(id,content){const s=getSession(id);if(!s)throw new Error('未找到剧本');if(!String(content||'').trim())throw new Error('开场白为空');const msg=makeMessage('assistant',content,s,{source:'character_first_message'});msg.renderedContent=applyRegexForSession(s,msg.content,'display');s.messages.push(msg);return saveSession(s);}
   function previewPrompt(id,opts={}){const s=getSession(id);if(!s)throw new Error('未找到剧本');const c=normalizeSession(clone(s));if(String(opts.draft||'').trim())c.messages.push(makeMessage('user',opts.draft,c,{source:'prompt_preview_draft'}));return assemble(c,{directorNote:opts.directorNote||''}).inspector;}
 
   // ---------- Local route compatibility ----------
@@ -618,6 +632,11 @@
       m=path.match(/^\/css-presets\/([^/]+)$/);if(m&&method==='PATCH'){const old=getCssPreset(m[1]);return old?ok(await saveCssPreset({...old,...body,id:m[1]})):fail('未找到 CSS Preset');}
       if(m&&method==='DELETE'){state.cssPresets=state.cssPresets.filter(x=>x.id!==m[1]);for(const sess of state.sessions){if(sess.customCssId===m[1]){sess.customCssId=null;sess.customCssEnabled=false;}}await persist();return ok({deleted:true});}
 
+      if(path==='/regex-packs'&&method==='GET')return ok(state.regexPacks);
+      if(path==='/regex-packs'&&method==='POST')return ok(await saveRegexPack(body||{}));
+      m=path.match(/^\/regex-packs\/([^/]+)$/);if(m&&method==='PATCH'){const old=getRegexPack(m[1]);return old?ok(await saveRegexPack({...old,...body,id:m[1]})):fail('未找到正则包');}
+      if(m&&method==='DELETE'){state.regexPacks=state.regexPacks.filter(x=>x.id!==m[1]);for(const sess of state.sessions)sess.regexPackIds=arr(sess.regexPackIds).filter(id=>id!==m[1]);await persist();return ok({deleted:true});}
+
       if(path==='/worldbooks'&&method==='GET')return ok(state.worldbooks);
       if(path==='/worldbooks'&&method==='POST')return ok(await saveWorldbook(body||{}));
       m=path.match(/^\/worldbooks\/([^/]+)$/);if(m&&method==='GET'){const w=getWorldbook(m[1]);return w?ok(w):fail('未找到世界书');}
@@ -634,5 +653,5 @@
   async function exportLibrary(){return clone(state);}
   async function importLibrary(raw){state=normalizeState(raw?.data||raw||{});await persist();return state;}
 
-  window.MimaStandalone={init,handle,getApiConfig,saveApiConfig,buildEndpoints,listModels,testApi,callModel,exportLibrary,importLibrary,assemble};
+  window.MimaStandalone={init,handle,getApiConfig,saveApiConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,applyRegexForSession,exportLibrary,importLibrary,assemble};
 })();

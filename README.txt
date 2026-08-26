@@ -9,12 +9,15 @@
 - Character Card / User Persona
 - Worldbook（Depth 0 = System 前/中/后；Depth > 0 = 历史深度注入）
 - Preset
+- Regex 正则包（display / prompt / input / output 四阶段）
+- 正则助手 / 预设助手 / CSS 美化助手（独立模型、温度、Persona 与聊天记录）
 - Prompt Inspector
 - Rolling Summary / Pinned Facts
 - 剧情编辑、分支、重说、续写、自动推进
 - Session 导入导出 / 本地资料备份
 - TTF / OTF / WOFF / WOFF2 本地字体库
 - OpenAI-compatible API 设置、模型拉取、测试连接
+- 真流式前端显示：Streaming 开启后边接收边显示正文
 
 使用方法：
 1. 最推荐：把整个文件夹作为静态站点上传到 Netlify / GitHub Pages / Cloudflare Pages 等，然后把链接分享给朋友。
@@ -43,11 +46,12 @@ API 配置 JSON（可选导入）示例：
 }
 
 数据位置：
-- 剧情 / Persona / 世界书 / Preset：IndexedDB（mimamao_tavern_standalone）
+- 剧情 / Persona / 世界书 / Preset / Regex 正则包：IndexedDB（mimamao_tavern_standalone）
 - 字体：IndexedDB（咪嘛馆字体库）
 - API 配置：localStorage
+- 助手模型偏好 / Persona / 独立聊天记录：localStorage（不额外保存 API Key）
 
-版本：MIMAMAO Tavern Standalone 1.0.9
+版本：MIMAMAO Tavern Standalone 1.1.0
 
 
 === V1.0.2 补丁说明 ===
@@ -126,3 +130,20 @@ V1.0.3 数据安全补丁：
 - 首行缩进与段间距仍只作用于普通 story-paragraph，不强制套到 system/details/表格/状态栏结构；状态栏自身 CSS 可继续覆盖继承的字体与尺寸。
 - 旧 URL 剧情字体同步支持 Safe HTML 基础继承。
 - 静态资源缓存版本更新为 ?v=1.0.9。
+
+
+=== v1.1.0 Regex + Assistant Studio + Live Streaming 补丁 ===
+- 修复主输入框有文字时仍显示酒红色焦点边框：有内容时改为银白色发光边框；空输入框仍保留旧外观。
+- 主输入框取消 Enter 发送监听：Enter / 换行键只负责换行，只有点击发送按钮才会真正请求模型。
+- 修复 Streaming 只显示接收进度、不显示正文的问题：SSE 每次收到的新片段都会同步到剧情区临时 Assistant 气泡，并以逐字/小步追赶动画显示；完成后仍由原 Session 保存链路接管最终消息。
+- 新增独立 Regex Engine Sidecar，不替换原 Preset / Worldbook / Safe HTML。Regex Pack 可挂载到当前 Session，并支持 display / prompt / input / output 四个阶段、优先级、启停、导入导出和即时测试。
+- display 阶段专门支持“模型短协议 → 前端长 HTML”：模型历史中可以保留紧凑标签，渲染时再展开完整状态栏，从而减少重复 div 带来的上下文 Token 占用。
+- 新增「正则助手」：可把 HTML 状态栏输出规范转换为配套短协议 Preset + display Regex Bundle，并一键保存、挂载；生成成果保存前会先校验 JavaScript RegExp。
+- 新增「预设助手」：用于设计/改写文风、行为约束、输出格式等 Preset，可一键保存并挂载。
+- 新增「CSS 美化助手」：用于生成纯 CSS Preset，可一键保存并应用；继续遵循现有 CSS Scope 与 Safe HTML 安全边界。
+- 三个助手均提供大型聊天工作区，分别保存独立 Model、Temperature、Streaming、Persona、设计风格和聊天记录；它们只继承正文 API 的连接信息（Base URL / Key / Headers），不会改动正文模型选择。
+- 助手聊天同样是 Enter 只换行、点击发送才调用模型。
+- Regex 与助手资料已接入完整备份；数据 schema 以增量方式升级到 v3，原剧情、角色卡、世界书、Preset、CSS 与旧入口保留。
+- 静态资源缓存版本更新为 ?v=1.1.0。
+
+Streaming 说明：前端现在会即时消费并显示服务端实际送达的 SSE chunk；若某个中转站/模型上游本身把内容缓存到最后才一次性返回，浏览器无法提前显示尚未收到的文字。

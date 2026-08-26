@@ -45,13 +45,13 @@
   async function loadState() {
     const existing = await get(STATE_KEY);
     if (existing && typeof existing === 'object') return existing;
-    const blank = { schemaVersion: 2, sessions: [], masks: [], presets: [], worldbooks: [], cssPresets: [] };
+    const blank = { schemaVersion: 3, sessions: [], masks: [], presets: [], worldbooks: [], cssPresets: [], regexPacks: [] };
     await set(STATE_KEY, blank);
     return blank;
   }
 
   async function saveState(state) {
-    return set(STATE_KEY, { ...state, schemaVersion: 2, cssPresets: Array.isArray(state.cssPresets) ? state.cssPresets : [], savedAt: new Date().toISOString() });
+    return set(STATE_KEY, { ...state, schemaVersion: 3, cssPresets: Array.isArray(state.cssPresets) ? state.cssPresets : [], regexPacks: Array.isArray(state.regexPacks) ? state.regexPacks : [], savedAt: new Date().toISOString() });
   }
 
   async function exportAll() {
@@ -61,12 +61,13 @@
   async function importAll(raw) {
     const src = raw?.data || raw || {};
     const next = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       sessions: Array.isArray(src.sessions) ? src.sessions : [],
       masks: Array.isArray(src.masks) ? src.masks : [],
       presets: Array.isArray(src.presets) ? src.presets : [],
       worldbooks: Array.isArray(src.worldbooks) ? src.worldbooks : [],
-      cssPresets: Array.isArray(src.cssPresets) ? src.cssPresets : []
+      cssPresets: Array.isArray(src.cssPresets) ? src.cssPresets : [],
+      regexPacks: Array.isArray(src.regexPacks) ? src.regexPacks : []
     };
     await saveState(next);
     return next;
