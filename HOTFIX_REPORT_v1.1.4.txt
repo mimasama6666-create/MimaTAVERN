@@ -1,0 +1,169 @@
+MIMAMAO Tavern · v1.1.4
+Assistant Artifact Self-Healing / Mobile Space / Reader-Controlled Streaming / Cache Insight
+施工报告
+
+基线
+----
+唯一源码母体：MimaTAVERN-main-v1.1.3-FULL.zip
+施工方式：纯增量补丁；未清理、未重构、未删除任何成熟入口。
+
+本轮目标
+--------
+1. 修复 Assistant Studio 在 iOS / 手机端展开“助手模型设置”后无法顺畅滑到下方设置的问题。
+2. 压缩 Assistant Studio 顶部标题、助手切换、模型设置、清空按钮与输入区的垂直占用，扩大聊天正文面积。
+3. 修复剧情 Streaming 与助手 Streaming 在生成期间强制把用户拖到底部的问题：用户向上阅读时停止自动跟随，可一键恢复“↓ 跟随输出”。
+4. 强化正则/预设/CSS 助手的 MIMA_ARTIFACT 自愈能力，降低模型生成“像 JSON 但不是严格 JSON”导致无法一键保存的频率。
+5. 审查 Persona / Preset / Worldbook / Memory 的真实 Prompt 注入与缓存现状，增加上游缓存命中可观测性，不伪造缓存。
+
+一、Assistant Studio 手机滚动与空间利用
+--------------------------------------
+真实原因：
+v1.1.3 手机端 assistant-sidebar 被固定 max-height 截住；展开 details 后虽有 overflow，但 iOS 触摸滚动区域与整个 Studio 的 grid / overflow 组合容易出现无法继续滑动。与此同时 Header、三助手按钮、配置卡与大号“清空当前助手聊天”持续占用大量高度。
+
+v1.1.4：
+- Assistant Studio Header 高度/内边距/标题字号做增量压缩。
+- 三助手切换按钮、配置 summary、配置 body、字段间距统一做紧凑覆盖。
+- “清空当前助手聊天”改为小型“清空聊天”文本按钮；功能与确认逻辑不变。
+- 配置折叠时 sidebar 不再强占 34–38dvh。
+- 配置展开时 root 增加 assistant-config-open，仅此时给 sidebar 48–51dvh 可滚动区域。
+- 为 iOS sidebar / chat 加 -webkit-overflow-scrolling: touch、touch-action: pan-y、overscroll-behavior-y: contain。
+- 助手输入框手机默认高度进一步压缩，但仍可手动增高。
+- 旧 assistant CSS 全部保留，新规则只追加在文件末尾覆盖。
+
+二、Streaming 阅读锁定修复
+------------------------
+旧行为：
+- 剧情 renderLiveStreamText() 每次字符更新都无条件 storyChatBox.scrollTop=scrollHeight。
+- 助手 send() 流式回调同样每个 chunk 无条件 scroll 到底部。
+- 所以用户只要向上滑，下一字符一到就被拖回最底部。
+
+v1.1.4 新行为：
+- 默认用户正在底部时继续自动跟随，体验与旧流式一致。
+- 生成期间用户主动向上滑离底部约 90px 后，followTail=false，后续字符仍继续生成/渲染，但绝不再抢滚动位置。
+- 页面出现“↓ 跟随输出”小悬浮按钮；点击后恢复自动跟随并回到底部。
+- 用户自己重新滑回接近底部也会自动恢复跟随。
+- 剧情生成完成、临时流式气泡替换为正式持久化消息时，如果用户处于暂停跟随状态，会保存并恢复 reading scrollTop，避免“生成结束时最后再拽一次”。
+- 助手 Streaming 同样支持阅读暂停与恢复。
+
+硬边界：
+UI scroll lost != generation cancelled。
+阅读旧文字不会影响模型继续生成、Regex display、消息持久化或 Speech/Story lifecycle。
+
+三、MIMA_ARTIFACT Self-Healing
+-----------------------------
+v1.1.3 已能修：
+- Markdown json fence
+- BOM / NBSP
+- JSON 字符串裸换行/Tab
+- trailing comma
+
+本轮针对实际报错：
+JSON Parse error: Property name must be a string literal
+
+新增安全自愈链（无 eval / 无 Function）：
+strict JSON
+→ 原 v1.1.3 safe normalization
+→ v1.1.4 loose syntax repair
+→ JSON.parse
+→ 原 saveArtifact schema / Regex validate
+→ 才允许保存
+
+安全修复覆盖：
+- {kind:"preset"} 这类 bare property key → {"kind":"preset"}
+- 单引号 JS-like strings → 标准 JSON strings
+- // 与 /* */ 注释（仅字符串外）
+- Regex 常见无效 JSON escape，如字符串中的 \s
+- trailing comma / raw controls
+
+仍然不能安全本地推断的严重残缺：FAIL CLOSED，不保存半残工件。
+
+新增按钮：
+“🩹 修复此工件”
+- 调用当前助手独立模型，仅修 JSON syntax。
+- 系统提示禁止改写业务字段、Regex、HTML、CSS、Preset 内容与数组顺序。
+- 修复返回仍必须经过本地 parser。
+- 原助手消息先写入 versions 归档；失败/停止时原工件原样保留。
+- 修复只是助手历史，不自动写入 Regex/Preset/CSS canonical store；用户仍需点击保存/挂载。
+
+同时为三个助手追加严格 MIMA_ARTIFACT JSON 协议，降低源头生成坏 JSON 的概率。
+
+四、Prompt / Cache 真实审查
+-------------------------
+重要结论：v1.1.3 没有“咪嘛馆自己创建并持有的远端显式模型缓存 ID”。
+当前 API Transport 是通用 OpenAI-compatible /chat/completions；没有 Google cachedContents / cachedContent 参数。
+
+但当前源码也绝不是“每轮把完整十几万历史全部喂进去”。原成熟机制保留：
+- recentMessageLimit 默认 34：只取最近消息窗口。
+- Worldbook 只注入 alwaysActive 或由最近剧情关键词真实命中的条目。
+- Worldbook 还有 worldbookBudgetChars 默认 16000 字符预算；预算外条目不注入。
+- 较早剧情由 Rolling Summary 收束。
+- Core Memory / Fact Memories 只按设置注入；Fact 默认只取最近 12 段。
+- Persona / Preset 只注入当前 Session 已挂载项目。
+- Display Regex 展开的长 HTML 不回灌 Prompt，仍保持 v1.1.0 的省 Token 语义。
+
+因此：当前已经有“上下文裁剪 + 摘要 + 条件世界书”，但远端 cache hit 由 Provider 决定。
+
+v1.1.4 Cache Insight：
+- callModelWithConfig 现在会读取常见 usage 格式，但只作为诊断，不进入剧情真源。
+- 支持 OpenAI-compatible：usage.prompt_tokens / completion_tokens / total_tokens / prompt_tokens_details.cached_tokens / input_tokens_details.cached_tokens。
+- 支持 Gemini-like：usage.total_cached_tokens、usageMetadata.cachedContentTokenCount、promptTokenCount、candidatesTokenCount、totalTokenCount 等。
+- Prompt Inspector 新增：估算输入 Tokens、最近消息窗口、世界书命中、System 字符、最终 Messages、最近一次上游缓存命中 Tokens。
+- 上游没返回 cached-token 统计时显示“—”，不会伪装成已缓存，也不会错误断言没有缓存。
+
+为什么本轮没有直接增加“显式缓存开关”：
+- 用户当前是可配置的任意 OpenAI-compatible / Enterprise CLI 中转。
+- Google Gemini 显式缓存需要原生 cachedContents + generateContent/cachedContent 生命周期。
+- 把 provider-specific 字段硬塞进通用 /chat/completions 会让其他中转 400，破坏旧 API 兼容。
+- 按只加不减原则，本轮先增加真实可观测性；未来若需要，可单独增加 Gemini Native Cache Provider Adapter，与现有 Generic Transport 共存，不替换旧路径。
+
+五、未改动成熟器官
+----------------
+逐字节比对 v1.1.3，以下保持原样：
+- local-store.js
+- regex-engine.js
+- font-manager.js
+- README.txt
+- v1.1.0 / v1.1.1 / v1.1.2 / v1.1.3 历史报告
+- 全部旧 smoke tests
+- 两份既有 DOCX 使用手册
+
+本轮只修改：
+- assistant-studio.js
+- app.js
+- standalone-core.js
+- style.css
+- index.html（新增跟随按钮 + cache-bust query）
+新增：
+- tests/smoke-v1.1.4.js
+- HOTFIX_REPORT_v1.1.4.txt
+
+六、验收
+--------
+node --check：全部 JS + tests PASS
+smoke-v1.1.0.js：PASS
+smoke-v1.1.1.js：PASS
+smoke-v1.1.2.js：PASS
+smoke-session-history-v1.1.2.js：PASS
+smoke-v1.1.3.js：PASS
+smoke-v1.1.4.js：PASS
+baseline untouched byte-compare：PASS
+git diff --no-index --check：PASS
+
+v1.1.4 新测试覆盖：
+- bare property JSON 自愈
+- single quote / Regex backslash 自愈且语义不变
+- 禁止 eval / new Function
+- Artifact Repair 按钮/工作流存在
+- iOS assistant config scroll override
+- Assistant reader-controlled Streaming
+- Story reader-controlled Streaming
+- 生成完成时阅读位置保护
+- Prompt recent-message pruning 仍生效
+- estimatedInputTokens 可见
+- OpenAI cached_tokens telemetry
+- Gemini cachedContentTokenCount telemetry
+
+结论
+----
+v1.1.4 是在 v1.1.3 基础上的纯增量 Hotfix/DLC。
+没有为了 UI、缓存或 JSON Repair 重写成熟 Story / Store / Regex / Provider 路径。

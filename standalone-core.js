@@ -8,6 +8,7 @@
 
   const API_CONFIG_KEY = 'MIMAMAO_TAVERN_STANDALONE_API_V1';
   let state = { schemaVersion: 3, sessions: [], masks: [], presets: [], worldbooks: [], cssPresets: [], regexPacks: [] };
+  let lastUsage = null; // v1.1.4: upstream usage/cache telemetry only; never treated as canonical story data.
 
   const nowIso = () => new Date().toISOString();
   const makeId = prefix => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
@@ -252,7 +253,7 @@
   function toHistoryMessage(m,session){if(!m?.content)return null;const content=messagePromptContent(m,session);if(m.role==='assistant')return{role:'assistant',content};if(m.role==='user')return{role:'user',content};return{role:'user',content:`【${m.role}】${content}`};}
   function applyDepth(history,items){const result=history.slice(),debug=[];const sorted=items.slice().sort((a,b)=>Number(b.entry.depth||0)-Number(a.entry.depth||0)||Number(a.entry.priority||50)-Number(b.entry.priority||50));for(const item of sorted){const {book,entry}=item;const depth=Math.max(1,Number(entry.depth||1));const anchor=Math.max(0,result.length-depth);let index=anchor;if(entry.position==='front')index=Math.max(0,anchor-1);else if(entry.position==='back')index=Math.min(result.length,anchor+1);const content=`【Worldbook Context · ${book.name} / ${entry.name} · depth=${depth}】\n${clip(entry.content,entry.maxChars)}`;result.splice(index,0,{role:'user',content});debug.push({bookId:book.id,bookName:book.name,entryId:entry.id,entryName:entry.name,depth,position:entry.position,insertedAt:index,chars:content.length});}return{messages:result,debug};}
   function enforceBudget(matched,budget){let used=0;const kept=[],dropped=[];const sorted=matched.slice().sort((a,b)=>Number(a.entry.priority||50)-Number(b.entry.priority||50)||Number(a.entry.depth||0)-Number(b.entry.depth||0));for(const item of sorted){const cost=clip(item.entry.content,item.entry.maxChars).length;if(used+cost<=budget||!kept.length){kept.push(item);used+=cost}else dropped.push({...item,activation:{...item.activation,reason:'budget'}});}return{kept,dropped,used};}
-  function assemble(sessionInput,options={}){const session=normalizeSession(sessionInput);const activation=collectWorldbookEntries(session);const budget=Math.max(1000,Number(session.promptSettings?.worldbookBudgetChars||16000));const budgeted=enforceBudget(activation.matched,budget),matched=budgeted.kept;const sys=buildSystemPrompt(session,options,matched);const limit=Math.max(6,Number(session.promptSettings?.recentMessageLimit||34));const recent=session.messages.filter(m=>m.role!=='director').slice(-limit).map(m=>toHistoryMessage(m,session)).filter(Boolean);const depthApplied=applyDepth(recent,matched.filter(x=>Number(x.entry.depth||0)>0));const messages=[{role:'system',content:sys.prompt},...depthApplied.messages];return{messages,inspector:{systemChars:sys.prompt.length,recentMessageCount:recent.length,finalMessageCount:messages.length,worldbookBudgetChars:budget,worldbookUsedChars:budgeted.used,sections:sys.sections.map(({name,chars})=>({name,chars})),matchedWorldbookEntries:matched.map(({book,entry,activation:a})=>({bookId:book.id,bookName:book.name,entryId:entry.id,entryName:entry.name,depth:entry.depth,position:entry.position,priority:entry.priority,reason:a.reason,hits:a.hits||[],secondaryHits:a.secondaryHits||[]})),skippedWorldbookEntries:[...activation.skipped,...budgeted.dropped].map(({book,entry,activation:a})=>({bookId:book.id,bookName:book.name,entryId:entry.id,entryName:entry.name,reason:a.reason})),depthInjections:depthApplied.debug,systemPreview:sys.prompt,messagePreview:messages.map((m,index)=>({index,role:m.role,content:m.content}))}};}
+  function assemble(sessionInput,options={}){const session=normalizeSession(sessionInput);const activation=collectWorldbookEntries(session);const budget=Math.max(1000,Number(session.promptSettings?.worldbookBudgetChars||16000));const budgeted=enforceBudget(activation.matched,budget),matched=budgeted.kept;const sys=buildSystemPrompt(session,options,matched);const limit=Math.max(6,Number(session.promptSettings?.recentMessageLimit||34));const recent=session.messages.filter(m=>m.role!=='director').slice(-limit).map(m=>toHistoryMessage(m,session)).filter(Boolean);const depthApplied=applyDepth(recent,matched.filter(x=>Number(x.entry.depth||0)>0));const messages=[{role:'system',content:sys.prompt},...depthApplied.messages];const estimatedInputTokens=messages.reduce((sum,m)=>sum+estimateTokens(m?.content||''),0);return{messages,inspector:{systemChars:sys.prompt.length,estimatedInputTokens,recentMessageCount:recent.length,recentMessageLimit:limit,finalMessageCount:messages.length,worldbookBudgetChars:budget,worldbookUsedChars:budgeted.used,upstreamUsage:lastUsage?clone(lastUsage):null,sections:sys.sections.map(({name,chars})=>({name,chars})),matchedWorldbookEntries:matched.map(({book,entry,activation:a})=>({bookId:book.id,bookName:book.name,entryId:entry.id,entryName:entry.name,depth:entry.depth,position:entry.position,priority:entry.priority,reason:a.reason,hits:a.hits||[],secondaryHits:a.secondaryHits||[]})),skippedWorldbookEntries:[...activation.skipped,...budgeted.dropped].map(({book,entry,activation:a})=>({bookId:book.id,bookName:book.name,entryId:entry.id,entryName:entry.name,reason:a.reason})),depthInjections:depthApplied.debug,systemPreview:sys.prompt,messagePreview:messages.map((m,index)=>({index,role:m.role,content:m.content}))}};}
 
   // ---------- API ----------
   // V1.0.2 patch: keep the old OpenAI-compatible route, but add strict empty-reply protection,
@@ -297,6 +298,31 @@
     return new ApiError(`E_API_HTTP_${status||0}`,message||`API 请求失败 HTTP ${status}`,{status,hint:apiErrorHint('',Number(status)||0,message),details});
   }
   function emitProgress(fn,payload){if(typeof fn==='function'){try{fn(payload)}catch(_){}}}
+  function finiteUsageNumber(...values){for(const v of values){if(v===null||v===undefined||v==='')continue;const n=Number(v);if(Number.isFinite(n)&&n>=0)return Math.floor(n)}return null;}
+  function extractUsageMetrics(payload,model=''){
+    const u=payload?.usage||payload?.usageMetadata||payload?.usage_metadata||null;if(!u||typeof u!=='object')return null;
+    const inputTokens=finiteUsageNumber(u.prompt_tokens,u.input_tokens,u.promptTokenCount,u.prompt_token_count,u.inputTokenCount);
+    const outputTokens=finiteUsageNumber(u.completion_tokens,u.output_tokens,u.candidatesTokenCount,u.candidates_token_count,u.outputTokenCount);
+    const totalTokens=finiteUsageNumber(u.total_tokens,u.totalTokenCount,u.total_token_count,(inputTokens!==null&&outputTokens!==null)?inputTokens+outputTokens:null);
+    const cachedTokens=finiteUsageNumber(
+      u.total_cached_tokens,
+      u.cachedContentTokenCount,
+      u.cached_content_token_count,
+      u.prompt_tokens_details?.cached_tokens,
+      u.input_tokens_details?.cached_tokens,
+      u.inputTokensDetails?.cachedTokens,
+      payload?.usageMetadata?.cachedContentTokenCount,
+      payload?.usage_metadata?.cached_content_token_count
+    );
+    if(inputTokens===null&&outputTokens===null&&totalTokens===null&&cachedTokens===null)return null;
+    return {model:String(model||payload?.model||''),inputTokens,outputTokens,totalTokens,cachedTokens,observedAt:nowIso()};
+  }
+  function captureUsageMetrics(payload,model='',onProgress=null){
+    const usage=extractUsageMetrics(payload,model);if(!usage)return null;lastUsage=usage;
+    if(usage.cachedTokens!==null){emitProgress(onProgress,{phase:'cache_usage',percent:86,detail:usage.cachedTokens>0?`上游报告缓存命中 ${usage.cachedTokens} tokens`:'上游返回 usage；本次报告缓存命中 0 tokens',usage:clone(usage)});}
+    return usage;
+  }
+  function getLastUsage(){return lastUsage?clone(lastUsage):null;}
   function buildEndpoints(cfg=getApiConfig()){
     let base=baseWithoutSlash(cfg.apiBase); if(!base)throw new ApiError('E_API_CONFIG','还没有配置 API Base URL（基础地址）');
     let chat,models;
@@ -353,20 +379,21 @@
     if(!res.ok)throw httpApiError(res.status,data?.error?.message||data?.message||`${label} 请求失败 HTTP ${res.status}`);
     return data;
   }
-  async function readStreamingReply(res,onProgress){
+  async function readStreamingReply(res,onProgress,model=''){
     if(!res.body?.getReader)throw new ApiError('E_STREAM_PARSE','当前浏览器无法读取流式响应，请关闭 Streaming（流式传输）后重试。',{status:res.status});
-    const reader=res.body.getReader(),decoder=new TextDecoder();let buffer='',reply='',eventCount=0,finalPayload=null;
+    const reader=res.body.getReader(),decoder=new TextDecoder();let buffer='',reply='',eventCount=0,finalPayload=null,streamUsage=null;
     const consumeLine=line=>{
       const raw=String(line||'').trim();if(!raw||raw.startsWith(':'))return;
       const payloadText=raw.startsWith('data:')?raw.slice(5).trim():raw;
       if(!payloadText||payloadText==='[DONE]')return;
       let payload;try{payload=JSON.parse(payloadText)}catch(_){return;}
-      eventCount++;finalPayload=payload;const piece=extractStreamDelta(payload);if(piece){reply+=piece;emitProgress(onProgress,{phase:'streaming',percent:Math.min(90,58+Math.log10(reply.length+1)*12),receivedChars:reply.length,delta:piece,streamText:reply,detail:`已接收 ${reply.length} 个字符`});}
+      eventCount++;finalPayload=payload;const observed=captureUsageMetrics(payload,model,null);if(observed)streamUsage=observed;const piece=extractStreamDelta(payload);if(piece){reply+=piece;emitProgress(onProgress,{phase:'streaming',percent:Math.min(90,58+Math.log10(reply.length+1)*12),receivedChars:reply.length,delta:piece,streamText:reply,detail:`已接收 ${reply.length} 个字符`});}
     };
     while(true){const {done,value}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});const lines=buffer.split(/\r?\n/);buffer=lines.pop()||'';for(const line of lines)consumeLine(line);}
     buffer+=decoder.decode();if(buffer.trim())for(const line of buffer.split(/\r?\n/))consumeLine(line);
     if(!reply&&finalPayload){try{reply=extractReply(finalPayload)}catch(_){}}
     if(!text(reply))throw new ApiError('E_API_EMPTY_REPLY','流式请求结束，但模型没有返回可见正文。',{status:res.status,details:`stream events: ${eventCount}`});
+    if(streamUsage)emitProgress(onProgress,{phase:'cache_usage',percent:92,detail:streamUsage.cachedTokens>0?`上游报告缓存命中 ${streamUsage.cachedTokens} tokens`:(streamUsage.cachedTokens===0?'上游返回 usage；本次报告缓存命中 0 tokens':'上游返回 usage，但没有提供缓存命中字段'),usage:clone(streamUsage)});
     return text(reply);
   }
   async function callModelWithConfig(messages,cfgInput,temperature=0.85,signal,options={}){
@@ -379,10 +406,11 @@
     const contentType=String(res.headers?.get?.('content-type')||'').toLowerCase();
     if(streamEnabled&&!/application\/json/i.test(contentType)){
       emitProgress(options.onProgress,{phase:'streaming',percent:55,detail:'连接成功，正在接收流式正文…'});
-      return await readStreamingReply(res,options.onProgress);
+      return await readStreamingReply(res,options.onProgress,cfg.model);
     }
     emitProgress(options.onProgress,{phase:'receiving',percent:68,detail:'模型已响应，正在解析正文…'});
     const data=await parseJsonResponse(res,'API');
+    captureUsageMetrics(data,cfg.model,options.onProgress);
     let reply;try{reply=extractReply(data)}catch(e){throw asApiError(e,'E_API_UNRECOGNIZED_RESPONSE');}
     reply=text(reply);
     if(!reply)throw new ApiError('E_API_EMPTY_REPLY','API 请求成功，但模型返回了空白正文。',{status:res.status,details:`finish_reason: ${data?.choices?.[0]?.finish_reason||'unknown'}`});
@@ -654,5 +682,5 @@
   async function exportLibrary(){return clone(state);}
   async function importLibrary(raw){state=normalizeState(raw?.data||raw||{});await persist();return state;}
 
-  window.MimaStandalone={init,handle,getApiConfig,saveApiConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,applyRegexForSession,exportLibrary,importLibrary,assemble};
+  window.MimaStandalone={init,handle,getApiConfig,saveApiConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,applyRegexForSession,exportLibrary,importLibrary,assemble,getLastUsage};
 })();

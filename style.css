@@ -398,3 +398,165 @@ body::before{
 .assistant-artifact-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px}
 .assistant-artifact-error{border-color:rgba(151,112,120,.28);background:rgba(255,250,250,.72)}
 .assistant-artifact-error-detail{margin-top:8px;padding:8px 10px;border-radius:10px;background:rgba(90,94,101,.055);font-size:12px;line-height:1.55;word-break:break-word;color:var(--text-soft,#777)}
+
+/* ============================================================
+   v1.1.4 · ASSISTANT STUDIO COMPACT + IOS SCROLL + READ-PAUSE
+   Additive overrides only. Existing v1.1.x assistant styles remain intact.
+   ============================================================ */
+.assistant-studio-head{
+  min-height:48px;
+  padding:10px 14px;
+}
+.assistant-studio-head .eyebrow{
+  font-size:.58rem;
+  letter-spacing:.10em;
+  line-height:1.2;
+}
+.assistant-studio-head h2{
+  margin:3px 0 0;
+  font-size:1.35rem;
+  line-height:1.18;
+}
+.assistant-studio-head .icon-btn{min-width:40px;height:40px}
+.assistant-sidebar{
+  gap:7px;
+  padding:9px 10px;
+  -webkit-overflow-scrolling:touch;
+  touch-action:pan-y;
+  overscroll-behavior-y:contain;
+}
+.assistant-type-tabs{gap:5px}
+.assistant-type-btn{
+  padding:7px 9px;
+  border-radius:12px;
+  line-height:1.25;
+}
+.assistant-config-card{border-radius:13px}
+.assistant-config-summary{padding:8px 10px;gap:7px}
+.assistant-config-summary>span{gap:6px}
+.assistant-config-summary-model{font-size:.63rem}
+.assistant-config-body{
+  padding:8px 10px 10px;
+  gap:5px;
+}
+.assistant-config-head{margin-bottom:0}
+.assistant-config-body .form-label{margin-top:2px;margin-bottom:1px}
+.assistant-config-body .field{min-height:39px;padding-top:8px;padding-bottom:8px}
+.assistant-config-body .field.textarea{min-height:72px}
+.assistant-config-body .row-sub{font-size:.66rem;line-height:1.45}
+.assistant-persona-details{margin-top:1px}
+.assistant-persona-details summary{padding:3px 0}
+.assistant-clear-btn{
+  align-self:flex-start;
+  border:0;
+  background:transparent;
+  color:#9a6671;
+  padding:3px 5px;
+  font:inherit;
+  font-size:.67rem;
+  cursor:pointer;
+  opacity:.76;
+}
+.assistant-clear-btn:disabled{opacity:.35;cursor:default}
+.assistant-main{position:relative}
+.assistant-chat-scroll{
+  padding-top:13px;
+  padding-bottom:13px;
+  scroll-behavior:auto;
+  -webkit-overflow-scrolling:touch;
+  overscroll-behavior-y:contain;
+  touch-action:pan-y;
+}
+.assistant-chat-msg{margin-bottom:13px;gap:5px}
+.assistant-chat-text{line-height:1.66}
+.assistant-composer{padding:7px 10px calc(8px + env(safe-area-inset-bottom))}
+.assistant-quick-row{gap:5px;margin-bottom:5px}
+.assistant-quick-row .chip-btn{padding-top:6px;padding-bottom:6px}
+.assistant-mode-banner{padding:5px 8px;margin-bottom:5px}
+.assistant-input-row{gap:7px}
+.assistant-input-row textarea{
+  min-height:72px;
+  max-height:180px;
+  padding:9px 12px;
+  border-radius:16px;
+}
+.assistant-enter-hint{font-size:.63rem;margin-top:2px}
+.assistant-follow-stream{
+  position:absolute;
+  right:16px;
+  bottom:118px;
+  z-index:6;
+  border:1px solid rgba(255,255,255,.88);
+  border-radius:999px;
+  padding:7px 11px;
+  background:rgba(89,94,103,.84);
+  color:#fff;
+  box-shadow:0 8px 26px rgba(67,73,82,.18);
+  backdrop-filter:blur(16px);
+  -webkit-backdrop-filter:blur(16px);
+  font-size:.72rem;
+  cursor:pointer;
+}
+
+@media(max-width:760px){
+  .assistant-studio-panel{height:97dvh;max-height:97dvh}
+  .assistant-studio-head{padding:8px 12px;min-height:45px}
+  .assistant-studio-head h2{font-size:1.28rem}
+  .assistant-studio-root{grid-template-rows:auto minmax(0,1fr)}
+  .assistant-sidebar{
+    max-height:none;
+    padding:7px 10px 6px;
+    gap:6px;
+    overflow-y:visible;
+  }
+  .assistant-studio-root.assistant-config-open .assistant-sidebar{
+    max-height:48dvh;
+    overflow-y:auto;
+    -webkit-overflow-scrolling:touch;
+    touch-action:pan-y;
+  }
+  .assistant-type-btn{padding:7px 4px;font-size:.70rem}
+  .assistant-config-summary{padding:7px 9px}
+  .assistant-config-body{padding:7px 9px 9px;gap:5px 8px}
+  .assistant-chat-scroll{padding:11px 10px}
+  .assistant-input-row textarea{min-height:68px}
+  .assistant-follow-stream{right:12px;bottom:104px;padding:6px 10px}
+}
+
+@media(max-width:480px){
+  .assistant-studio-head .eyebrow{font-size:.54rem}
+  .assistant-studio-head h2{font-size:1.22rem}
+  .assistant-sidebar{max-height:none}
+  .assistant-studio-root.assistant-config-open .assistant-sidebar{max-height:51dvh}
+  .assistant-type-btn{font-size:.65rem;padding:6px 2px}
+  .assistant-config-body{grid-template-columns:1fr}
+  .assistant-config-body .inline-field-row{gap:6px}
+  .assistant-config-body .ghost-btn{padding-left:10px;padding-right:10px}
+  .assistant-chat-msg{margin-bottom:11px}
+  .assistant-composer{padding-left:8px;padding-right:8px}
+  .assistant-enter-hint{display:none}
+}
+
+/* v1.1.4 Story streaming: user scroll wins over auto-follow. */
+.chat-box{scroll-behavior:auto}
+.story-follow-stream{
+  position:absolute;
+  right:16px;
+  bottom:112px;
+  z-index:12;
+  border:1px solid rgba(255,255,255,.86);
+  border-radius:999px;
+  padding:7px 11px;
+  background:rgba(88,93,102,.84);
+  color:#fff;
+  box-shadow:0 8px 26px rgba(67,73,82,.18);
+  backdrop-filter:blur(16px);
+  -webkit-backdrop-filter:blur(16px);
+  font-size:.72rem;
+}
+@media(max-width:760px){.story-follow-stream{right:10px;bottom:104px;padding:6px 10px}}
+
+/* v1.1.4 Prompt cache observability. */
+.cache-insight-card{margin:0 0 14px;padding:10px 12px;border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.56)}
+.cache-insight-card>strong{display:block;margin-bottom:4px}
+@media(max-width:620px){.prompt-stats{grid-template-columns:1fr 1fr}}
