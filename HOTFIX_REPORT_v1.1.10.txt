@@ -1,0 +1,29 @@
+MimaTAVERN v1.1.10 · BOND VISIBLE-NUMBER HYDRATION HOTFIX
+
+Scope
+- Incremental patch on v1.1.9 only.
+- No Store/schema/Regex/Prompt/API refactor.
+- Existing Safe HTML sanitizer remains fail-closed for arbitrary inline CSS.
+
+Root cause confirmed after v1.1.9
+- v1.1.9 correctly preserves a pre-existing style="--value:85%;".
+- But the rendered BOND markup is not guaranteed to contain that inline variable.
+- Existing/historical/model-generated status HTML can contain only:
+    .mima-meter-number => "85 / 100"
+    .mima-meter-fill   => no --value
+- CSS then evaluates var(--value, 0%) to 0%, so every fill remains empty.
+
+Fix
+- Added render-only hydrateSafeHtmlDynamicMeters().
+- After Safe HTML sanitization and before nodes are mounted, it reads each
+  .mima-meter-number and derives a bounded 0..100 visual percentage.
+- Supports "85 / 100" and percentage text.
+- Writes only trusted code-derived --value and width to .mima-meter-fill.
+- width is set as inline !important so existing user CSS !important rules cannot
+  force the fallback back to zero.
+- Stored message content is not modified; historical messages repair on render.
+
+Safety
+- Arbitrary model-provided style remains blocked.
+- No arbitrary CSS is copied from message text.
+- Derived width is numeric, clamped, and written only to .mima-meter-fill.

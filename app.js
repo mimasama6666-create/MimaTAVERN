@@ -666,8 +666,50 @@ function appendProseText(parent,text){
     const chunks=raw.split(/\n{2,}/);
     chunks.forEach(chunk=>{if(!chunk.trim())return;const p=document.createElement('div');p.className='story-prose story-paragraph';p.textContent=chunk.trim();parent.appendChild(p)});
 }
+function parseBondMeterPercent(text){
+    const raw=String(text||'').replace(/\s+/g,' ').trim();
+    if(!raw)return null;
+    let match=raw.match(/(-?(?:\d+(?:\.\d+)?|\.\d+))\s*\/\s*(-?(?:\d+(?:\.\d+)?|\.\d+))/);
+    if(match){
+        const current=Number(match[1]),maximum=Number(match[2]);
+        if(Number.isFinite(current)&&Number.isFinite(maximum)&&maximum>0)return Math.max(0,Math.min(100,current/maximum*100));
+    }
+    match=raw.match(/(-?(?:\d+(?:\.\d+)?|\.\d+))\s*%/);
+    if(match){
+        const numeric=Number(match[1]);
+        if(Number.isFinite(numeric))return Math.max(0,Math.min(100,numeric));
+    }
+    return null;
+}
+function hydrateSafeHtmlDynamicMeters(root){
+    if(!root?.querySelectorAll)return;
+    for(const meter of root.querySelectorAll('.mima-meter')){
+        const fill=meter.querySelector('.mima-meter-fill');
+        if(!fill)continue;
+        let percent=null;
+        const declared=String(fill.style?.getPropertyValue?.('--value')||'').trim();
+        const declaredMatch=declared.match(/^(-?(?:\d+(?:\.\d+)?|\.\d+))%$/);
+        if(declaredMatch){
+            const numeric=Number(declaredMatch[1]);
+            if(Number.isFinite(numeric))percent=Math.max(0,Math.min(100,numeric));
+        }
+        // v1.1.10 fallback: historical/model-generated BOND HTML often carries
+        // only the visible "85 / 100" number and no inline --value at all.
+        // Derive the bounded visual width from that already-visible value.
+        const numberNode=meter.querySelector('.mima-meter-number');
+        const fromNumber=parseBondMeterPercent(numberNode?.textContent||'');
+        if(fromNumber!==null)percent=fromNumber;
+        if(percent===null)continue;
+        const safeValue=`${percent}%`;
+        fill.style.setProperty('--value',safeValue);
+        // Inline !important is intentional here: the value is code-derived and
+        // bounded, and it must survive user CSS rules that also use !important.
+        fill.style.setProperty('width',safeValue,'important');
+    }
+}
 function appendSafeHtmlWithProse(node,text){
     const template=document.createElement('template');template.innerHTML=sanitizeAllowedHtml(text||'');
+    hydrateSafeHtmlDynamicMeters(template.content);
     let prose='';
     const flush=()=>{if(prose.trim())appendProseText(node,prose);prose=''};
     for(const child of [...template.content.childNodes]){
