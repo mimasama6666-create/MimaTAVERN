@@ -45,7 +45,8 @@
       summaryEnabled: input.summaryEnabled !== false,
       pinnedFactsEnabled: input.pinnedFactsEnabled !== false,
       showInjectionLabels: input.showInjectionLabels !== false,
-      summaryTriggerMessages: clampInt(input.summaryTriggerMessages, 12, 200, 28)
+      summaryTriggerMessages: clampInt(input.summaryTriggerMessages, 12, 200, 28),
+      inputSemanticMode: ['auto','dialogue_first','quote_dialogue','raw'].includes(input.inputSemanticMode) ? input.inputSemanticMode : 'auto'
     };
   }
 
@@ -205,6 +206,23 @@
   function activeRegexPacks(session){return arr(session?.regexPackIds).map(getRegexPack).filter(p=>p&&p.enabled!==false).sort((a,b)=>Number(a.priority||50)-Number(b.priority||50));}
   function applyRegexForSession(sessionOrId,input,phase='display',diagnostics=null){const session=typeof sessionOrId==='string'?getSession(sessionOrId):sessionOrId;if(!session)return String(input??'');const transformed=window.MimaRegexEngine?.apply?window.MimaRegexEngine.apply(String(input??''),activeRegexPacks(session),phase,diagnostics):String(input??'');return phase==='display'||phase==='prompt'?resolveMacrosForSession(session,transformed):transformed;}
   function messagePromptContent(m,session){return applyRegexForSession(session,m?.content||'', 'prompt');}
+  function inputSemanticMode(session,message=null){
+    const stored=message?.metadata?.inputSemanticMode;
+    if(['auto','dialogue_first','quote_dialogue','raw'].includes(stored))return stored;
+    const configured=session?.promptSettings?.inputSemanticMode;
+    return ['auto','dialogue_first','quote_dialogue','raw'].includes(configured)?configured:'auto';
+  }
+  function compileUserInputForPrompt(sessionOrId,input,modeOverride=null){
+    const session=typeof sessionOrId==='string'?getSession(sessionOrId):sessionOrId;
+    const raw=resolveMacrosForSession(session,String(input??''));
+    const mode=modeOverride||inputSemanticMode(session);
+    if(mode==='raw'||!window.MimaUserInputSemanticParser?.compile)return raw;
+    return window.MimaUserInputSemanticParser.compile(raw,{mode}).prompt;
+  }
+  function userMessagePromptContent(m,session){
+    const content=messagePromptContent(m,session);
+    return compileUserInputForPrompt(session,content,inputSemanticMode(session,m));
+  }
   function keywordMatches(hay, keyword, entry) {
     const k=String(keyword||'').trim(); if(!k)return false;
     if(entry.useRegex){ try{return new RegExp(k,entry.caseSensitive?'u':'iu').test(String(hay||''));}catch(_){return false;} }
@@ -255,13 +273,22 @@
     if(session.userNotes)add('user_notes',`【玩家备注】\n${session.userNotes}`);
     if(session.aiNotes)add('ai_notes',`【AI 备注】\n${session.aiNotes}`);
     add('worldbook_back',joinWb(back,'System Back'));
+    if(inputSemanticMode(session)!=='raw')add('player_input_semantics',`【玩家输入语义 / AIRP Boundary】
+咪嘛馆会把玩家原始消息临时编译为 PLAYER_SPEECH / PLAYER_ACTION / PLAYER_STAGE / PLAYER_PRIVATE_THOUGHT；这些标签只用于本轮理解，不代表玩家真的说出了标签文字。
+- PLAYER_SPEECH：玩家真正说出口、在正常听觉条件下可被角色听见的台词。
+- PLAYER_ACTION：世界中实际发生的玩家动作/外显行为，不是台词。角色只能获得自己当时能合理看到、听到、触到、闻到或从后果推断出的部分；模型读到了完整动作文本，不等于角色知道完整动作。
+- PLAYER_STAGE：括号/舞台式输入，绝对不是台词；它可能混合动作、表情、意图、感受和内心。只把其中客观可感知的外显部分视为角色可能获得的信息；隐藏动作、意图、评价、情绪原因和内心内容默认不可直接得知。
+- PLAYER_PRIVATE_THOUGHT：玩家私密内心，默认只有玩家本人知道。除非当前世界规则明确存在且当下实际生效的读心/心灵连接能力，否则角色不得读取、复述、回答或据此精准行动。即使存在此类能力，也必须服从能力范围与当前事实。
+硬边界：文本对模型可见 ≠ 文本对角色可知。禁止上帝视角把隐藏动作或私密想法升级为角色事实；禁止把 ACTION/STAGE/PRIVATE_THOUGHT 当作玩家说过的话。
+叙事衔接：玩家已经写出的动作视为已发生输入，不要机械复述成“你做了X，我看到你做了X”；优先写合理后果、角色反应与下一步发展。
+如果语义标签与标点习惯冲突，以语义标签为准。`);
     if(options.directorNote||session.directorNote)add('director_note',`【导演指令】\n${options.directorNote||session.directorNote}\n注意：导演指令只影响演绎方向，不是 {{user}} 的台词，不要当成玩家说过的话。`);
     if(options.continuation)add('continue_rule','【续写要求】请紧接上一条 assistant 回复继续写，不要重复已经写过的内容。');
     if(options.regenerate)add('regenerate_rule','【重说要求】请基于相同上下文重新生成上一条 assistant 回复。避开上一版的重复句式与意象。');
     if(options.autoAdvance)add('auto_advance_rule','【自动推进要求】请在不替 {{user}} 做重大决定的前提下自然推进下一段剧情。可以写环境、动作、角色反应、氛围变化，但不要代替 {{user}} 说关键台词。');
     return {prompt:chunks.join('\n\n'),sections};
   }
-  function toHistoryMessage(m,session){if(!m?.content)return null;const content=messagePromptContent(m,session);if(m.role==='assistant')return{role:'assistant',content};if(m.role==='user')return{role:'user',content};return{role:'user',content:`【${m.role}】${content}`};}
+  function toHistoryMessage(m,session){if(!m?.content)return null;const content=m.role==='user'?userMessagePromptContent(m,session):messagePromptContent(m,session);if(m.role==='assistant')return{role:'assistant',content};if(m.role==='user')return{role:'user',content};return{role:'user',content:`【${m.role}】${content}`};}
   function applyDepth(history,items,session){const result=history.slice(),debug=[];const sorted=items.slice().sort((a,b)=>Number(b.entry.depth||0)-Number(a.entry.depth||0)||Number(a.entry.priority||50)-Number(b.entry.priority||50));for(const item of sorted){const {book,entry}=item;const depth=Math.max(1,Number(entry.depth||1));const anchor=Math.max(0,result.length-depth);let index=anchor;if(entry.position==='front')index=Math.max(0,anchor-1);else if(entry.position==='back')index=Math.min(result.length,anchor+1);const content=resolveMacrosForSession(session,`【Worldbook Context · ${book.name} / ${entry.name} · depth=${depth}】\n${clip(entry.content,entry.maxChars)}`);result.splice(index,0,{role:'user',content});debug.push({bookId:book.id,bookName:book.name,entryId:entry.id,entryName:entry.name,depth,position:entry.position,insertedAt:index,chars:content.length});}return{messages:result,debug};}
   function enforceBudget(matched,budget){let used=0;const kept=[],dropped=[];const sorted=matched.slice().sort((a,b)=>Number(a.entry.priority||50)-Number(b.entry.priority||50)||Number(a.entry.depth||0)-Number(b.entry.depth||0));for(const item of sorted){const cost=clip(item.entry.content,item.entry.maxChars).length;if(used+cost<=budget||!kept.length){kept.push(item);used+=cost}else dropped.push({...item,activation:{...item.activation,reason:'budget'}});}return{kept,dropped,used};}
   function assemble(sessionInput,options={}){const session=normalizeSession(sessionInput);const activation=collectWorldbookEntries(session);const budget=Math.max(1000,Number(session.promptSettings?.worldbookBudgetChars||16000));const budgeted=enforceBudget(activation.matched,budget),matched=budgeted.kept;const sys=buildSystemPrompt(session,options,matched);const limit=Math.max(6,Number(session.promptSettings?.recentMessageLimit||34));const recent=session.messages.filter(m=>m.role!=='director').slice(-limit).map(m=>toHistoryMessage(m,session)).filter(Boolean);const depthApplied=applyDepth(recent,matched.filter(x=>Number(x.entry.depth||0)>0),session);const messages=[{role:'system',content:sys.prompt},...depthApplied.messages];const estimatedInputTokens=messages.reduce((sum,m)=>sum+estimateTokens(m?.content||''),0);return{messages,inspector:{systemChars:sys.prompt.length,estimatedInputTokens,recentMessageCount:recent.length,recentMessageLimit:limit,finalMessageCount:messages.length,worldbookBudgetChars:budget,worldbookUsedChars:budgeted.used,upstreamUsage:lastUsage?clone(lastUsage):null,sections:sys.sections.map(({name,chars})=>({name,chars})),matchedWorldbookEntries:matched.map(({book,entry,activation:a})=>({bookId:book.id,bookName:book.name,entryId:entry.id,entryName:entry.name,depth:entry.depth,position:entry.position,priority:entry.priority,reason:a.reason,hits:a.hits||[],secondaryHits:a.secondaryHits||[]})),skippedWorldbookEntries:[...activation.skipped,...budgeted.dropped].map(({book,entry,activation:a})=>({bookId:book.id,bookName:book.name,entryId:entry.id,entryName:entry.name,reason:a.reason})),depthInjections:depthApplied.debug,systemPreview:sys.prompt,messagePreview:messages.map((m,index)=>({index,role:m.role,content:m.content}))}};}
@@ -468,7 +495,7 @@
   }
   function formatTimelineBlock(label,messages,session){
     const ctx=macroContext(session);
-    const body=arr(messages).map(m=>`${m.role==='user'?ctx.userName:ctx.charName}：${resolveMacrosForSession(session,m.content)}`).join('\n');
+    const body=arr(messages).map(m=>m.role==='user'?`${ctx.userName}（玩家输入语义）：\n${compileUserInputForPrompt(session,m.content,inputSemanticMode(session,m))}`:`${ctx.charName}：${resolveMacrosForSession(session,m.content)}`).join('\n');
     return body?`${label}\n${body}`:'';
   }
   function formatRoundRange(data,startRound,endRound,{includeOpening=false,session=null}={}){
@@ -567,7 +594,7 @@
     if(session.promptSettings?.summaryEnabled===false)return session;
     const msgs=session.messages||[];const safeWindow=Math.max(18,Number(session.promptSettings?.recentMessageLimit||34)-4);const unsummarizedEnd=msgs.length-safeWindow;
     if(unsummarizedEnd<=8||(session.lastSummarizedIndex||0)>=unsummarizedEnd)return session;
-    const start=session.lastSummarizedIndex||0;const ctx=macroContext(session);const chunk=msgs.slice(start,unsummarizedEnd).filter(m=>m.role==='user'||m.role==='assistant').map(m=>`${m.role==='user'?ctx.userName:ctx.charName}：${resolveMacrosForSession(session,m.content)}`).join('\n');if(!chunk.trim())return session;
+    const start=session.lastSummarizedIndex||0;const ctx=macroContext(session);const chunk=msgs.slice(start,unsummarizedEnd).filter(m=>m.role==='user'||m.role==='assistant').map(m=>m.role==='user'?`${ctx.userName}（玩家输入语义）：\n${compileUserInputForPrompt(session,m.content,inputSemanticMode(session,m))}`:`${ctx.charName}：${resolveMacrosForSession(session,m.content)}`).join('\n');if(!chunk.trim())return session;
     emitProgress(progress,{phase:'summary',percent:20,detail:'正在整理较早剧情摘要…'});
     const p=[{role:'system',content:'你是独立剧情档案助手。只总结实际发生过的剧情，不添加新事实，不混入其他世界。输出中文纯文本。'},{role:'user',content:`【已有长期摘要】\n${session.rollingSummary||'(无)'}\n\n【本次新增旧剧情】\n${chunk}\n\n请输出更新后的剧情摘要，保留：已发生事件、人物关系变化、身体/心理状态、重要物品与地点、未解决伏笔。控制在 1000 字以内。`}];
     try{
@@ -590,7 +617,7 @@
     if(action==='send'){
       if(!String(userText||'').trim())throw new ApiError('E_STORY_EMPTY_INPUT','还没有输入内容猫！',{hint:'请输入动作、语言或剧情后再发送。'});
       const originalUserText=String(userText||'');const transformedUserText=applyRegexForSession(session,originalUserText,'input');
-      const userMsg=makeMessage('user',transformedUserText,session,{source:'manual_send',regexInputApplied:transformedUserText!==originalUserText});userMsg.rawContent=originalUserText;session.messages.push(userMsg);
+      const userMsg=makeMessage('user',transformedUserText,session,{source:'manual_send',regexInputApplied:transformedUserText!==originalUserText,inputSemanticMode:inputSemanticMode(session),inputSemanticParserVersion:'1.1.7'});userMsg.rawContent=originalUserText;session.messages.push(userMsg);
       session=await saveSession(session);
       emitProgress(progress,{phase:'saved_user',percent:14,detail:'主人消息已安全写入本地剧情。'});
     }
@@ -630,9 +657,9 @@
     emitProgress(progress,{phase:'done',percent:100,detail:'剧情生成完成。'});
     return saved;
   }
-  async function editMessage(id,msgId,content,opts={}){const s=getSession(id);if(!s)throw new Error('未找到剧本');const i=s.messages.findIndex(m=>m.id===msgId);if(i<0)throw new Error('未找到消息');const msg=s.messages[i];archiveVersion(msg,'manual_edit');msg.content=String(content||'');msg.rawContent=msg.content;msg.renderedContent=msg.role==='assistant'?applyRegexForSession(s,msg.content,'display'):msg.content;msg.isEdited=true;msg.editedAt=nowIso();msg.tokenEstimate=estimateTokens(msg.content);if(opts.truncateAfter){const removed=s.messages.slice(i+1);if(removed.length){s.archivedBranches=arr(s.archivedBranches);s.archivedBranches.push({id:makeId('branch'),fromMessageId:msg.id,reason:'edit_truncate_after',archivedAt:nowIso(),messages:removed});s.messages=s.messages.slice(0,i+1);}}return saveSession(s);}
+  async function editMessage(id,msgId,content,opts={}){const s=getSession(id);if(!s)throw new Error('未找到剧本');const i=s.messages.findIndex(m=>m.id===msgId);if(i<0)throw new Error('未找到消息');const msg=s.messages[i];archiveVersion(msg,'manual_edit');msg.content=String(content||'');msg.rawContent=msg.content;msg.renderedContent=msg.role==='assistant'?applyRegexForSession(s,msg.content,'display'):msg.content;if(msg.role==='user')msg.metadata={...(msg.metadata||{}),inputSemanticMode:inputSemanticMode(s),inputSemanticParserVersion:'1.1.7'};msg.isEdited=true;msg.editedAt=nowIso();msg.tokenEstimate=estimateTokens(msg.content);if(opts.truncateAfter){const removed=s.messages.slice(i+1);if(removed.length){s.archivedBranches=arr(s.archivedBranches);s.archivedBranches.push({id:makeId('branch'),fromMessageId:msg.id,reason:'edit_truncate_after',archivedAt:nowIso(),messages:removed});s.messages=s.messages.slice(0,i+1);}}return saveSession(s);}
   async function addOpening(id,content){const s=getSession(id);if(!s)throw new Error('未找到剧本');if(!String(content||'').trim())throw new Error('开场白为空');const msg=makeMessage('assistant',content,s,{source:'character_first_message'});msg.renderedContent=applyRegexForSession(s,msg.content,'display');s.messages.push(msg);return saveSession(s);}
-  function previewPrompt(id,opts={}){const s=getSession(id);if(!s)throw new Error('未找到剧本');const c=normalizeSession(clone(s));if(String(opts.draft||'').trim())c.messages.push(makeMessage('user',opts.draft,c,{source:'prompt_preview_draft'}));return assemble(c,{directorNote:opts.directorNote||''}).inspector;}
+  function previewPrompt(id,opts={}){const s=getSession(id);if(!s)throw new Error('未找到剧本');const c=normalizeSession(clone(s));if(String(opts.draft||'').trim())c.messages.push(makeMessage('user',opts.draft,c,{source:'prompt_preview_draft',inputSemanticMode:inputSemanticMode(c),inputSemanticParserVersion:'1.1.7'}));return assemble(c,{directorNote:opts.directorNote||''}).inspector;}
 
   // ---------- Local route compatibility ----------
   function ok(data){return{success:true,data};}
@@ -694,5 +721,5 @@
   async function exportLibrary(){return clone(state);}
   async function importLibrary(raw){state=normalizeState(raw?.data||raw||{});await persist();return state;}
 
-  window.MimaStandalone={init,handle,getApiConfig,saveApiConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,applyRegexForSession,resolveMacrosForSession,exportLibrary,importLibrary,assemble,getLastUsage};
+  window.MimaStandalone={init,handle,getApiConfig,saveApiConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,applyRegexForSession,resolveMacrosForSession,compileUserInputForPrompt,exportLibrary,importLibrary,assemble,getLastUsage};
 })();

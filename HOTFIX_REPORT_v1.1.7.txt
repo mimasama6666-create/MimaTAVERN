@@ -1,0 +1,143 @@
+MIMAMAO Tavern v1.1.7 · USER INPUT SEMANTICS / EPISTEMIC BOUNDARY HOTFIX
+=======================================================================
+
+BASELINE
+--------
+唯一施工基线：MimaTAVERN-main-v1.1.6-FULL.zip
+施工策略：增量 Sidecar / Bridge；不重构、不删除旧入口、不改已有 Store 真源。
+
+ROOT CAUSE
+----------
+v1.1.6 会把玩家消息以 role="user" 的普通文本直接送入 Prompt。模型只能看到一整段字符串，无法可靠区分：
+1. 玩家真正说出口的台词；
+2. 括号中的动作/舞台描述；
+3. 括号中的私密内心；
+4. “模型读到了文本”与“角色在世界内知道了信息”。
+因此可能把括号动作当台词，或以上帝视角直接读取隐藏动作/内心。
+
+V1.1.7 ADDITIVE IMPLEMENTATION
+------------------------------
+新增：user-input-semantic-parser.js
+
+A. Smart AIRP parser
+- 支持中文/英文括号：（） / ()
+- 支持常见对白引号：“” / 「」 / 『』 / ""
+- SMART AUTO 默认兼容两种常见习惯：
+  1) 对话，（动作+内心）
+  2) 动作，“对白”（内心）
+- 明确引号存在时：引号内容 => PLAYER_SPEECH；外围普通文本 => PLAYER_ACTION
+- 无明确引号时：普通文本默认 => PLAYER_SPEECH；明显动作起句会谨慎识别为 PLAYER_ACTION
+- 括号永远不直接视为台词 => PLAYER_STAGE
+- 括号内出现“心想/心里想/内心想/暗想/默念/OS/想着/想道”等明确线索时，拆出 PLAYER_PRIVATE_THOUGHT
+
+B. Model-facing semantic protocol
+Prompt 编译时临时生成：
+<PLAYER_TURN>
+<PLAYER_SPEECH>...</PLAYER_SPEECH>
+<PLAYER_ACTION>...</PLAYER_ACTION>
+<PLAYER_STAGE>...</PLAYER_STAGE>
+<PLAYER_PRIVATE_THOUGHT>...</PLAYER_PRIVATE_THOUGHT>
+</PLAYER_TURN>
+
+原始用户消息不会被改写成这些标签；标签只存在于发送模型的临时 Prompt。
+
+C. Epistemic hard boundary
+System Prompt 新增硬边界：
+- PLAYER_SPEECH = 可听见台词
+- PLAYER_ACTION = 已发生动作，不等于角色知道动作全文
+- PLAYER_STAGE = 绝非台词；可混合动作/意图/感受/内心，仅外显可感知部分可能被角色获得
+- PLAYER_PRIVATE_THOUGHT = 默认只有玩家本人知道
+- “文本对模型可见 ≠ 文本对角色可知”
+- 禁止将隐藏动作/私密想法升级为角色事实
+- 禁止把 ACTION/STAGE/PRIVATE_THOUGHT 当玩家说过的话
+- 不机械复述玩家已写动作，优先写后果、角色反应和后续发展
+- 若世界观确实存在且当下生效的读心能力，仍需服从能力范围与当前事实
+
+D. Per-Session AIRP mode
+Context 设置新增「🎭 AIRP 输入语义」：
+- 智能自动（默认 / 推荐）
+- 对话优先：普通文本=台词，括号=动作/心理
+- 引号台词：引号=台词，其余普通文本=动作
+- 旧版原样：关闭语义解析
+
+每条新玩家消息会记录当时使用的 semantic mode，因此之后修改 Session 默认模式，不会悄悄重解释旧消息。
+
+E. Non-destructive / compatibility
+- Store 的 message.content / rawContent 仍保存玩家原文（input regex 的既有行为不变）
+- API role:"user" / role:"assistant" 保持 canonical，不做字符串替换
+- 旧 Session 无需迁移；没有 message-local mode 的旧消息按当前 Session 模式 fail-soft 编译
+- 编辑玩家消息后会按当前模式重新登记语义模式；重说/分支从原消息重新编译
+- Prompt Inspector 展示模型真正看到的语义编译结果
+- Rolling Summary 与手动 Memory / timeline 汇总也使用同一语义边界，避免摘要模型再次把括号当台词
+
+FILES CHANGED
+-------------
+- standalone-core.js
+  仅接入 semantic sidecar、epistemic system section、Prompt/history/summary bridge、message-local mode metadata。
+- app.js
+  仅在 Context 设置增加 AIRP 模式选择与保存。
+- index.html
+  仅加载新 sidecar 与 v1.1.7 cache-bust；保留旧 compatibility markers。
+- tests/smoke-v1.1.7.js
+  新增行为回归。
+
+FILES ADDED
+-----------
+- user-input-semantic-parser.js
+- tests/smoke-v1.1.7.js
+- HOTFIX_REPORT_v1.1.7.txt
+
+MATURE FILES VERIFIED BYTE-UNCHANGED
+------------------------------------
+- local-store.js
+- regex-engine.js
+- persona-macro-resolver.js
+- assistant-studio.js
+- font-manager.js
+- style.css
+- 两份既有 DOCX 使用手册
+
+BEHAVIOR EXAMPLES
+-----------------
+输入：
+你今天怎么啦？（伸手抱住他，心想：这只狗怎么这么可爱）
+
+SMART AUTO Prompt：
+PLAYER_SPEECH = 你今天怎么啦？
+PLAYER_STAGE = 伸手抱住他
+PLAYER_PRIVATE_THOUGHT = 这只狗怎么这么可爱
+
+输入：
+我走到门边，“别过来。”（心想：钥匙在抽屉里）
+
+SMART AUTO Prompt：
+PLAYER_ACTION = 我走到门边，
+PLAYER_SPEECH = 别过来。
+PLAYER_PRIVATE_THOUGHT = 钥匙在抽屉里
+
+TESTS
+-----
+PASS smoke-session-history-v1.1.2.js
+PASS smoke-v1.1.0.js
+PASS smoke-v1.1.1.js
+PASS smoke-v1.1.2.js
+PASS smoke-v1.1.3.js
+PASS smoke-v1.1.4.js
+PASS smoke-v1.1.5.js
+PASS smoke-v1.1.5-repair.js
+PASS smoke-v1.1.5-repair-failure.js
+PASS smoke-v1.1.6.js
+PASS smoke-v1.1.7.js
+PASS all JS node --check
+PASS static startup asset reference check (8 scripts all present)
+PASS mature-file byte comparison
+
+NOTES / HONEST BOUNDARY
+-----------------------
+自然语言本身存在歧义，代码无法百分之百从任意一句文本推断作者意图，所以 v1.1.7 采用：
+1. Smart Auto 的保守启发式；
+2. 明确的语义标签；
+3. 强 epistemic boundary；
+4. 可按 Session 选择 AIRP 习惯。
+
+这比单纯在 Prompt 中写“括号不是台词”更稳定，同时不把用户锁死在一种 AIRP 写法里。
