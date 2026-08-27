@@ -1,0 +1,83 @@
+MIMAMAO Tavern v1.1.8 · STORY HISTORY / TYPOGRAPHY / STREAM-MODAL HOTFIX
+=======================================================================
+
+Baseline
+--------
+Unique source baseline: MimaTAVERN-main-v1.1.7-FULL.zip.
+This hotfix is additive. No cleanup/refactor pass was performed.
+
+Fixed 1 · Player/User message bubbles ignored Novel Typography
+---------------------------------------------------------------
+Root cause:
+- Reader typography CSS was scoped only to `.assistant-msg .story-prose`.
+- Player bubbles therefore kept UI typography even though their rendered content already used the same story-prose renderer.
+- Legacy URL story fonts were also scoped only to assistant content.
+
+Fix:
+- Player `.user-msg .story-prose` now shares story font size, line height, letter spacing and story font.
+- Player `.story-paragraph` also shares paragraph gap and first-line indent.
+- Legacy URL story-font bridge includes player story prose.
+- Safe HTML is now enabled only for assistant story output; raw player text never becomes executable/rendered HTML just because the Session enables Safe HTML.
+
+Fixed 2 · Opening Settings during streaming could make the UI feel frozen / impossible to close
+-----------------------------------------------------------------------------------------------
+Root cause:
+- v1.1.4's typewriter loop ran every 12 ms.
+- Every visual tick re-applied display Regex, rebuilt the entire growing stream DOM, and ran Safe HTML sanitization.
+- On mobile, a long streaming answer could saturate the main thread even while the Settings modal was covering the story, delaying tap/close handling.
+
+Fix:
+- Network/model generation continues normally.
+- The newest stream text keeps buffering in `targetText`.
+- While Settings is open, expensive story-stream visual painting is paused.
+- Generation progress is deferred rather than repeatedly repainting behind Settings.
+- Closing Settings resumes visual streaming from the buffered text.
+- No API request is cancelled, restarted, or duplicated by opening/closing Settings.
+
+Fixed 3 · Individual historical story messages could not be deleted
+--------------------------------------------------------------------
+Root cause:
+- v1.1.2 added Session-level history deletion and message editing, but there was no DELETE route for an individual story message.
+
+Fix:
+- Added `DELETE /sessions/:sessionId/messages/:messageId`.
+- User and assistant messages now expose a `删除` control.
+- The normal message editor also exposes Delete.
+- Deletion is blocked while a generation transaction is in flight to avoid mutating the prompt beneath an active request.
+- The target message disappears from active `messages` and therefore from future recent-message context.
+- For accidental-delete recovery/data safety, an invisible copy is retained in Session `deletedMessages` with `deletedAt` + `manual_delete` metadata.
+- Character cards, presets, worldbooks, Regex, CSS and other library objects are untouched.
+
+Fixed 4 · Safe HTML typography preview barely reacted
+------------------------------------------------------
+Root cause:
+- The Safe HTML demo used a plain `<p>` rather than the story-prose/story-paragraph classes.
+- It contained only one paragraph, so paragraph spacing could not be seen.
+- A hard-coded `margin-bottom:12px` masked the configured paragraph-gap variable.
+
+Fix:
+- Safe HTML preview prose explicitly uses the same reader typography classes.
+- Two Safe HTML paragraphs are shown so paragraph gap / first-line indent are visibly testable.
+- Preview margin uses `--story-paragraph-gap`.
+- Added a live player-message preview bubble so the user can verify the exact same typography settings on their own dialogue bubble.
+- Status-bar demo intentionally keeps its independent UI typography to verify that story typography does not crush custom HTML status bars.
+
+Safety / compatibility
+----------------------
+- No Session ID, API role, Store key, Regex ID or canonical machine identifier was changed.
+- Existing Session deletion remains intact.
+- Existing message edit/version/branch paths remain intact.
+- Existing streaming transport remains intact; only hidden visual painting is paused while Settings is open.
+- Existing Safe HTML sanitizer remains intact.
+
+Regression
+----------
+- Existing v1.1.0 through v1.1.7 smoke suites rerun.
+- New v1.1.8 smoke verifies:
+  * per-message DELETE route and persistence,
+  * recoverable deletedMessages record,
+  * player typography selectors,
+  * Safe HTML preview typography classes,
+  * stream visual-pause/deferred-progress guard,
+  * message delete UI,
+  * v1.1.8 cache bust.

@@ -87,7 +87,7 @@
       enabledContextSources: { storySummary: true, recentMessages: true, telegramContext: false, vectorMemory: false },
       worldbookIds: list(s.worldbookIds), presetIds: list(s.presetIds), openingId: s.openingId || null,
       canonLevel: s.canonLevel || 'alternate', status: s.status || 'active',
-      messages: arr(s.messages).map(normalizeMessage), archivedBranches: arr(s.archivedBranches),
+      messages: arr(s.messages).map(normalizeMessage), archivedBranches: arr(s.archivedBranches), deletedMessages: arr(s.deletedMessages).map(normalizeMessage),
       summary: text(s.summary), rollingSummary: text(s.rollingSummary || s.summary), longSummary: text(s.longSummary),
       sceneSummary: text(s.sceneSummary), characterPsychSummary: text(s.characterPsychSummary), relationshipSummary: text(s.relationshipSummary),
       unresolvedHooks: list(s.unresolvedHooks), pinnedFacts: list(s.pinnedFacts),
@@ -658,6 +658,15 @@
     return saved;
   }
   async function editMessage(id,msgId,content,opts={}){const s=getSession(id);if(!s)throw new Error('未找到剧本');const i=s.messages.findIndex(m=>m.id===msgId);if(i<0)throw new Error('未找到消息');const msg=s.messages[i];archiveVersion(msg,'manual_edit');msg.content=String(content||'');msg.rawContent=msg.content;msg.renderedContent=msg.role==='assistant'?applyRegexForSession(s,msg.content,'display'):msg.content;if(msg.role==='user')msg.metadata={...(msg.metadata||{}),inputSemanticMode:inputSemanticMode(s),inputSemanticParserVersion:'1.1.7'};msg.isEdited=true;msg.editedAt=nowIso();msg.tokenEstimate=estimateTokens(msg.content);if(opts.truncateAfter){const removed=s.messages.slice(i+1);if(removed.length){s.archivedBranches=arr(s.archivedBranches);s.archivedBranches.push({id:makeId('branch'),fromMessageId:msg.id,reason:'edit_truncate_after',archivedAt:nowIso(),messages:removed});s.messages=s.messages.slice(0,i+1);}}return saveSession(s);}
+  async function deleteMessage(id,msgId){
+    const s=getSession(id);if(!s)throw new Error('未找到剧本');
+    const i=s.messages.findIndex(m=>m.id===msgId);if(i<0)throw new Error('未找到消息');
+    const [removed]=s.messages.splice(i,1);
+    const recovery=normalizeMessage({...clone(removed),metadata:{...(removed?.metadata||{}),deletedAt:nowIso(),deleteReason:'manual_delete'}});
+    s.deletedMessages=arr(s.deletedMessages);s.deletedMessages.push(recovery);
+    if(Number.isFinite(Number(s.lastSummarizedIndex)))s.lastSummarizedIndex=Math.max(0,Math.min(Number(s.lastSummarizedIndex),s.messages.length));
+    return saveSession(s);
+  }
   async function addOpening(id,content){const s=getSession(id);if(!s)throw new Error('未找到剧本');if(!String(content||'').trim())throw new Error('开场白为空');const msg=makeMessage('assistant',content,s,{source:'character_first_message'});msg.renderedContent=applyRegexForSession(s,msg.content,'display');s.messages.push(msg);return saveSession(s);}
   function previewPrompt(id,opts={}){const s=getSession(id);if(!s)throw new Error('未找到剧本');const c=normalizeSession(clone(s));if(String(opts.draft||'').trim())c.messages.push(makeMessage('user',opts.draft,c,{source:'prompt_preview_draft',inputSemanticMode:inputSemanticMode(c),inputSemanticParserVersion:'1.1.7'}));return assemble(c,{directorNote:opts.directorNote||''}).inspector;}
 
@@ -678,6 +687,7 @@
       m=path.match(/^\/sessions\/([^/]+)\/prompt-preview$/);if(m&&method==='POST')return ok(previewPrompt(m[1],body||{}));
       m=path.match(/^\/sessions\/([^/]+)\/opening$/);if(m&&method==='POST')return ok(await addOpening(m[1],body?.content||''));
       m=path.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)$/);if(m&&method==='PATCH')return ok(await editMessage(m[1],m[2],body?.content,{truncateAfter:!!body?.truncateAfter}));
+      if(m&&method==='DELETE')return ok(await deleteMessage(m[1],m[2]));
       m=path.match(/^\/sessions\/([^/]+)\/memory$/);if(m&&method==='PATCH')return ok(await updateManualMemory(m[1],body||{}));
       m=path.match(/^\/sessions\/([^/]+)\/memory\/core$/);if(m&&method==='POST')return ok(await generateCoreMemory(m[1],body||{},signal,progress));
       if(m&&method==='DELETE')return ok(await deleteCoreMemory(m[1]));
