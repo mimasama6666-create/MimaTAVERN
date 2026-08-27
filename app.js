@@ -678,6 +678,24 @@ function appendSafeHtmlWithProse(node,text){
     flush();
 }
 function appendRenderedContent(node,text,allowHtml=false){if(allowHtml){appendSafeHtmlWithProse(node,text);return}appendProseText(node,text)}
+function sanitizeSafeInlineStyle(styleText){
+    const kept=[];
+    for(const declaration of String(styleText||'').split(';')){
+        const colon=declaration.indexOf(':');
+        if(colon<=0)continue;
+        const name=declaration.slice(0,colon).trim().toLowerCase();
+        const value=declaration.slice(colon+1).trim();
+        // Safe HTML deliberately does NOT allow arbitrary inline CSS. The one
+        // legacy dynamic status value we preserve is the BOND meter percentage.
+        if(name==='--value'){
+            const match=value.match(/^(-?(?:\d+(?:\.\d+)?|\.\d+))%$/);
+            if(!match)continue;
+            const numeric=Math.max(0,Math.min(100,Number(match[1])));
+            if(Number.isFinite(numeric))kept.push(`--value:${numeric}%`);
+        }
+    }
+    return kept.join(';');
+}
 function sanitizeAllowedHtml(html){
     const template=document.createElement('template');template.innerHTML=cleanCorruptText(html);
     const allowedTags=new Set(['SYSTEM','DIV','SPAN','P','BR','STRONG','B','EM','I','SMALL','MARK','S','U','SUB','SUP','KBD','SECTION','ARTICLE','HEADER','FOOTER','MAIN','ASIDE','NAV','DETAILS','SUMMARY','BLOCKQUOTE','PRE','CODE','H1','H2','H3','H4','H5','H6','UL','OL','LI','DL','DT','DD','TABLE','CAPTION','COLGROUP','COL','THEAD','TBODY','TFOOT','TR','TD','TH','HR']);
@@ -689,6 +707,11 @@ function sanitizeAllowedHtml(html){
         if(!allowedTags.has(el.tagName)){el.replaceWith(...[...el.childNodes]);continue}
         for(const a of [...el.attributes]){
             const n=a.name.toLowerCase(),v=String(a.value||'');
+            if(n==='style'){
+                const safeStyle=sanitizeSafeInlineStyle(v);
+                if(safeStyle)el.setAttribute('style',safeStyle);else el.removeAttribute(a.name);
+                continue;
+            }
             const ok=allowedAttrs.has(n)||n.startsWith('data-')||n.startsWith('aria-');
             if(!ok||/^on/i.test(n)||/javascript:|data:text\/html/i.test(v))el.removeAttribute(a.name);
         }

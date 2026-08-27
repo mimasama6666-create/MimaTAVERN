@@ -147,3 +147,11 @@ V1.0.3 数据安全补丁：
 - 静态资源缓存版本更新为 ?v=1.1.0。
 
 Streaming 说明：前端现在会即时消费并显示服务端实际送达的 SSE chunk；若某个中转站/模型上游本身把内容缓存到最后才一次性返回，浏览器无法提前显示尚未收到的文字。
+
+
+=== v1.1.9 Safe HTML 动态状态变量补丁 ===
+- 修复 BOND 数字正常但所有进度条始终为空的问题：根因是 Safe HTML sanitizer 会删除 `style="--value:85%;"`，导致 CSS 的 `var(--value, 0%)` 永远回退到 0%。
+- 不开放任意 inline style；只增量保留旧状态栏已经使用的 `--value:<0..100>%` 动态变量，并做百分比格式校验与 0–100 夹紧。
+- 原 HTML / Regex / CSS 状态栏输出协议无需修改，旧 BOND 结构继续兼容。
+- Safe HTML 原有 script/style/event/javascript 等安全边界保持不变。
+- 静态资源 release 更新为 1.1.9，避免手机端继续命中旧 app.js 缓存。
