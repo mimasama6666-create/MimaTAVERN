@@ -312,6 +312,7 @@
     if(code==='E_API_EMPTY_REPLY')return '接口请求成功，但可见正文为空。常见原因是中转兼容层只返回 reasoning_content、模型输出被过滤/截断、max_tokens 太小，或上游返回格式异常。咪嘛馆现在会拦截空回复，不再把空白消息写进剧情。';
     if(code==='E_API_UNRECOGNIZED_RESPONSE')return '接口返回成功，但响应结构不是咪嘛馆可识别的 OpenAI-compatible 文本格式。可检查中转站是否使用了自定义响应结构。';
     if(code==='E_STREAM_PARSE')return '流式数据没有按 SSE/NDJSON 的常见格式返回，可能是中转站的流式兼容实现异常。可暂时关闭 Streaming（流式传输）再试。';
+    if(code==='E_STREAM_INTERRUPTED')return '流式连接已经建立，但接收过程中被网络 / CDN / 中转节点中断。咪嘛馆不会自动再次计费重试；可以点击“仅重试本轮”手动重试，且不会重复写入玩家消息。';
     if(status===400)return '请求参数不被接口接受。常见原因是模型名错误、该模型不支持 temperature / stream / max_tokens，或接口格式不兼容。';
     if(status===402)return '上游/中转站计费网关拒绝了本次请求。余额非零也可能因为模型倍率、分组额度、预授权或请求的最大输出额度过高而被拒绝。';
     if(status===401)return 'API Key（密钥）无效、过期，或 Authorization 认证格式不被服务端接受。';
@@ -427,8 +428,16 @@
       let payload;try{payload=JSON.parse(payloadText)}catch(_){return;}
       eventCount++;finalPayload=payload;const observed=captureUsageMetrics(payload,model,null);if(observed)streamUsage=observed;const piece=extractStreamDelta(payload);if(piece){reply+=piece;emitProgress(onProgress,{phase:'streaming',percent:Math.min(90,58+Math.log10(reply.length+1)*12),receivedChars:reply.length,delta:piece,streamText:reply,detail:`已接收 ${reply.length} 个字符`});}
     };
-    while(true){const {done,value}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});const lines=buffer.split(/\r?\n/);buffer=lines.pop()||'';for(const line of lines)consumeLine(line);}
-    buffer+=decoder.decode();if(buffer.trim())for(const line of buffer.split(/\r?\n/))consumeLine(line);
+    try{
+      while(true){const {done,value}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});const lines=buffer.split(/\r?\n/);buffer=lines.pop()||'';for(const line of lines)consumeLine(line);}
+      buffer+=decoder.decode();if(buffer.trim())for(const line of buffer.split(/\r?\n/))consumeLine(line);
+    }catch(e){
+      if(e?.name==='AbortError')throw e;
+      if(text(reply)){
+        throw new ApiError('E_STREAM_INTERRUPTED',`流式连接在已接收 ${reply.length} 个字符后中断。为避免把半截回复写入剧情，本轮没有提交角色消息。`,{status:res.status,hint:apiErrorHint('E_STREAM_INTERRUPTED',res.status,e?.message||''),details:`receivedChars: ${reply.length}; stream events: ${eventCount}`});
+      }
+      throw asApiError(e,'E_API_NETWORK_CORS');
+    }
     if(!reply&&finalPayload){try{reply=extractReply(finalPayload)}catch(_){}}
     if(!text(reply))throw new ApiError('E_API_EMPTY_REPLY','流式请求结束，但模型没有返回可见正文。',{status:res.status,details:`stream events: ${eventCount}`});
     if(streamUsage)emitProgress(onProgress,{phase:'cache_usage',percent:92,detail:streamUsage.cachedTokens>0?`上游报告缓存命中 ${streamUsage.cachedTokens} tokens`:(streamUsage.cachedTokens===0?'上游返回 usage；本次报告缓存命中 0 tokens':'上游返回 usage，但没有提供缓存命中字段'),usage:clone(streamUsage)});
@@ -439,7 +448,15 @@
     const streamEnabled=options.streamOverride===undefined?!!cfg.stream:!!options.streamOverride;
     const body={model:cfg.model,messages};if(streamEnabled)body.stream=true;if(cfg.sendTemperature!==false)body.temperature=clampTemp(temperature);if(Number(cfg.maxTokens)>0)body.max_tokens=Math.floor(Number(cfg.maxTokens));
     emitProgress(options.onProgress,{phase:'requesting',percent:42,detail:`正在请求 ${cfg.model}`});
-    let res;try{res=await fetch(chat,{method:'POST',headers:apiHeaders(cfg),body:JSON.stringify(body),signal});}catch(e){throw asApiError(e);}
+    let res;try{res=await fetch(chat,{method:'POST',headers:apiHeaders(cfg),body:JSON.stringify(body),signal,mode:'cors',credentials:'omit',cache:'no-store'});}catch(e){
+      const err=asApiError(e);
+      if(err instanceof ApiError&&err.code==='E_API_NETWORK_CORS'){
+        let endpoint='';try{endpoint=new URL(chat).origin}catch(_){}
+        const online=(typeof navigator!=='undefined'&&typeof navigator.onLine==='boolean')?String(navigator.onLine):'unknown';
+        err.details=[err.details,`stage: fetch_before_response`,`endpoint: ${endpoint||'unknown'}`,`navigator.onLine: ${online}`].filter(Boolean).join('; ');
+      }
+      throw err;
+    }
     if(!res.ok){let data={};try{data=await res.clone().json()}catch(_){}throw httpApiError(res.status,data?.error?.message||data?.message||`API 请求失败 HTTP ${res.status}`);}
     const contentType=String(res.headers?.get?.('content-type')||'').toLowerCase();
     if(streamEnabled&&!/application\/json/i.test(contentType)){

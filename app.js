@@ -19,6 +19,8 @@ let fontRecords = [];
 let memoryGenerating = false;
 let liveStreamState = null;
 let deferredGenerationProgress = null;
+let lastGenerationFailure = null;
+let currentGenerationAction = null;
 
 const TEMP_KEY = 'MIMAMAO_TAVERN_TEMP';
 const LEGACY_FONT_URL_KEY = 'storyFontUrl';
@@ -559,7 +561,7 @@ function collectApiForm(){const temp=Math.max(.1,Math.min(2,Number(qs('api-tempe
 function saveApiSettings(){try{const c=collectApiForm();if(c.extraHeaders)JSON.parse(c.extraHeaders);MimaStandalone.saveApiConfig(c);localStorage.setItem(TEMP_KEY,String(c.temperature));toast('API（接口）配置只保存到了这个浏览器');const el=qs('api-status');if(el)el.textContent='✅ 已保存。';return true}catch(e){const info=describeApiError(e);toast(`API（接口）配置错误：${info.message}`);const el=qs('api-status');if(el)el.textContent=`❌ ${info.code} · ${info.message}\n可能原因：${info.hint}`;return false}}
 async function loadApiModels(){if(!saveApiSettings())return;const status=qs('api-status');status.textContent='正在拉取模型……';try{const models=await MimaStandalone.listModels();populateApiModelSelect(models);status.textContent=`✅ 拉到 ${models.length} 个 Model（模型）。现在可以点击上方下拉框展开选择，也可以继续手填。`;if(models.length&&!qs('api-model').value){qs('api-model').value=models[0];populateApiModelSelect(models);MimaStandalone.saveApiConfig({...collectApiForm(),model:models[0]})}}catch(e){const info=describeApiError(e);status.textContent=`❌ ${info.code}${info.status?` · HTTP（状态码） ${info.status}`:''}\n${info.message}\n可能原因：${info.hint}`}}
 async function testApiConnection(){if(!saveApiSettings())return;const status=qs('api-status');status.textContent='正在测试 API（接口）……';try{const r=await MimaStandalone.testApi();status.textContent=`✅ API（接口）可访问，模型列表 ${r.count} 个。`;populateApiModelSelect(r.models)}catch(e){const info=describeApiError(e);status.textContent=`❌ ${info.code}${info.status?` · HTTP（状态码） ${info.status}`:''}\n${info.message}\n可能原因：${info.hint}`}}
-function describeApiError(e){const message=e?.message||String(e);const code=e?.code||(/Failed to fetch|NetworkError|Load failed|CORS/i.test(message)?'E_API_NETWORK_CORS':'E_API_UNKNOWN');const status=Number(e?.status)||0;let hint=e?.hint||'';if(!hint&&code==='E_API_NETWORK_CORS')hint='如果地址/Key（密钥）正确，通常是 API 没开放浏览器 CORS（跨域），也可能是网络或证书问题。';if(!hint)hint='请检查 API（接口）地址、密钥、模型名、参数兼容性以及中转站状态。';return{message,code,status,hint,details:e?.details||''}}
+function describeApiError(e){const message=e?.message||e?.msg||(typeof e==='string'?e:'未知 API 错误');const code=e?.code||(/Failed to fetch|NetworkError|Load failed|CORS/i.test(message)?'E_API_NETWORK_CORS':'E_API_UNKNOWN');const status=Number(e?.status)||0;let hint=e?.hint||'';if(!hint&&code==='E_API_NETWORK_CORS')hint='浏览器 Fetch 在拿不到响应时无法可靠区分 CORS、网络断线、证书错误或“网关错误响应缺少 CORS 头”。如果同一配置一会成功一会失败，更像中转/CDN 节点抖动，而不是你的剧情数据坏了。';if(!hint&&code==='E_STREAM_INTERRUPTED')hint='流式连接已建立后中断。不要自动重复计费；可点击“仅重试本轮”手动重试，玩家消息不会重复写入。';if(!hint)hint='请检查 API（接口）地址、密钥、模型名、参数兼容性以及中转站状态。';return{message,code,status,hint,details:e?.details||''}}
 function friendlyApiError(e){const i=describeApiError(e);return `${i.code}${i.status?` · HTTP（状态码） ${i.status}`:''} · ${i.message}\n可能原因：${i.hint}`}
 function chooseApiImport(){qs('api-config-file-input').value='';qs('api-config-file-input').click()}
 async function importApiConfigFile(file){if(!file)return;try{const raw=JSON.parse(await file.text()),src=raw.data||raw;const temperature=Number(src.temperature??localStorage.getItem(TEMP_KEY)??.85);MimaStandalone.saveApiConfig({apiBase:src.apiBase||src.baseUrl||src.base_url||'',apiKey:src.apiKey||src.api_key||src.key||'',model:src.model||'',chatEndpoint:src.chatEndpoint||'',modelsEndpoint:src.modelsEndpoint||'',extraHeaders:typeof src.extraHeaders==='string'?src.extraHeaders:src.extraHeaders?JSON.stringify(src.extraHeaders):'',sendTemperature:src.sendTemperature!==false,temperature,stream:!!(src.stream??src.streaming),maxTokens:Number(src.maxTokens||0)});localStorage.setItem(TEMP_KEY,String(temperature));renderApiTab(qs('settings-content'));toast('API（接口）配置已导入到当前浏览器')}catch(e){toast(`API（接口）配置导入失败：${e.message}`)}}
@@ -585,7 +587,7 @@ function getTemp(){const cfg=MimaStandalone.getApiConfig?.()||{};const n=Number(
 function toggleUIState(generating){isGenerating=generating;qs('send-btn').disabled=generating;qsa('.quick-actions .chip-btn').forEach(b=>{if(b.id!=='stop-btn')b.disabled=generating});qs('stop-btn').classList.toggle('hidden',!generating);qs('story-input').disabled=generating}
 function generationActionLabel(action){return action==='regenerate'?'正在重新生成':action==='continue'?'正在续写':action==='auto_advance'?'正在推进剧情':'正在生成剧情'}
 function setGenerationProgress(payload={}){const panel=qs('generation-panel'),bar=qs('generation-progress-bar'),label=qs('generation-label'),pct=qs('generation-percent'),detail=qs('generation-detail');if(!panel)return;panel.classList.remove('hidden','error','done');const n=Math.max(2,Math.min(100,Number(payload.percent)||2));bar.style.width=`${n}%`;pct.textContent=`${Math.round(n)}%`;if(payload.label)label.textContent=payload.label;if(payload.detail)detail.textContent=payload.detail}
-function beginGenerationProgress(action){deferredGenerationProgress=null;const panel=qs('generation-panel');panel?.classList.remove('hidden','error','done');setGenerationProgress({percent:4,label:`🤍 ${generationActionLabel(action)}`,detail:'正在准备本轮剧情…'})}
+function beginGenerationProgress(action){deferredGenerationProgress=null;currentGenerationAction=action;lastGenerationFailure=null;const retry=qs('generation-retry');if(retry)retry.classList.add('hidden');const panel=qs('generation-panel');panel?.classList.remove('hidden','error','done');setGenerationProgress({percent:4,label:`🤍 ${generationActionLabel(action)}`,detail:'正在准备本轮剧情…'})}
 function isStoryNearBottom(box,threshold=96){return !box||((box.scrollHeight-box.scrollTop-box.clientHeight)<=threshold)}
 function updateStoryFollowButton(){const b=qs('story-follow-stream');if(!b)return;b.classList.toggle('hidden',!liveStreamState||liveStreamState.followTail!==false)}
 function resumeStoryStreamFollow(){if(!liveStreamState)return;liveStreamState.followTail=true;const box=qs('story-chat-box');if(box)box.scrollTop=box.scrollHeight;updateStoryFollowButton()}
@@ -595,10 +597,11 @@ function ensureLiveStreamBubble(){if(liveStreamState?.node?.isConnected)return l
 function pumpLiveStream(){const st=liveStreamState;if(!st||st.timer)return;st.timer=setInterval(()=>{if(!liveStreamState){clearInterval(st.timer);return}if(isSettingsOpen()||liveStreamState.visualPaused)return;const gap=st.targetText.length-st.displayText.length;if(gap<=0)return;const step=gap>500?6:gap>220?4:gap>80?2:1;st.displayText=st.targetText.slice(0,st.displayText.length+step);renderLiveStreamText()},12)}
 function handleGenerationProgress(payload){if(isSettingsOpen())deferredGenerationProgress=payload;else setGenerationProgress(payload);if(payload?.streamText!==undefined){const st=ensureLiveStreamBubble();if(st){st.targetText=String(payload.streamText||'');st.visualPaused=isSettingsOpen();pumpLiveStream()}}}
 function clearLiveStream(){if(liveStreamState?.timer)clearInterval(liveStreamState.timer);if(liveStreamState?.node?.isConnected)liveStreamState.node.remove();liveStreamState=null;updateStoryFollowButton()}
-function finishGenerationProgress(){deferredGenerationProgress=null;setGenerationProgress({percent:100,label:'🤍 生成完成',detail:'剧情已保存到本机。'});const panel=qs('generation-panel');panel?.classList.add('done');setTimeout(()=>{if(!isGenerating)panel?.classList.add('hidden')},650)}
-function showGenerationError(err){deferredGenerationProgress=null;const info=describeApiError(err),panel=qs('generation-panel'),bar=qs('generation-progress-bar'),label=qs('generation-label'),pct=qs('generation-percent'),detail=qs('generation-detail');if(!panel)return;panel.classList.remove('hidden','done');panel.classList.add('error');bar.style.width='100%';pct.textContent=info.status?`HTTP（状态码） ${info.status}`:'ERROR（错误）';label.textContent=`生成失败 · ${info.code}`;detail.textContent=`${info.message}
+function finishGenerationProgress(){deferredGenerationProgress=null;lastGenerationFailure=null;currentGenerationAction=null;const retry=qs('generation-retry');if(retry)retry.classList.add('hidden');setGenerationProgress({percent:100,label:'🤍 生成完成',detail:'剧情已保存到本机。'});const panel=qs('generation-panel');panel?.classList.add('done');setTimeout(()=>{if(!isGenerating)panel?.classList.add('hidden')},650)}
+function showGenerationError(err){deferredGenerationProgress=null;const info=describeApiError(err),panel=qs('generation-panel'),bar=qs('generation-progress-bar'),label=qs('generation-label'),pct=qs('generation-percent'),detail=qs('generation-detail'),retry=qs('generation-retry');if(!panel)return;lastGenerationFailure={...info,action:currentGenerationAction};panel.classList.remove('hidden','done');panel.classList.add('error');bar.style.width='100%';pct.textContent=info.status?`HTTP（状态码） ${info.status}`:'ERROR（错误）';label.textContent=`生成失败 · ${info.code}`;detail.textContent=`${info.message}
 可能原因：${info.hint}${info.details?`
-诊断：${info.details}`:''}`}
+诊断：${info.details}`:''}`;const retryable=info.code==='E_API_NETWORK_CORS'||info.code==='E_STREAM_INTERRUPTED'||[408,409,429,502,503,504].includes(info.status)||info.status>=500;if(retry)retry.classList.toggle('hidden',!retryable)}
+function retryFailedGeneration(){if(isGenerating)return toast('当前已经在生成中。');if(!lastGenerationFailure)return toast('当前没有可重试的失败请求。');const previousAction=lastGenerationFailure.action||'send';const retry=qs('generation-retry');if(retry)retry.classList.add('hidden');if(previousAction==='send')return triggerChat('','regenerate');return triggerChat('',previousAction)}
 function dismissGenerationPanel(){qs('generation-panel')?.classList.add('hidden')}
 async function triggerChat(text,actionType='send'){
     if(!currentSessionId)return toast('请先创建一个剧情。');
@@ -666,50 +669,8 @@ function appendProseText(parent,text){
     const chunks=raw.split(/\n{2,}/);
     chunks.forEach(chunk=>{if(!chunk.trim())return;const p=document.createElement('div');p.className='story-prose story-paragraph';p.textContent=chunk.trim();parent.appendChild(p)});
 }
-function parseBondMeterPercent(text){
-    const raw=String(text||'').replace(/\s+/g,' ').trim();
-    if(!raw)return null;
-    let match=raw.match(/(-?(?:\d+(?:\.\d+)?|\.\d+))\s*\/\s*(-?(?:\d+(?:\.\d+)?|\.\d+))/);
-    if(match){
-        const current=Number(match[1]),maximum=Number(match[2]);
-        if(Number.isFinite(current)&&Number.isFinite(maximum)&&maximum>0)return Math.max(0,Math.min(100,current/maximum*100));
-    }
-    match=raw.match(/(-?(?:\d+(?:\.\d+)?|\.\d+))\s*%/);
-    if(match){
-        const numeric=Number(match[1]);
-        if(Number.isFinite(numeric))return Math.max(0,Math.min(100,numeric));
-    }
-    return null;
-}
-function hydrateSafeHtmlDynamicMeters(root){
-    if(!root?.querySelectorAll)return;
-    for(const meter of root.querySelectorAll('.mima-meter')){
-        const fill=meter.querySelector('.mima-meter-fill');
-        if(!fill)continue;
-        let percent=null;
-        const declared=String(fill.style?.getPropertyValue?.('--value')||'').trim();
-        const declaredMatch=declared.match(/^(-?(?:\d+(?:\.\d+)?|\.\d+))%$/);
-        if(declaredMatch){
-            const numeric=Number(declaredMatch[1]);
-            if(Number.isFinite(numeric))percent=Math.max(0,Math.min(100,numeric));
-        }
-        // v1.1.10 fallback: historical/model-generated BOND HTML often carries
-        // only the visible "85 / 100" number and no inline --value at all.
-        // Derive the bounded visual width from that already-visible value.
-        const numberNode=meter.querySelector('.mima-meter-number');
-        const fromNumber=parseBondMeterPercent(numberNode?.textContent||'');
-        if(fromNumber!==null)percent=fromNumber;
-        if(percent===null)continue;
-        const safeValue=`${percent}%`;
-        fill.style.setProperty('--value',safeValue);
-        // Inline !important is intentional here: the value is code-derived and
-        // bounded, and it must survive user CSS rules that also use !important.
-        fill.style.setProperty('width',safeValue,'important');
-    }
-}
 function appendSafeHtmlWithProse(node,text){
     const template=document.createElement('template');template.innerHTML=sanitizeAllowedHtml(text||'');
-    hydrateSafeHtmlDynamicMeters(template.content);
     let prose='';
     const flush=()=>{if(prose.trim())appendProseText(node,prose);prose=''};
     for(const child of [...template.content.childNodes]){
@@ -720,40 +681,17 @@ function appendSafeHtmlWithProse(node,text){
     flush();
 }
 function appendRenderedContent(node,text,allowHtml=false){if(allowHtml){appendSafeHtmlWithProse(node,text);return}appendProseText(node,text)}
-function sanitizeSafeInlineStyle(styleText){
-    const kept=[];
-    for(const declaration of String(styleText||'').split(';')){
-        const colon=declaration.indexOf(':');
-        if(colon<=0)continue;
-        const name=declaration.slice(0,colon).trim().toLowerCase();
-        const value=declaration.slice(colon+1).trim();
-        // Safe HTML deliberately does NOT allow arbitrary inline CSS. The one
-        // legacy dynamic status value we preserve is the BOND meter percentage.
-        if(name==='--value'){
-            const match=value.match(/^(-?(?:\d+(?:\.\d+)?|\.\d+))%$/);
-            if(!match)continue;
-            const numeric=Math.max(0,Math.min(100,Number(match[1])));
-            if(Number.isFinite(numeric))kept.push(`--value:${numeric}%`);
-        }
-    }
-    return kept.join(';');
-}
 function sanitizeAllowedHtml(html){
     const template=document.createElement('template');template.innerHTML=cleanCorruptText(html);
-    const allowedTags=new Set(['SYSTEM','DIV','SPAN','P','BR','STRONG','B','EM','I','SMALL','MARK','S','U','SUB','SUP','KBD','SECTION','ARTICLE','HEADER','FOOTER','MAIN','ASIDE','NAV','DETAILS','SUMMARY','BLOCKQUOTE','PRE','CODE','H1','H2','H3','H4','H5','H6','UL','OL','LI','DL','DT','DD','TABLE','CAPTION','COLGROUP','COL','THEAD','TBODY','TFOOT','TR','TD','TH','HR']);
+    const allowedTags=new Set(['SYSTEM','DIV','SPAN','P','BR','STRONG','B','EM','I','SMALL','MARK','S','U','SUB','SUP','KBD','SECTION','ARTICLE','HEADER','FOOTER','MAIN','ASIDE','NAV','DETAILS','SUMMARY','BLOCKQUOTE','PRE','CODE','H1','H2','H3','H4','H5','H6','UL','OL','LI','DL','DT','DD','TABLE','CAPTION','COLGROUP','COL','THEAD','TBODY','TFOOT','TR','TD','TH','HR','PROGRESS','METER']);
     const blockedTags=new Set(['SCRIPT','STYLE','IFRAME','OBJECT','EMBED','FORM','INPUT','BUTTON','SELECT','TEXTAREA','OPTION','META','LINK','BASE','SVG','MATH','VIDEO','AUDIO','SOURCE','TRACK','CANVAS','NOSCRIPT']);
-    const allowedAttrs=new Set(['class','title','role','open','colspan','rowspan','scope']);
+    const allowedAttrs=new Set(['class','title','role','open','colspan','rowspan','scope','value','max','min','low','high','optimum']);
     const nodes=[...template.content.querySelectorAll('*')];
     for(const el of nodes){
         if(blockedTags.has(el.tagName)){el.remove();continue}
         if(!allowedTags.has(el.tagName)){el.replaceWith(...[...el.childNodes]);continue}
         for(const a of [...el.attributes]){
             const n=a.name.toLowerCase(),v=String(a.value||'');
-            if(n==='style'){
-                const safeStyle=sanitizeSafeInlineStyle(v);
-                if(safeStyle)el.setAttribute('style',safeStyle);else el.removeAttribute(a.name);
-                continue;
-            }
             const ok=allowedAttrs.has(n)||n.startsWith('data-')||n.startsWith('aria-');
             if(!ok||/^on/i.test(n)||/javascript:|data:text\/html/i.test(v))el.removeAttribute(a.name);
         }
@@ -764,7 +702,7 @@ function sanitizeAllowedHtml(html){
 function restoreLegacyFont(){const url=localStorage.getItem(LEGACY_FONT_URL_KEY);if(!url)return;let tag=document.createElement('style');tag.id='legacy-url-font-style';document.head.appendChild(tag);const fam=localStorage.getItem(LEGACY_FONT_FAMILY_KEY)||'MimaUrlFont';const fmt=fontFormat(url);const apply=`.assistant-msg .story-prose,.assistant-msg .msg-content.safe-html-content,.user-msg .story-prose{font-family:'${fam}',-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif!important}`;tag.textContent=url.includes('fonts.googleapis.com')||url.endsWith('.css')?`@import url('${url}'); ${apply}`:`@font-face{font-family:'${fam}';src:url('${url}')${fmt?` format('${fmt}')`:''};font-display:swap;} ${apply}`}
 
 // Expose inline handlers
-Object.assign(window,{goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,clearCoreMemory,deleteFactMemory,clearAllFactMemories,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,syncTemperature,updateStoryTypography,resetStoryTypography,dismissGenerationPanel,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,continueMsg,autoAdvance,stopGeneration});
+Object.assign(window,{goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,clearCoreMemory,deleteFactMemory,clearAllFactMemories,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,syncTemperature,updateStoryTypography,resetStoryTypography,dismissGenerationPanel,retryFailedGeneration,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,continueMsg,autoAdvance,stopGeneration});
 
 
 window.MimaTavernBridge={
