@@ -1,0 +1,28 @@
+MimaTAVERN v1.1.9 · Browser Transport / Safe HTML Progress Hotfix
+
+BASELINE
+- Sole source baseline: MimaTAVERN-main-v1.1.8-FULL.zip from the latest conversation artifact.
+- Incremental patch only; no cleanup/refactor of unrelated systems.
+
+FIXES
+1. E_API_NETWORK_CORS UI no longer renders [object Object].
+   - describeApiError now understands the Core fail-object shape (msg/code/status/hint/details).
+   - Diagnostics explicitly state that browser Fetch cannot distinguish CORS, network loss, TLS failure, or a gateway error response that omitted CORS headers.
+2. No unsafe automatic retry.
+   - A visible “仅重试本轮 · 不重复玩家消息” action appears for transient transport failures.
+   - The retry reuses the already-saved last player turn instead of inserting a duplicate player message.
+   - No automatic retry is performed, avoiding hidden duplicate API charges.
+3. Streaming interruption is classified separately.
+   - If the stream breaks after partial text arrived, Core returns E_STREAM_INTERRUPTED with received character/event diagnostics.
+   - Partial text is not committed as canonical story output.
+4. Browser request transport is explicit and conservative.
+   - mode=cors, credentials=omit, cache=no-store.
+   - Diagnostic metadata includes endpoint origin and navigator.onLine when Fetch fails before a readable response.
+5. Safe HTML sanitizer now supports native progress/meter elements.
+   - Added safe tags: progress, meter.
+   - Added safe numeric/state attributes: value, max, min, low, high, optimum.
+   - script/style/event handler rules remain blocked.
+   - This restores Regex-generated BOND progress bars such as <progress class="mima-progress" value="76" max="100"></progress>.
+
+IMPORTANT LIMIT
+- A pure browser frontend cannot override an upstream server/CDN CORS policy. Intermittent CORS-like errors often mean some gateway/error responses omit Access-Control-Allow-Origin. v1.1.9 improves diagnosis and recovery without adding a backend or secretly retrying billable requests.

@@ -603,8 +603,8 @@ body::before{
 
 
 /* ============================================================
-   v1.1.9 · Browser transport diagnostics + Safe HTML meters
-   Additive only. No legacy CSS or sanitizer behavior removed.
+   v1.2.0 · Canonical Browser Transport + Safe HTML Native Meters
+   Additive merge on top of v1.1.10 BOND hydration.
    ============================================================ */
 .generation-actions{position:relative;display:flex;gap:7px;flex-wrap:wrap;margin-top:8px}
 .generation-retry{border:1px solid rgba(255,255,255,.72);background:rgba(255,255,255,.62);color:#70484d;border-radius:999px;padding:6px 10px;font-size:.69rem;line-height:1.2;box-shadow:inset 0 1px 0 rgba(255,255,255,.82)}

@@ -1,0 +1,33 @@
+MimaTAVERN v1.2.0 · CANONICAL BRANCH MERGE
+
+BASELINE
+- Sole canonical mother: MimaTAVERN-main-v1.1.10-BOND-HYDRATION-FULL.zip.
+- Parallel v1.1.9 Browser Transport package is patch source only, never a replacement baseline.
+
+PRESERVED FROM v1.1.10
+- All v1.1.0..v1.1.8 behavior and compatibility.
+- Safe HTML controlled --value bridge from the original v1.1.9 BOND branch.
+- hydrateSafeHtmlDynamicMeters() historical/visible-number BOND recovery.
+- Message edit/delete/recovery, streaming visual pause, semantic input parser, macros, memory/context, Regex/CSS/Persona systems.
+
+MERGED ADDITIVELY
+1. API error UI accepts Core fail objects with msg/code/status/hint/details.
+2. Explicit browser transport: mode=cors, credentials=omit, cache=no-store.
+3. E_STREAM_INTERRUPTED protects canonical history from partial streamed replies.
+4. Transient failures expose manual retry; failed initial send retries as regenerate/respond so the already-saved player message is not duplicated.
+5. Safe HTML supports native progress/meter tags and value/max/min/low/high/optimum attributes while retaining the v1.1.10 BOND sanitizer/hydrator.
+
+NON-GOALS / SAFETY
+- No automatic billable retry.
+- No Store/schema migration.
+- No arbitrary inline CSS allowance.
+- No removal of legacy commands/routes/UI paths.
+- Browser code cannot fix an upstream server/CDN that omits CORS headers.
+
+VALIDATION
+- JavaScript syntax checks: app.js / standalone-core.js / assistant-studio.js / regex-engine.js / user-input-semantic-parser.js PASS.
+- Existing registered smoke tests v1.1.0 through v1.1.10: PASS.
+- New v1.2.0 canonical merge smoke: PASS.
+- Total executed smoke scripts: 15 / 15 PASS.
+- Changed from v1.1.10 mother only: app.js, standalone-core.js, index.html, style.css, README.txt plus additive report/test files.
+- local-store.js, regex-engine.js, assistant-studio.js, font-manager.js, persona-macro-resolver.js, user-input-semantic-parser.js remain byte-identical to the v1.1.10 mother.

@@ -1,0 +1,25 @@
+MimaTAVERN v1.2.0 CANONICAL HANDOFF
+
+CANONICAL MOTHER
+MimaTAVERN-main-v1.1.10-BOND-HYDRATION-FULL.zip
+
+MERGED PATCH SOURCE
+Parallel MimaTAVERN-main-v1.1.9-FULL.zip (Browser Transport / Safe HTML Progress branch)
+Patch source only; it was NOT used as a replacement mother.
+
+CANONICAL RESULT
+- Keeps v1.1.9 BOND controlled --value Safe HTML bridge.
+- Keeps v1.1.10 visible-number / historical BOND hydration.
+- Adds E_STREAM_INTERRUPTED and partial-reply fail-closed behavior.
+- Adds explicit browser fetch mode=cors / credentials=omit / cache=no-store diagnostics.
+- Adds manual retry without duplicating an already-saved player turn.
+- Adds native Safe HTML progress/meter tags and numeric attributes.
+- Keeps all existing Store/schema/Session/Regex/Prompt compatibility paths.
+
+VALIDATION
+15 / 15 registered + new smoke scripts PASS.
+No unrelated source modules were rewritten.
+
+NEXT BASELINE RULE
+Use this v1.2.0 package as the only mother for subsequent MimaTAVERN work.
+Do not restart from either historical v1.1.9 branch.

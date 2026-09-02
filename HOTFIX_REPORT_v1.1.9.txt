@@ -1,28 +1,42 @@
-MimaTAVERN v1.1.9 · Browser Transport / Safe HTML Progress Hotfix
+MIMAMAO Tavern v1.1.9 · SAFE HTML DYNAMIC STATUS VARIABLE HOTFIX
+=================================================================
 
-BASELINE
-- Sole source baseline: MimaTAVERN-main-v1.1.8-FULL.zip from the latest conversation artifact.
-- Incremental patch only; no cleanup/refactor of unrelated systems.
+Baseline
+--------
+Unique source baseline: MimaTAVERN-main-v1.1.8-FULL.zip.
+This hotfix is additive and narrowly scoped. No unrelated refactor/cleanup was performed.
 
-FIXES
-1. E_API_NETWORK_CORS UI no longer renders [object Object].
-   - describeApiError now understands the Core fail-object shape (msg/code/status/hint/details).
-   - Diagnostics explicitly state that browser Fetch cannot distinguish CORS, network loss, TLS failure, or a gateway error response that omitted CORS headers.
-2. No unsafe automatic retry.
-   - A visible “仅重试本轮 · 不重复玩家消息” action appears for transient transport failures.
-   - The retry reuses the already-saved last player turn instead of inserting a duplicate player message.
-   - No automatic retry is performed, avoiding hidden duplicate API charges.
-3. Streaming interruption is classified separately.
-   - If the stream breaks after partial text arrived, Core returns E_STREAM_INTERRUPTED with received character/event diagnostics.
-   - Partial text is not committed as canonical story output.
-4. Browser request transport is explicit and conservative.
-   - mode=cors, credentials=omit, cache=no-store.
-   - Diagnostic metadata includes endpoint origin and navigator.onLine when Fetch fails before a readable response.
-5. Safe HTML sanitizer now supports native progress/meter elements.
-   - Added safe tags: progress, meter.
-   - Added safe numeric/state attributes: value, max, min, low, high, optimum.
-   - script/style/event handler rules remain blocked.
-   - This restores Regex-generated BOND progress bars such as <progress class="mima-progress" value="76" max="100"></progress>.
+Symptom
+-------
+BOND numbers rendered correctly (for example 85 / 100), but every visual meter remained empty.
+Changing the CSS alone could not fix it.
 
-IMPORTANT LIMIT
-- A pure browser frontend cannot override an upstream server/CDN CORS policy. Intermittent CORS-like errors often mean some gateway/error responses omit Access-Control-Allow-Origin. v1.1.9 improves diagnosis and recovery without adding a backend or secretly retrying billable requests.
+Root cause
+----------
+The v1.1.8 Safe HTML sanitizer intentionally allowed only:
+  class, title, role, open, colspan, rowspan, scope, data-*, aria-*
+and removed every `style` attribute.
+
+The established BOND HTML encodes its dynamic percentage as:
+  <span class="mima-meter-fill" style="--value:85%;"></span>
+
+Therefore Safe HTML transformed that element into:
+  <span class="mima-meter-fill"></span>
+
+The CSS then evaluated `width: var(--value, 0%)`, hit the fallback, and rendered 0% for every bar.
+
+Fix
+---
+- Added a narrow Safe HTML inline-style bridge.
+- It does NOT allow arbitrary inline CSS.
+- It preserves only the legacy custom property `--value`.
+- `--value` must be a percentage and is clamped to 0..100.
+- Every other inline declaration is discarded exactly as before.
+- Existing tag/attribute/event/javascript filtering remains intact.
+- Existing HTML, Regex, CSS output contract and BOND markup do not need to change.
+- Advanced static asset release marker to 1.1.9 so iOS/WebView does not keep the v1.1.8 app.js sanitizer in cache.
+
+Regression
+----------
+- Existing v1.1.0 through v1.1.8 smoke suites rerun unchanged.
+- New v1.1.9 smoke verifies the controlled style bridge, percentage-only validation, 0..100 clamping, continued rejection of arbitrary style allowlisting, and cache-bust advancement.
