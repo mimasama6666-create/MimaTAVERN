@@ -1,0 +1,32 @@
+/** MimaTAVERN v1.3.0 Novel-only prompt assembler. */
+(() => {
+  'use strict';
+  const root=typeof window!=='undefined'?window:globalThis;
+  const arr=v=>Array.isArray(v)?v:[];
+  const clean=v=>String(v??'').trim();
+  const clip=(s,n)=>{const t=clean(s);return n>0&&t.length>n?t.slice(-n):t};
+  const estimateTokens=t=>Math.ceil(String(t||'').length/2.5);
+  function keywordMatch(hay,keyword,entry={}){const k=clean(keyword);if(!k)return false;if(entry.useRegex){try{return new RegExp(k,entry.caseSensitive?'u':'iu').test(hay)}catch(_){return false}}const a=entry.caseSensitive?String(hay):String(hay).toLocaleLowerCase(),b=entry.caseSensitive?k:k.toLocaleLowerCase();return a.includes(b);}
+  function selectWorldbook(project,worldbooks,directorNote=''){
+    const engine=root.MimaNovelEngine,chapters=engine.orderedChapters(project),active=engine.getChapter(project,project.activeChapterId),recent=chapters.slice(-3).map(c=>engine.getChapterText(c)).join('\n'),summaries=chapters.slice(-8).map(c=>c.summary?.overview||'').join('\n'),hay=[recent,summaries,directorNote].join('\n');
+    const selected=[],skipped=[];for(const book of arr(worldbooks).filter(w=>project.worldbookIds.includes(w.id)&&w.enabled!==false)){for(const entry of arr(book.entries)){if(entry.enabled===false||!clean(entry.content)){skipped.push({book,entry,reason:'disabled_or_empty'});continue}if(entry.alwaysActive){selected.push({book,entry,reason:'always'});continue}const keys=arr(entry.keywords).filter(Boolean),hits=keys.filter(k=>keywordMatch(hay,k,entry));const ok=keys.length&&(entry.matchMode==='all'?hits.length===keys.length:hits.length>0);if(ok)selected.push({book,entry,reason:'keyword',hits});else skipped.push({book,entry,reason:'keyword_miss'});}}
+    selected.sort((a,b)=>Number(a.entry.priority||50)-Number(b.entry.priority||50));return{selected,skipped};
+  }
+  function formatSummary(c){const s=c.summary||{};const bits=[`【${c.title}】`,s.overview,s.events?.length?`事件：${s.events.join('；')}`:'',s.revealedFacts?.length?`已揭示：${s.revealedFacts.join('；')}`:'',s.openThreads?.length?`未完成：${s.openThreads.join('；')}`:'',s.endingState?`结尾状态：${s.endingState}`:''].filter(Boolean);return bits.join('\n');}
+  function formatNarrativeState(state={}){const rows=[];if(state.storyOverview)rows.push(`故事概括：${state.storyOverview}`);if(state.currentSituation)rows.push(`当前剧情：${state.currentSituation}`);for(const [label,key] of [['人物状态','characterStates'],['人物关系','relationships'],['时间线','timeline'],['进行中剧情线','openThreads'],['伏笔','foreshadowing'],['已揭示事实','revealedFacts'],['地点','locations']]){const value=state[key];if(Array.isArray(value)&&value.length)rows.push(`${label}：\n${value.map(x=>`- ${typeof x==='string'?x:JSON.stringify(x)}`).join('\n')}`);}return rows.join('\n\n');}
+  function assemble({project:projectInput,presets=[],worldbooks=[],directorNote='',mode='continue',draftText=''}){
+    const engine=root.MimaNovelEngine,memory=root.MimaNovelMemory,project=engine.normalizeProject(projectInput),chapters=engine.orderedChapters(project),active=engine.getChapter(project,project.activeChapterId)||chapters[chapters.length-1];if(!active)throw new Error('小说没有可续写章节');
+    const sections=[],messages=[],add=(name,role,content)=>{const text=clean(content);if(!text)return;sections.push({name,chars:text.length});messages.push({role,content:text});};
+    add('novel_contract','system',`【Novel Studio · 续写契约】\n你正在续写一部长篇小说，不是在进行聊天角色扮演。必须紧接已经发生的正文继续写，保持人物知识边界、时序、关系、世界设定与叙述视角一致。过去正文与已验证剧情档案是事实；本轮导演要求只影响未来写法，不会自动成为已发生事实。禁止把系统提示、世界书、预设名、剧情档案结构或“导演要求”字样写进小说正文。输出只包含可直接接到正文后的小说文本。`);
+    const mountedPresets=arr(presets).filter(p=>project.presetIds.includes(p.id)&&p.enabled!==false).sort((a,b)=>Number(a.priority||50)-Number(b.priority||50));if(mountedPresets.length)add('presets','system',`【文风 / Preset】\n${mountedPresets.map(p=>`【${p.name}】\n${p.content}`).join('\n\n')}`);
+    const wb=selectWorldbook(project,worldbooks,directorNote);if(wb.selected.length)add('worldbook','system',`【相关 Worldbook】\n${wb.selected.map(x=>`【${x.book.name} / ${x.entry.name}】\n${x.entry.content}`).join('\n\n')}`);
+    const memoryStatus=project.memoryStatus?.status||'missing',stateText=formatNarrativeState(project.narrativeState);if(stateText&&memoryStatus!=='stale')add('narrative_state','system',`${memoryStatus==='degraded'?'【Canonical 剧情档案 · DEGRADED：可能缺少最近变化，以原始正文为准】':memoryStatus==='missing'?'【Canonical 剧情档案 · PARTIAL：尚未覆盖全部章节，以原始正文为准】':'【Canonical 剧情档案】'}\n${stateText}`);
+    const activeIndex=Math.max(0,chapters.findIndex(c=>c.id===active.id));const freshSummaries=chapters.slice(0,activeIndex).filter(c=>c.summary&&!(memory?.isSummaryStale?.(c)));if(freshSummaries.length)add('chapter_summaries','system',`【历史章节概括】\n${freshSummaries.map(formatSummary).join('\n\n')}`);
+    const budget=Math.max(4000,Number(project.generationSettings?.contextBudgetChars)||48000);let remaining=budget;const raw=[];for(let i=activeIndex;i>=0&&remaining>0;i--){const c=chapters[i],body=engine.getChapterText(c);if(!body)continue;const take=clip(body,remaining);raw.unshift(`【${c.title}${i===activeIndex?' · 当前章节':''}】\n${take}`);remaining-=take.length;}add('recent_prose','user',`【已发生正文 · 以此为最高事实来源】\n${raw.join('\n\n')}`);
+    if(directorNote)add('director_note','system',`【本轮续写要求 / Director Note】\n${directorNote}\n只用于本次生成，不要把“要求本身”当成已经发生的事实。`);
+    if(mode==='append'&&draftText)add('draft_tail','user',`【本轮已经生成的草稿尾部】\n${clip(draftText,6000)}\n\n请只从末尾继续，不要重写或复述已经生成的段落。`);
+    add('output_requirement','system',`【输出要求】\n${mode==='append'?'继续补写':'续写'}小说正文；不写解释、标题、字数统计或提示词。目标：本轮累计可见正文至少 ${Math.max(0,Number(project.generationSettings?.minimumChars)||0)} 字符。`);
+    const totalChars=messages.reduce((n,m)=>n+m.content.length,0);return{messages,inspector:{sections,selectedWorldbookEntries:wb.selected.map(x=>({bookId:x.book.id,bookName:x.book.name,entryId:x.entry.id,entryName:x.entry.name,reason:x.reason})),skippedWorldbookEntries:wb.skipped.map(x=>({bookId:x.book.id,entryId:x.entry.id,reason:x.reason})),estimatedInputTokens:estimateTokens(messages.map(m=>m.content).join('\n')),contextBudgetChars:budget,activeChapterId:active.id,activeChapterTitle:active.title,summarySources:freshSummaries.map(c=>({id:c.id,title:c.title,revision:c.revision})),memoryStatus,memoryExcludedAsStale:memoryStatus==='stale',messagePreview:messages.map((m,index)=>({index,role:m.role,content:m.content}))}};
+  }
+  root.MimaNovelPromptAssembler={assemble,selectWorldbook,formatNarrativeState};
+})();

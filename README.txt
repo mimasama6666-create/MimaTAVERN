@@ -163,3 +163,39 @@ Streaming 说明：前端现在会即时消费并显示服务端实际送达的 
 - 浏览器请求显式使用 mode=cors / credentials=omit / cache=no-store，并在 Fetch 尚未拿到响应时记录 endpoint origin 与 navigator.onLine 诊断。
 - Safe HTML 新增原生 <progress>/<meter> 标签及其数值属性；script/style/event/javascript 安全边界继续保持。
 - 不改 Store/schema/Session ID/Regex ID/Prompt contract；不删除既有入口。
+
+======================================================================
+MimaTAVERN v1.3.0 · Novel Studio DLC
+======================================================================
+
+【小说续写】
+顶部 ✒ 入口打开 Novel Studio。可导入 TXT；咪嘛馆会保留原始 sourceText 快照，并自动识别常见中文/英文章节标题。没有章节标题时会作为“正文”单章导入。
+
+Novel Project 与原 RP Session 完全分离。章节正文由 source / manual / ai_accepted segment 组成；AI 新生成内容先进入 Draft，只有点击“采纳续写”才会进入 canonical 正文。删除或重写 Draft 不会改变小说正文或剧情档案。
+
+【最低字数】
+最低字数不是只写在 Prompt 里的软要求。模型返回后由代码统计可见正文字符；不足时会沿同一个 NovelGeneration 继续追加，达到要求或触及项目设置的追加上限。触及上限会明确标记 incomplete，不会伪装完成，也不会重新生成前半段。
+
+【剧情档案】
+每章可生成结构化章节概括，并增量维护全局 NarrativeState：故事概括、当前剧情、人物状态、关系、时间线、进行中剧情线、伏笔、已揭示事实和地点。修改旧章节会把受影响摘要/全局记忆标记 stale；未分析完整本书时显示 missing/PARTIAL。stale 的全局剧情状态不会继续作为可信 canonical memory 注入续写 Prompt。
+
+【续写要求 / Director Note】
+续写要求可以留空。它只对本轮请求生效，不会直接进入 canonical 剧情记忆；只有最终被采纳正文真正写出的事实，才可能被后续剧情档案提取。
+
+【Preset / Worldbook】
+Novel Studio 直接挂载咪嘛馆现有 Preset 与 Worldbook ID，不创建重复副本。Worldbook 会根据当前/近期正文、章节概括和本轮导演要求做相关性激活。
+
+【主题】
+内置主题：Mima Default、Midnight、E-Ink、Paper。Default 不写入主题覆盖属性，因此保持 v1.2 原外观；E-Ink 使用灰纸/深灰文字并主动抑制 glow、blur、gradient 和 animation。主题和字体/排版设置相互独立。
+
+【CSS】
+CSS Preset 新增 Novel / Assistant surface。Novel 稳定 selector 包括：
+.novel-studio-root / .novel-reader / .novel-sidebar / .novel-inspector / .novel-draft / .novel-memory-card / .novel-director-box
+稳定 reader token：--reader-bg / --reader-text / --reader-muted / --reader-line。
+现有 story/global/app scope 继续兼容。自定义 CSS 仍位于内置主题之上；网址参数 ?noCss=1 仍可作为紧急 CSS bypass。
+
+【备份】
+资料库 schemaVersion=4。完整 Library / Full Settings 备份会包含 novelProjects 与 themeSettings；导入 v3 会增量补齐为空 Novel 域与 Default Theme，不删除旧 Session / Persona / Preset / Worldbook / Regex / CSS 数据。
+
+【导出】
+Novel Studio 可导出 TXT 或项目 JSON。TXT 只包含 canonical source/manual/ai_accepted 正文，不包含尚未采纳的 Draft。

@@ -7,7 +7,7 @@
   'use strict';
 
   const API_CONFIG_KEY = 'MIMAMAO_TAVERN_STANDALONE_API_V1';
-  let state = { schemaVersion: 3, sessions: [], masks: [], presets: [], worldbooks: [], cssPresets: [], regexPacks: [] };
+  let state = { schemaVersion: 4, sessions: [], masks: [], presets: [], worldbooks: [], cssPresets: [], regexPacks: [], novelProjects: [], themeSettings:{theme:'default',updatedAt:''} };
   let lastUsage = null; // v1.1.4: upstream usage/cache telemetry only; never treated as canonical story data.
 
   const nowIso = () => new Date().toISOString();
@@ -123,7 +123,10 @@
 
   function normalizeCssPreset(p = {}) {
     const createdAt = p.createdAt || nowIso();
-    return { id:p.id || makeId('css'), name:text(p.name || '未命名 CSS'), css:String(p.css || ''), scope:['story','global','app'].includes(p.scope) ? p.scope : 'story', createdAt, updatedAt:p.updatedAt || createdAt };
+    const legacyScope=['story','global','app'].includes(p.scope)?p.scope:(['novel','assistant','chat'].includes(p.scope)?p.scope:'story');
+    const inferredSurface=legacyScope==='app'?'global':(legacyScope==='novel'?'novel':(legacyScope==='assistant'?'assistant':'chat'));
+    const surface=['global','chat','novel','assistant'].includes(p.surface)?p.surface:inferredSurface;
+    return { id:p.id || makeId('css'), name:text(p.name || '未命名 CSS'), css:String(p.css || ''), scope:legacyScope, surface, createdAt, updatedAt:p.updatedAt || createdAt };
   }
 
   function normalizeWorldbookEntry(e = {}) {
@@ -153,15 +156,17 @@
 
   function normalizeState(raw = {}) {
     return {
-      schemaVersion: 3,
+      schemaVersion: 4,
       sessions: arr(raw.sessions).map(normalizeSession), masks: arr(raw.masks).map(normalizeMask),
       presets: arr(raw.presets).map(normalizePreset), worldbooks: arr(raw.worldbooks).map(normalizeWorldbook), cssPresets: arr(raw.cssPresets).map(normalizeCssPreset),
-      regexPacks: arr(raw.regexPacks).map(normalizeRegexPack)
+      regexPacks: arr(raw.regexPacks).map(normalizeRegexPack),
+      novelProjects: arr(raw.novelProjects).map(x=>window.MimaNovelEngine?.normalizeProject?window.MimaNovelEngine.normalizeProject(x):x),
+      themeSettings: window.MimaThemeEngine?.normalizeSettings?window.MimaThemeEngine.normalizeSettings(raw.themeSettings||{}):{theme:'default',updatedAt:''}
     };
   }
 
   async function persist() { await window.MimaLocalStore.saveState(state); }
-  async function init() { state = normalizeState(await window.MimaLocalStore.loadState()); await persist(); return state; }
+  async function init() { state = normalizeState(await window.MimaLocalStore.loadState()); window.MimaThemeEngine?.apply?.(state.themeSettings); await persist(); return state; }
 
   function getSession(id) { return state.sessions.find(x => x.id === id); }
   function getMask(id) { return state.masks.find(x => x.id === id); }
@@ -169,6 +174,7 @@
   function getWorldbook(id) { return state.worldbooks.find(x => x.id === id); }
   function getCssPreset(id) { return state.cssPresets.find(x => x.id === id); }
   function getRegexPack(id) { return state.regexPacks.find(x => x.id === id); }
+  function getNovel(id) { return state.novelProjects.find(x => x.id === id); }
 
   function sessionSummaries() {
     return state.sessions.map(s => ({ id:s.id,title:s.title,mode:s.mode,canonLevel:s.canonLevel,status:s.status,updatedAt:s.updatedAt,
@@ -188,6 +194,8 @@
   async function saveWorldbook(w) { const n=normalizeWorldbook({ ...w, updatedAt:nowIso() }); const i=state.worldbooks.findIndex(x=>x.id===n.id); if(i>=0)state.worldbooks[i]=n;else state.worldbooks.push(n); await persist(); return n; }
   async function saveCssPreset(p) { const n=normalizeCssPreset({ ...p, updatedAt:nowIso() }); const i=state.cssPresets.findIndex(x=>x.id===n.id); if(i>=0)state.cssPresets[i]=n;else state.cssPresets.push(n); await persist(); return n; }
   async function saveRegexPack(p) { const checked=window.MimaRegexEngine?.validatePack?window.MimaRegexEngine.validatePack(p):{ok:true,pack:normalizeRegexPack(p),invalid:[]}; if(!checked.ok)throw new ApiError('E_REGEX_INVALID',`正则包含无效规则：${checked.invalid.map(x=>`${x.name}: ${x.error}`).join('；')}`,{hint:'请检查 Pattern（匹配式）与 Flags（标志）；无效规则不会被静默保存。'}); const n=normalizeRegexPack({ ...checked.pack, updatedAt:nowIso() }); const i=state.regexPacks.findIndex(x=>x.id===n.id); if(i>=0)state.regexPacks[i]=n;else state.regexPacks.push(n); await persist(); return n; }
+  async function saveNovelProject(p) { if(!window.MimaNovelEngine)throw new Error('Novel Engine 未加载'); const n=window.MimaNovelEngine.normalizeProject({...p,updatedAt:nowIso()}); const i=state.novelProjects.findIndex(x=>x.id===n.id); if(i>=0)state.novelProjects[i]=n;else state.novelProjects.push(n); await persist(); return n; }
+  async function saveThemeSettings(input={}) { state.themeSettings=window.MimaThemeEngine?.normalizeSettings?window.MimaThemeEngine.normalizeSettings({...input,updatedAt:nowIso()}):{theme:text(input.theme||'default'),updatedAt:nowIso()}; window.MimaThemeEngine?.apply?.(state.themeSettings); await persist(); return clone(state.themeSettings); }
 
   // ---------- Prompt Assembler ----------
   const asText = v => String(v || '').trim();
@@ -477,6 +485,70 @@
   async function listModels(){return listModelsWithConfig(getApiConfig());}
   async function testApi(){const models=await listModels();return{ok:true,models,count:models.length};}
 
+  // ---------- Novel Studio ----------
+  function novelSummaries(){return state.novelProjects.map(p=>({id:p.id,title:p.title,updatedAt:p.updatedAt,createdAt:p.createdAt,sourceName:p.sourceName,chapterCount:arr(p.chapterOrder).length,activeChapterId:p.activeChapterId,memoryStatus:p.memoryStatus?.status||'missing'})).sort((a,b)=>String(b.updatedAt).localeCompare(String(a.updatedAt)));}
+  function getNovelProject(id){const p=getNovel(id);if(!p)throw new Error('未找到小说项目');return p;}
+  function novelModelConfig(project){const base=getApiConfig(),n=project.modelSettings||{};return{...base,model:text(n.model)||base.model,sendTemperature:n.sendTemperature!==false,temperature:Number.isFinite(Number(n.temperature))?Number(n.temperature):base.temperature,stream:n.streaming!==false,maxTokens:Number(n.maxTokens)>0?Number(n.maxTokens):base.maxTokens};}
+  function createBlankNovel(body={}){const p=window.MimaNovelEngine.createProjectFromText({title:body.title||'未命名小说',sourceName:'',sourceEncoding:'utf-8',text:''});p.createdFrom='manual';return p;}
+  async function patchNovelProject(id,body={}){const p=getNovelProject(id),allowed=['title','activeChapterId','presetIds','worldbookIds','modelSettings','generationSettings','appearance'];for(const k of allowed)if(Object.prototype.hasOwnProperty.call(body,k))p[k]=clone(body[k]);return saveNovelProject(p);}
+  function novelAssets(){return{presets:state.presets,worldbooks:state.worldbooks,cssPresets:state.cssPresets,themeSettings:state.themeSettings};}
+  function novelPromptPreview(id,body={}){const p=getNovelProject(id);return window.MimaNovelPromptAssembler.assemble({project:p,presets:state.presets,worldbooks:state.worldbooks,directorNote:body.directorNote||'',mode:body.mode||'continue',draftText:body.draftText||''}).inspector;}
+  function analysisPrompt(project,chapter){const body=window.MimaNovelEngine.getChapterText(chapter);return[
+    {role:'system',content:'你是小说剧情档案整理器。只提取已经发生的事实，禁止预测未来、补写剧情或把本轮导演要求当事实。只输出严格 JSON，不要 Markdown。'},
+    {role:'user',content:`请分析以下章节，并输出 {"summary":{"overview":"","events":[],"characterChanges":[],"revealedFacts":[],"openThreads":[],"foreshadowing":[],"endingState":""},"delta":{"storyOverview":"","currentSituation":"","characterStates":[],"relationships":[],"timeline":[],"openThreads":[],"foreshadowing":[],"revealedFacts":[],"locations":[],"closedThreads":[],"resolvedForeshadowing":[]}}。\n\n【${chapter.title}】\n${body}`}
+  ];}
+  async function analyzeNovelChapterInMemory(project,chapter,signal=null,progress=null){const engine=window.MimaNovelEngine,memory=window.MimaNovelMemory;if(!engine||!memory)throw new Error('Novel Memory 未加载');const body=engine.getChapterText(chapter);if(!body.trim())return project;const cfg=novelModelConfig(project),raw=await callModelWithConfig(analysisPrompt(project,chapter),cfg,0.25,signal,{streamOverride:false,onProgress:progress}),parsed=memory.validateAnalysisPayload(raw),revision=chapter.revision,hash=engine.chapterHash(chapter),summary={...parsed.summary,sourceRevision:revision,sourceHash:hash,generatedAt:nowIso()};chapter.summary=summary;chapter.summarySourceRevision=revision;chapter.summarySourceHash=hash;chapter.summaryStatus='fresh';project.narrativeState=memory.mergeDelta(project.narrativeState,parsed.delta,chapter);const otherCovered=project.chapters.filter(c=>engine.getChapterText(c).trim()&&c.id!==chapter.id);const hasStale=otherCovered.some(c=>c.summaryStatus==='stale'||(c.summaryStatus==='fresh'&&memory.isSummaryStale(c)));const hasMissing=otherCovered.some(c=>c.summaryStatus==='missing'||!c.summarySourceRevision||!c.summarySourceHash);project.memoryStatus={status:hasStale?'stale':(hasMissing?'missing':'fresh'),error:'',updatedAt:nowIso()};return project;}
+  async function updateNovelMemory(id,chapterId,signal=null,progress=null){const p=getNovelProject(id),c=window.MimaNovelEngine.getChapter(p,chapterId||p.activeChapterId);if(!c)throw new Error('未找到章节');try{await analyzeNovelChapterInMemory(p,c,signal,progress);return await saveNovelProject(p);}catch(e){p.memoryStatus={status:'degraded',error:e?.message||String(e),updatedAt:nowIso()};await saveNovelProject(p);throw e;}}
+  async function rebuildNovelMemory(id,signal=null,progress=null){const original=clone(getNovelProject(id)),p=clone(original);p.narrativeState=window.MimaNovelMemory.seedForRebuild(p.narrativeState);for(const c of p.chapters){c.summaryStatus='missing';c.summarySourceRevision=0;c.summarySourceHash='';}try{for(const chapterId of p.chapterOrder){const c=window.MimaNovelEngine.getChapter(p,chapterId);if(c&&window.MimaNovelEngine.getChapterText(c).trim())await analyzeNovelChapterInMemory(p,c,signal,progress);}p.memoryStatus={status:'fresh',error:'',updatedAt:nowIso()};return await saveNovelProject(p);}catch(e){const restored=clone(original);restored.memoryStatus={status:'degraded',error:e?.message||String(e),updatedAt:nowIso()};await saveNovelProject(restored);throw e;}}
+  function findDraft(p,id){return arr(p.drafts).find(x=>x.id===id)||null;}function findGeneration(p,id){return arr(p.generations).find(x=>x.id===id)||null;}
+  function assertNovelDraftBaseCurrent(project,draft,generation){
+    const engine=window.MimaNovelEngine,chapter=engine.getChapter(project,draft.chapterId);if(!chapter)throw new Error('Draft 对应章节不存在');
+    const snap=generation?.inputSnapshot||{},hasRevision=Object.prototype.hasOwnProperty.call(snap,'chapterRevision'),hasHash=!!snap.chapterHash;
+    const revisionChanged=hasRevision&&Number(snap.chapterRevision)!==Number(chapter.revision),hashChanged=hasHash&&String(snap.chapterHash)!==engine.chapterHash(chapter);
+    if(revisionChanged||hashChanged)throw new Error('Draft 基于旧版正文；当前章节已经修改。请重写 Draft 后再继续或采纳。');
+    return chapter;
+  }
+  async function continueNovel(id,body={},signal=null,progress=null){
+    const engine=window.MimaNovelEngine,p=getNovelProject(id),resumeDraft=body.draftId?findDraft(p,body.draftId):null;
+    let chapter,gen,draft;
+    if(resumeDraft){
+      if(['accepted','rejected'].includes(resumeDraft.status))throw new Error('当前 Draft 已终结，不能继续补写');
+      draft=resumeDraft;gen=findGeneration(p,draft.generationId);if(!gen)throw new Error('Draft 对应的 Generation 不存在');
+      chapter=assertNovelDraftBaseCurrent(p,draft,gen);
+      gen.status='generating';draft.status='generating';gen.error='';
+    }else{
+      chapter=engine.getChapter(p,body.chapterId||p.activeChapterId);if(!chapter)throw new Error('未找到续写章节');p.activeChapterId=chapter.id;
+      gen=engine.normalizeGeneration({projectId:p.id,chapterId:chapter.id,directorNote:String(body.directorNote||''),minimumChars:Math.max(0,Number(body.minimumChars??p.generationSettings?.minimumChars)||0),status:'generating',inputSnapshot:{chapterRevision:chapter.revision,chapterHash:engine.chapterHash(chapter)}});
+      draft=engine.normalizeDraft({projectId:p.id,chapterId:chapter.id,generationId:gen.id,status:'generating'});gen.draftId=draft.id;p.generations.push(gen);p.drafts.push(draft);
+    }
+    if(Object.prototype.hasOwnProperty.call(body,'directorNote'))gen.directorNote=String(body.directorNote||'');
+    if(Object.prototype.hasOwnProperty.call(body,'minimumChars'))gen.minimumChars=Math.max(0,Number(body.minimumChars)||0);
+    const minimumChars=Math.max(0,Number(gen.minimumChars)||0),maxAppend=Number.isFinite(Number(p.generationSettings?.maxAppendAttempts))?Math.max(0,Math.min(8,Number(p.generationSettings.maxAppendAttempts))):3;
+    await saveNovelProject(p);const cfg=novelModelConfig(p);let callsThisRun=0;
+    try{
+      while(true){
+        const mode=draft.content?'append':'continue';
+        const built=window.MimaNovelPromptAssembler.assemble({project:p,presets:state.presets,worldbooks:state.worldbooks,directorNote:gen.directorNote,mode,draftText:draft.content});
+        const before=draft.content;
+        const proxy=ev=>{if(ev?.streamText!==undefined){draft.content=engine.appendDraftText(before,ev.streamText||'');draft.updatedAt=nowIso();}if(progress)progress({...ev,novelDraftText:draft.content,generationId:gen.id,draftId:draft.id});};
+        const reply=await callModelWithConfig(built.messages,cfg,cfg.temperature,signal,{streamOverride:cfg.stream,onProgress:proxy});
+        draft.content=engine.appendDraftText(before,reply);draft.updatedAt=nowIso();callsThisRun++;
+        gen.attempts.push({index:gen.attempts.length,manualResume:!!resumeDraft,chars:engine.countVisibleChars(reply),totalChars:engine.countVisibleChars(draft.content),completedAt:nowIso()});
+        const count=engine.countVisibleChars(draft.content);
+        if(count>=minimumChars){draft.status='ready';gen.status='ready';gen.completedAt=nowIso();break;}
+        if(callsThisRun>=maxAppend+1){draft.status='incomplete';draft.metadata={...draft.metadata,achievedChars:count,requiredChars:minimumChars};gen.status='incomplete';gen.completedAt=nowIso();break;}
+      }
+      await saveNovelProject(p);return{project:p,draft,generation:gen};
+    }catch(e){
+      const count=engine.countVisibleChars(draft.content);draft.status='interrupted';draft.metadata={...draft.metadata,achievedChars:count,requiredChars:minimumChars,error:e?.message||String(e)};gen.status='interrupted';gen.error=e?.message||String(e);gen.completedAt=nowIso();await saveNovelProject(p);if(count>0)return{project:p,draft,generation:gen,interrupted:true};throw e;
+    }
+  }
+  async function patchNovelDraft(id,draftId,body={}){const p=getNovelProject(id),d=findDraft(p,draftId);if(!d)throw new Error('未找到草稿');if(d.status==='accepted')throw new Error('已采纳草稿不能再编辑');d.content=String(body.content??d.content);d.updatedAt=nowIso();if(['interrupted','incomplete'].includes(d.status))d.status='ready';return saveNovelProject(p);}
+  async function rejectNovelDraft(id,draftId){const p=getNovelProject(id),d=findDraft(p,draftId);if(!d)throw new Error('未找到草稿');if(d.status==='accepted')throw new Error('已采纳草稿不能删除');d.status='rejected';d.updatedAt=nowIso();const g=findGeneration(p,d.generationId);if(g)g.status='rejected';return saveNovelProject(p);}
+  async function regenerateNovelDraft(id,draftId,body={},signal=null,progress=null){const p=getNovelProject(id),old=findDraft(p,draftId);if(!old)throw new Error('未找到草稿');if(old.status==='accepted')throw new Error('已采纳草稿不能重写');old.status='rejected';const g=findGeneration(p,old.generationId);if(g)g.status='rejected';await saveNovelProject(p);return continueNovel(id,{...body,chapterId:old.chapterId,directorNote:body.directorNote??g?.directorNote??''},signal,progress);}
+  async function acceptNovelDraft(id,draftId,signal=null,progress=null){const engine=window.MimaNovelEngine,p=getNovelProject(id),d=findDraft(p,draftId);if(!d)throw new Error('未找到草稿');if(d.status==='accepted')return p;if(!['ready','incomplete','interrupted'].includes(d.status))throw new Error('当前草稿状态不能采纳');const g0=findGeneration(p,d.generationId);if(!g0)throw new Error('Draft 对应的 Generation 不存在');assertNovelDraftBaseCurrent(p,d,g0);const committed=engine.appendAcceptedSegment(p,d.chapterId,d);const cd=findDraft(committed,draftId);if(cd)cd.status='accepted';const g=findGeneration(committed,d.generationId);if(g){g.status='accepted';g.completedAt=g.completedAt||nowIso();}committed.memoryStatus={status:'stale',error:'',updatedAt:nowIso()};const saved=await saveNovelProject(committed);try{return await updateNovelMemory(saved.id,d.chapterId,signal,progress);}catch(e){const latest=getNovelProject(saved.id),c=engine.getChapter(latest,d.chapterId);if(c)c.summaryStatus=c.summarySourceRevision?'stale':'missing';latest.memoryStatus={status:'degraded',error:e?.message||String(e),updatedAt:nowIso()};return saveNovelProject(latest);}}
+  async function patchNovelMemory(id,body={}){const p=getNovelProject(id);p.narrativeState=window.MimaNovelMemory.applyManualPatch(p.narrativeState,body);return saveNovelProject(p);}
+
   // ---------- Story Engine ----------
   function makeMessage(role,content,session,metadata={}){return normalizeMessage({id:makeId('msg'),role,content,rawContent:content,time:nowIso(),mode:'story_mode',canonLevel:session.canonLevel||'alternate',metadata,branchId:'main',tokenEstimate:estimateTokens(content)});}
   function archiveVersion(msg,reason){msg.versions=arr(msg.versions);msg.versions.push({content:msg.content,time:nowIso(),reason:reason||'regenerate'});}
@@ -693,6 +765,29 @@
   async function handle(endpoint,method='GET',body=null,signal=null,progress=null){
     try{
       const path=String(endpoint||'').split('?')[0];
+      if(path==='/theme'&&method==='GET')return ok(clone(state.themeSettings));
+      if(path==='/theme'&&method==='PATCH')return ok(await saveThemeSettings(body||{}));
+      if(path==='/novel-assets'&&method==='GET')return ok(novelAssets());
+      if(path==='/novels'&&method==='GET')return ok(novelSummaries());
+      if(path==='/novels'&&method==='POST')return ok(await saveNovelProject(createBlankNovel(body||{})));
+      if(path==='/novels/import'&&method==='POST'){const p=window.MimaNovelEngine.createProjectFromText({title:body?.title,sourceName:body?.sourceName||'',sourceEncoding:body?.sourceEncoding||'utf-8',text:body?.text||''});return ok(await saveNovelProject(p));}
+      let nm=path.match(/^\/novels\/([^/]+)$/);if(nm&&method==='GET'){const p=getNovel(nm[1]);return p?ok(p):fail('未找到小说项目');}
+      if(nm&&method==='PATCH')return ok(await patchNovelProject(nm[1],body||{}));
+      if(nm&&method==='DELETE'){const before=state.novelProjects.length;state.novelProjects=state.novelProjects.filter(x=>x.id!==nm[1]);await persist();return ok({deleted:state.novelProjects.length<before});}
+      nm=path.match(/^\/novels\/([^/]+)\/chapters\/([^/]+)$/);if(nm&&method==='PATCH'){const p=getNovelProject(nm[1]),next=window.MimaNovelEngine.editChapter(p,nm[2],body?.action||'replace_text',body||{});return ok(await saveNovelProject(next));}
+      nm=path.match(/^\/novels\/([^/]+)\/prompt-preview$/);if(nm&&method==='POST')return ok(novelPromptPreview(nm[1],body||{}));
+      nm=path.match(/^\/novels\/([^/]+)\/continue$/);if(nm&&method==='POST')return ok(await continueNovel(nm[1],body||{},signal,progress));
+      nm=path.match(/^\/novels\/([^/]+)\/drafts\/([^/]+)$/);if(nm&&method==='PATCH')return ok(await patchNovelDraft(nm[1],nm[2],body||{}));
+      if(nm&&method==='DELETE')return ok(await rejectNovelDraft(nm[1],nm[2]));
+      nm=path.match(/^\/novels\/([^/]+)\/drafts\/([^/]+)\/continue$/);if(nm&&method==='POST')return ok(await continueNovel(nm[1],{...(body||{}),draftId:nm[2]},signal,progress));
+      nm=path.match(/^\/novels\/([^/]+)\/drafts\/([^/]+)\/regenerate$/);if(nm&&method==='POST')return ok(await regenerateNovelDraft(nm[1],nm[2],body||{},signal,progress));
+      nm=path.match(/^\/novels\/([^/]+)\/drafts\/([^/]+)\/accept$/);if(nm&&method==='POST')return ok(await acceptNovelDraft(nm[1],nm[2],signal,progress));
+      nm=path.match(/^\/novels\/([^/]+)\/memory\/chapter\/([^/]+)$/);if(nm&&method==='POST')return ok(await updateNovelMemory(nm[1],nm[2],signal,progress));
+      nm=path.match(/^\/novels\/([^/]+)\/memory\/rebuild$/);if(nm&&method==='POST')return ok(await rebuildNovelMemory(nm[1],signal,progress));
+      nm=path.match(/^\/novels\/([^/]+)\/memory$/);if(nm&&method==='PATCH')return ok(await patchNovelMemory(nm[1],body||{}));
+      nm=path.match(/^\/novels\/([^/]+)\/export\/txt$/);if(nm&&method==='GET'){const p=getNovelProject(nm[1]);return ok({name:`${p.title||'novel'}.txt`,text:window.MimaNovelEngine.exportProjectText(p)});}
+      nm=path.match(/^\/novels\/([^/]+)\/export\/json$/);if(nm&&method==='GET'){const p=getNovelProject(nm[1]);return ok({name:`${p.title||'novel'}.json`,project:clone(p)});}
+
       if(path==='/sessions'&&method==='GET')return ok(sessionSummaries());
       if(path==='/sessions/full'&&method==='GET')return ok(state.sessions);
       if(path==='/sessions'&&method==='POST'){const s=await saveSession(normalizeSession({...body,id:makeId('sess'),createdAt:nowIso(),updatedAt:nowIso(),messages:[]}));return ok(s);}
@@ -720,12 +815,12 @@
       if(path==='/presets'&&method==='GET')return ok(state.presets);
       if(path==='/presets'&&method==='POST')return ok(await savePreset(body||{}));
       m=path.match(/^\/presets\/([^/]+)$/);if(m&&method==='PATCH'){const old=getPreset(m[1]);return old?ok(await savePreset({...old,...body,id:m[1]})):fail('未找到预设');}
-      if(m&&method==='DELETE'){state.presets=state.presets.filter(x=>x.id!==m[1]);for(const s of state.sessions)s.presetIds=s.presetIds.filter(id=>id!==m[1]);await persist();return ok({deleted:true});}
+      if(m&&method==='DELETE'){state.presets=state.presets.filter(x=>x.id!==m[1]);for(const s of state.sessions)s.presetIds=s.presetIds.filter(id=>id!==m[1]);for(const p of state.novelProjects)p.presetIds=arr(p.presetIds).filter(id=>id!==m[1]);await persist();return ok({deleted:true});}
 
       if(path==='/css-presets'&&method==='GET')return ok(state.cssPresets);
       if(path==='/css-presets'&&method==='POST')return ok(await saveCssPreset(body||{}));
       m=path.match(/^\/css-presets\/([^/]+)$/);if(m&&method==='PATCH'){const old=getCssPreset(m[1]);return old?ok(await saveCssPreset({...old,...body,id:m[1]})):fail('未找到 CSS Preset');}
-      if(m&&method==='DELETE'){state.cssPresets=state.cssPresets.filter(x=>x.id!==m[1]);for(const sess of state.sessions){if(sess.customCssId===m[1]){sess.customCssId=null;sess.customCssEnabled=false;}}await persist();return ok({deleted:true});}
+      if(m&&method==='DELETE'){state.cssPresets=state.cssPresets.filter(x=>x.id!==m[1]);for(const sess of state.sessions){if(sess.customCssId===m[1]){sess.customCssId=null;sess.customCssEnabled=false;}}for(const p of state.novelProjects){if(p.appearance?.customCssId===m[1]){p.appearance.customCssId=null;p.appearance.customCssEnabled=false;}}await persist();return ok({deleted:true});}
 
       if(path==='/regex-packs'&&method==='GET')return ok(state.regexPacks);
       if(path==='/regex-packs'&&method==='POST')return ok(await saveRegexPack(body||{}));
@@ -736,7 +831,7 @@
       if(path==='/worldbooks'&&method==='POST')return ok(await saveWorldbook(body||{}));
       m=path.match(/^\/worldbooks\/([^/]+)$/);if(m&&method==='GET'){const w=getWorldbook(m[1]);return w?ok(w):fail('未找到世界书');}
       if(m&&method==='PATCH'){const old=getWorldbook(m[1]);return old?ok(await saveWorldbook({...old,...body,id:m[1]})):fail('未找到世界书');}
-      if(m&&method==='DELETE'){state.worldbooks=state.worldbooks.filter(x=>x.id!==m[1]);for(const s of state.sessions)s.worldbookIds=s.worldbookIds.filter(id=>id!==m[1]);await persist();return ok({deleted:true});}
+      if(m&&method==='DELETE'){state.worldbooks=state.worldbooks.filter(x=>x.id!==m[1]);for(const s of state.sessions)s.worldbookIds=s.worldbookIds.filter(id=>id!==m[1]);for(const p of state.novelProjects)p.worldbookIds=arr(p.worldbookIds).filter(id=>id!==m[1]);await persist();return ok({deleted:true});}
       return fail(`Standalone 未实现路径：${method} ${path}`);
     }catch(e){
       if(e?.name==='AbortError')return{success:false,aborted:true,code:'E_ABORTED',msg:'生成已停止'};
@@ -746,7 +841,7 @@
   }
 
   async function exportLibrary(){return clone(state);}
-  async function importLibrary(raw){state=normalizeState(raw?.data||raw||{});await persist();return state;}
+  async function importLibrary(raw){state=normalizeState(raw?.data||raw||{});window.MimaThemeEngine?.apply?.(state.themeSettings);await persist();return state;}
 
-  window.MimaStandalone={init,handle,getApiConfig,saveApiConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,applyRegexForSession,resolveMacrosForSession,compileUserInputForPrompt,exportLibrary,importLibrary,assemble,getLastUsage};
+  window.MimaStandalone={init,handle,getApiConfig,saveApiConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,applyRegexForSession,resolveMacrosForSession,compileUserInputForPrompt,exportLibrary,importLibrary,assemble,getLastUsage,getState:()=>clone(state)};
 })();
