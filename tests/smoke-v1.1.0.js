@@ -72,7 +72,7 @@ require(path.join(ROOT, 'standalone-core.js'));
   assert.strictEqual(invalid.success, false, 'invalid regex should fail closed at save time');
 
   const library = await MimaStandalone.exportLibrary();
-  assert.strictEqual(library.schemaVersion, 3, 'schema did not migrate additively to v3');
+  assert(library.schemaVersion >= 3, 'schema regressed below v3 compatibility floor');
   assert.strictEqual(library.regexPacks.length, 1, 'regex pack not persisted');
   assert.strictEqual(library.sessions[0].regexPackIds[0], regexId, 'session mount not persisted');
 

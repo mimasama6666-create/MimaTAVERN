@@ -645,3 +645,28 @@ html[data-mima-theme="paper"] body{background:radial-gradient(circle at 15% -8%,
 @media(max-width:760px){.novel-modal{padding:0;align-items:flex-end}.novel-studio-panel{width:100%;height:96dvh;max-height:96dvh;border-radius:24px 24px 0 0}.novel-mobile-tabs{display:flex;flex:0 0 auto;gap:5px;padding:8px 10px;border-bottom:1px solid var(--reader-line);background:var(--reader-panel)}.novel-mobile-tabs button{flex:1;border:0;background:transparent;color:var(--muted);padding:7px;border-radius:10px}.novel-mobile-tabs button.active{background:var(--accent-soft);color:var(--text);font-weight:750}.novel-studio-root{display:block;overflow:auto}.novel-sidebar,.novel-reader,.novel-inspector{display:none;border:0}.novel-sidebar.mobile-visible,.novel-reader.mobile-visible,.novel-inspector.mobile-visible{display:block}.novel-sidebar.mobile-visible{max-height:34vh;border-bottom:1px solid var(--reader-line)}.novel-reader.mobile-visible{min-height:62vh;padding:18px 15px 36px}.novel-inspector.mobile-visible{padding:13px}.novel-reader-head{display:grid}.novel-reader-head .toolbar{flex-wrap:wrap}.novel-theme-grid{grid-template-columns:1fr}.novel-generate-row{align-items:stretch}.novel-director-box,.novel-draft{border-radius:14px}}
 .novel-inspector-tabs{display:flex;gap:6px;margin:0 0 10px}.novel-inspector-tabs button{flex:1;border:1px solid var(--reader-line);background:transparent;color:var(--muted);padding:7px;border-radius:10px}.novel-inspector-tabs button.active{background:var(--accent-soft);color:var(--text);font-weight:750}
 @media(max-width:760px){.novel-inspector-tabs{display:none}}
+
+/* Novel Studio 1.3.1 — chapter and continuation archives */
+.novel-chapter-archive{display:grid;gap:12px;max-width:var(--novel-reader-max-width);margin:0 auto 16px;min-width:0}
+.novel-text-unit,.novel-draft-record{min-width:0;border:1px solid var(--reader-line);border-radius:14px;background:color-mix(in srgb,var(--reader-panel) 72%,transparent);overflow:hidden}
+.novel-text-unit>summary,.novel-draft-record>summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 16px;color:var(--reader-text);font-size:.82rem;font-weight:650}
+.novel-text-unit>summary::-webkit-details-marker,.novel-draft-record>summary::-webkit-details-marker{display:none}
+.novel-text-unit>summary::before,.novel-draft-record>summary::before{content:'▸';color:var(--reader-muted);font-size:.8rem;transition:transform .2s}
+.novel-text-unit[open]>summary::before,.novel-draft-record[open]>summary::before{transform:rotate(90deg)}
+.novel-text-unit>summary span:first-child,.novel-draft-record>summary strong{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.novel-text-unit>summary small,.novel-draft-record>summary span{font-size:.7rem;font-weight:400;color:var(--reader-muted);white-space:nowrap}
+.novel-text-unit[open]>summary,.novel-draft-record[open]>summary{border-bottom:1px solid var(--reader-line);background:color-mix(in srgb,var(--reader-panel) 90%,transparent)}
+.novel-text-unit-body,.novel-draft-record-body{padding:20px 16px;min-width:0}
+.novel-unit-edit{margin:16px 0 0;border-top:1px solid var(--reader-line);padding-top:12px;font-size:.76rem;color:var(--reader-muted)}
+.novel-unit-edit>summary{cursor:pointer;display:list-item;margin-bottom:10px}
+.novel-unit-edit .novel-editor{width:100%;max-width:100%;min-height:220px}
+.novel-draft-history{max-width:var(--novel-reader-max-width);margin:16px auto 22px;display:grid;gap:9px}
+.novel-draft-history h3{font-size:.89rem;color:var(--reader-text);margin:7px 0}
+.novel-draft-record .novel-draft-prose{margin:0 auto 12px}
+.novel-generation-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.novel-reparse{width:100%;justify-content:center;margin-bottom:6px}
+.novel-reader-head small{display:block;font-size:.7rem;color:var(--reader-muted);margin-top:4px}
+html[data-mima-theme="midnight"] .novel-text-unit,html[data-mima-theme="midnight"] .novel-draft-record{background:#24262c;color:var(--reader-text)}
+html[data-mima-theme="eink"] .novel-text-unit,html[data-mima-theme="eink"] .novel-draft-record{background:#cfd0ca;border-radius:5px}
+html[data-mima-theme="eink"] .novel-text-unit[open]>summary,html[data-mima-theme="eink"] .novel-draft-record[open]>summary{background:#c2c4bd}
+@media(max-width:760px){.novel-text-unit>summary,.novel-draft-record>summary{padding:12px 9px;gap:6px}.novel-text-unit-body,.novel-draft-record-body{padding:14px 10px}.novel-generate-row{flex-wrap:wrap}.novel-generation-actions{width:100%}.novel-generation-actions button{flex:1;min-width:120px}}

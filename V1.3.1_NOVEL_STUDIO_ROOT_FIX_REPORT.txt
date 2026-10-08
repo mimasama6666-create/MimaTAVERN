@@ -1,0 +1,31 @@
+MimaTAVERN v1.3.1 · Novel Studio Root-Fix + UX Repair
+====================================================
+MOTHER: exact SHA-256-matched v1.3.0 Novel Studio FULL ZIP.
+Original source and backup tag: backup/v1.3.0-before-novel-fix (unchanged).
+No modification to the separate MIMAMAO project.
+
+Confirmed source-level faults repaired:
+1. CSS import always forced scope='story', so full-UI files were confined to a chat prose subtree. Import now requests explicit scope; app-scope CSS has a persisted global mount and dedicated style element, independent of RP Session selection. Novel-specific CSS remains scoped. Theme switches retain global CSS. ?noCss=1 remains an emergency off switch.
+2. Single-chapter import for unrecognized chapter markers made long source appear as one giant body. Parser handles more headings; chapters and original-source segments are folded. Existing untouched TXT imports can be safely reparsed without overwriting edits, drafts or source snapshots. Manual split remains supported.
+3. Only latest active Draft was shown. Per-chapter continuation records now archive all drafts (including discarded/accepted status), source/accepted/manual segments fold independently, each segment can be edited. New generation offers same-chapter or next-chapter mode. Regeneration keeps prior candidate as an alternate, not destructive replacement.
+4. A UI race was reproducible: changing Minimum Characters and clicking Continue triggered onchange -> full re-render on blur, replacing the clicked button and clearing the Director Note before dispatch. setProjectValue now patches canonical state without destroying current editor DOM. Chromium mock interaction verifies the director note actually enters the request and a draft appears.
+5. New Novel projects defaulted Streaming ON and Temperature send ON regardless of main API configuration. They now inherit main API settings until overridden. Existing choices remain preserved, with a user-facing explicit reset-to-inherit control.
+6. SSE error events were swallowed and malformed/truncated output could look like an empty or complete response. Read path now distinguishes upstream error / response parse / partial stream / missing finish marker, preserving partial Drafts and associated structured error information. No silent fallback, auto model switching, extra hidden retries, or fake success.
+7. Next-chapter numbering excludes preface/volume entries.
+
+Important external reproduction boundary:
+- We were not provided failing real API logs, request metadata or a connected test account; it is NOT verified that the user's specific transport failure is fully resolved. The new button "测试小说模型连接（2 次小请求）" separately checks nonstream summary and the configured continuation transport. When still failing, capture error code/HTTP/stage and sanitized diagnostic text (never API Key). Do not attribute to upstream without evidence.
+- Browser mock route/execution and unit smoke tests do not replace a real long-running provider conversation.
+
+Validation:
+- All JavaScript files syntax-checked.
+- All v1.1.x-v1.3.0 historical and new v1.3.1 smoke regression tests passed.
+- git diff --check clean.
+- Chromium injected-page interaction: 6 chapters (preface+5), collapsed section expands, director text transmitted with request, Draft generated, Draft accepted into separate canonical segment, new chapter created, E-Ink theme applies, global CSS persists/applies, mobile viewport 390px without horizontal overflow, no script page errors.
+- SSE upstream error and truncated-stream partial draft explicitly covered by v1.3.1 regression.
+
+Installation:
+- Full source package (not patch-only). Copy contents of the extracted top-level project folder into the EXISTING MimaTAVERN repository root, NOT the MIMAMAO repository.
+- Export your browser-local MimaTAVERN backup first (IndexedDB is not inside the source ZIP).
+- Versioned scripts / stylesheet have release=1.3.1 cache markers; after deployment hard reload to clear old code.
+- Git metadata is excluded from the package.

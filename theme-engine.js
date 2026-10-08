@@ -9,7 +9,7 @@
     {id:'paper',name:'Paper',description:'暖纸色长篇阅读主题'}
   ]);
   const IDS=new Set(BUILTINS.map(x=>x.id));
-  function normalizeSettings(input={}){const requested=String(input?.theme||input?.themeId||'default').trim().toLowerCase();return{theme:IDS.has(requested)?requested:'default',updatedAt:input?.updatedAt||''};}
+  function normalizeSettings(input={}){const requested=String(input?.theme||input?.themeId||'default').trim().toLowerCase();return{theme:IDS.has(requested)?requested:'default',globalCssPresetId:typeof input?.globalCssPresetId==='string'?input.globalCssPresetId:null,globalCssEnabled:input?.globalCssEnabled!==false,updatedAt:input?.updatedAt||''};}
   function apply(input={}){
     const settings=normalizeSettings(input);
     if(typeof document!=='undefined'&&document.documentElement){

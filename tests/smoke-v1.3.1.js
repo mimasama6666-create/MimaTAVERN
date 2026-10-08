@@ -1,0 +1,75 @@
+const assert=require('assert');
+const fs=require('fs');
+const path=require('path');
+const root=path.resolve(__dirname,'..');
+global.window=global;
+let persisted={schemaVersion:4,sessions:[],masks:[],presets:[],worldbooks:[],cssPresets:[],regexPacks:[],novelProjects:[],themeSettings:{theme:'default'}};
+const local=new Map();
+global.localStorage={getItem:k=>local.get(k)||null,setItem:(k,v)=>local.set(k,String(v))};
+global.MimaLocalStore={loadState:async()=>JSON.parse(JSON.stringify(persisted)),saveState:async v=>(persisted=JSON.parse(JSON.stringify(v)),persisted)};
+for(const f of ['theme-engine.js','regex-engine.js','novel-engine.js','novel-memory.js','novel-prompt-assembler.js','standalone-core.js'])require(path.join(root,f));
+(async()=>{
+  const text='《长篇》\n第一卷 归途\n第1章 雨夜\n故事一。\n第二章: 钟楼\n故事二。\n第三章、深海\n故事三。\n第四章：亡者\n故事四。\n第五章 终章\n故事五。';
+  assert.strictEqual(MimaNovelEngine.parseChapters(text).filter(c=>/^第.*章/.test(c.title)).length,5,'five chapters not identified');
+  await MimaStandalone.init();
+  let res=await MimaStandalone.handle('/novels/import','POST',{text,title:'测试'}); assert(res.success); const id=res.data.id;
+  assert.strictEqual(res.data.chapterOrder.length,7,'volume intro and five chapters should remain separate');
+  const chapterId=res.data.chapterOrder[6];const originalImported=res.data;
+  res=await MimaStandalone.handle(`/novels/${id}/chapters`,'POST',{title:'第六章 新的旅程'});
+  assert(res.success,'new chapter route missing');
+  const newId=res.data.activeChapterId;
+  assert(newId!==chapterId);assert.strictEqual(res.data.chapters.find(x=>x.id===newId).title,'第六章 新的旅程');
+  const automaticallyNumbered=MimaNovelEngine.appendNewChapter(originalImported);assert.strictEqual(automaticallyNumbered.chapters.find(x=>x.id===automaticallyNumbered.activeChapterId).title,'第6章','preface or volume must not count as the next chapter number');
+  let project=res.data;
+  const moved=MimaNovelEngine.editChapter(project,project.chapterOrder[0],'edit_segment',{segmentId:project.chapters[0].segments[0].id,content:'重写的序章。'});
+  assert.strictEqual(MimaNovelEngine.getChapterText(moved.chapters[0]),'重写的序章。');
+  assert.strictEqual(MimaNovelEngine.getChapterText(project.chapters[0]).includes('重写的序章'),false);
+  // Active chapter new; previously uploaded chapters retained intact.
+  let streamResponses=[];
+  MimaStandalone.saveApiConfig({apiBase:'https://mock.test/v1',model:'mock',stream:false});
+  const messages=[];
+  global.fetch=async(_url,options)=>{const body=JSON.parse(options.body);messages.push(body);if(streamResponses.length){const v=streamResponses.shift();if(v instanceof Error)throw v;return v;}return{ok:true,status:200,headers:{get:()=> 'application/json'},text:async()=>JSON.stringify({choices:[{message:{content:'新的篇章已经展开。'}}]})};};
+  // model setting inherits the configured provider's stream preference on freshly created project
+  const cfgProject=MimaStandalone.getState().novelProjects.find(x=>x.id===id);
+  assert.strictEqual(cfgProject.modelSettings.streaming,null,'new novel should inherit global stream setting');
+  const continueRes=await MimaStandalone.handle(`/novels/${id}/continue`,'POST',{chapterId:newId,minimumChars:5});
+  assert(continueRes.success,JSON.stringify(continueRes));
+  assert.strictEqual(messages[0].stream,undefined,'should not silently enable streaming against global setting');
+  const bare=await MimaStandalone.handle('/novels/import','POST',{text:'没有章节标题的正文',title:'无章节'});
+  const badReparse=await MimaStandalone.handle(`/novels/${bare.data.id}/reparse`,'POST',{});
+  assert(!badReparse.success,'a chapter parser must not invent chapters without grounded headings');
+  const cssPreset=await MimaStandalone.handle('/css-presets','POST',{name:'test global',scope:'app',surface:'global',css:'.novel-reader{color:red}'});
+  assert(cssPreset.success);
+  const mount=await MimaStandalone.handle('/theme','PATCH',{globalCssPresetId:cssPreset.data.id,globalCssEnabled:true});
+  assert(mount.success&&mount.data.globalCssPresetId===cssPreset.data.id,'global CSS mount not persisted');
+  const switchTheme=await MimaStandalone.handle('/theme','PATCH',{theme:'eink'});
+  assert.strictEqual(switchTheme.data.globalCssPresetId,cssPreset.data.id,'switching themes unmounted global CSS');
+  await MimaStandalone.handle(`/css-presets/${cssPreset.data.id}`,'DELETE');
+  assert.strictEqual(MimaStandalone.getState().themeSettings.globalCssPresetId,null,'deleting global CSS left dangling mount');
+
+  // Error details survive UI route by code and safe hint, not just generic interrupted label
+  streamResponses.push(new Error('Failed to fetch'));
+  const bad=await MimaStandalone.handle(`/novels/${id}/memory/chapter/${chapterId}`,'POST',{});
+  assert.strictEqual(bad.code,'E_API_NETWORK_CORS');
+  // Real streaming parser must retain upstream error codes rather than claim a generic network interruption.
+  const sse=(data)=>({ok:true,status:200,headers:{get:()=> 'text/event-stream'},body:{getReader:()=>{let done=false;return{read:async()=>{if(done)return{done:true};done=true;return{done:false,value:new TextEncoder().encode(data)}}}}}});
+  await MimaStandalone.handle(`/novels/${id}`,'PATCH',{modelSettings:{...cfgProject.modelSettings,streaming:true}});
+  streamResponses.push(sse('event: error\ndata: {"error":{"message":"provider denied","status":429}}\n\n'));
+  const upstream=await MimaStandalone.handle(`/novels/${id}/continue`,'POST',{chapterId:newId,minimumChars:1});
+  assert.strictEqual(upstream.code,'E_API_UPSTREAM','SSE upstream error swallowed');
+  assert(upstream.msg.includes('provider denied'));
+  streamResponses.push(sse('data: {"choices":[{"delta":{"content":"半段文字"}}]}\n\n'));
+  const trunc=await MimaStandalone.handle(`/novels/${id}/continue`,'POST',{chapterId:newId,minimumChars:1});
+  assert(trunc.success&&trunc.data.interrupted===true,'truncated stream misreported as completed reply');
+  const saved=MimaStandalone.getState().novelProjects.find(x=>x.id===id);
+  assert(saved.drafts.some(d=>d.content.includes('半段文字')&&d.status==='interrupted'),'partial text lost on interruption');
+  const ui=fs.readFileSync(path.join(root,'novel-studio.js'),'utf8');
+  assert(ui.includes('function renderChapterArchive')&&ui.includes('<details'),'chapter/continuation archive missing');
+  assert(ui.includes('传输诊断')&&ui.includes('code:'),'transport diagnostics missing');
+  assert(ui.includes('Capture user input BEFORE render()'),'director note must be captured before DOM rerender');
+  assert(ui.includes('续写本章')&&ui.includes('新篇章续写'),'both generation modes missing');
+  assert(ui.includes('reparseChapters')&&ui.includes('saveSegment'),'chapter reparse / segment edit path missing');
+  const app=fs.readFileSync(path.join(root,'app.js'),'utf8');
+  assert(app.includes('导入并应用到全局')||app.includes('导入后选择作用域'),'CSS import target cannot remain silently story-only');
+  console.log('v1.3.1 user regression PASS');
+})().catch(e=>{console.error(e);process.exitCode=1});

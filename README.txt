@@ -199,3 +199,17 @@ CSS Preset 新增 Novel / Assistant surface。Novel 稳定 selector 包括：
 
 【导出】
 Novel Studio 可导出 TXT 或项目 JSON。TXT 只包含 canonical source/manual/ai_accepted 正文，不包含尚未采纳的 Draft。
+
+
+MimaTAVERN v1.3.1 · Novel Studio 修复补丁（完整包）
+- TXT 导入自动识别序章、卷、中文/英文数字章节等标题；有依据时按章独立归类，左侧显示章节数。
+- 导入原文使用折叠阅读，原始 source snapshot 保留；章节独立编辑，逐段 AI 续写独立折叠归档。
+- 可选择「续写本章」或「新篇章续写」，均先产生 Draft，采纳后才进入正文和剧情记忆。
+- 旧草稿不因“重写”自动销毁；断流返回 partial Draft 仍保留原 Generation。
+- 修复输入框 onchange 重绘导致“点击续写未发出请求”及导演要求丢失。
+- CSS 导入询问作用域，支持真正全局挂载、小说独立挂载、聊天正文挂载；全局挂载保存在主题设置中跨 Session。
+- API 默认继承主 API 的 Streaming 和 Temperature 策略；旧项目可在模型设置点击「跟随主 API 配置」。
+- 「测试小说模型连接」手动发送两次短小请求，分别验证章节总结非流式和续写当前传输方式。
+- 传输失败显示错误码、HTTP 状态、提示与阶段；不会自动收费重试，也不会把空文视作生成成功。
+- 没有真实中转账号/密钥，故无法在此验收用户自己中转线路的完整长篇请求。遇到失败请提供新诊断窗口的 code / HTTP / stage（勿提供 Key）。
+- 更新不会覆盖本地 IndexedDB；完整包不含运行数据或 Git 仓库历史。部署前仍建议导出完整备份。

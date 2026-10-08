@@ -195,7 +195,7 @@
   async function saveCssPreset(p) { const n=normalizeCssPreset({ ...p, updatedAt:nowIso() }); const i=state.cssPresets.findIndex(x=>x.id===n.id); if(i>=0)state.cssPresets[i]=n;else state.cssPresets.push(n); await persist(); return n; }
   async function saveRegexPack(p) { const checked=window.MimaRegexEngine?.validatePack?window.MimaRegexEngine.validatePack(p):{ok:true,pack:normalizeRegexPack(p),invalid:[]}; if(!checked.ok)throw new ApiError('E_REGEX_INVALID',`正则包含无效规则：${checked.invalid.map(x=>`${x.name}: ${x.error}`).join('；')}`,{hint:'请检查 Pattern（匹配式）与 Flags（标志）；无效规则不会被静默保存。'}); const n=normalizeRegexPack({ ...checked.pack, updatedAt:nowIso() }); const i=state.regexPacks.findIndex(x=>x.id===n.id); if(i>=0)state.regexPacks[i]=n;else state.regexPacks.push(n); await persist(); return n; }
   async function saveNovelProject(p) { if(!window.MimaNovelEngine)throw new Error('Novel Engine 未加载'); const n=window.MimaNovelEngine.normalizeProject({...p,updatedAt:nowIso()}); const i=state.novelProjects.findIndex(x=>x.id===n.id); if(i>=0)state.novelProjects[i]=n;else state.novelProjects.push(n); await persist(); return n; }
-  async function saveThemeSettings(input={}) { state.themeSettings=window.MimaThemeEngine?.normalizeSettings?window.MimaThemeEngine.normalizeSettings({...input,updatedAt:nowIso()}):{theme:text(input.theme||'default'),updatedAt:nowIso()}; window.MimaThemeEngine?.apply?.(state.themeSettings); await persist(); return clone(state.themeSettings); }
+  async function saveThemeSettings(input={}) { state.themeSettings=window.MimaThemeEngine?.normalizeSettings?window.MimaThemeEngine.normalizeSettings({...state.themeSettings,...input,updatedAt:nowIso()}):{theme:text(input.theme||'default'),updatedAt:nowIso()}; window.MimaThemeEngine?.apply?.(state.themeSettings); await persist(); return clone(state.themeSettings); }
 
   // ---------- Prompt Assembler ----------
   const asText = v => String(v || '').trim();
@@ -326,6 +326,7 @@
     if(status===401)return 'API Key（密钥）无效、过期，或 Authorization 认证格式不被服务端接受。';
     if(status===403)return '服务端拒绝访问。可能是账号权限、来源限制、地区限制、模型权限或 CORS 策略。';
     if(status===404)return '请求端点或模型不存在。请重点检查 Base URL（基础地址）、Chat Endpoint（聊天端点）以及模型名。';
+    if(status===413)return '提交到 API 的正文或上下文超过当前接口允许的请求体大小；请先识别章节再单章分析，不要把整本书作为一个章节提交。';
     if(status===408||status===504)return '请求超时。可能是模型生成过慢、上游拥堵或网关超时。';
     if(status===409)return '服务端状态冲突，可能是上游会话/任务状态异常；稍后重试通常可恢复。';
     if(status===422)return '请求字段格式可解析但无法处理，通常是模型参数或消息格式不兼容。';
@@ -427,28 +428,36 @@
     return data;
   }
   async function readStreamingReply(res,onProgress,model=''){
-    if(!res.body?.getReader)throw new ApiError('E_STREAM_PARSE','当前浏览器无法读取流式响应，请关闭 Streaming（流式传输）后重试。',{status:res.status});
-    const reader=res.body.getReader(),decoder=new TextDecoder();let buffer='',reply='',eventCount=0,finalPayload=null,streamUsage=null;
+    if(!res.body?.getReader)throw new ApiError('E_STREAM_PARSE','当前浏览器无法读取流式响应。',{status:res.status});
+    const reader=res.body.getReader(),decoder=new TextDecoder();
+    let buffer='',reply='',eventCount=0,finalPayload=null,streamUsage=null,receivedDone=false,finishReason='',badEvents=0;
+    let eventType='message';
     const consumeLine=line=>{
-      const raw=String(line||'').trim();if(!raw||raw.startsWith(':'))return;
+      const raw=String(line||'').trim();if(!raw)return;if(raw.startsWith(':'))return;
+      if(raw.startsWith('event:')){eventType=raw.slice(6).trim()||'message';return}
+      if(!raw.startsWith('data:')&&!raw.startsWith('{'))return;
       const payloadText=raw.startsWith('data:')?raw.slice(5).trim():raw;
-      if(!payloadText||payloadText==='[DONE]')return;
-      let payload;try{payload=JSON.parse(payloadText)}catch(_){return;}
-      eventCount++;finalPayload=payload;const observed=captureUsageMetrics(payload,model,null);if(observed)streamUsage=observed;const piece=extractStreamDelta(payload);if(piece){reply+=piece;emitProgress(onProgress,{phase:'streaming',percent:Math.min(90,58+Math.log10(reply.length+1)*12),receivedChars:reply.length,delta:piece,streamText:reply,detail:`已接收 ${reply.length} 个字符`});}
+      if(payloadText==='[DONE]'){receivedDone=true;return}if(!payloadText)return;
+      let payload;try{payload=JSON.parse(payloadText)}catch(_){badEvents++;return}
+      if(eventType==='error'||payload?.error){throw new ApiError('E_API_UPSTREAM',String(payload?.error?.message||payload?.message||'上游通过 SSE 返回错误事件'),{status:Number(payload?.error?.status||payload?.status)||res.status,details:`stage: stream_event; events: ${eventCount}`})}
+      eventCount++;finalPayload=payload;
+      const finish=payload?.choices?.[0]?.finish_reason||payload?.finish_reason;
+      if(finish)finishReason=String(finish);
+      const observed=captureUsageMetrics(payload,model,null);if(observed)streamUsage=observed;
+      const piece=extractStreamDelta(payload);if(piece){reply+=piece;emitProgress(onProgress,{phase:'streaming',percent:Math.min(90,58+Math.log10(reply.length+1)*12),receivedChars:reply.length,delta:piece,streamText:reply,detail:`已接收 ${reply.length} 个字符`});}
     };
     try{
-      while(true){const {done,value}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});const lines=buffer.split(/\r?\n/);buffer=lines.pop()||'';for(const line of lines)consumeLine(line);}
+      while(true){const {done,value}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});const lines=buffer.split(/\r?\n/);buffer=lines.pop()||'';for(const line of lines)consumeLine(line)}
       buffer+=decoder.decode();if(buffer.trim())for(const line of buffer.split(/\r?\n/))consumeLine(line);
     }catch(e){
-      if(e?.name==='AbortError')throw e;
-      if(text(reply)){
-        throw new ApiError('E_STREAM_INTERRUPTED',`流式连接在已接收 ${reply.length} 个字符后中断。为避免把半截回复写入剧情，本轮没有提交角色消息。`,{status:res.status,hint:apiErrorHint('E_STREAM_INTERRUPTED',res.status,e?.message||''),details:`receivedChars: ${reply.length}; stream events: ${eventCount}`});
-      }
+      if(e?.name==='AbortError'||e instanceof ApiError)throw e;
+      if(reply)throw new ApiError('E_STREAM_INTERRUPTED',`流式连接在接收 ${reply.length} 字符后异常终止。已保留 Draft，不会将其冒充完整正文。`,{status:res.status,details:`stage: stream_read; events: ${eventCount}; cause: ${e?.name||'unknown'}: ${e?.message||String(e)}`});
       throw asApiError(e,'E_API_NETWORK_CORS');
     }
-    if(!reply&&finalPayload){try{reply=extractReply(finalPayload)}catch(_){}}
-    if(!text(reply))throw new ApiError('E_API_EMPTY_REPLY','流式请求结束，但模型没有返回可见正文。',{status:res.status,details:`stream events: ${eventCount}`});
-    if(streamUsage)emitProgress(onProgress,{phase:'cache_usage',percent:92,detail:streamUsage.cachedTokens>0?`上游报告缓存命中 ${streamUsage.cachedTokens} tokens`:(streamUsage.cachedTokens===0?'上游返回 usage；本次报告缓存命中 0 tokens':'上游返回 usage，但没有提供缓存命中字段'),usage:clone(streamUsage)});
+    if(!reply&&finalPayload){try{reply=extractReply(finalPayload)}catch(e){if(e instanceof ApiError&&e.code==='E_API_UPSTREAM')throw e;}}
+    if(!reply)throw new ApiError(badEvents?'E_STREAM_PARSE':'E_API_EMPTY_REPLY',badEvents?'模型流包含无法解析的数据，未获得正文。':'流式请求结束，但模型没有返回可见正文。',{status:res.status,details:`stream events: ${eventCount}; malformed events: ${badEvents}`});
+    if(!receivedDone&&!finishReason)throw new ApiError('E_STREAM_INTERRUPTED','流式响应已结束，但缺少完成标记。[已收到的片段保留为 Draft]',{status:res.status,details:`stage: stream_eof; receivedChars: ${reply.length}; events: ${eventCount}`});
+    if(streamUsage)emitProgress(onProgress,{phase:'cache_usage',percent:92,detail:streamUsage.cachedTokens>0?`上游报告缓存命中 ${streamUsage.cachedTokens} tokens`:'上游返回 usage',usage:clone(streamUsage)});
     return text(reply);
   }
   async function callModelWithConfig(messages,cfgInput,temperature=0.85,signal,options={}){
@@ -488,7 +497,7 @@
   // ---------- Novel Studio ----------
   function novelSummaries(){return state.novelProjects.map(p=>({id:p.id,title:p.title,updatedAt:p.updatedAt,createdAt:p.createdAt,sourceName:p.sourceName,chapterCount:arr(p.chapterOrder).length,activeChapterId:p.activeChapterId,memoryStatus:p.memoryStatus?.status||'missing'})).sort((a,b)=>String(b.updatedAt).localeCompare(String(a.updatedAt)));}
   function getNovelProject(id){const p=getNovel(id);if(!p)throw new Error('未找到小说项目');return p;}
-  function novelModelConfig(project){const base=getApiConfig(),n=project.modelSettings||{};return{...base,model:text(n.model)||base.model,sendTemperature:n.sendTemperature!==false,temperature:Number.isFinite(Number(n.temperature))?Number(n.temperature):base.temperature,stream:n.streaming!==false,maxTokens:Number(n.maxTokens)>0?Number(n.maxTokens):base.maxTokens};}
+  function novelModelConfig(project){const base=getApiConfig(),n=project.modelSettings||{};return{...base,model:text(n.model)||base.model,sendTemperature:typeof n.sendTemperature==='boolean'?n.sendTemperature:base.sendTemperature,temperature:n.temperature!==null&&n.temperature!==undefined&&Number.isFinite(Number(n.temperature))?Number(n.temperature):base.temperature,stream:typeof n.streaming==='boolean'?n.streaming:base.stream,maxTokens:Number(n.maxTokens)>0?Number(n.maxTokens):base.maxTokens};}
   function createBlankNovel(body={}){const p=window.MimaNovelEngine.createProjectFromText({title:body.title||'未命名小说',sourceName:'',sourceEncoding:'utf-8',text:''});p.createdFrom='manual';return p;}
   async function patchNovelProject(id,body={}){const p=getNovelProject(id),allowed=['title','activeChapterId','presetIds','worldbookIds','modelSettings','generationSettings','appearance'];for(const k of allowed)if(Object.prototype.hasOwnProperty.call(body,k))p[k]=clone(body[k]);return saveNovelProject(p);}
   function novelAssets(){return{presets:state.presets,worldbooks:state.worldbooks,cssPresets:state.cssPresets,themeSettings:state.themeSettings};}
@@ -545,7 +554,13 @@
   }
   async function patchNovelDraft(id,draftId,body={}){const p=getNovelProject(id),d=findDraft(p,draftId);if(!d)throw new Error('未找到草稿');if(d.status==='accepted')throw new Error('已采纳草稿不能再编辑');d.content=String(body.content??d.content);d.updatedAt=nowIso();if(['interrupted','incomplete'].includes(d.status))d.status='ready';return saveNovelProject(p);}
   async function rejectNovelDraft(id,draftId){const p=getNovelProject(id),d=findDraft(p,draftId);if(!d)throw new Error('未找到草稿');if(d.status==='accepted')throw new Error('已采纳草稿不能删除');d.status='rejected';d.updatedAt=nowIso();const g=findGeneration(p,d.generationId);if(g)g.status='rejected';return saveNovelProject(p);}
-  async function regenerateNovelDraft(id,draftId,body={},signal=null,progress=null){const p=getNovelProject(id),old=findDraft(p,draftId);if(!old)throw new Error('未找到草稿');if(old.status==='accepted')throw new Error('已采纳草稿不能重写');old.status='rejected';const g=findGeneration(p,old.generationId);if(g)g.status='rejected';await saveNovelProject(p);return continueNovel(id,{...body,chapterId:old.chapterId,directorNote:body.directorNote??g?.directorNote??''},signal,progress);}
+  async function regenerateNovelDraft(id,draftId,body={},signal=null,progress=null){
+    const p=getNovelProject(id),old=findDraft(p,draftId);if(!old)throw new Error('未找到草稿');
+    if(old.status==='accepted')throw new Error('已采纳草稿不能重写，请改为编辑原文或开启下一轮续写');
+    // Regeneration is an alternate draft, not destructive replacement. Preserve the old candidate even on provider failure.
+    const previous=findGeneration(p,old.generationId);
+    return continueNovel(id,{...body,chapterId:old.chapterId,directorNote:body.directorNote??previous?.directorNote??''},signal,progress);
+  }
   async function acceptNovelDraft(id,draftId,signal=null,progress=null){const engine=window.MimaNovelEngine,p=getNovelProject(id),d=findDraft(p,draftId);if(!d)throw new Error('未找到草稿');if(d.status==='accepted')return p;if(!['ready','incomplete','interrupted'].includes(d.status))throw new Error('当前草稿状态不能采纳');const g0=findGeneration(p,d.generationId);if(!g0)throw new Error('Draft 对应的 Generation 不存在');assertNovelDraftBaseCurrent(p,d,g0);const committed=engine.appendAcceptedSegment(p,d.chapterId,d);const cd=findDraft(committed,draftId);if(cd)cd.status='accepted';const g=findGeneration(committed,d.generationId);if(g){g.status='accepted';g.completedAt=g.completedAt||nowIso();}committed.memoryStatus={status:'stale',error:'',updatedAt:nowIso()};const saved=await saveNovelProject(committed);try{return await updateNovelMemory(saved.id,d.chapterId,signal,progress);}catch(e){const latest=getNovelProject(saved.id),c=engine.getChapter(latest,d.chapterId);if(c)c.summaryStatus=c.summarySourceRevision?'stale':'missing';latest.memoryStatus={status:'degraded',error:e?.message||String(e),updatedAt:nowIso()};return saveNovelProject(latest);}}
   async function patchNovelMemory(id,body={}){const p=getNovelProject(id);p.narrativeState=window.MimaNovelMemory.applyManualPatch(p.narrativeState,body);return saveNovelProject(p);}
 
@@ -774,7 +789,13 @@
       let nm=path.match(/^\/novels\/([^/]+)$/);if(nm&&method==='GET'){const p=getNovel(nm[1]);return p?ok(p):fail('未找到小说项目');}
       if(nm&&method==='PATCH')return ok(await patchNovelProject(nm[1],body||{}));
       if(nm&&method==='DELETE'){const before=state.novelProjects.length;state.novelProjects=state.novelProjects.filter(x=>x.id!==nm[1]);await persist();return ok({deleted:state.novelProjects.length<before});}
+      nm=path.match(/^\/novels\/([^/]+)\/chapters$/);if(nm&&method==='POST'){const p=getNovelProject(nm[1]);return ok(await saveNovelProject(window.MimaNovelEngine.appendNewChapter(p,body?.title||'')));}
+      nm=path.match(/^\/novels\/([^/]+)\/reparse$/);if(nm&&method==='POST'){const p=getNovelProject(nm[1]);return ok(await saveNovelProject(window.MimaNovelEngine.reparseImportedProject(p)));}
       nm=path.match(/^\/novels\/([^/]+)\/chapters\/([^/]+)$/);if(nm&&method==='PATCH'){const p=getNovelProject(nm[1]),next=window.MimaNovelEngine.editChapter(p,nm[2],body?.action||'replace_text',body||{});return ok(await saveNovelProject(next));}
+      nm=path.match(/^\/novels\/([^/]+)\/test-connection$/);if(nm&&method==='POST'){const p=getNovelProject(nm[1]),cfg=novelModelConfig(p);const stages=[{stage:'summary_nonstream',stream:false},{stage:'continuation',stream:cfg.stream}],out={model:cfg.model,streamSetting:cfg.stream};
+        for(const step of stages){try{const reply=await callModelWithConfig([{role:'user',content:'请回复：连接成功'}],cfg,cfg.temperature,signal,{streamOverride:step.stream,onProgress:progress});out[step.stage]={ok:true,chars:reply.length};}
+          catch(e){if(e instanceof ApiError)e.details=[`novel_test_stage: ${step.stage}`,e.details].filter(Boolean).join('; ');throw e;}}
+        return ok(out);}
       nm=path.match(/^\/novels\/([^/]+)\/prompt-preview$/);if(nm&&method==='POST')return ok(novelPromptPreview(nm[1],body||{}));
       nm=path.match(/^\/novels\/([^/]+)\/continue$/);if(nm&&method==='POST')return ok(await continueNovel(nm[1],body||{},signal,progress));
       nm=path.match(/^\/novels\/([^/]+)\/drafts\/([^/]+)$/);if(nm&&method==='PATCH')return ok(await patchNovelDraft(nm[1],nm[2],body||{}));
@@ -820,7 +841,7 @@
       if(path==='/css-presets'&&method==='GET')return ok(state.cssPresets);
       if(path==='/css-presets'&&method==='POST')return ok(await saveCssPreset(body||{}));
       m=path.match(/^\/css-presets\/([^/]+)$/);if(m&&method==='PATCH'){const old=getCssPreset(m[1]);return old?ok(await saveCssPreset({...old,...body,id:m[1]})):fail('未找到 CSS Preset');}
-      if(m&&method==='DELETE'){state.cssPresets=state.cssPresets.filter(x=>x.id!==m[1]);for(const sess of state.sessions){if(sess.customCssId===m[1]){sess.customCssId=null;sess.customCssEnabled=false;}}for(const p of state.novelProjects){if(p.appearance?.customCssId===m[1]){p.appearance.customCssId=null;p.appearance.customCssEnabled=false;}}await persist();return ok({deleted:true});}
+      if(m&&method==='DELETE'){state.cssPresets=state.cssPresets.filter(x=>x.id!==m[1]);if(state.themeSettings?.globalCssPresetId===m[1])state.themeSettings={...state.themeSettings,globalCssPresetId:null,globalCssEnabled:false};for(const sess of state.sessions){if(sess.customCssId===m[1]){sess.customCssId=null;sess.customCssEnabled=false;}}for(const p of state.novelProjects){if(p.appearance?.customCssId===m[1]){p.appearance.customCssId=null;p.appearance.customCssEnabled=false;}}await persist();return ok({deleted:true});}
 
       if(path==='/regex-packs'&&method==='GET')return ok(state.regexPacks);
       if(path==='/regex-packs'&&method==='POST')return ok(await saveRegexPack(body||{}));
