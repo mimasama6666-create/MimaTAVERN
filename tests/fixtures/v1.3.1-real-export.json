@@ -1,0 +1,228 @@
+{
+  "schemaVersion": 4,
+  "sessions": [
+    {
+      "id": "sess_1791521139483_9apjrws",
+      "title": "版本真实生成·会话",
+      "createdAt": "2026-10-09T04:45:39.483Z",
+      "updatedAt": "2026-10-09T04:45:39.484Z",
+      "mode": "tavern",
+      "characterMode": "tavern",
+      "loadedUserMaskId": null,
+      "loadedCharMaskId": null,
+      "enabledPersonaSources": {
+        "sandalphonPersona": false,
+        "userPersona": false,
+        "telegramContext": false,
+        "longTermMemory": false,
+        "sandalphonState": false
+      },
+      "enabledContextSources": {
+        "storySummary": true,
+        "recentMessages": true,
+        "telegramContext": false,
+        "vectorMemory": false
+      },
+      "worldbookIds": [],
+      "presetIds": [],
+      "openingId": null,
+      "canonLevel": "alternate",
+      "status": "active",
+      "messages": [
+        {
+          "id": "legacy_message",
+          "role": "user",
+          "content": "旧会话的一段原始历史",
+          "rawContent": "旧会话的一段原始历史",
+          "renderedContent": "",
+          "time": "2026-10-09T04:45:39.484Z",
+          "mode": "story_mode",
+          "emotion": null,
+          "metadata": {},
+          "canonLevel": "alternate",
+          "isEdited": false,
+          "parentMessageId": null,
+          "branchId": "main",
+          "tokenEstimate": 4,
+          "versions": []
+        }
+      ],
+      "archivedBranches": [],
+      "deletedMessages": [],
+      "summary": "旧会话的珍贵概要",
+      "rollingSummary": "旧会话的珍贵概要",
+      "longSummary": "",
+      "sceneSummary": "",
+      "characterPsychSummary": "",
+      "relationshipSummary": "",
+      "unresolvedHooks": [],
+      "pinnedFacts": [],
+      "lastSummarizedIndex": 0,
+      "tags": [],
+      "lastScene": "",
+      "userNotes": "",
+      "aiNotes": "",
+      "directorNote": "",
+      "storyState": {},
+      "promptSettings": {
+        "recentMessageLimit": 34,
+        "worldbookBudgetChars": 16000,
+        "summaryEnabled": true,
+        "pinnedFactsEnabled": true,
+        "showInjectionLabels": true,
+        "summaryTriggerMessages": 28,
+        "inputSemanticMode": "auto"
+      },
+      "manualMemory": {
+        "core": {
+          "content": "",
+          "updatedAt": "",
+          "source": "context",
+          "targetChars": 1000,
+          "temperature": 0.35,
+          "sourceRoundCount": 0,
+          "sourceFactCount": 0
+        },
+        "facts": [],
+        "settings": {
+          "injectCore": true,
+          "injectFacts": true,
+          "factInjectionLimit": 12,
+          "summaryTemperature": 0.35
+        }
+      },
+      "customCssId": null,
+      "customCssEnabled": true,
+      "regexPackIds": [],
+      "renderMode": "text"
+    }
+  ],
+  "masks": [],
+  "presets": [],
+  "worldbooks": [],
+  "cssPresets": [],
+  "regexPacks": [],
+  "novelProjects": [
+    {
+      "id": "novel_1791521139484_0ea2h8i",
+      "title": "真实历史导出项目",
+      "createdAt": "2026-10-09T04:45:39.485Z",
+      "updatedAt": "2026-10-09T04:45:39.486Z",
+      "sourceName": "保存原稿.txt",
+      "sourceEncoding": "utf-8",
+      "sourceText": "第一章\n此处是旧版真实 TXT 原文，主角遇见了朋友。",
+      "sourceHash": "56f8b9ff",
+      "chapters": [
+        {
+          "id": "chap_1791521139485_4sy7hem",
+          "projectId": "novel_1791521139484_0ea2h8i",
+          "title": "第一章",
+          "order": 0,
+          "segments": [
+            {
+              "id": "seg_1791521139485_khk08t4",
+              "kind": "source",
+              "content": "此处是旧版真实 TXT 原文，主角遇见了朋友。",
+              "createdAt": "2026-10-09T04:45:39.485Z",
+              "updatedAt": "2026-10-09T04:45:39.485Z",
+              "generationId": null
+            }
+          ],
+          "revision": 1,
+          "summary": {
+            "overview": "",
+            "events": [],
+            "characterChanges": [],
+            "revealedFacts": [],
+            "openThreads": [],
+            "foreshadowing": [],
+            "endingState": "",
+            "sourceRevision": 0,
+            "sourceHash": "",
+            "generatedAt": ""
+          },
+          "summarySourceRevision": 0,
+          "summarySourceHash": "",
+          "summaryStatus": "missing",
+          "createdAt": "2026-10-09T04:45:39.485Z",
+          "updatedAt": "2026-10-09T04:45:39.485Z"
+        }
+      ],
+      "chapterOrder": [
+        "chap_1791521139485_4sy7hem"
+      ],
+      "activeChapterId": "chap_1791521139485_4sy7hem",
+      "presetIds": [],
+      "worldbookIds": [],
+      "modelSettings": {
+        "model": "",
+        "temperature": null,
+        "sendTemperature": null,
+        "streaming": null,
+        "maxTokens": 0
+      },
+      "generationSettings": {
+        "minimumChars": 1200,
+        "maxAppendAttempts": 3,
+        "contextBudgetChars": 48000
+      },
+      "narrativeState": {
+        "storyOverview": "主人在旧版亲手修改的剧情概括",
+        "currentSituation": "",
+        "characterStates": [
+          {
+            "name": "主角",
+            "status": "幸存"
+          }
+        ],
+        "relationships": [],
+        "timeline": [],
+        "openThreads": [
+          "旧版仍然在追寻的秘密"
+        ],
+        "foreshadowing": [],
+        "revealedFacts": [],
+        "locations": [],
+        "lastUpdatedAt": "",
+        "sourceChapterRevisions": {},
+        "manualOverrides": {
+          "storyOverview": "主人在旧版亲手修改的剧情概括",
+          "characterStates": [
+            {
+              "name": "主角",
+              "status": "幸存"
+            }
+          ],
+          "openThreads": [
+            "旧版仍然在追寻的秘密"
+          ]
+        }
+      },
+      "memoryStatus": {
+        "status": "missing",
+        "error": "",
+        "updatedAt": ""
+      },
+      "drafts": [],
+      "generations": [],
+      "appearance": {
+        "fontFamily": "",
+        "fontSize": 17,
+        "lineHeight": 1.9,
+        "letterSpacing": 0,
+        "paragraphGap": 1,
+        "firstLineIndent": 2,
+        "maxWidth": 760,
+        "customCssId": null,
+        "customCssEnabled": true
+      },
+      "createdFrom": "txt_import"
+    }
+  ],
+  "themeSettings": {
+    "theme": "default",
+    "globalCssPresetId": null,
+    "globalCssEnabled": true,
+    "updatedAt": ""
+  }
+}

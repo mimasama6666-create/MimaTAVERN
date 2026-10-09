@@ -384,7 +384,16 @@ async function deleteFactMemory(id){if(!confirm('删除这一段事实记忆？'
 async function clearAllFactMemories(){if(!confirm('清空全部事实记忆？核心记忆和剧情原文不会被删除。'))return;const res=await fetchStory(`/sessions/${currentSessionId}/memory/facts`,'DELETE');if(res.success){currentSessionData=res.data;toast('事实记忆已清空');renderMemoryTab(qs('settings-content'))}else toast(res.msg||'清空失败')}
 async function exportWholeLibrary(){const data=await MimaStandalone.exportLibrary();downloadJson('mimamao-tavern-full-backup.json',{format:'mimamao-tavern-standalone',version:1,exportedAt:new Date().toISOString(),data});}
 function chooseLibraryImport(){qs('library-file-input').value='';qs('library-file-input').click()}
-async function importWholeLibrary(file){if(!file)return;if(!confirm('导入完整酒馆备份会覆盖当前浏览器里的剧情/角色卡/世界书/预设。继续吗？'))return;try{const raw=JSON.parse(await file.text());await MimaStandalone.importLibrary(raw);currentSessionId=null;currentSessionData=null;await loadAll();toast('完整酒馆备份已导入')}catch(e){toast(`备份导入失败：${e.message}`)}}
+async function importWholeLibrary(file){
+    if(!file)return;
+    try{
+        const raw=JSON.parse(await file.text()),valid=MimaStandalone.validateLibrary(raw);
+        const current=await MimaStandalone.exportLibrary();
+        const describe=data=>`会话 ${data.sessions.length} / 小说 ${data.novelProjects?.length||0} / 角色卡 ${data.masks.length} / 世界书 ${data.worldbooks.length} / 预设 ${data.presets.length}`;
+        if(!confirm(`已通过资料库结构校验。\n当前：${describe(current)}\n导入：${describe(valid)}\n\n这会替换当前资料库，建议先导出应急备份。确认覆盖吗？`))return;
+        await MimaStandalone.importLibrary(raw);currentSessionId=null;currentSessionData=null;await loadAll();toast('完整酒馆备份已导入');
+    }catch(e){toast(`备份导入失败（未清空现有资料）：${e.message}`)}
+}
 
 
 const FULL_SETTINGS_FORMAT = 'mimamao-tavern-full-settings';
@@ -437,22 +446,35 @@ async function exportFullSettingsBackup(){
 }
 function chooseFullSettingsImport(){const input=qs('full-settings-file-input');input.value='';input.click()}
 async function applyFullSettingsBackup(raw,{fromSnapshot=false}={}){
-    const src=raw?.data||raw||{};
-    if(raw?.format&&raw.format!==FULL_SETTINGS_FORMAT) throw new Error('这不是咪嘛馆完整设置备份文件');
-    if(!src.library) throw new Error('备份里缺少剧情资料 library（资料库）');
-    await MimaStandalone.importLibrary(src.library);
-    if(src.api&&typeof src.api==='object'){
-        const old=MimaStandalone.getApiConfig();
-        const incoming={...src.api};
-        if(!incoming.apiKey) incoming.apiKey=old.apiKey||'';
-        MimaStandalone.saveApiConfig({...old,...incoming});
+    if(!raw||raw.format!==FULL_SETTINGS_FORMAT||Number(raw.version)>FULL_SETTINGS_VERSION)throw new Error('不是受支持的咪嘛馆完整设置备份');
+    const src=raw.data;
+    if(!src||typeof src!=='object'||!src.library)throw new Error('备份里缺少剧情资料 library（资料库）');
+    // Before changing fonts, preferences or API keys, verify the entire canonical data shape.
+    MimaStandalone.validateLibrary(src.library);
+    if(src.localPrefs!==undefined&&(!src.localPrefs||typeof src.localPrefs!=='object'||Array.isArray(src.localPrefs)))throw new Error('localPrefs 结构无效');
+    if(src.fonts!==undefined&&!Array.isArray(src.fonts))throw new Error('fonts 结构无效');
+    const previousApi=MimaStandalone.getApiConfig(),previousPrefs=collectPortableLocalPrefs();
+    const selected={ui:MimaFontManager.getSelected('ui'),story:MimaFontManager.getSelected('story')};
+    try{
+        // Prepare external assets before the final canonical commit. Font imports only add assets;
+        // they must never trigger an empty library write on partial import failure.
+        if(Array.isArray(src.fonts)&&src.fonts.length&&MimaFontManager.importPortable)await MimaFontManager.importPortable(src.fonts,{replace:false});
+        if(src.api&&typeof src.api==='object'){
+            const incoming={...src.api};if(!incoming.apiKey)incoming.apiKey=previousApi.apiKey||'';
+            MimaStandalone.saveApiConfig({...previousApi,...incoming});
+        }
+        restorePortableLocalPrefs(src.localPrefs||{});
+        if(src.selectedFonts?.ui!==undefined)MimaFontManager.setSelected('ui',src.selectedFonts.ui||'');
+        if(src.selectedFonts?.story!==undefined)MimaFontManager.setSelected('story',src.selectedFonts.story||'');
+        await MimaStandalone.importLibrary(src.library); // last; atomic compare-and-swap
+    }catch(e){
+        MimaStandalone.saveApiConfig(previousApi);
+        for(const key of FULL_SETTINGS_KEYS){if(Object.prototype.hasOwnProperty.call(previousPrefs,key))localStorage.setItem(key,previousPrefs[key]);else localStorage.removeItem(key)}
+        MimaFontManager.setSelected('ui',selected.ui||'');MimaFontManager.setSelected('story',selected.story||'');
+        applyStoryTypography();restoreLegacyFont();
+        throw e;
     }
-    restorePortableLocalPrefs(src.localPrefs||{});
-    applyStoryTypography();
-    if(Array.isArray(src.fonts)&&src.fonts.length&&MimaFontManager.importPortable) await MimaFontManager.importPortable(src.fonts,{replace:false});
-    if(src.selectedFonts?.ui!==undefined)MimaFontManager.setSelected('ui',src.selectedFonts.ui||'');
-    if(src.selectedFonts?.story!==undefined)MimaFontManager.setSelected('story',src.selectedFonts.story||'');
-    restoreLegacyFont();
+    applyStoryTypography();restoreLegacyFont();
     currentSessionId=null;currentSessionData=null;
     await loadAll();
     if(!fromSnapshot)openSettings('data');
@@ -500,12 +522,38 @@ function ensureCustomCssStyle(){let tag=qs('mima-custom-css-style');if(!tag){tag
 function stripEmbeddedStyleTags(css){return String(css||'').replace(/<\/?style\b[^>]*>/gi,'')}
 function findMatchingBrace(src,open){let depth=0,quote='',comment=false;for(let i=open;i<src.length;i++){const ch=src[i],next=src[i+1];if(comment){if(ch==='*'&&next==='/'){comment=false;i++}continue}if(!quote&&ch==='/'&&next==='*'){comment=true;i++;continue}if(quote){if(ch==='\\'){i++;continue}if(ch===quote)quote='';continue}if(ch==='"'||ch==="'"){quote=ch;continue}if(ch==='{')depth++;else if(ch==='}'&&--depth===0)return i}return-1}
 function scopeCssBlock(css,scope){let out='',cursor=0;const src=String(css||'');while(cursor<src.length){const open=src.indexOf('{',cursor);if(open<0){out+=src.slice(cursor);break}const close=findMatchingBrace(src,open);if(close<0){out+=src.slice(cursor);break}const header=src.slice(cursor,open);const trimmed=header.trim();const body=src.slice(open+1,close);if(!trimmed){out+=header+'{'+body+'}'}else if(/^@(media|supports|container|layer|document)\b/i.test(trimmed)){out+=header+'{'+scopeCssBlock(body,scope)+'}'}else if(/^@(keyframes|-webkit-keyframes|font-face|page|property|counter-style)\b/i.test(trimmed)){out+=header+'{'+body+'}'}else if(trimmed.startsWith('@')){out+=header+'{'+body+'}'}else{const lead=header.slice(0,header.indexOf(trimmed));const selectors=trimmed.split(',').map(sel=>sel.trim()).filter(Boolean).map(sel=>{if(sel===scope||sel.startsWith(scope+' ')||sel.startsWith(scope+':'))return sel;if(/^(from|to|\d+(?:\.\d+)?%)$/i.test(sel))return sel;const normalized=sel.replace(/^(?:html|body|:root)\b\s*/i,'').trim();return normalized?`${scope} ${normalized}`:scope}).join(', ');out+=lead+selectors+'{'+body+'}'}cursor=close+1}return out}
-function compileCustomCss(preset,targetSurface=null){if(!preset?.css)return'';const clean=stripEmbeddedStyleTags(preset.css);if(preset.scope==='app'||preset.surface==='global'&&preset.scope==='app')return clean;const surface=targetSurface||preset.surface||(preset.scope==='novel'?'novel':preset.scope==='assistant'?'assistant':'chat');if(surface==='novel')return scopeCssBlock(clean,'.novel-studio-root');if(surface==='assistant')return scopeCssBlock(clean,'.assistant-studio-panel');const scope=preset.scope==='global'?'#story-chat-box.tavern-story-scope':'.tavern-story-content';return scopeCssBlock(clean,scope)}
+function cssScopeSelector(selector,scope){const clean=selector.trim();if(!clean)return'';if(clean===scope||clean.startsWith(scope+' ')||clean.startsWith(scope+':'))return clean;const normalized=clean.replace(/^(?:html|body|:root)\b\s*/i,'').trim();return normalized?`${scope} ${normalized}`:scope}
+function splitCssSelectorList(input){
+    const out=[];let part='',depth=0,quote='',escaped=false;
+    for(const ch of String(input)){
+        if(escaped){part+=ch;escaped=false;continue;}
+        if(ch==='\\'){part+=ch;escaped=true;continue;}
+        if(quote){part+=ch;if(ch===quote)quote='';continue;}
+        if(ch==='"'||ch==="'"){quote=ch;part+=ch;continue;}
+        if(ch==='('||ch==='[')depth++;
+        else if(ch===')'||ch===']')depth--;
+        if(ch===','&&depth===0){if(part.trim())out.push(part.trim());part='';continue;}
+        part+=ch;
+    }
+    if(part.trim())out.push(part.trim());return out;
+}
+function scopeCssWithBrowserParser(css,scope){
+    if(typeof CSSStyleSheet==='undefined'){if(/@import\s/i.test(css))throw new Error('Scoped CSS 不支持 @import；请使用全局 CSS');return scopeCssBlock(css,scope);}
+    const sheet=new CSSStyleSheet();sheet.replaceSync(css);
+    const mapRules=rules=>Array.from(rules).map(rule=>{
+        if(rule.type===CSSRule.STYLE_RULE)return splitCssSelectorList(rule.selectorText).map(sel=>cssScopeSelector(sel,scope)).join(', ')+'{'+rule.style.cssText+'}';
+        if(rule.type===CSSRule.IMPORT_RULE)throw new Error('Scoped CSS 不允许 @import 跨作用域加载外部样式；请使用全局 CSS 或直接粘贴规则');
+        if(rule.cssRules&&rule.type!==CSSRule.KEYFRAMES_RULE)return rule.cssText.slice(0,rule.cssText.indexOf('{'))+'{'+mapRules(rule.cssRules)+'}';
+        return rule.cssText; // keyframes/font-face preserve legacy behavior (global namespaces)
+    }).join('\n');
+    return mapRules(sheet.cssRules);
+}
+function compileCustomCss(preset,targetSurface=null){if(!preset?.css)return'';const clean=stripEmbeddedStyleTags(preset.css);if(preset.scope==='app'||preset.surface==='global'&&preset.scope==='app')return clean;const surface=targetSurface||preset.surface||(preset.scope==='novel'?'novel':preset.scope==='assistant'?'assistant':'chat');if(surface==='novel')return scopeCssWithBrowserParser(clean,'.novel-studio-root');if(surface==='assistant')return scopeCssWithBrowserParser(clean,'.assistant-studio-panel');const scope=preset.scope==='global'?'#story-chat-box.tavern-story-scope':'.tavern-story-content';return scopeCssWithBrowserParser(clean,scope)}
 function ensureGlobalCssStyle(){let tag=qs('mima-global-css-style');if(!tag){tag=document.createElement('style');tag.id='mima-global-css-style';document.head.appendChild(tag)}return tag}
 function applyCustomCss(){
   const tag=ensureCustomCssStyle(),globalTag=ensureGlobalCssStyle(),preset=currentCssPreset();
   const safeCssBypass=new URLSearchParams(location.search).get('noCss')==='1';
-  tag.textContent=safeCssBypass||!currentSessionData||currentSessionData.customCssEnabled===false||!preset?'':compileCustomCss(preset);
+  try{tag.textContent=safeCssBypass||!currentSessionData||currentSessionData.customCssEnabled===false||!preset?'':compileCustomCss(preset);}catch(e){tag.textContent='';console.error('Scoped CSS 已拒绝无效规则',e);toast(`CSS 作用域解析失败：${e.message}`)}
   const setting=MimaStandalone.getState?.().themeSettings||{},globalPreset=cssPresets.find(x=>x.id===setting.globalCssPresetId&&x.scope==='app');
   globalTag.textContent=safeCssBypass||setting.globalCssEnabled===false||!globalPreset?'':compileCustomCss(globalPreset);
 }

@@ -1,0 +1,92 @@
+const assert=require('node:assert/strict');
+const path=require('node:path');
+const fs=require('node:fs');
+const root=process.argv[2]||path.resolve(__dirname,'..');
+const copy=x=>JSON.parse(JSON.stringify(x));
+global.window=global;
+const memoryStorage=new Map();
+global.localStorage={getItem:k=>memoryStorage.get(k)||null,setItem:(k,v)=>memoryStorage.set(k,String(v)),removeItem:k=>memoryStorage.delete(k)};
+require(path.join(root,'local-store.js'));
+const validate=MimaLocalStore.validateLibrary;
+const directImport=MimaLocalStore.importAll;
+let canonical={storeRevision:0,schemaVersion:4,sessions:[],masks:[],presets:[],worldbooks:[],cssPresets:[],regexPacks:[],novelProjects:[],themeSettings:{theme:'default'}};
+let failWrite=false;
+global.MimaLocalStore={validateLibrary:validate,loadState:async()=>copy(canonical),saveState:async(candidate,expected)=>{
+  if(failWrite)throw Error('E_IDB_WRITE_INTERRUPTED');
+  if(expected!==canonical.storeRevision)throw Error('E_CANONICAL_CONFLICT');
+  canonical={...copy(candidate),storeRevision:expected+1};return copy(canonical);
+}};
+for(const name of ['theme-engine.js','regex-engine.js','novel-memory.js','novel-engine.js','novel-prompt-assembler.js','standalone-core.js'])
+  require(path.join(root,name));
+const route=(p,m,b)=>MimaStandalone.handle(p,m,b);
+(async()=>{
+  await MimaStandalone.init();
+  const created=await route('/novels/import','POST',{title:'小说',sourceName:'主人原文.txt',text:'第一章\n珍贵的原文内容'});
+  assert.equal(created.success,true,JSON.stringify(created));
+  const id=created.data.id;
+  const changed=await route(`/novels/${id}/memory`,'PATCH',{storyOverview:'主人亲手修改的剧情记忆',characterStates:[{name:'A',status:'仍然活着'}],openThreads:['未完成的红线']});
+  assert.equal(changed.success,true,JSON.stringify(changed));
+  const backup=await MimaStandalone.exportLibrary();
+  assert.equal(backup.schemaVersion,4);
+  assert.equal(backup.novelProjects[0].narrativeState.manualOverrides.storyOverview,'主人亲手修改的剧情记忆');
+  if(!process.argv[2])assert.equal(backup.backupContractRevision,1,'new exported backup must declare its contract');
+  const before=copy(canonical), runtime=MimaStandalone.getState();
+  // Real P0 reproduction: only ONE existing owner-edited field is deleted.
+  const corrupt=copy(backup);delete corrupt.novelProjects[0].narrativeState.manualOverrides;
+  const p0Path='novelProjects[0].narrativeState.manualOverrides';
+  assert.throws(()=>validate(corrupt),e=>e.message.includes(p0Path),'validator accepted lost manual memory');
+  await assert.rejects(()=>directImport(corrupt),e=>e.message.includes(p0Path),'store-level import accepted missing manual memory');
+  await assert.rejects(()=>MimaStandalone.importLibrary(corrupt),e=>e.message.includes(p0Path),'Core import accepted missing manual memory');
+  assert.deepEqual(canonical,before,'reject changed durable canonical');
+  assert.deepEqual(MimaStandalone.getState(),runtime,'reject changed runtime state');
+  for(const [key,mutate] of [
+    ['novelProjects[0].chapters[0].memoryDelta',x=>delete x.novelProjects[0].chapters[0].memoryDelta],
+    ['novelProjects[0].legacyNarrativeCheckpoint',x=>delete x.novelProjects[0].legacyNarrativeCheckpoint],
+    ['novelProjects[0].recordRevision',x=>delete x.novelProjects[0].recordRevision],
+    ['backupContractRevision',x=>x.backupContractRevision=123]
+  ]){
+    const damaged=copy(backup);mutate(damaged);
+    assert.throws(()=>validate(damaged),e=>e.message.includes(key),`corrupt ${key} accepted`);
+    await assert.rejects(()=>MimaStandalone.importLibrary(damaged));
+    assert.deepEqual(canonical,before);
+  }
+  // Removing the format marker alone must not make a modern snapshot with a
+  // still-visible mature narrative shape lose its owner-authored facts.
+  const unmarked=copy(corrupt);delete unmarked.backupContractRevision;
+  assert.throws(()=>validate(unmarked),/narrativeState.manualOverrides/);
+  // Sparse new novels legitimately begin with {}, and manualOverrides:{} is
+  // a valid empty user override. Neither may be rejected or coerced.
+  const empty=copy(backup);empty.novelProjects[0].narrativeState={};assert.equal(validate(empty),empty);
+  const noPatch=copy(backup);noPatch.novelProjects[0].narrativeState=MimaNovelMemory.applyManualPatch({},{});assert.equal(validate(noPatch),noPatch);
+  // Verify a real reversible v4 export and an atomic write failure.
+  await MimaStandalone.importLibrary(backup);
+  assert.equal((await MimaStandalone.exportLibrary()).novelProjects[0].narrativeState.manualOverrides.storyOverview,'主人亲手修改的剧情记忆');
+  await directImport(backup);
+  assert.equal(MimaStandalone.getState().novelProjects[0].narrativeState.manualOverrides.storyOverview,'主人亲手修改的剧情记忆');
+  failWrite=true;await assert.rejects(()=>MimaStandalone.importLibrary(backup),/INTERRUPTED/);
+  failWrite=false;
+  const afterError=copy(canonical);assert.equal(afterError.novelProjects[0].narrativeState.manualOverrides.storyOverview,'主人亲手修改的剧情记忆');
+  // Fixtures below were generated by running each released standalone-core,
+  // novel-engine, and novel-memory from its respective original ZIP.
+  for(const v of ['1.3.1','1.3.2','1.3.3']){
+    const archive=JSON.parse(fs.readFileSync(path.join(__dirname,'fixtures',`v${v}-real-export.json`),'utf8'));
+    assert.equal(archive.schemaVersion,4);
+    assert.equal(archive.novelProjects[0].narrativeState.manualOverrides.storyOverview,'主人在旧版亲手修改的剧情概括');
+    assert.equal(validate(archive),archive,`original ${v} export rejected`);
+    await MimaStandalone.importLibrary(archive);
+    await directImport(archive); // The legacy LocalStore entrypoint must migrate via Core too.
+    const imported=MimaStandalone.getState();
+    assert.equal(imported.sessions[0].summary,'旧会话的珍贵概要');
+    assert.equal(imported.sessions[0].messages[0].content,'旧会话的一段原始历史');
+    assert.equal(imported.novelProjects[0].sourceText,'第一章\n此处是旧版真实 TXT 原文，主角遇见了朋友。');
+    assert.equal(imported.novelProjects[0].chapters[0].segments[0].content,'此处是旧版真实 TXT 原文，主角遇见了朋友。');
+    assert.deepEqual(imported.novelProjects[0].narrativeState.manualOverrides.characterStates,[{name:'主角',status:'幸存'}]);
+    assert.equal(imported.novelProjects[0].narrativeState.manualOverrides.storyOverview,'主人在旧版亲手修改的剧情概括');
+    assert(imported.novelProjects[0].narrativeState.manualOverrides.openThreads.includes('旧版仍然在追寻的秘密'));
+    const migrated=await MimaStandalone.exportLibrary();
+    assert.equal(validate(migrated),migrated,'legacy migration cannot produce invalid new v4 export');
+    if(v==='1.3.1')assert.equal(imported.novelProjects[0].chapters[0].memoryDelta,null);
+    if(v==='1.3.2')assert.equal(imported.novelProjects[0].legacyNarrativeCheckpoint,null);
+  }
+  console.log('PASS v1.3.6: corrupt owner memory rejected via validator+both imports, durable/runtime unchanged; real v1.3.1/1.3.2/1.3.3 exports migrated without content loss; marked roundtrip and write failure');
+})().catch(e=>{console.error(e);process.exitCode=1});

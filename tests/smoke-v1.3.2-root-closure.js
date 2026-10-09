@@ -1,0 +1,82 @@
+const assert=require('node:assert/strict');
+const path=require('node:path');
+const root=path.resolve(__dirname,'..');
+global.window=global;
+const local=new Map();global.localStorage={getItem:k=>local.get(k)||null,setItem:(k,v)=>local.set(k,String(v))};
+require(path.join(root,'local-store.js'));
+const validator=MimaLocalStore.validateLibrary;
+const clone=v=>JSON.parse(JSON.stringify(v));
+let persisted={schemaVersion:4,storeRevision:0,sessions:[],masks:[],presets:[],worldbooks:[],cssPresets:[],regexPacks:[],novelProjects:[],themeSettings:{theme:'default'}};
+global.MimaLocalStore={validateLibrary:validator,loadState:async()=>clone(persisted),saveState:async(v,revision)=>{if(revision!==persisted.storeRevision)throw new Error('E_CANONICAL_CONFLICT');persisted={...clone(v),storeRevision:revision+1};return clone(persisted);}};
+for(const f of ['theme-engine.js','regex-engine.js','novel-engine.js','novel-memory.js','novel-prompt-assembler.js','standalone-core.js'])require(path.join(root,f));
+const post=(p,b={})=>MimaStandalone.handle(p,'POST',b);
+const patch=(p,b={})=>MimaStandalone.handle(p,'PATCH',b);
+const read=(p)=>MimaStandalone.handle(p,'GET');
+const hold=()=>{let release;return{promise:new Promise(resolve=>{release=resolve}),release}};
+const reply=(content,finish_reason='stop')=>({ok:true,status:200,headers:{get:()=> 'application/json'},text:async()=>JSON.stringify({choices:[{message:{content},finish_reason}]})});
+const flush=()=>new Promise(resolve=>setImmediate(resolve));
+(async()=>{
+  await MimaStandalone.init();
+  assert.throws(()=>validator({nonsense:true}),/缺失必需/);
+  assert.throws(()=>validator({format:'foreign',data:persisted}),/格式/);
+  // Keep the fixture structurally valid so this test specifically checks
+  // the broken chapter reference, not the newer nested-schema guard.
+  const validNovel=MimaNovelEngine.normalizeProject({id:'n1',chapters:[{id:'x',segments:[]}],chapterOrder:['x']});
+  assert.throws(()=>validator({...persisted,novelProjects:[{...validNovel,chapterOrder:['broken']}]}),/引用/);
+  let res=await post('/novels/import',{title:'安全小说',text:'第一章\n门是蓝色的'});assert(res.success,JSON.stringify(res));
+  const id=res.data.id,chapterId=res.data.activeChapterId;
+  await assert.rejects(()=>MimaStandalone.importLibrary({nonsense:true}),/缺失必需/);
+  assert((await read(`/novels/${id}`)).success,'bad import erased valid novel');
+  MimaStandalone.saveApiConfig({apiBase:'https://test.invalid/v1',model:'mock',stream:false});
+  const gate=hold();let called=false;
+  global.fetch=async()=>{called=true;return gate.promise};
+  const analyzing=post(`/novels/${id}/memory/chapter/${chapterId}`);
+  while(!called)await flush();
+  const updated=await patch(`/novels/${id}/chapters/${chapterId}`,{action:'replace_text',content:'门是红色的'});
+  assert(updated.success,'edit failed');
+  gate.release(reply(JSON.stringify({summary:{overview:'蓝门旧总结',revealedFacts:['门是蓝色的']},delta:{revealedFacts:['门是蓝色的']}})));
+  const stale=await analyzing;
+  assert(!stale.success,'old async summary unexpectedly committed');
+  res=await read(`/novels/${id}`);
+  assert.equal(MimaNovelEngine.getChapterText(res.data.chapters[0]),'门是红色的');
+  assert(!res.data.narrativeState.revealedFacts?.includes('门是蓝色的'));
+  global.fetch=async()=>reply(JSON.stringify({summary:{overview:'门红了',revealedFacts:['门是红色的']},delta:{revealedFacts:['门是红色的']}}));
+  assert((await post(`/novels/${id}/memory/chapter/${chapterId}`)).success);
+  res=await read(`/novels/${id}`);assert.deepEqual(res.data.narrativeState.revealedFacts,['门是红色的']);
+  const appended=await post(`/novels/${id}/chapters`,{title:'第二章'});assert(appended.success);
+  const c2=appended.data.activeChapterId;
+  await patch(`/novels/${id}/chapters/${c2}`,{action:'replace_text',content:'秘密组织真相'});
+  const world=await post('/worldbooks',{name:'spoiler',entries:[{id:'w1',name:'剧透',content:'幕后黑手是甲',keywords:['秘密组织']}]});
+  assert(world.success);await patch(`/novels/${id}`,{worldbookIds:[world.data.id],activeChapterId:chapterId});
+  const preview=await post(`/novels/${id}/prompt-preview`);assert(preview.success);assert.equal(preview.data.selectedWorldbookEntries.length,0,'future chapter activated worldbook');
+  // Merge must retain historical draft and its input basis, never silently delete it.
+  let p=(await read(`/novels/${id}`)).data;
+  const d=MimaNovelEngine.normalizeDraft({id:'draft-merge',projectId:id,chapterId:c2,generationId:'gen-merge',status:'ready',content:'候选正文'});
+  const g=MimaNovelEngine.normalizeGeneration({id:'gen-merge',projectId:id,chapterId:c2,draftId:d.id,status:'ready',inputSnapshot:{chapterRevision:2,chapterHash:'old'}});
+  const merge=MimaNovelEngine.editChapter({...p,activeChapterId:c2,drafts:[...p.drafts,d],generations:[...p.generations,g]},chapterId,'merge_next');
+  assert.equal(merge.activeChapterId,chapterId,'merge must keep selected chapter');
+  assert(merge.drafts.some(x=>x.id===d.id&&x.chapterId===chapterId&&x.metadata.requiresRebase));
+  assert(merge.generations.some(x=>x.id===g.id&&x.chapterId===chapterId&&x.inputSnapshot.requiresRebase));
+  // Request-specific minimum and non-stream finish_reason are admission authority.
+  const current=(await read(`/novels/${id}`)).data;
+  global.fetch=async(_,opts)=>{assert(JSON.stringify(JSON.parse(opts.body).messages).includes('至少 5 字符'));return reply('未完成的半句话，','length');};
+  const truncated=await post(`/novels/${id}/continue`,{chapterId:current.activeChapterId,minimumChars:5});
+  assert(truncated.success,JSON.stringify(truncated));
+  assert.equal(truncated.data.draft.status,'incomplete');
+  // RP deletion race: previously saved Session cannot be resurrected by model response.
+  const session=await post('/sessions',{title:'删除竞态'});assert(session.success);
+  const sg=hold();called=false;global.fetch=async()=>{called=true;return sg.promise};
+  const rp=post(`/sessions/${session.data.id}/chat`,{text:'你好'});
+  while(!called)await flush();
+  const del=await MimaStandalone.handle(`/sessions/${session.data.id}`,'DELETE');assert(del.success);
+  sg.release(reply('我来了'));
+  const result=await rp;assert(!result.success,'deleted session resurrected');
+  assert(!(await read(`/sessions/${session.data.id}`)).success);
+  // A second tab committing before this tab must cause conflict, not blind overwrite.
+  const before=MimaStandalone.getState();
+  persisted={...persisted,storeRevision:persisted.storeRevision+1};
+  const conflict=await patch(`/novels/${id}`,{title:'未授权旧窗口覆盖'});
+  assert(!conflict.success,'cross-tab update incorrectly overwritten');
+  assert.equal(MimaStandalone.getState().novelProjects.find(x=>x.id===id).title,before.novelProjects.find(x=>x.id===id).title);
+  console.log('v1.3.2 root closure: invalid backups, async novel CAS, source-aware facts, spoiler isolation, merge retention, finish reason, RP deletion PASS');
+})().catch(e=>{console.error(e);process.exitCode=1});
