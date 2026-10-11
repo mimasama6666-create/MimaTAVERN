@@ -1,0 +1,21 @@
+#compat-lab{position:fixed;inset:0;z-index:1100;background:var(--bg,#f5f6f8);color:var(--text,#252634);overflow:auto;padding:0 0 35px}
+#compat-lab.hidden{display:none}
+.compat-main{max-width:1060px;margin:auto;padding:18px;display:grid;gap:16px}
+.compat-head{display:flex;align-items:center;justify-content:space-between;gap:12px;position:sticky;top:0;background:var(--bg,#f5f6f8);z-index:1;padding:14px 18px;border-bottom:1px solid #aaa5}
+.compat-main section{border:1px solid #8d8d8d44;border-radius:14px;padding:15px;min-width:0}
+.compat-main h3{margin:0 0 10px;font-size:1.12rem}.compat-main p{line-height:1.5}
+.compat-main button,.compat-main select,.compat-main input[type=file]{font:inherit;max-width:100%}
+.compat-main button{padding:7px 12px;border:1px solid #8585af8c;border-radius:9px;cursor:pointer;background:var(--surface,#f0eaf9);color:inherit}
+.compat-main button:disabled{opacity:.48;cursor:not-allowed}
+.compat-actions{display:flex;flex-wrap:wrap;align-items:center;gap:9px;margin:10px 0}
+.compat-main pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:380px;overflow:auto;background:#8881;padding:10px;border-radius:8px}
+.compat-main details{padding:9px;margin:8px 0;border:1px solid #8585af55;border-radius:8px}
+.compat-main summary{cursor:pointer;overflow-wrap:anywhere}
+.compat-line{display:flex;gap:10px;align-items:center;justify-content:space-between;border-bottom:1px solid #8585af38;padding:8px 0}
+#compat-conversation[hidden]{display:none}
+#compat-messages{max-height:420px;min-height:90px;overflow-y:auto;display:grid;gap:10px}
+.compat-message{white-space:pre-wrap;overflow-wrap:anywhere;background:#8881;padding:11px;border-radius:10px;line-height:1.55}
+.compat-message.user{margin-left:12%}.compat-message.assistant{margin-right:12%}
+#compat-input{width:100%;min-height:90px;padding:10px;box-sizing:border-box;color:inherit;background:transparent;border:1px solid #8888;border-radius:10px}
+#compat-notice{white-space:pre-wrap}#compat-notice[data-kind=error],#compat-gap{color:#d04b4b}
+@media(max-width:640px){.compat-main{padding:8px}.compat-main section{padding:12px}.compat-head{align-items:flex-start}.compat-line{flex-wrap:wrap}}

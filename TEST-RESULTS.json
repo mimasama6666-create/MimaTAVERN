@@ -1,0 +1,183 @@
+{
+  "runner": "node",
+  "nodeVersion": "v22.16.0",
+  "total": 29,
+  "passed": 29,
+  "failed": 0,
+  "cases": [
+    {
+      "file": "tests/smoke-compat-r1-r5.js",
+      "ok": true,
+      "seconds": 0.043,
+      "output": "PASS compatibility smoke: 25 explicit assertions/groups; synthetic PNG dual-card, CCv1/v2/v3, unknown bytes, ZIP/CHARX, traversal, CRC, budget, WI/regex, prompt, plugin sandbox, store digest, UI refs"
+    },
+    {
+      "file": "tests/smoke-session-history-v1.1.2.js",
+      "ok": true,
+      "seconds": 0.03,
+      "output": "PASS v1.1.2 session history: rename preserves story data; delete removes only target session"
+    },
+    {
+      "file": "tests/smoke-v1.1.0.js",
+      "ok": true,
+      "seconds": 0.054,
+      "output": "PASS v1.1.0: migration + regex fail-closed/token-saving + multiline story input + real SSE story streaming"
+    },
+    {
+      "file": "tests/smoke-v1.1.1.js",
+      "ok": true,
+      "seconds": 0.022,
+      "output": "PASS v1.1.1: assistant model keeps story API connection but no longer inherits story Max Tokens"
+    },
+    {
+      "file": "tests/smoke-v1.1.10.js",
+      "ok": true,
+      "seconds": 0.022,
+      "output": "PASS v1.1.10: BOND fill is hydrated from visible numeric value even when --value is absent"
+    },
+    {
+      "file": "tests/smoke-v1.1.2.js",
+      "ok": true,
+      "seconds": 0.025,
+      "output": "PASS v1.1.2: collapsed assistant model panel + edit/delete history + safe in-place regenerate"
+    },
+    {
+      "file": "tests/smoke-v1.1.3.js",
+      "ok": true,
+      "seconds": 0.025,
+      "output": "PASS v1.1.3: strict artifacts parse; common model JSON glitches auto-repair; irreparable artifacts surface diagnostics"
+    },
+    {
+      "file": "tests/smoke-v1.1.4.js",
+      "ok": true,
+      "seconds": 0.051,
+      "output": "PASS v1.1.4: artifact self-healing + compact iOS assistant + reader-controlled streaming + cache observability/context pruning"
+    },
+    {
+      "file": "tests/smoke-v1.1.5-repair-failure.js",
+      "ok": true,
+      "seconds": 0.026,
+      "output": "PASS v1.1.5 repair failure: one paid call only; original preserved; failed model response archived and surfaced"
+    },
+    {
+      "file": "tests/smoke-v1.1.5-repair.js",
+      "ok": true,
+      "seconds": 0.03,
+      "output": "PASS v1.1.5 repair: one paid call only; broken V1 -> V2; original and repair attempt archived"
+    },
+    {
+      "file": "tests/smoke-v1.1.5.js",
+      "ok": true,
+      "seconds": 0.029,
+      "output": "PASS v1.1.5: V2 Zero-Escape artifacts preserve regex/HTML/CSS, legacy V1 remains compatible, invalid V2 fails closed, paid repair is explicit and archived"
+    },
+    {
+      "file": "tests/smoke-v1.1.6.js",
+      "ok": true,
+      "seconds": 0.031,
+      "output": "PASS v1.1.6: persona macros resolve in Persona/Preset/Worldbook/Memory/history/display without mutating source or machine roles"
+    },
+    {
+      "file": "tests/smoke-v1.1.7.js",
+      "ok": true,
+      "seconds": 0.034,
+      "output": "PASS v1.1.7: AIRP speech/action/private-thought semantics are compiled at prompt time with epistemic boundaries while raw Store/UI data stays intact"
+    },
+    {
+      "file": "tests/smoke-v1.1.8.js",
+      "ok": true,
+      "seconds": 0.031,
+      "output": "PASS v1.1.8: player typography + Safe HTML live preview + responsive Settings during streaming + recoverable per-message deletion"
+    },
+    {
+      "file": "tests/smoke-v1.1.9.js",
+      "ok": true,
+      "seconds": 0.023,
+      "output": "PASS v1.1.9: Safe HTML preserves only bounded --value percentages for legacy BOND meters"
+    },
+    {
+      "file": "tests/smoke-v1.2.0.js",
+      "ok": true,
+      "seconds": 0.053,
+      "output": "PASS v1.2.0: canonical BOND hydration + native meters + conservative browser transport + non-duplicating manual retry coexist"
+    },
+    {
+      "file": "tests/smoke-v1.3.0.js",
+      "ok": true,
+      "seconds": 0.064,
+      "output": "PASS v1.3.0: migration + TXT + chapters + prompt + same-generation append + Draft/accept + partial memory + fail-closed memory + themes + RP coexistence"
+    },
+    {
+      "file": "tests/smoke-v1.3.1.js",
+      "ok": true,
+      "seconds": 0.041,
+      "output": "v1.3.1 user regression PASS"
+    },
+    {
+      "file": "tests/smoke-v1.3.2-root-closure.js",
+      "ok": true,
+      "seconds": 0.046,
+      "output": "v1.3.2 root closure: invalid backups, async novel CAS, source-aware facts, spoiler isolation, merge retention, finish reason, RP deletion PASS"
+    },
+    {
+      "file": "tests/smoke-v1.3.3-backup-integrity.js",
+      "ok": true,
+      "seconds": 0.034,
+      "output": "PASS v1.3.3 backup integrity: nested validation, unchanged state, legacy import, interrupted write, CAS"
+    },
+    {
+      "file": "tests/smoke-v1.3.3-legacy-memory.js",
+      "ok": true,
+      "seconds": 0.03,
+      "output": "PASS v1.3.3 legacy memory: v1.3.1 fixture, prompt retention, source-bound rollback, newer deltas, review marker and spoiler isolation"
+    },
+    {
+      "file": "tests/smoke-v1.3.4-legacy-quarantine.js",
+      "ok": true,
+      "seconds": 0.037,
+      "output": "PASS v1.3.4 legacy quarantine: future spoiler filtered, verified legacy retained, human review chapter-scoped, edits/reorder/re-analysis invalidate"
+    },
+    {
+      "file": "tests/smoke-v1.3.4-rework.js",
+      "ok": true,
+      "seconds": 0.053,
+      "output": "PASS v1.3.4 full v4 export/import, 16 corrupted field guards and unchanged canonical, valid empty fields, failed-write rollback, v2/v3 migration"
+    },
+    {
+      "file": "tests/smoke-v1.3.5-persisted-arrays.js",
+      "ok": true,
+      "seconds": 0.058,
+      "output": "PASS v1.3.5 complete v4 durable arrays and legacy, corrupted field guards and unchanged canonical, valid empty fields, failed-write rollback, v2/v3 migration"
+    },
+    {
+      "file": "tests/smoke-v1.3.6-historical-v4-contract.js",
+      "ok": true,
+      "seconds": 0.045,
+      "output": "PASS v1.3.6: corrupt owner memory rejected via validator+both imports, durable/runtime unchanged; real v1.3.1/1.3.2/1.3.3 exports migrated without content loss; marked roundtrip and write failure"
+    },
+    {
+      "file": "tests/smoke-v1.3.7-theme.js",
+      "ok": true,
+      "seconds": 0.026,
+      "output": "PASS v1.3.7: legacy + new themes, HTML references, CSS layer, user CSS parity, meta and color scheme"
+    },
+    {
+      "file": "tests/smoke-v1.3.9-memory-facts.js",
+      "ok": true,
+      "seconds": 0.058,
+      "output": "PASS v1.3.9: multi-range fact summary, atomic replace-all failure, concurrent settings preservation and source-message retention"
+    },
+    {
+      "file": "tests/smoke-v1.3.9-png-memory.js",
+      "ok": true,
+      "seconds": 0.073,
+      "output": "PASS v1.3.9: V2/V3 tEXt+compressed metadata, CRC, duplicate rejection, append-safe memory commit, manual conflict, abort, one-call core, independent request owner"
+    },
+    {
+      "file": "tests/smoke-v1.4.0-png-resources.js",
+      "ok": true,
+      "seconds": 0.044,
+      "output": "PASS v1.4.0 PNG read-only full metadata, V3 precedence, CSS/preset/worldbook extraction, incompatible script isolation, loss guard, tamper refusal"
+    }
+  ]
+}

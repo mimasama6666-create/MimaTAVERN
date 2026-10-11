@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <!-- v1.1.4 compatibility marker: release=1.1.4 -->
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#dfe1e4">
+    <title>咪嘛馆 · MIMAMAO Tavern（酒馆） · Standalone（独立版）</title>
+    <link rel="stylesheet" href="./style.css?v=1.1.2&hotfix=1.1.3&release=1.3.1&auditfix=1.3.2&themefix=1.4.0&memoryfix=1.3.9">
+    <link rel="stylesheet" href="./theme-skin.css?v=1.4.0">
+<!-- v1.1.5 compatibility regression marker: release=1.1.5 -->
+<!-- v1.1.6 compatibility regression marker: release=1.1.6 -->
+<!-- v1.1.7 compatibility regression marker: release=1.1.7 -->
+<!-- v1.1.8 hotfix marker: release=1.1.8 -->
+<!-- v1.1.9 Safe HTML dynamic status variable hotfix marker: release=1.1.9 -->
+<!-- v1.1.10 BOND visible-number hydration hotfix marker: release=1.1.10 -->
+<!-- v1.2.0 canonical branch merge marker: release=1.2.0 -->
+<!-- v1.3.1 Novel Studio Root Fix marker: release=1.3.1&auditfix=1.3.2 -->
+<!-- v1.1.9 regression compatibility marker only: ./app.js?v=1.1.2&release=1.1.9 -->
+</head>
+<body>
+<div id="drawer-scrim" class="scrim hidden" onclick="closeDrawer()"></div>
+<aside id="session-drawer" class="session-drawer">
+    <div class="drawer-head">
+        <div>
+            <div class="eyebrow">MIMAMAO TAVERN（咪嘛馆） · STANDALONE（独立版）</div>
+            <h1>🍷 咪嘛馆</h1>
+        </div>
+        <button class="icon-btn" onclick="closeDrawer()">✕</button>
+    </div>
+    <div class="toolbar"><button class="primary-btn" style="flex:1" onclick="openNewSessionModal()">＋ 新建剧情</button><button class="ghost-btn" onclick="chooseSessionImport()">⇧ 导入</button></div>
+    <div id="session-list" class="session-list"></div>
+    <div class="drawer-footer">
+        <button class="ghost-btn" onclick="openSettings('api')">🔌 API（接口）设置</button>
+        <div class="standalone-note">Standalone（独立版） · 数据仅保存在本机浏览器</div>
+    </div>
+</aside>
+
+<div class="app-shell">
+    <header class="topbar glass-bar">
+        <button class="icon-btn" onclick="openDrawer()" aria-label="剧情列表">☰</button>
+        <div id="top-avatar" class="top-avatar">🤍</div>
+        <div class="top-title-wrap">
+            <div id="current-character" class="top-character">未挂载角色</div>
+            <div id="current-title" class="top-title">欢迎来到咪嘛馆</div>
+        </div>
+        <button class="icon-btn" onclick="openSettings('roles')" aria-label="角色设置">🤍</button>
+        <button class="icon-btn" onclick="MimaNovelStudio.open()" aria-label="小说续写">✒</button>
+        <button class="icon-btn" onclick="MimaAssistantStudio.open('regex')" aria-label="咪嘛助手">✦</button>
+        <button class="icon-btn" onclick="openSettings('worldbook')" aria-label="酒馆设置">⚙️</button>
+    </header>
+
+    <div id="context-ribbon" class="context-ribbon hidden"></div>
+
+    <main id="story-chat-box" class="tavern-story-scope chat-box">
+        <div class="empty-state">
+            <div class="empty-icon">🍷</div>
+            <h2>咪嘛馆已经开门</h2>
+            <p>创建一个独立宇宙，挂载角色卡与世界书，然后开始长剧情。</p>
+        </div>
+    </main>
+
+    <button id="story-follow-stream" class="story-follow-stream hidden" onclick="resumeStoryStreamFollow()">↓ 跟随输出</button>
+
+    <footer class="composer-shell glass-bar">
+        <div id="generation-panel" class="generation-panel hidden" aria-live="polite">
+            <div class="generation-head"><span id="generation-label">🤍 正在生成剧情</span><span id="generation-percent">0%</span><button class="generation-close" onclick="dismissGenerationPanel()" aria-label="关闭状态">×</button></div>
+            <div class="generation-track"><div id="generation-progress-bar" class="generation-progress-bar"></div></div>
+            <div id="generation-detail" class="generation-detail">正在准备本轮剧情…</div>
+            <div class="generation-actions"><button id="generation-retry" class="generation-retry hidden" onclick="retryFailedGeneration()">↻ 仅重试本轮 · 不重复玩家消息</button></div>
+        </div>
+        <div id="director-wrap" class="director-wrap collapsed">
+            <input id="director-note" class="field" placeholder="导演指令：只影响演绎，不算 User（用户）台词">
+        </div>
+        <div class="quick-actions">
+            <button class="chip-btn" onclick="toggleDirector()">🎬 导演</button>
+            <button class="chip-btn" onclick="regenerateMsg()">↻ 重说</button>
+            <button class="chip-btn" onclick="continueMsg()">» 续写</button>
+            <button class="chip-btn" onclick="autoAdvance()">✦ 推进</button>
+            <button id="stop-btn" class="chip-btn danger hidden" onclick="stopGeneration()">■ 停止</button>
+        </div>
+        <div class="composer-row">
+            <textarea id="story-input" rows="1" placeholder="写下你的动作、语言或剧情……"></textarea>
+            <button id="send-btn" class="send-btn" onclick="sendMsg()">➤</button>
+        </div>
+    </footer>
+</div>
+
+<!-- 设置中心 -->
+<div id="settings-modal" class="modal hidden">
+    <div class="modal-panel settings-panel">
+        <div class="modal-head sticky-head">
+            <div>
+                <div class="eyebrow">独立宇宙设置</div>
+                <h2 id="settings-title">咪嘛馆设置</h2>
+            </div>
+            <button class="icon-btn" onclick="closeSettings()">✕</button>
+        </div>
+        <nav class="settings-tabs">
+            <button data-tab="roles" onclick="switchSettingsTab('roles')">🤍 角色</button>
+            <button data-tab="png-resources" onclick="switchSettingsTab('png-resources')">📦 PNG 资源</button>
+            <button data-tab="worldbook" onclick="switchSettingsTab('worldbook')">📚 世界书</button>
+            <button data-tab="presets" onclick="switchSettingsTab('presets')">🧩 预设</button>
+            <button data-tab="regex" onclick="switchSettingsTab('regex')">🧬 正则</button>
+            <button data-tab="context" onclick="switchSettingsTab('context')">🧠 Context（上下文）</button>
+            <button data-tab="memory" onclick="switchSettingsTab('memory')">🗃️ 记忆</button>
+            <button data-tab="appearance" onclick="switchSettingsTab('appearance')">🎨 外观</button>
+            <button data-tab="api" onclick="switchSettingsTab('api')">🔌 API（接口）</button>
+            <button data-tab="prompt" onclick="switchSettingsTab('prompt')">🔬 Prompt（提示词）</button>
+            <button data-tab="data" onclick="switchSettingsTab('data')">💾 Data（数据）</button>
+        </nav>
+        <div id="settings-content" class="settings-content"></div>
+    </div>
+</div>
+
+<!-- 通用编辑器 -->
+<div id="editor-modal" class="modal hidden">
+    <div class="modal-panel editor-panel">
+        <div class="modal-head sticky-head">
+            <div><div class="eyebrow" id="editor-eyebrow">EDITOR（编辑器）</div><h2 id="editor-title">编辑</h2></div>
+            <button class="icon-btn" onclick="closeEditor()">✕</button>
+        </div>
+        <div id="editor-body" class="editor-body"></div>
+        <div class="editor-actions sticky-bottom">
+            <button id="editor-delete" class="danger-btn hidden">删除</button>
+            <div class="spacer"></div>
+            <button class="ghost-btn" onclick="closeEditor()">取消</button>
+            <button id="editor-save" class="primary-btn">保存</button>
+        </div>
+    </div>
+</div>
+
+
+<!-- Novel Studio DLC -->
+<div id="novel-modal" class="modal novel-modal hidden">
+  <div class="modal-panel novel-studio-panel">
+    <div class="modal-head sticky-head novel-studio-head">
+      <div><div class="eyebrow">MIMATAVERN NOVEL STUDIO</div><h2>✒ 小说续写</h2></div>
+      <button class="icon-btn" onclick="MimaNovelStudio.close()">✕</button>
+    </div>
+    <div id="novel-studio-root" class="novel-studio-root"></div>
+  </div>
+</div>
+
+<!-- 咪嘛助手 · Regex / Preset / CSS Studio -->
+<div id="assistant-modal" class="modal hidden">
+    <div class="modal-panel assistant-studio-panel">
+        <div class="modal-head sticky-head assistant-studio-head">
+            <div><div class="eyebrow">MIMA ASSISTANT STUDIO（咪嘛助手工作室）</div><h2 id="assistant-studio-title">正则助手</h2></div>
+            <button class="icon-btn" onclick="MimaAssistantStudio.close()">✕</button>
+        </div>
+        <div id="assistant-studio-root" class="assistant-studio-root"></div>
+    </div>
+</div>
+
+<!-- 新剧情 -->
+<div id="new-session-modal" class="modal hidden">
+    <div class="modal-panel compact-panel">
+        <div class="modal-head"><h2>开辟新宇宙</h2><button class="icon-btn" onclick="closeNewSessionModal()">✕</button></div>
+        <label class="form-label">剧情标题</label>
+        <input id="new-session-title" class="field" placeholder="例如：末日后的巴比伦">
+        <label class="form-label">模式</label>
+        <select id="new-session-mode" class="field">
+            <option value="tavern" selected>Standalone（独立版） · 完全独立宇宙</option>
+        </select>
+        <button class="primary-btn wide" onclick="createSession()">创建并进入</button>
+    </div>
+</div>
+
+<input id="session-file-input" class="hidden" type="file" accept=".json,application/json">
+<input id="png-inspector-input" class="hidden" type="file" accept=".png,image/png">
+<input id="persona-file-input" class="hidden" type="file" accept=".txt,.json,.png,application/json,text/plain,image/png">
+<input id="worldbook-file-input" class="hidden" type="file" accept=".json,application/json">
+<input id="regex-file-input" class="hidden" type="file" accept=".json,application/json">
+<input id="font-file-input" class="hidden" type="file" accept=".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2">
+<input id="css-file-input" class="hidden" type="file" accept=".css,text/css">
+<input id="api-config-file-input" class="hidden" type="file" accept=".json,application/json">
+<input id="library-file-input" class="hidden" type="file" accept=".json,application/json">
+<input id="full-settings-file-input" class="hidden" type="file" accept=".json,application/json">
+<input id="novel-file-input" class="hidden" type="file" accept=".txt,text/plain">
+
+<script src="./local-store.js?v=1.3.1&auditfix=1.3.2&rework=1.3.3&reworkfix=1.3.4&arrayguard=1.3.5&legacycontract=1.3.6"></script>
+<script src="./theme-engine.js?v=1.4.0"></script>
+<script src="./regex-engine.js?v=1.1.0"></script>
+<script src="./persona-macro-resolver.js?v=1.1.6"></script>
+<script src="./user-input-semantic-parser.js?v=1.1.7"></script>
+<script src="./novel-memory.js?v=1.3.1&auditfix=1.3.2&rework=1.3.3&reworkfix=1.3.4"></script>
+<script src="./novel-engine.js?v=1.3.1&auditfix=1.3.2&rework=1.3.3"></script>
+<script src="./novel-prompt-assembler.js?v=1.3.1&auditfix=1.3.2&rework=1.3.3"></script>
+<script src="./standalone-core.js?v=1.1.0&release=1.3.1&auditfix=1.3.2&rework=1.3.3&reworkfix=1.3.4&legacycontract=1.3.6&memoryfix=1.3.9&pnginspect=1.4.0"></script>
+<script src="./font-manager.js?v=1.1.0"></script>
+<script src="./png-card-import.js?v=1.4.0"></script>
+<script src="./png-resource-inspector.js?v=1.4.0"></script>
+<script src="./app.js?v=1.1.2&release=1.3.1&auditfix=1.3.2&themefix=1.4.0&pngcard=1.3.8&memoryfix=1.3.9&pnginspect=1.4.0"></script>
+<script src="./assistant-studio.js?v=1.1.2&hotfix=1.1.3&release=1.3.1&auditfix=1.3.2"></script>
+<script src="./novel-studio.js?v=1.3.1&auditfix=1.3.2&release=1.3.1&auditfix=1.3.2&rework=1.3.3&reworkfix=1.3.4&themefix=1.4.0&memoryfix=1.3.9&pnginspect=1.4.0"></script>
+</body>
+</html>

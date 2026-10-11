@@ -26,6 +26,9 @@
   };
   const estimateTokens = t => Math.ceil(String(t || '').length / 2.5);
 
+  function fingerprint(data){const str=JSON.stringify(data);let h=2166136261;for(let i=0;i<str.length;i++){h^=str.charCodeAt(i);h=Math.imul(h,16777619);}return 'fnv1a32:'+((h>>>0).toString(16).padStart(8,'0'))+':'+str.length;}
+  function memorySourceFingerprint(messages,count){return fingerprint((messages||[]).slice(0,count).map(m=>[m.id,m.role,m.content,m.rawContent,m.versions,m.isEdited,m.branchId]));}
+  function memorySourceValid(session,item){return !item.stale&&(!item.sourceFingerprint||!!item.sourceCount&&session.messages.length>=item.sourceCount&&memorySourceFingerprint(session.messages,item.sourceCount)===item.sourceFingerprint);}
   function normalizeMessage(msg = {}) {
     return {
       id: msg.id || makeId('msg'), role: msg.role || 'user',
@@ -56,7 +59,7 @@
       id:m.id||makeId('factmem'), startRound, endRound, content:text(m.content),
       createdAt:m.createdAt||nowIso(), updatedAt:m.updatedAt||m.createdAt||nowIso(),
       source:text(m.source||'manual_fact_summary'), targetChars:clampInt(m.targetChars,80,4000,360),
-      temperature:clampTemp(m.temperature??0.35), sourceMessageCount:Math.max(0,Number(m.sourceMessageCount)||0)
+      temperature:clampTemp(m.temperature??0.35), sourceMessageCount:Math.max(0,Number(m.sourceMessageCount)||0), sourceCount:Math.max(0,Number(m.sourceCount)||0),sourceFingerprint:String(m.sourceFingerprint||''),stale:m.stale===true
     };
   }
   function normalizeManualMemory(input = {}) {
@@ -65,7 +68,7 @@
       core:{
         content:text(coreInput.content), updatedAt:coreInput.updatedAt||'', source:['context','facts','manual'].includes(coreInput.source)?coreInput.source:'context',
         targetChars:clampInt(coreInput.targetChars,100,12000,1000), temperature:clampTemp(coreInput.temperature??0.35),
-        sourceRoundCount:Math.max(0,Number(coreInput.sourceRoundCount)||0), sourceFactCount:Math.max(0,Number(coreInput.sourceFactCount)||0)
+        sourceRoundCount:Math.max(0,Number(coreInput.sourceRoundCount)||0), sourceFactCount:Math.max(0,Number(coreInput.sourceFactCount)||0),sourceCount:Math.max(0,Number(coreInput.sourceCount)||0),sourceFingerprint:String(coreInput.sourceFingerprint||''),sourceFactsHash:String(coreInput.sourceFactsHash||''),stale:coreInput.stale===true
       },
       facts:arr(input.facts).map(normalizeFactMemory).filter(x=>x.content),
       settings:{
@@ -91,7 +94,7 @@
       summary: text(s.summary), rollingSummary: text(s.rollingSummary || s.summary), longSummary: text(s.longSummary),
       sceneSummary: text(s.sceneSummary), characterPsychSummary: text(s.characterPsychSummary), relationshipSummary: text(s.relationshipSummary),
       unresolvedHooks: list(s.unresolvedHooks), pinnedFacts: list(s.pinnedFacts),
-      lastSummarizedIndex: Number.isFinite(Number(s.lastSummarizedIndex)) ? Number(s.lastSummarizedIndex) : 0,
+      lastSummarizedIndex: Number.isFinite(Number(s.lastSummarizedIndex)) ? Number(s.lastSummarizedIndex) : 0,rollingSourceCount:Math.max(0,Number(s.rollingSourceCount)||0),rollingSourceFingerprint:String(s.rollingSourceFingerprint||''),
       tags: list(s.tags), lastScene: text(s.lastScene), userNotes: text(s.userNotes), aiNotes: text(s.aiNotes),
       directorNote: text(s.directorNote), storyState: s.storyState && typeof s.storyState === 'object' ? s.storyState : {},
       promptSettings: normalizePromptSettings(s.promptSettings || {}),
@@ -178,7 +181,15 @@
       throw e;
     }
   }
-  async function init() { state = normalizeState(await window.MimaLocalStore.loadState()); window.MimaThemeEngine?.apply?.(state.themeSettings); return state; }
+  async function init() {
+    state = normalizeState(await window.MimaLocalStore.loadState());window.MimaThemeEngine?.apply?.(state.themeSettings);
+    // Browser-only startup: pick up a crashed Rolling job after its durable
+    // owner lease has expired. A surviving other tab keeps its lease; no dual
+    // settlement, and nothing here blocks a user's Direct Reply.
+    if(typeof document!=='undefined'&&typeof window.MimaLocalStore?.getMemoryJob==='function')
+      setTimeout(()=>resumeExpiredRollingJobs().catch(e=>console.warn('Memory recovery scan failed',{code:e.code||e.message,stage:'startup_scan'})),0);
+    return state;
+  }
 
   function getSession(id) { return state.sessions.find(x => x.id === id); }
   function getMask(id) { return state.masks.find(x => x.id === id); }
@@ -291,12 +302,15 @@
     add('worldbook_middle',joinWb(middle,'System Middle'));
     const ps=sortedPresets(session);if(ps.length)add('presets',`【已挂载酒馆预设 / Presets】\n${ps.map(p=>`【${p.name} · ${p.type||'style'} · priority=${p.priority||50}】\n${p.content}`).join('\n\n')}`);
     if(session.promptSettings?.pinnedFactsEnabled!==false&&session.pinnedFacts?.length)add('pinned_facts',`【Pinned Facts · 不可遗忘事实】\n${session.pinnedFacts.map(x=>`- ${x}`).join('\n')}`);
-    if(session.promptSettings?.summaryEnabled!==false&&(session.rollingSummary||session.summary||session.longSummary))add('story_summary',`【剧情摘要 / Rolling Summary】\n${session.rollingSummary||session.summary||session.longSummary}`);
-    const memory=normalizeManualMemory(session.manualMemory||{});
-    if(memory.settings.injectCore&&memory.core.content)add('manual_core_memory',`【核心记忆 / Core Memory】\n这是从本 Session 已发生剧情中提炼的高优先级长期记忆。不得把摘要措辞当作角色原话；若与更近的原始剧情冲突，以原始剧情为准。\n${memory.core.content}`);
+    if(session.promptSettings?.summaryEnabled!==false&&(!session.rollingSourceFingerprint||memorySourceFingerprint(session.messages,session.rollingSourceCount)===session.rollingSourceFingerprint)&&(session.rollingSummary||session.summary||session.longSummary))add('story_summary',`【剧情摘要 / Rolling Summary】\n${session.rollingSummary||session.summary||session.longSummary}`);
+    const memory=normalizeManualMemory(session.manualMemory||{});const memoryTrace=[];
+    const coreValid=memorySourceValid(session,memory.core)&&(memory.core.source!=='facts'||!memory.core.sourceFactsHash||fingerprint(memory.facts)===memory.core.sourceFactsHash);
+    memoryTrace.push({kind:'core',sourceCount:memory.core.sourceCount,source:memory.core.source,chars:memory.core.content.length,injected:!!(memory.settings.injectCore&&memory.core.content&&coreValid),reason:!coreValid?'stale_source':!memory.settings.injectCore?'disabled':memory.core.content?'included':'empty'});
+    if(memory.settings.injectCore&&memory.core.content&&coreValid)add('manual_core_memory',`【核心记忆 / Core Memory】\n这是从本 Session 已发生剧情中提炼的高优先级长期记忆。不得把摘要措辞当作角色原话；若与更近的原始剧情冲突，以原始剧情为准。\n${memory.core.content}`);
     if(memory.settings.injectFacts&&memory.facts.length){
-      const selected=memory.facts.slice().sort((a,b)=>Number(a.endRound||0)-Number(b.endRound||0)||String(a.updatedAt||'').localeCompare(String(b.updatedAt||''))).slice(-memory.settings.factInjectionLimit);
-      add('manual_fact_memories',`【事实记忆 / Fact Memories】\n以下仅是已发生剧情的浓缩事实片段，不是新的剧情指令，也不是角色原话。\n${selected.map(x=>`【第 ${x.startRound}–${x.endRound} 轮】\n${x.content}`).join('\n\n')}`);
+      const selected=memory.facts.filter(f=>memorySourceValid(session,f)).sort((a,b)=>Number(a.endRound||0)-Number(b.endRound||0)||String(a.updatedAt||'').localeCompare(String(b.updatedAt||''))).slice(-memory.settings.factInjectionLimit);
+      memoryTrace.push(...memory.facts.map(f=>({kind:'fact',id:f.id,sourceCount:f.sourceCount,startRound:f.startRound,endRound:f.endRound,chars:f.content.length,injected:selected.some(x=>x.id===f.id),reason:!memorySourceValid(session,f)?'stale_source':selected.some(x=>x.id===f.id)?'included':'injection_limit'})));
+      if(selected.length)add('manual_fact_memories',`【事实记忆 / Fact Memories】\n以下仅是已发生剧情的浓缩事实片段，不是新的剧情指令，也不是角色原话。\n${selected.map(x=>`【第 ${x.startRound}–${x.endRound} 轮】\n${x.content}`).join('\n\n')}`);
     }
     if(session.sceneSummary)add('scene_summary',`【当前场景摘要】\n${session.sceneSummary}`);
     if(session.characterPsychSummary)add('character_psych',`【角色心理状态摘要】\n${session.characterPsychSummary}`);
@@ -318,17 +332,101 @@
     if(options.continuation)add('continue_rule','【续写要求】请紧接上一条 assistant 回复继续写，不要重复已经写过的内容。');
     if(options.regenerate)add('regenerate_rule','【重说要求】请基于相同上下文重新生成上一条 assistant 回复。避开上一版的重复句式与意象。');
     if(options.autoAdvance)add('auto_advance_rule','【自动推进要求】请在不替 {{user}} 做重大决定的前提下自然推进下一段剧情。可以写环境、动作、角色反应、氛围变化，但不要代替 {{user}} 说关键台词。');
-    return {prompt:chunks.join('\n\n'),sections};
+    return {prompt:chunks.join('\n\n'),sections,memoryTrace};
   }
   function toHistoryMessage(m,session){if(!m?.content)return null;const content=m.role==='user'?userMessagePromptContent(m,session):messagePromptContent(m,session);if(m.role==='assistant')return{role:'assistant',content};if(m.role==='user')return{role:'user',content};return{role:'user',content:`【${m.role}】${content}`};}
   function applyDepth(history,items,session){const result=history.slice(),debug=[];const sorted=items.slice().sort((a,b)=>Number(b.entry.depth||0)-Number(a.entry.depth||0)||Number(a.entry.priority||50)-Number(b.entry.priority||50));for(const item of sorted){const {book,entry}=item;const depth=Math.max(1,Number(entry.depth||1));const anchor=Math.max(0,result.length-depth);let index=anchor;if(entry.position==='front')index=Math.max(0,anchor-1);else if(entry.position==='back')index=Math.min(result.length,anchor+1);const content=resolveMacrosForSession(session,`【Worldbook Context · ${book.name} / ${entry.name} · depth=${depth}】\n${clip(entry.content,entry.maxChars)}`);result.splice(index,0,{role:'user',content});debug.push({bookId:book.id,bookName:book.name,entryId:entry.id,entryName:entry.name,depth,position:entry.position,insertedAt:index,chars:content.length});}return{messages:result,debug};}
   function enforceBudget(matched,budget){let used=0;const kept=[],dropped=[];const sorted=matched.slice().sort((a,b)=>Number(a.entry.priority||50)-Number(b.entry.priority||50)||Number(a.entry.depth||0)-Number(b.entry.depth||0));for(const item of sorted){const cost=clip(item.entry.content,item.entry.maxChars).length;if(used+cost<=budget||!kept.length){kept.push(item);used+=cost}else dropped.push({...item,activation:{...item.activation,reason:'budget'}});}return{kept,dropped,used};}
-  function assemble(sessionInput,options={}){const session=normalizeSession(sessionInput);const activation=collectWorldbookEntries(session);const budget=Math.max(1000,Number(session.promptSettings?.worldbookBudgetChars||16000));const budgeted=enforceBudget(activation.matched,budget),matched=budgeted.kept;const sys=buildSystemPrompt(session,options,matched);const limit=Math.max(6,Number(session.promptSettings?.recentMessageLimit||34));const recent=session.messages.filter(m=>m.role!=='director').slice(-limit).map(m=>toHistoryMessage(m,session)).filter(Boolean);const depthApplied=applyDepth(recent,matched.filter(x=>Number(x.entry.depth||0)>0),session);const messages=[{role:'system',content:sys.prompt},...depthApplied.messages];const estimatedInputTokens=messages.reduce((sum,m)=>sum+estimateTokens(m?.content||''),0);return{messages,inspector:{systemChars:sys.prompt.length,estimatedInputTokens,recentMessageCount:recent.length,recentMessageLimit:limit,finalMessageCount:messages.length,worldbookBudgetChars:budget,worldbookUsedChars:budgeted.used,upstreamUsage:lastUsage?clone(lastUsage):null,sections:sys.sections.map(({name,chars})=>({name,chars})),matchedWorldbookEntries:matched.map(({book,entry,activation:a})=>({bookId:book.id,bookName:book.name,entryId:entry.id,entryName:entry.name,depth:entry.depth,position:entry.position,priority:entry.priority,reason:a.reason,hits:a.hits||[],secondaryHits:a.secondaryHits||[]})),skippedWorldbookEntries:[...activation.skipped,...budgeted.dropped].map(({book,entry,activation:a})=>({bookId:book.id,bookName:book.name,entryId:entry.id,entryName:entry.name,reason:a.reason})),depthInjections:depthApplied.debug,systemPreview:sys.prompt,messagePreview:messages.map((m,index)=>({index,role:m.role,content:m.content}))}};}
+  // The complete source chronology remains in the canonical session. Projection
+  // is a traceable retrieval operation, NEVER a mutation of History. If a
+  // provider context size is unknown we use an explicitly labelled *estimate*,
+  // not a claim about that model's actual tokenizer/context limit.
+  function promptBudget(){
+    const cfg=getApiConfig(),configured=Number(cfg.contextWindowTokens);
+    const windowTokens=Number.isFinite(configured)&&configured>=4096?Math.floor(configured):32768;
+    const reserve=Math.max(1024,Number(cfg.maxTokens)>0?Math.floor(Number(cfg.maxTokens)):4096);
+    return {windowTokens,reserve,usable:Math.max(1024,Math.floor(windowTokens*.85)-reserve),verified:configured>=4096};
+  }
+  function retrievalTerms(input){
+    const source=String(input||'').toLowerCase(),pieces=(source.match(/[\p{Script=Han}]{2,}|[a-z0-9_]{3,}/gu)||[]);
+    const terms=new Set();for(const part of pieces){
+      if(/[\p{Script=Han}]/u.test(part)){for(let i=0;i<part.length-1;i++)terms.add(part.slice(i,i+2));}
+      else terms.add(part);
+    }
+    return [...terms].filter(x=>!['剧情','角色','继续','主人','回复','这样','发生','故事','之后','可以'].includes(x)).slice(0,120);
+  }
+  function retrieveRawGap(session,history,coreCount,anchor,available){
+    const older=history.slice(0,Math.max(0,history.length-coreCount));
+    if(!older.length||available<=0)return {chosen:[],omitted:older,usedTokens:0,terms:[]};
+    const terms=retrievalTerms(anchor),items=older.map((m,index)=>{
+      const projected=toHistoryMessage(m,session),content=projected?.content||'';
+      const plain=(m.rawContent||m.content||'').toLowerCase();
+      const matches=terms.reduce((n,t)=>n+(plain.includes(t)?1:0),0);
+      const importance=(m.metadata?.pinned===true?100:0)+(/承诺|约定|关键|线索|秘密|身份|名字|物品|位置|誓言|决定|失踪|结局/.test(plain)?2:0);
+      return {m,index,projected,cost:estimateTokens(content)+10,score:matches*5+importance};
+    });
+    // Retrieve evidence-bearing turns rather than pulling a massive uncapped
+    // prefix. Round-trip chronology is kept for selected evidence, with stable
+    // IDs, not new invented summary text.
+    items.sort((a,b)=>b.score-a.score||b.index-a.index);
+    let usedTokens=0;const chosen=[];
+    for(const item of items){if(!item.score)continue;if(usedTokens+item.cost>available)continue;chosen.push(item);usedTokens+=item.cost;}
+    chosen.sort((a,b)=>a.index-b.index);
+    const chosenIds=new Set(chosen.map(x=>x.m.id));
+    return {chosen,omitted:older.filter(m=>!chosenIds.has(m.id)),usedTokens,terms};
+  }
+  function assemble(sessionInput,options={}){
+    const session=normalizeSession(sessionInput),activation=collectWorldbookEntries(session);
+    const budget=Math.max(1000,Number(session.promptSettings?.worldbookBudgetChars||16000)),budgeted=enforceBudget(activation.matched,budget),matched=budgeted.kept;
+    const sys=buildSystemPrompt(session,options,matched),limit=Math.max(6,Number(session.promptSettings?.recentMessageLimit||34));
+    const visibleHistory=session.messages.filter(m=>m.role!=='director'),recentRaw=visibleHistory.slice(-limit);
+    const summaryValid=!session.rollingSourceFingerprint||memorySourceFingerprint(session.messages,session.rollingSourceCount)===session.rollingSourceFingerprint;
+    const coverageStart=summaryValid?Math.max(0,session.lastSummarizedIndex||0):0;
+    const needsRawGap=session.promptSettings?.summaryEnabled!==false&&(summaryNeeded(session)||rollingInFlight.has(session.id));
+    const pendingRaw=needsRawGap?session.messages.slice(coverageStart).filter(m=>m.role!=='director'):[];
+    const recentIds=new Set(recentRaw.map(m=>m.id));
+    const uncoveredOlder=pendingRaw.filter(m=>!recentIds.has(m.id));
+    const promptCap=promptBudget(),recent=recentRaw.map(m=>toHistoryMessage(m,session)).filter(Boolean);
+    const depthOnly=matched.filter(x=>Number(x.entry.depth||0)>0);
+    const baseline=applyDepth(recent,depthOnly,session);
+    const baselineTokens=estimateTokens(sys.prompt)+baseline.messages.reduce((n,m)=>n+estimateTokens(m.content),0);
+    // Hard guard protects Persona/Worldbook/Recent configured context: these
+    // sections must never be silently shortened to make space for memory.
+    if(baselineTokens>promptCap.usable){
+      throw new ApiError('E_CONTEXT_BUDGET_BASE','本轮必需的角色/世界书/最近剧情超过上下文预算；已保留原文，未请求模型。',{
+        details:JSON.stringify({stage:'assemble',estimatedTokens:baselineTokens,usableTokens:promptCap.usable,configuredWindow:promptCap.verified,recentMessageLimit:limit}),
+        hint:'请核对当前模型的真实 Context Window 并在 API 设置中填写；或调整用户指定的提示词预算。不会删除原始剧情或自动压缩 Persona。'});
+    }
+    const anchor=options.draft||recentRaw.filter(m=>m.role==='user').slice(-1).map(m=>m.rawContent||m.content).join(' ')||recentRaw.slice(-1).map(m=>m.rawContent||m.content).join(' ');
+    const retrievalBudget=Math.min(Math.floor(promptCap.usable*.38),Math.max(0,promptCap.usable-baselineTokens-600));
+    const candidateHistory=uncoveredOlder;
+    const retrieved=retrieveRawGap(session,candidateHistory,0,anchor,retrievalBudget);
+    const trace={pendingRawCount:pendingRaw.length,uncoveredRawCount:uncoveredOlder.length,retrievedCount:retrieved.chosen.length,
+      omittedCount:retrieved.omitted.length,retrievedIds:retrieved.chosen.map(x=>x.m.id),omittedIds:retrieved.omitted.slice(0,60).map(x=>x.id),
+      sourceFingerprint:memorySourceFingerprint(session.messages.filter(m=>m.metadata?.source!=='prompt_preview_draft'),session.messages.filter(m=>m.metadata?.source!=='prompt_preview_draft').length),sourceCount:session.messages.filter(m=>m.metadata?.source!=='prompt_preview_draft').length,
+      sourceWindow:promptCap.windowTokens,budgetVerified:promptCap.verified,retrievalEstimateTokens:retrieved.usedTokens,
+      coverageComplete:!retrieved.omitted.length,summarySourceValid:summaryValid,summarySourceCount:session.rollingSourceCount};
+    const recall=tracked=>tracked.map(x=>x.projected).filter(Boolean);
+    const olderMessages=recall(retrieved.chosen);
+    const marker=uncoveredOlder.length?`【原始剧情检索覆盖提示】\n待后台摘要的原始剧情共 ${uncoveredOlder.length} 条在最近窗口之外；本轮按输入相关性从本地原文检索 ${retrieved.chosen.length} 条，尚未覆盖 ${retrieved.omitted.length} 条。\n历史原文仍完整保存在本地；未检索到的旧事件不能据此推断“不存在”，请不要编造缺失往事。` : '';
+    const header=marker?`${sys.prompt}\n\n${marker}`:sys.prompt;
+    const depthApplied=applyDepth([...olderMessages,...recent],depthOnly,session);
+    const messages=[{role:'system',content:header},...depthApplied.messages];
+    const estimatedInputTokens=messages.reduce((sum,m)=>sum+estimateTokens(m?.content||''),0);
+    if(estimatedInputTokens>promptCap.usable)throw new ApiError('E_CONTEXT_BUDGET','上下文检索结果超过本轮预算，已中止发送但保留全部资料。',{details:JSON.stringify({estimatedInputTokens,promptCap,trace})});
+    return{messages,inspector:{systemChars:header.length,estimatedInputTokens,recentMessageCount:recent.length,unsummarizedGapCount:uncoveredOlder.length,recentMessageLimit:limit,finalMessageCount:messages.length,
+      contextTrace:trace,worldbookBudgetChars:budget,worldbookUsedChars:budgeted.used,upstreamUsage:lastUsage?clone(lastUsage):null,
+      sections:sys.sections.map(({name,chars})=>({name,chars})),memoryTrace:sys.memoryTrace,
+      rollingTrace:{sourceCount:session.rollingSourceCount||0,valid:summaryValid,coverage:trace},
+      matchedWorldbookEntries:matched.map(({book,entry,activation:a})=>({bookId:book.id,bookName:book.name,entryId:entry.id,entryName:entry.name,depth:entry.depth,position:entry.position,priority:entry.priority,reason:a.reason,hits:a.hits||[],secondaryHits:a.secondaryHits||[]})),
+      skippedWorldbookEntries:[...activation.skipped,...budgeted.dropped].map(({book,entry,activation:a})=>({bookId:book.id,bookName:book.name,entryId:entry.id,entryName:entry.name,reason:a.reason})),
+      depthInjections:depthApplied.debug,systemPreview:header,messagePreview:messages.map((m,index)=>({index,role:m.role,content:m.content}))}};
+  }
 
   // ---------- API ----------
   // V1.0.2 patch: keep the old OpenAI-compatible route, but add strict empty-reply protection,
   // structured diagnostics, real streaming, and a persisted temperature setting.
-  function defaultApiConfig(){return{apiBase:'',apiKey:'',model:'',chatEndpoint:'',modelsEndpoint:'',extraHeaders:'',sendTemperature:true,temperature:0.85,stream:false,maxTokens:0};}
+  function defaultApiConfig(){return{apiBase:'',apiKey:'',model:'',chatEndpoint:'',modelsEndpoint:'',extraHeaders:'',sendTemperature:true,temperature:0.85,stream:false,maxTokens:0,contextWindowTokens:0};}
   function getApiConfig(){try{return{...defaultApiConfig(),...JSON.parse(localStorage.getItem(API_CONFIG_KEY)||'{}')}}catch(_){return defaultApiConfig();}}
   function saveApiConfig(cfg){const next={...defaultApiConfig(),...cfg};next.temperature=clampTemp(next.temperature);next.stream=!!next.stream;localStorage.setItem(API_CONFIG_KEY,JSON.stringify(next));return next;}
   function baseWithoutSlash(s){return String(s||'').trim().replace(/\/+$/,'');}
@@ -426,9 +524,13 @@
   function extractReply(data){
     const choice=data?.choices?.[0],message=choice?.message||{};
     // A recognized field is allowed to be empty here; callModel will classify that as E_API_EMPTY_REPLY.
+    if(message.refusal)throw new ApiError('E_API_REFUSAL','模型明确拒绝提供正文，未将拒绝字段存入记忆。');
     if(Object.prototype.hasOwnProperty.call(message,'content'))return contentPiece(message.content);
     if(Object.prototype.hasOwnProperty.call(message,'text'))return contentPiece(message.text);
-    if(Object.prototype.hasOwnProperty.call(message,'refusal'))return contentPiece(message.refusal);
+    if(Object.prototype.hasOwnProperty.call(message,'refusal'))throw new ApiError('E_API_REFUSAL','模型明确拒绝提供正文，未将拒绝字段存入记忆。');
+    // A 200 response containing only private reasoning has no user-visible content.
+    // Classify the recognized response shape as E_API_EMPTY_REPLY, never as memory.
+    if(['reasoning_content','reasoning','thinking'].some(field=>Object.prototype.hasOwnProperty.call(message,field)))return '';
     if(choice&&Object.prototype.hasOwnProperty.call(choice,'text'))return contentPiece(choice.text);
     if(choice?.delta&&Object.prototype.hasOwnProperty.call(choice.delta,'content'))return contentPiece(choice.delta.content);
     if(Object.prototype.hasOwnProperty.call(data||{},'output_text'))return contentPiece(data.output_text);
@@ -489,6 +591,8 @@
     const cfg={...defaultApiConfig(),...(cfgInput||{})};if(!cfg.model)throw new ApiError('E_API_CONFIG','还没有选择/填写 Model（模型）');const {chat}=buildEndpoints(cfg);
     const streamEnabled=options.streamOverride===undefined?!!cfg.stream:!!options.streamOverride;
     const body={model:cfg.model,messages};if(streamEnabled)body.stream=true;if(cfg.sendTemperature!==false)body.temperature=clampTemp(temperature);if(Number(cfg.maxTokens)>0)body.max_tokens=Math.floor(Number(cfg.maxTokens));
+    const requestId=makeId('req'),diag={requestId,jobId:options.memoryContext?.jobId||null,attemptId:options.memoryContext?.attemptId||null,stage:options.memoryContext?.stage||'story',model:cfg.model,endpointOrigin:(()=>{try{return new URL(chat).origin}catch{return 'unknown'}})(),requestFields:Object.keys(body).sort(),messageCount:messages.length,temperaturePresent:Object.hasOwn(body,'temperature'),maxTokens:body.max_tokens||null,stream:streamEnabled};
+    const diagnostic=extra=>JSON.stringify({...diag,...extra});
     emitProgress(options.onProgress,{phase:'requesting',percent:42,detail:`正在请求 ${cfg.model}`});
     let res;try{res=await fetch(chat,{method:'POST',headers:apiHeaders(cfg),body:JSON.stringify(body),signal,mode:'cors',credentials:'omit',cache:'no-store'});}catch(e){
       const err=asApiError(e);
@@ -497,21 +601,22 @@
         const online=(typeof navigator!=='undefined'&&typeof navigator.onLine==='boolean')?String(navigator.onLine):'unknown';
         err.details=[err.details,`stage: fetch_before_response`,`endpoint: ${endpoint||'unknown'}`,`navigator.onLine: ${online}`].filter(Boolean).join('; ');
       }
-      throw err;
+      err.details=diagnostic({errorSource:'transport',causeCode:err.code||'E_API_NETWORK'});throw err;
     }
-    if(!res.ok){let data={};try{data=await res.clone().json()}catch(_){}throw httpApiError(res.status,data?.error?.message||data?.message||`API 请求失败 HTTP ${res.status}`);}
+    if(!res.ok){let data={};try{data=await res.clone().json()}catch(_){}const problem=httpApiError(res.status,data?.error?.message||data?.message||`API 请求失败 HTTP ${res.status}`);problem.details=diagnostic({errorSource:'http',httpStatus:res.status,responseShape:Object.keys(data||{}).slice(0,20)});throw problem;}
     const contentType=String(res.headers?.get?.('content-type')||'').toLowerCase();
     if(streamEnabled&&!/application\/json/i.test(contentType)){
       emitProgress(options.onProgress,{phase:'streaming',percent:55,detail:'连接成功，正在接收流式正文…'});
-      const streamProgress=ev=>options.onProgress?.(ev);streamProgress.resultMeta=options.resultMeta;return await readStreamingReply(res,streamProgress,cfg.model);
+      const streamProgress=ev=>options.onProgress?.(ev);streamProgress.resultMeta=options.resultMeta;try{return await readStreamingReply(res,streamProgress,cfg.model);}catch(e){if(e instanceof ApiError)e.details=diagnostic({errorSource:'stream',httpStatus:res.status,errorCode:e.code,streamDetails:String(e.details||'').slice(0,500)});throw e;}
     }
     emitProgress(options.onProgress,{phase:'receiving',percent:68,detail:'模型已响应，正在解析正文…'});
     const data=await parseJsonResponse(res,'API');
     captureUsageMetrics(data,cfg.model,options.onProgress);
-    let reply;try{reply=extractReply(data)}catch(e){throw asApiError(e,'E_API_UNRECOGNIZED_RESPONSE');}
+    let reply;try{reply=extractReply(data)}catch(e){const cause=asApiError(e,'E_API_UNRECOGNIZED_RESPONSE');if(cause instanceof ApiError)cause.details=diagnostic({errorSource:'response_shape',errorCode:cause.code,httpStatus:res.status,responseShape:Object.keys(data||{}).slice(0,20),messageShape:Object.keys(data?.choices?.[0]?.message||{}).slice(0,20)});throw cause;}
     reply=text(reply);
-    if(options.resultMeta){options.resultMeta.finishReason=String(data?.choices?.[0]?.finish_reason||data?.finish_reason||'unknown');options.resultMeta.refused=!!data?.choices?.[0]?.message?.refusal;}
-    if(!reply)throw new ApiError('E_API_EMPTY_REPLY','API 请求成功，但模型返回了空白正文。',{status:res.status,details:`finish_reason: ${data?.choices?.[0]?.finish_reason||'unknown'}`});
+    if(options.resultMeta){options.resultMeta.finishReason=String(data?.choices?.[0]?.finish_reason||data?.finish_reason||'unknown');options.resultMeta.refused=!!data?.choices?.[0]?.message?.refusal;options.resultMeta.usage=data?.usage||null;options.resultMeta.requestId=requestId;}
+    if(options.memoryContext&&String(data?.choices?.[0]?.finish_reason||data?.finish_reason||'').toLowerCase()==='length')throw new ApiError('E_API_TRUNCATED','记忆输出触及长度限制，已阻止将不完整候选写入长期事实。',{status:res.status,details:diagnostic({errorSource:'output_limit',httpStatus:res.status,finishReason:'length',visibleChars:reply.length})});
+    if(!reply)throw new ApiError('E_API_EMPTY_REPLY','API 请求成功，但模型返回了空白正文。',{status:res.status,details:diagnostic({errorSource:'response_body',httpStatus:res.status,contentType,finishReason:data?.choices?.[0]?.finish_reason||'unknown',responseShape:Object.keys(data||{}).slice(0,20),messageShape:Object.keys(data?.choices?.[0]?.message||{}).slice(0,20),visibleChars:0})});
     emitProgress(options.onProgress,{phase:'received',percent:90,receivedChars:reply.length,detail:`正文接收完成 · ${reply.length} 字符`});
     return reply;
   }
@@ -662,7 +767,7 @@
     }
     push();return out.length?out:[String(textInput||'')];
   }
-  async function summarizeFactText(sourceText,targetChars,temp,signal,progress,label='事实记忆'){
+  async function summarizeFactText(sourceText,targetChars,temp,signal,progress,label='事实记忆',job=null){
     const chunks=splitTextBlocks(sourceText,28000),partials=[];
     for(let i=0;i<chunks.length;i++){
       emitProgress(progress,{phase:'memory_fact',percent:12+Math.round(((i+.25)/chunks.length)*62),detail:`${label} · 正在总结 ${i+1}/${chunks.length}`});
@@ -670,14 +775,14 @@
         {role:'system',content:'你是“咪嘛馆”的事实记忆整理器。只记录输入剧情中明确发生过的事实，不补充、不猜测、不续写，不把推测写成事实。输出中文纯文本。'},
         {role:'user',content:`【剧情原文】\n${chunks[i]}\n\n请将上面的剧情压缩成一段高密度“事实记忆”。只记录发生了什么：谁做了什么、关键对话结论、重要地点/物品/状态变化、明确承诺或约定。不要写文学点评，不要写气氛赏析，不要按每条消息机械流水账。目标约 ${targetChars} 字；剧情信息少时可以更短，信息密度优先。`}
       ];
-      partials.push(await callModel(prompt,temp,signal,{streamOverride:false}));
+      partials.push(await memoryModel(prompt,temp,signal,job,'fact_part_'+i));
     }
     if(partials.length===1)return partials[0];
     emitProgress(progress,{phase:'memory_fact_merge',percent:78,detail:`${label} · 正在合并超长分片`});
-    return await callModel([
+    return await memoryModel([
       {role:'system',content:'你是“咪嘛馆”的事实记忆整理器。把多个同一剧情区间的分段摘要合并为一个事实摘要。不得新增事实。输出中文纯文本。'},
       {role:'user',content:`【分段事实摘要】\n${partials.map((x,i)=>`[${i+1}] ${x}`).join('\n\n')}\n\n合并去重，保持事件先后与主体清晰，目标约 ${targetChars} 字。`}
-    ],temp,signal,{streamOverride:false});
+    ],temp,signal,job,'fact_merge');
   }
   function assertMemoryTaskActive(signal){
     if(signal?.aborted)throw new DOMException('记忆总结已由用户停止。','AbortError');
@@ -700,8 +805,94 @@
     latest.manualMemory=apply(nowMem);
     return latest;
   }
-  async function generateFactMemories(id,opts={},signal=null,progress=null){
-    let session=getSession(id);if(!session)throw new ApiError('E_STORY_SESSION_MISSING','未找到剧情 Session。');session=normalizeSession(session);
+  async function runRecordedMemory(kind,id,opts={},signal=null,progress=null){
+    const store=window.MimaLocalStore;
+    const snapshot=getSession(id);if(!snapshot)throw new ApiError('E_STORY_SESSION_MISSING','剧情已不存在');
+    if(typeof store?.beginMemoryJob!=='function')return kind==='core'?generateCoreMemory(id,opts,signal,progress):kind==='facts'?generateFactMemories(id,opts,signal,progress):refreshSummary(snapshot,opts.temperature,signal,progress);
+    const original=normalizeSession(clone(snapshot));if(kind==='rolling'&&!summaryNeeded(original))return original;let job=null,heartbeat=null;
+    try{
+      const cfg=getApiConfig();const configSignature=fingerprint([cfg.apiBase,cfg.chatEndpoint,cfg.model,cfg.sendTemperature,cfg.maxTokens,cfg.stream]);
+      const sourceHash=fingerprint([memorySourceFingerprint(original.messages,original.messages.length),kind==='core'&&opts.source==='facts'?original.manualMemory.facts:null,kind==='rolling'?original.rollingSummary:null]);
+      job=await store.beginMemoryJob({sessionId:id,kind,options:opts,sourceHash,sourceCount:original.messages.length,configSignature});
+      if(typeof store.heartbeatMemoryJob==='function'&&typeof setInterval==='function'){
+        heartbeat=setInterval(()=>store.heartbeatMemoryJob(job).catch(e=>{
+          console.warn('Memory lease heartbeat failed',{sessionId:id,kind,jobId:job.id,attemptId:job.attemptId,stage:'heartbeat',code:e.code||e.message});
+        }),10000);
+      }
+      await store.checkpointMemoryJob(job,'request_planned',{sourceCount:original.messages.length,sourceRevision:original.recordRevision});
+      if(kind==='core')return await generateCoreMemory(id,opts,signal,progress,job,original);
+      if(kind==='facts')return await generateFactMemories(id,opts,signal,progress,job,original);
+      return await refreshSummary(original,opts.temperature,signal,progress,job);
+    }catch(e){if(job){try{await store.settleMemoryJob(job,signal?.aborted||e.name==='AbortError'?'aborted':'failed',e.code||e.message||'E_MEMORY_FAILED');}catch(settle){e.settlementError=settle.message;}}throw e;}
+    finally{if(heartbeat!==null)clearInterval(heartbeat);}
+  }
+  async function checkpoint(job,stage,info={}){if(job)await window.MimaLocalStore.checkpointMemoryJob(job,stage,info);}
+  async function storeMemoryResult(job,snapshot,patch){
+    const committed=await window.MimaLocalStore.commitMemoryJob(job,snapshot,patch);
+    // Merge persisted current state, not the stale pre-request snapshot.
+    state=normalizeState(committed);return getSession(job.sessionId);
+  }
+  function validateMemoryCandidate(messages,candidate,stage,finishReason='unknown',requiresSourceLink=false){
+    const raw=String(candidate||'').trim();const source=messages.filter(m=>m.role==='user').map(m=>m.content||'').join('\n');
+    const invalid=(reason)=>{throw new ApiError('E_MEMORY_OUTPUT_INVALID','记忆候选未通过来源与输出契约校验，旧记忆已保留。',{
+      details:JSON.stringify({stage,reason,chars:raw.length,finishReason}),hint:'请查看任务阶段诊断并对原任务重试；拒绝模板和缺少来源证据的文字不会进入长期记忆。'});};
+    if(!raw||/^(?:\.{3,}|[.…]{2,}|null|undefined|n\/?a|todo|placeholder)$/i.test(raw))invalid('placeholder');
+    if(/^(?:system|developer|assistant)\s*:/i.test(raw)||/\[im_start\]|<\|im_start\|>|<!--\s*(system|developer)/i.test(raw))invalid('control_plane');
+    if(['length','max_tokens','content_filter'].includes(String(finishReason).toLowerCase()))invalid('truncated_or_filtered');
+    let memory=raw,formal=false,evidence=[];
+    if(/^```(?:json)?/i.test(raw)||raw.startsWith('{')){
+      let parsed;try{parsed=JSON.parse(raw.replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'').trim());}
+      catch{invalid('malformed_structured_output');}
+      if(!parsed||typeof parsed!=='object'||Array.isArray(parsed)||typeof parsed.memory!=='string')invalid('structured_schema');
+      memory=parsed.memory.trim();formal=true;evidence=Array.isArray(parsed.evidence)?parsed.evidence:[];
+      if(!evidence.length||!evidence.every(e=>typeof e?.quote==='string'&&e.quote.trim().length>=3&&source.includes(e.quote.trim())))invalid('evidence_not_in_source');
+      const lowerMemory=memory.toLowerCase();
+      const supporting=evidence.some(e=>{
+        const quote=e.quote.toLowerCase();
+        const tokens=quote.match(/[\p{Script=Han}]{2,}|[a-z0-9]{4,}/gu)||[];
+        return tokens.some(t=>{
+          if(/[\p{Script=Han}]/u.test(t)){for(let i=0;i<t.length-1;i++)if(lowerMemory.includes(t.slice(i,i+2)))return true;return false;}
+          return lowerMemory.includes(t);
+        });
+      });
+      if(!supporting)invalid('evidence_unrelated_to_memory');
+    }
+    if(!memory||/^(?:\.{3,}|null|n\/?a|todo|placeholder)$/i.test(memory))invalid('empty_memory');
+    // Discriminate a provider refusal *as the entire output* from a quoted
+    // refusal in a real story. A source quote with narrative framing is not
+    // rejected just because one character once said similar words.
+    const standaloneRefusal=/^(?:i(?:'| a)?m sorry[,!. ]*(?:but )?(?:i (?:can(?:not|'t)|am unable)|as an ai)|i can(?:not|'t) (?:assist|help|comply)|as an ai (?:language )?model|对不起[，, ]*(?:我无法|我不能|作为)|抱歉[，, ]*(?:我无法|我不能|作为)|很抱歉[，, ]*(?:我无法|我不能|作为))/i;
+    if(standaloneRefusal.test(memory)&&!(/(?:说道|回答|告诉|表示|原话|台词|说[:：]|said|replied|quoted|“|「)/i.test(memory)&&source.includes(memory)))invalid('provider_refusal');
+    if(standaloneRefusal.test(memory)&&!source.includes(memory))invalid('provider_refusal');
+    // A prose-only legacy API has no citation field. Keep support, but demand
+    // at least a small lexical link to the source instead of trusting a nonempty string.
+    if(!formal&&requiresSourceLink){
+      const segments=(memory.toLowerCase().match(/[\p{Script=Han}]{2,}|[a-z0-9]{4,}/gu)||[]),lower=source.toLowerCase();
+      const linked=segments.some(term=>{if(/[\p{Script=Han}]/u.test(term)){for(let i=0;i<term.length-1;i++)if(lower.includes(term.slice(i,i+2)))return true;return false;}return lower.includes(term);});
+      if(!linked)invalid('no_legacy_source_evidence');
+    }
+    return {memory,contract:formal?'json_evidence':'legacy_source_overlap',evidenceCount:evidence.length};
+  }
+  async function memoryModel(messages,temp,signal,job,stage){
+    if(job?.resumeCandidates&&Object.hasOwn(job.resumeCandidates,stage)){
+      // Third-round journals predate the new output contract: even a durable
+      // received checkpoint must be revalidated before becoming canonical.
+      const checked=validateMemoryCandidate(messages,job.resumeCandidates[stage],stage,'resumed',true);
+      await checkpoint(job,stage+'_reused',{sourceHash:job.sourceHash,outputContract:checked.contract});return checked.memory;
+    }
+    if(job&&window.MimaMemoryPriority?.whenIdle){await checkpoint(job,stage+'_queued');await window.MimaMemoryPriority.whenIdle(signal);}
+    await checkpoint(job,stage+'_request');const started=Date.now(),meta={};
+    try{
+      const prompt=messages.map(m=>({...m}));prompt[0]={...prompt[0],content:prompt[0].content+'\n【记忆输出契约】优先输出 JSON：{"memory":"与来源一致的中文事实摘要","evidence":[{"quote":"材料中连续且真实存在的原句"}]}。quote 必须逐字出现在用户提供的材料中，禁止凭空发明。若不支持 JSON，兼容纯文本输出，但纯文本也必须包含能在来源中核对的具体事实。禁止道歉拒绝模板、系统提示、占位输出。'};
+      const value=await callModel(prompt,temp,signal,{streamOverride:false,resultMeta:meta,memoryContext:job?{jobId:job.id,attemptId:job.attemptId,stage}:null});
+      const checked=validateMemoryCandidate(messages,value,stage,meta.finishReason||'unknown',!!job);
+      await checkpoint(job,stage+'_received',{chars:checked.memory.length,elapsedMs:Date.now()-started,finishReason:meta.finishReason||'unknown',outputContract:checked.contract,evidenceCount:checked.evidenceCount,usage:meta.usage||null,...(checked.memory.length<=20000?{output:checked.memory}:{candidateOversize:true})});
+      return checked.memory;
+    }
+    catch(e){await checkpoint(job,stage+'_error',{errorCode:e.code||e.name||'E_UNKNOWN',httpStatus:e.status||0,details:String(e.details||'').slice(0,1500),elapsedMs:Date.now()-started});throw e;}
+  }
+  async function generateFactMemories(id,opts={},signal=null,progress=null,job=null,snapshot=null){
+    let session=snapshot||getSession(id);if(!session)throw new ApiError('E_STORY_SESSION_MISSING','未找到剧情 Session。');session=normalizeSession(session);
     const data=storyRoundData(session),total=data.rounds.length;
     if(!total)throw new ApiError('E_MEMORY_NO_ROUNDS','当前剧情还没有可总结的 User→Character 轮次。');
     const chunkRounds=clampInt(opts.chunkRounds,1,200,10),scope=opts.scope==='all'?'all':'recent';
@@ -717,8 +908,9 @@
         const local=Math.max(0,Math.min(1,((Number(ev?.percent)||12)-12)/78));
         emitProgress(progress,{...ev,percent:10+Math.round(((i+local)/ranges.length)*78)});
       };
-      const content=await summarizeFactText(source,targetChars,temp,signal,report,`第 ${a}–${b} 轮`);
-      generated.push(normalizeFactMemory({startRound:a,endRound:b,content,source:'manual_fact_summary',targetChars,temperature:temp,sourceMessageCount:data.rounds.filter(r=>r.index>=a&&r.index<=b).reduce((n,r)=>n+r.messages.length,0)}));
+      const content=await summarizeFactText(source,targetChars,temp,signal,report,`第 ${a}–${b} 轮`,job);
+      generated.push(normalizeFactMemory({startRound:a,endRound:b,content,source:'manual_fact_summary',targetChars,temperature:temp,sourceMessageCount:data.rounds.filter(r=>r.index>=a&&r.index<=b).reduce((n,r)=>n+r.messages.length,0),sourceCount:session.messages.length,sourceFingerprint:memorySourceFingerprint(session.messages,session.messages.length)}));
+      await checkpoint(job,'fact_range_verified',{startRound:a,endRound:b,chars:content.length});
     }
     assertMemoryTaskActive(signal);
     const replace=scope==='all'&&opts.replaceExisting===true;
@@ -730,10 +922,10 @@
     });
     emitProgress(progress,{phase:'memory_fact_saving',percent:94,detail:`正在保存 ${generated.length} 段事实记忆…`});
     assertMemoryTaskActive(signal);
-    const saved=await saveSession(fresh);emitProgress(progress,{phase:'done',percent:100,detail:`事实记忆完成 · ${generated.length} 段`});return saved;
+    const saved=job?await storeMemoryResult(job,session,{manualMemory:fresh.manualMemory}):await saveSession(fresh);emitProgress(progress,{phase:'done',percent:100,detail:`事实记忆完成 · ${generated.length} 段`});return saved;
   }
-  async function generateCoreMemory(id,opts={},signal=null,progress=null){
-    let session=getSession(id);if(!session)throw new ApiError('E_STORY_SESSION_MISSING','未找到剧情 Session。');session=normalizeSession(session);
+  async function generateCoreMemory(id,opts={},signal=null,progress=null,job=null,snapshot=null){
+    let session=snapshot||getSession(id);if(!session)throw new ApiError('E_STORY_SESSION_MISSING','未找到剧情 Session。');session=normalizeSession(session);
     const memory=normalizeManualMemory(session.manualMemory||{}),sourceType=opts.source==='facts'?'facts':'context',targetChars=clampInt(opts.targetChars,100,12000,1000),temp=clampTemp(opts.temperature??0.35);
     const data=storyRoundData(session);let source='',sourceFactCount=0;
     if(sourceType==='facts'){
@@ -747,31 +939,31 @@
     for(let i=0;i<(chunks.length===1?0:chunks.length);i++){
       assertMemoryTaskActive(signal);
       emitProgress(progress,{phase:'memory_core',percent:10+Math.round(((i+.2)/chunks.length)*58),detail:`核心记忆 · 整理材料 ${i+1}/${chunks.length}`});
-      partials.push(await callModel([
+      partials.push(await memoryModel([
         {role:'system',content:'你是“咪嘛馆”的核心记忆整理器。你的任务是提炼长期剧情记忆，不续写、不新增事实、不杜撰角色心理。输出中文纯文本。'},
         {role:'user',content:`【材料来源：${sourceType==='facts'?'事实记忆':'剧情原文'}】\n${chunks[i]}\n\n请提炼这部分材料中的长期核心信息。重点保留：决定后续关系与行为的重要事件；角色关系变化与关系阶段；明确承诺、约定、誓言、边界与背叛/和解；持续性的心理/身体/身份状态改变；关键人物、地点、物品与未解决问题。不要按轮次流水账，不要写空泛感想。`}
-      ],temp,signal,{streamOverride:false}));
+      ],temp,signal,job,'core_part_'+i));
     }
     assertMemoryTaskActive(signal);
     emitProgress(progress,{phase:'memory_core_merge',percent:76,detail:'核心记忆 · 正在做最终去重与关系提炼…'});
     const final=chunks.length===1
-      ? await callModel([
+      ? await memoryModel([
           {role:'system',content:'你是“咪嘛馆”的长期核心记忆编辑器。只根据材料输出最终核心记忆，不续写、不虚构、不杜撰角色心理，不加入推测。输出中文纯文本。'},
           {role:'user',content:`【完整来源：${sourceType==='facts'?'事实记忆':'剧情原文'}】\n${source}\n\n写成约 ${targetChars} 字的长期核心记忆。按主题与关系组织，优先记录：关系转变、重要承诺/约定、关键选择及其后果、持续状态变化、身份和世界观重要事实、未解决事项。保留主体和因果，不写流水账，不凑字数。`}
-        ],temp,signal,{streamOverride:false})
-      : await callModel([
+        ],temp,signal,job,'core_final_single')
+      : await memoryModel([
           {role:'system',content:'你是“咪嘛馆”的长期核心记忆编辑器。根据材料输出最终核心记忆。不得新增任何事实；如果材料之间信息重复，要合并而不是复述。输出中文纯文本。'},
           {role:'user',content:`【候选核心材料】\n${partials.map((x,i)=>`[${i+1}] ${x}`).join('\n\n')}\n\n请写成约 ${targetChars} 字的最终“核心记忆”。绝对不要写成“第1轮……第2轮……”的流水账。按主题与关系组织，优先记录：关系转变、重要承诺/约定、关键选择及其后果、长期状态变化、身份与世界观关键事实、重要未解决事项。保留必要的因果关系与主体，不要为了凑字数重复内容。`}
-        ],temp,signal,{streamOverride:false});
+        ],temp,signal,job,'core_final_merge');
     assertMemoryTaskActive(signal);
     const fresh=commitMemoryIntoLatest(session,'core',sourceType,nowMemory=>({
       ...nowMemory,
-      core:{content:final,updatedAt:nowIso(),source:sourceType,targetChars,temperature:temp,sourceRoundCount:data.rounds.length,sourceFactCount},
+      core:{content:final,updatedAt:nowIso(),source:sourceType,targetChars,temperature:temp,sourceRoundCount:data.rounds.length,sourceFactCount,sourceCount:session.messages.length,sourceFingerprint:memorySourceFingerprint(session.messages,session.messages.length),sourceFactsHash:sourceType==='facts'?fingerprint(memory.facts):''},
       settings:{...nowMemory.settings,summaryTemperature:temp}
     }));
     emitProgress(progress,{phase:'memory_core_saving',percent:95,detail:'正在保存核心记忆…'});
     assertMemoryTaskActive(signal);
-    const saved=await saveSession(fresh);emitProgress(progress,{phase:'done',percent:100,detail:'核心记忆已更新。'});return saved;
+    const saved=job?await storeMemoryResult(job,session,{manualMemory:fresh.manualMemory}):await saveSession(fresh);emitProgress(progress,{phase:'done',percent:100,detail:'核心记忆已更新。'});return saved;
   }
   async function updateManualMemory(id,body={}){
     let session=getSession(id);if(!session)throw new ApiError('E_STORY_SESSION_MISSING','未找到剧情 Session。');session=normalizeSession(session);const memory=normalizeManualMemory(session.manualMemory||{});
@@ -782,24 +974,53 @@
   async function deleteCoreMemory(id){let session=getSession(id);if(!session)throw new ApiError('E_STORY_SESSION_MISSING','未找到剧情 Session。');session=normalizeSession(session);const memory=normalizeManualMemory(session.manualMemory||{});memory.core=normalizeManualMemory({}).core;session.manualMemory=memory;return saveSession(session);}
   async function deleteFactMemory(id,factId=''){let session=getSession(id);if(!session)throw new ApiError('E_STORY_SESSION_MISSING','未找到剧情 Session。');session=normalizeSession(session);const memory=normalizeManualMemory(session.manualMemory||{});memory.facts=factId?memory.facts.filter(x=>x.id!==factId):[];session.manualMemory=memory;return saveSession(session);}
 
-  async function refreshSummary(session,temp,signal,progress){
-    if(session.promptSettings?.summaryEnabled===false)return session;
+  function summaryNeeded(session){const limit=Math.max(18,Number(session.promptSettings?.recentMessageLimit||34)-4);const end=(session.messages||[]).length-limit;return session.promptSettings?.summaryEnabled!==false&&end>8&&(session.lastSummarizedIndex||0)<end;}
+  async function refreshSummary(session,temp,signal,progress,job=null){
+    const original=clone(session);
+    if(session.promptSettings?.summaryEnabled===false){if(job)await window.MimaLocalStore.settleMemoryJob(job,'skipped','E_MEMORY_DISABLED');return session;}
     const msgs=session.messages||[];const safeWindow=Math.max(18,Number(session.promptSettings?.recentMessageLimit||34)-4);const unsummarizedEnd=msgs.length-safeWindow;
-    if(unsummarizedEnd<=8||(session.lastSummarizedIndex||0)>=unsummarizedEnd)return session;
-    const start=session.lastSummarizedIndex||0;const ctx=macroContext(session);const chunk=msgs.slice(start,unsummarizedEnd).filter(m=>m.role==='user'||m.role==='assistant').map(m=>m.role==='user'?`${ctx.userName}（玩家输入语义）：\n${compileUserInputForPrompt(session,m.content,inputSemanticMode(session,m))}`:`${ctx.charName}：${resolveMacrosForSession(session,m.content)}`).join('\n');if(!chunk.trim())return session;
+    if(unsummarizedEnd<=8||(session.lastSummarizedIndex||0)>=unsummarizedEnd){if(job)await window.MimaLocalStore.settleMemoryJob(job,'skipped','E_MEMORY_ALREADY_COVERED');return session;}
+    const start=session.lastSummarizedIndex||0;const ctx=macroContext(session);const chunk=msgs.slice(start,unsummarizedEnd).filter(m=>m.role==='user'||m.role==='assistant').map(m=>m.role==='user'?`${ctx.userName}（玩家输入语义）：\n${compileUserInputForPrompt(session,m.content,inputSemanticMode(session,m))}`:`${ctx.charName}：${resolveMacrosForSession(session,m.content)}`).join('\n');if(!chunk.trim()){if(job)await window.MimaLocalStore.settleMemoryJob(job,'skipped','E_MEMORY_SOURCE_EMPTY');return session;}
     emitProgress(progress,{phase:'summary',percent:20,detail:'正在整理较早剧情摘要…'});
     const p=[{role:'system',content:'你是独立剧情档案助手。只总结实际发生过的剧情，不添加新事实，不混入其他世界。输出中文纯文本。'},{role:'user',content:`【已有长期摘要】\n${session.rollingSummary||'(无)'}\n\n【本次新增旧剧情】\n${chunk}\n\n请输出更新后的剧情摘要，保留：已发生事件、人物关系变化、身体/心理状态、重要物品与地点、未解决伏笔。控制在 1000 字以内。`}];
     try{
-      const summary=await callModel(p,Math.min(clampTemp(temp),0.6),signal,{streamOverride:false});
-      session.rollingSummary=summary;session.summary=summary;session.lastSummarizedIndex=unsummarizedEnd;
+      const sourceChunks=splitTextBlocks(chunk,25000);
+      let summary;
+      if(sourceChunks.length===1)summary=await memoryModel(p,Math.min(clampTemp(temp),0.6),signal,job,'rolling_summary');
+      else{
+        const pieces=[];
+        for(let i=0;i<sourceChunks.length;i++){
+          assertMemoryTaskActive(signal);
+          pieces.push(await memoryModel([{role:'system',content:'你是独立剧情档案助手，只总结下列单个原文分片，不新增事实。'},
+            {role:'user',content:`【旧剧情原文分片 ${i+1}/${sourceChunks.length}】\n${sourceChunks[i]}\n请给出本分片中发生的事件和对应人物关系。`}],Math.min(clampTemp(temp),0.6),signal,job,'rolling_part_'+i));
+        }
+        summary=await memoryModel([{role:'system',content:'你是独立剧情档案助手。根据旧摘要和已逐段确认的来源摘要合并，严格保持事实来源，不续写。'},
+          {role:'user',content:`【已有长期摘要】\n${session.rollingSummary||'(无)'}\n\n【已校验的分片摘要】\n${pieces.map((x,i)=>`【${i+1}】${x}`).join('\n\n')}\n\n合并事件、关系与未解伏笔，控制在 1000 字以内。`}],Math.min(clampTemp(temp),0.6),signal,job,'rolling_merge');
+      }
+      session.rollingSummary=summary;session.summary=summary;session.lastSummarizedIndex=unsummarizedEnd;session.rollingSourceCount=unsummarizedEnd;session.rollingSourceFingerprint=memorySourceFingerprint(session.messages,unsummarizedEnd);
       emitProgress(progress,{phase:'summary_done',percent:28,detail:'旧剧情摘要已更新。'});
-      return await saveSession(session);
-    }catch(e){
-      if(e.name==='AbortError')throw e;
-      console.warn('Rolling Summary 更新失败，继续剧情：',e);
-      emitProgress(progress,{phase:'summary_skipped',percent:28,detail:'摘要更新失败，已跳过，不影响本轮正文生成。'});
-      return session;
+      return job?await storeMemoryResult(job,original,{rollingSummary:summary,summary,lastSummarizedIndex:unsummarizedEnd,rollingSourceCount:unsummarizedEnd,rollingSourceFingerprint:session.rollingSourceFingerprint}):await saveSession(session);
+    }catch(e){throw e;}
+  }
+  const rollingInFlight=new Set();
+  async function resumeExpiredRollingJobs(){
+    const store=window.MimaLocalStore,configs=getApiConfig();if(!configs.model||!configs.apiBase)return;
+    for(const session of state.sessions){
+      const job=await store.getMemoryJob(session.id,'rolling');
+      if(!job||job.status!=='running'||Number(job.leaseUntilEpoch||0)>Date.now()||Number(job.recoveryCount||0)>=3)continue;
+      if(!summaryNeeded(session))continue;
+      if(rollingInFlight.has(session.id))continue;
+      rollingInFlight.add(session.id);
+      runRecordedMemory('rolling',session.id,job.options||{temperature:0.35},null,null)
+        .catch(e=>console.warn('Rolling recovery debt',{sessionId:session.id,jobId:job.id,stage:'startup_recovery',code:e.code||e.message,attemptId:job.attemptId}))
+        .finally(()=>rollingInFlight.delete(session.id));
     }
+  }
+  function queueRollingSummary(id,temp){
+    if(rollingInFlight.has(id)||!getSession(id)||!summaryNeeded(getSession(id)))return;rollingInFlight.add(id);
+    setTimeout(()=>{runRecordedMemory('rolling',id,{temperature:temp},null,null)
+      .catch(e=>{if(e.code!=='E_MEMORY_JOB_PENDING')console.warn('Rolling summary background debt', {sessionId:id,code:e.code||'E_MEMORY_BACKGROUND',stage:'rolling',settlementError:e.settlementError||''});})
+      .finally(()=>rollingInFlight.delete(id));},0);
   }
   async function processStoryTurn(id,userText,action='send',signal,temp=.85,options={},progress=null){
     let session=getSession(id);
@@ -816,7 +1037,7 @@
     // “重说”必须在任何摘要/异步保存之前锁定目标消息 ID，避免后续状态变化后误替换上一轮剧情。
     const requestedTargetId=action==='regenerate'?text(options?.targetMessageId):'';
     const lockedTargetId=action==='regenerate'?(resolveRegenerationTarget(session,requestedTargetId)?.id||null):null;
-    session=await refreshSummary(session,temp,signal,progress);
+    const sourceBeforeReply=clone(session.messages);
     let target=null;
     if(action==='continue'){
       target=[...session.messages].reverse().find(m=>m.role==='assistant');
@@ -845,7 +1066,21 @@
     }else{
       const assistantMsg=makeMessage('assistant',reply,session,action==='auto_advance'?{source:'auto_advance',directorNote:opts.directorNote}:{source:'model_reply'});assistantMsg.rawContent=replyRaw;assistantMsg.renderedContent=renderedReply;session.messages.push(assistantMsg);
     }
-    const saved=await saveSession(session);
+    // A memory job may have committed while Provider was generating. Rebase only
+    // when the original story prefix has not changed. Never overwrite memory.
+    const generatedMessages=clone(session.messages);let saved=null;
+    for(let commitAttempt=0;commitAttempt<3;commitAttempt++){
+      const persisted=normalizeState(await window.MimaLocalStore.loadState());
+      const latest=persisted.sessions.find(x=>x.id===id);
+      if(!latest||JSON.stringify(latest.messages)!==JSON.stringify(sourceBeforeReply))throw new ApiError('E_CANONICAL_CONFLICT','生成期间剧情原文被其他操作修改；拒绝以旧回复覆盖新时间线。');
+      // Rebase the one generated turn onto a verified current Session. Style,
+      // manual memory and other settings changed while thinking are retained.
+      state=persisted;
+      try{saved=await saveSession({...latest,messages:generatedMessages});break;}
+      catch(e){if(!String(e?.message||'').includes('E_CANONICAL_CONFLICT')||commitAttempt===2)throw e;}
+    }
+    // Auto summary is a lower-priority independent job; never block Direct Reply.
+    queueRollingSummary(id,temp);
     emitProgress(progress,{phase:'done',percent:100,detail:'剧情生成完成。'});
     return saved;
   }
@@ -911,9 +1146,9 @@
       m=path.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)$/);if(m&&method==='PATCH')return ok(await editMessage(m[1],m[2],body?.content,{truncateAfter:!!body?.truncateAfter}));
       if(m&&method==='DELETE')return ok(await deleteMessage(m[1],m[2]));
       m=path.match(/^\/sessions\/([^/]+)\/memory$/);if(m&&method==='PATCH')return ok(await updateManualMemory(m[1],body||{}));
-      m=path.match(/^\/sessions\/([^/]+)\/memory\/core$/);if(m&&method==='POST')return ok(await generateCoreMemory(m[1],body||{},signal,progress));
+      m=path.match(/^\/sessions\/([^/]+)\/memory\/core$/);if(m&&method==='POST')return ok(await runRecordedMemory('core',m[1],body||{},signal,progress));
       if(m&&method==='DELETE')return ok(await deleteCoreMemory(m[1]));
-      m=path.match(/^\/sessions\/([^/]+)\/memory\/facts$/);if(m&&method==='POST')return ok(await generateFactMemories(m[1],body||{},signal,progress));
+      m=path.match(/^\/sessions\/([^/]+)\/memory\/facts$/);if(m&&method==='POST')return ok(await runRecordedMemory('facts',m[1],body||{},signal,progress));
       if(m&&method==='DELETE')return ok(await deleteFactMemory(m[1]));
       m=path.match(/^\/sessions\/([^/]+)\/memory\/facts\/([^/]+)$/);if(m&&method==='DELETE')return ok(await deleteFactMemory(m[1],m[2]));
 
@@ -973,5 +1208,5 @@
     try{await persist();window.MimaThemeEngine?.apply?.(state.themeSettings);return clone(state);}catch(e){state=normalizeState(await window.MimaLocalStore.loadState());throw e;}
   }
 
-  window.MimaStandalone={init,handle,getApiConfig,saveApiConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,applyRegexForSession,resolveMacrosForSession,compileUserInputForPrompt,exportLibrary,importLibrary,validateLibrary,assemble,getLastUsage,getState:()=>clone(state)};
+  window.MimaStandalone={init,handle,runRecordedMemory,memorySourceFingerprint,getApiConfig,saveApiConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,applyRegexForSession,resolveMacrosForSession,compileUserInputForPrompt,exportLibrary,importLibrary,validateLibrary,assemble,getLastUsage,getState:()=>clone(state)};
 })();

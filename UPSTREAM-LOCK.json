@@ -1,0 +1,16 @@
+{
+  "officialHost": "SillyTavern",
+  "targetTag": "1.19.0",
+  "releaseCommitVerifiedPrefix": "7e8663c",
+  "releaseFullSha": "7e8663cd9c184a550b37238218bdd32c6efc68e9",
+  "fullShaStatus": "Full SHA independently resolved from official GitHub release commit. Windows git checkout NOT EXECUTED in this environment.",
+  "originalHostCodeBundled": false,
+  "license": "AGPL-3.0",
+  "references": [
+    "https://github.com/SillyTavern/SillyTavern/releases/tag/1.19.0",
+    "https://docs.sillytavern.app/usage/core-concepts/worldinfo/",
+    "https://github.com/kwaroran/character-card-spec-v3/blob/main/SPEC_V3.md"
+  ],
+  "thirdPartyPluginsBundled": false,
+  "thirdPartyAPIFullParity": "NOT VERIFIED"
+}

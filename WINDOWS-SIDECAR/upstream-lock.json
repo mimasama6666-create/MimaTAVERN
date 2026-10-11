@@ -1,0 +1,11 @@
+{
+  "project": "SillyTavern",
+  "source": "https://github.com/SillyTavern/SillyTavern.git",
+  "tag": "1.19.0",
+  "verifiedReleaseCommitPrefix": "7e8663c",
+  "fullCommitSha": "7e8663cd9c184a550b37238218bdd32c6efc68e9",
+  "note": "Immutable 1.19.0 release commit pinned by full SHA. Windows clone/npm/launch remain UNTESTED.",
+  "license": "AGPL-3.0",
+  "licenseSource": "https://github.com/SillyTavern/SillyTavern/blob/1.19.0/LICENSE",
+  "verification": "git tag + 40-character pinned HEAD, local git rev-parse; Windows real execution UNTESTED"
+}

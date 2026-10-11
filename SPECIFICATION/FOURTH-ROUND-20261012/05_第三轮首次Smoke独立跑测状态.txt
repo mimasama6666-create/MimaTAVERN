@@ -1,0 +1,48 @@
+0 tests/smoke-compat-r1-r5.js
+0 tests/smoke-compat-rework-real-png.js
+0 tests/smoke-compat-rework-store.js
+0 tests/smoke-compat-rework-turn.js
+0 tests/smoke-compat-rework-worker.js
+0 tests/smoke-session-history-v1.1.2.js
+0 tests/smoke-third-api-diagnostics.js
+0 tests/smoke-third-compat-concurrency.js
+1 tests/smoke-third-memory-journal.js
++ actual - expected
+
++ 'running'
+- 'committed'
+
+    at /mnt/data/mimakan_round3/new/MimaTAVERN-R1-R5-REWORK-20261011/tests/smoke-third-memory-journal.js:58:9 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: 'running',
+  expected: 'committed',
+  operator: 'strictEqual'
+}
+0 tests/smoke-v1.1.0.js
+0 tests/smoke-v1.1.1.js
+0 tests/smoke-v1.1.10.js
+0 tests/smoke-v1.1.2.js
+0 tests/smoke-v1.1.3.js
+0 tests/smoke-v1.1.4.js
+0 tests/smoke-v1.1.5-repair-failure.js
+0 tests/smoke-v1.1.5-repair.js
+0 tests/smoke-v1.1.5.js
+0 tests/smoke-v1.1.6.js
+0 tests/smoke-v1.1.7.js
+0 tests/smoke-v1.1.8.js
+0 tests/smoke-v1.1.9.js
+0 tests/smoke-v1.2.0.js
+0 tests/smoke-v1.3.0.js
+0 tests/smoke-v1.3.1.js
+0 tests/smoke-v1.3.2-root-closure.js
+0 tests/smoke-v1.3.3-backup-integrity.js
+0 tests/smoke-v1.3.3-legacy-memory.js
+0 tests/smoke-v1.3.4-legacy-quarantine.js
+0 tests/smoke-v1.3.4-rework.js
+0 tests/smoke-v1.3.5-persisted-arrays.js
+0 tests/smoke-v1.3.6-historical-v4-contract.js
+0 tests/smoke-v1.3.7-theme.js
+0 tests/smoke-v1.3.9-memory-facts.js
+0 tests/smoke-v1.3.9-png-memory.js
+0 tests/smoke-v1.4.0-png-resources.js

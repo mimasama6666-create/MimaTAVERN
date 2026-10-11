@@ -365,5 +365,94 @@
     const db=await openDb();
     return new Promise((resolve,reject)=>{const tx=db.transaction(STORE,'readwrite');tx.objectStore(STORE).delete(SETTINGS_SNAPSHOT_KEY);tx.oncomplete=()=>{db.close();resolve(true)};tx.onerror=()=>{db.close();reject(tx.error)}});
   }
-  window.MimaLocalStore={loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,clearSettingsSnapshot};
+
+  // Durable per-session memory journal is stored next to, but independent from,
+  // the canonical state record. No new database/version or destructive migration.
+  const jobKey=(sessionId,kind)=>`memory_job:${sessionId}:${kind}`;
+  const MEMORY_LEASE_MS=45000; // durable ownership, not a Provider request timeout
+  async function getMemoryJob(sessionId,kind){return get(jobKey(sessionId,kind));}
+  async function memoryJobTransaction(sessionId,kind,work){
+    const db=await openDb();return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE);let result,issue;
+      const req=kv.get(jobKey(sessionId,kind));req.onerror=()=>{issue=req.error;tx.abort();};
+      req.onsuccess=()=>{try{result=work(req.result,kv,tx);}catch(e){issue=e;tx.abort();}};
+      tx.oncomplete=()=>{db.close();resolve(result);};tx.onabort=()=>{db.close();reject(issue||tx.error||new Error('E_MEMORY_JOURNAL_WRITE_FAILED'));};
+    });
+  }
+  async function beginMemoryJob({sessionId,kind,options,sourceHash,sourceCount,configSignature}){
+    return memoryJobTransaction(sessionId,kind,(old,kv)=>{
+      const live=old?.status==='running'&&Number(old.leaseUntilEpoch||0)>Date.now();
+      if(live)throw new Error('E_MEMORY_JOB_PENDING: 另一个尚有租约的 attempt 正在运行；不能竞争结算');
+      if(old?.status==='running'&&Number(old.recoveryCount||0)>=3)throw new Error('E_MEMORY_RECOVERY_LIMIT: 连续恢复已达到上限，请检查后台任务错误记录并人工操作');
+      const sameSource=old?.sourceHash===sourceHash&&old?.configSignature===configSignature&&JSON.stringify(old?.options)===JSON.stringify(options);
+      const resumeCandidates={};
+      if(sameSource&&['running','failed','interrupted','aborted'].includes(old?.status)){for(const candidate of old.checkpoints||[]){if(typeof candidate.output==='string'&&candidate.stage.endsWith('_received'))resumeCandidates[candidate.stage.slice(0,-9)]=candidate.output;}}
+      const now=new Date().toISOString(),recovering=old?.status==='running';
+      const job={resumeCandidates,configSignature,
+        id:recovering?old.id:`mem_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+        attemptId:`a_${Date.now()}_${Math.random().toString(36).slice(2)}`,sessionId,kind,options,sourceHash,sourceCount,
+        status:'running',stage:recovering?'recovered_pending':'prepared',startedAt:recovering?old.startedAt:now,updatedAt:now,
+        checkpoints:sameSource?(old.checkpoints||[]):[],revision:(old?.revision||0)+1,
+        leaseUntilEpoch:Date.now()+MEMORY_LEASE_MS,recoveryCount:recovering?(Number(old.recoveryCount||0)+1):0,
+        recoveredFromAttemptId:recovering?old.attemptId:null};
+      kv.put(job,jobKey(sessionId,kind));return job;
+    });
+  }
+  async function heartbeatMemoryJob(job){
+    return memoryJobTransaction(job.sessionId,job.kind,(old,kv)=>{
+      if(old?.id!==job.id||old?.attemptId!==job.attemptId||old.status!=='running')throw new Error('E_MEMORY_JOB_FENCED');
+      const next={...old,updatedAt:new Date().toISOString(),leaseUntilEpoch:Date.now()+MEMORY_LEASE_MS,revision:old.revision+1};
+      kv.put(next,jobKey(job.sessionId,job.kind));return next;
+    });
+  }
+  async function checkpointMemoryJob(job,stage,extra={}){
+    return memoryJobTransaction(job.sessionId,job.kind,(old,kv)=>{
+      if(old?.id!==job.id||old?.attemptId!==job.attemptId||old.status!=='running')throw new Error('E_MEMORY_JOB_FENCED');
+      const next={...old,stage,updatedAt:new Date().toISOString(),leaseUntilEpoch:Date.now()+MEMORY_LEASE_MS,revision:old.revision+1,checkpoints:[...(old.checkpoints||[]),{stage,time:new Date().toISOString(),...extra}].slice(-300)};
+      kv.put(next,jobKey(job.sessionId,job.kind));return next;
+    });
+  }
+  async function settleMemoryJob(job,status,code=''){
+    return memoryJobTransaction(job.sessionId,job.kind,(old,kv)=>{
+      if(old?.id!==job.id||old?.attemptId!==job.attemptId||old.status!=='running')throw new Error('E_MEMORY_JOB_FENCED');
+      const next={...old,status,stage:status==='aborted'?'aborted':status==='skipped'?'skipped':'failed',code:String(code).slice(0,120),updatedAt:new Date().toISOString(),revision:old.revision+1};
+      kv.put(next,jobKey(job.sessionId,job.kind));return next;
+    });
+  }
+  async function interruptMemoryJob(sessionId,kind,expectedId){
+    return memoryJobTransaction(sessionId,kind,(old,kv)=>{
+      if(!old||old.id!==expectedId||old.status!=='running')throw new Error('E_MEMORY_JOB_FENCED');
+      const next={...old,status:'interrupted',stage:'user_interrupted',code:'E_MEMORY_RECOVERY_REQUESTED',updatedAt:new Date().toISOString(),revision:old.revision+1};
+      kv.put(next,jobKey(sessionId,kind));return next;
+    });
+  }
+  // Atomic settlement checks source history and target memory in the *current*
+  // canonical document under the same IDB readwrite transaction. A concurrent
+  // chat/CSS/other session save cannot be overwritten with an old snapshot.
+  async function commitMemoryJob(job,snapshot,patch){
+    const db=await openDb();return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE);let problem,committed;
+      const fail=(message)=>{problem=new Error(message);tx.abort();};
+      const jr=kv.get(jobKey(job.sessionId,job.kind));jr.onerror=()=>fail('E_MEMORY_JOURNAL_READ');
+      jr.onsuccess=()=>{
+        const active=jr.result;if(!active||active.id!==job.id||active.attemptId!==job.attemptId||active.status!=='running'){fail('E_MEMORY_JOB_FENCED');return;}
+        const sr=kv.get(STATE_KEY);sr.onerror=()=>fail('E_MEMORY_STORE_READ');sr.onsuccess=()=>{
+          const current=sr.result;if(!current||!Array.isArray(current.sessions)){fail('E_MEMORY_STORE_UNVERIFIED');return;}
+          const index=current.sessions.findIndex(x=>x.id===job.sessionId);if(index<0){fail('E_STORY_SESSION_MISSING');return;}
+          const latest=current.sessions[index];
+          if(!Array.isArray(latest.messages)||JSON.stringify(latest.messages.slice(0,snapshot.messages.length))!==JSON.stringify(snapshot.messages)){fail('E_MEMORY_SOURCE_STALE');return;}
+          if(job.kind==='facts'&&JSON.stringify(latest.manualMemory?.facts||[])!==JSON.stringify(snapshot.manualMemory?.facts||[])){fail('E_MEMORY_FACTS_CONFLICT');return;}
+          if(job.kind==='core'&&(JSON.stringify(latest.manualMemory?.core||{})!==JSON.stringify(snapshot.manualMemory?.core||{})||(job.options?.source==='facts'&&JSON.stringify(latest.manualMemory?.facts||[])!==JSON.stringify(snapshot.manualMemory?.facts||[])))){fail('E_MEMORY_CORE_CONFLICT');return;}
+          if(job.kind==='rolling'&&(latest.rollingSummary!==snapshot.rollingSummary||latest.lastSummarizedIndex!==snapshot.lastSummarizedIndex)){fail('E_MEMORY_ROLLING_CONFLICT');return;}
+          const changed={...latest,...patch,recordRevision:(Number(latest.recordRevision)||0)+1,updatedAt:new Date().toISOString()};
+          const sessions=current.sessions.slice();sessions[index]=changed;
+          committed={...current,sessions,storeRevision:(Number(current.storeRevision)||0)+1,savedAt:new Date().toISOString()};
+          kv.put(committed,STATE_KEY);
+          kv.put({...active,status:'committed',stage:'saved',revision:active.revision+1,updatedAt:new Date().toISOString(),finishedAt:new Date().toISOString()},jobKey(job.sessionId,job.kind));
+        };
+      };
+      tx.oncomplete=()=>{db.close();resolve(committed);};tx.onabort=()=>{db.close();reject(problem||tx.error||new Error('E_MEMORY_COMMIT_ABORTED'));};
+    });
+  }
+  window.MimaLocalStore={loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,clearSettingsSnapshot,getMemoryJob,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob};
 })();

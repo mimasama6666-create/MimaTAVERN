@@ -1,0 +1,15 @@
+【咪嘛馆 × SillyTavern 兼容工程 R1–R5 同轮全部施工｜FULL-CONTRACT｜非 MIMAMAO/QQBOT｜一次完成/一次总包】
+
+先在本对话附件或文件库找到《01_咪嘛馆_R1-R5_完整施工与验收蓝图.md》，完整阅读并严格执行；同时找到最新的 MimaTAVERN 主程序母体（2026-10-11 已知基线 v1.4.0，但如果有更新必须以最新版为准）、R0 蓝图，以及可用的角色卡样本。先核实 SHA256、现有 app.js/index.html/standalone-core.js/local-store.js/png-card-import.js/png-resource-inspector.js/regex-engine.js/novel 与 assistant 代码、旧调用链/数据合同/测试，禁止根据之前聊天或蓝图中的行号猜当前实现。不得对 MIMAMAO、QQBOT 施工。
+
+工程目标：原生咪嘛馆保持最简单“开盖即食”的旧体验，独立新增「酒馆兼容实验室」，让高级玩家导入 PNG、CCV1/2/3 JSON、外置世界书/正则/预设、CHARX、扩展 ZIP/manifest 和多种扩展字段；来源包完整无损、可看所有原始 JSON 与资产、对每一项显示兼容级别和语义差异；可独立开始角色剧情，用逐版本验证的世界书激活、prompt slots、regex 阶段、HTML/CSS 状态栏、变量/媒体、Tavern Helper 受控 API 运行；复杂无法等价模拟的 JS 允许经用户选择使用官方 SillyTavern Windows sidecar 原版宿主。不能用“JSON 成功解析/保存”伪装真正可玩，也不能让脚本随意读主站密钥或跨卡数据。
+
+本轮须 R1–R5 一起做到最后再交总包，内部开发严格按 R1 无损数据和兼容库、R2 prompt/worldbook/会话、R3 正则渲染/状态栏/变量、R4 插件沙箱及具体 API、R5 Windows 官方酒馆 sidecar 的依赖顺序分 Gate 验收。不要先交只有 R1 的假总包。遇到未知生态插件逐项标明能力 L0 识别/L1 保留/L2 转换/L3 原生等价运行/L4 特定插件实测/L5 官方宿主运行；不得谎称所有第三方脚本都被咪嘛馆自研内核 100% 支持。
+
+强制保护：旧原生 Sessions/Prompt/记忆/小说/主题/CSS/菜单/历史/备份全部功能及调用不被破坏；旧 store schemaVersion=4 且 normalizeState 白名单，绝不可直接塞新字段进旧库后保存；优先单独版本化 Compat IndexedDB，CAS、事务、分段资产、幂等 import 和全套备份/恢复；读取失败不初始化空库；不缩上下文、不删资料、不吞错、不默认执行 JS、不让 iframe 获得父 DOM/主站密钥。每条兼容 Speech Turn 唯一 settlement，插件失败不能吞主回复或造成重复消息；旧插件 attempt 不能覆盖新 session 或已撤销权限。
+
+上游必须查官方 SillyTavern 实际实现、Character Card V3/CHARX spec、正则源码、World Info 源码、Tavern Helper 的对应版本接口，并固定 tag/commit/hash；调查复制/打包时的 AGPL 与第三方许可义务。王爱英 PNG 是一个真实样本（13 条世界书、9 正则、3 脚本）但必须有多格式标准、公开和恶意 fixture 避免过拟合。R5 的 Windows installer 不覆盖现有 ST/data/config，端口 loopback 限定、不误杀别的进程、支持路径空格/中文、无 Node/断网、恢复/回滚；官方宿主是真正独立宿主，不把原生运行算成自研兼容。
+
+交付必须是可独立覆盖的「完整源码/静态文件总 ZIP + 可选 Windows sidecar 安装启动脚本 + SHA256 + 变更影响面 + 上游锁/依赖/许可证 + 明确的兼容矩阵 + 数据完整性和 rollback + R1–R5 每层测试记录 + Windows 操作手册 + 残缺/未实测表」。不要夹带我的私人数据/密钥/原始私有角色卡。把本蓝图中 T01–T26 验收场景变为可运行或可明确标记的检查，必须逐门槛复核，最终按用户可见流程验收。若环境限制无法运行真正的 Windows/官方酒馆/在线模型，必须明确“未实测”，不可伪造通过。修根因，不贴 timeout/retry/fallback 创可贴；不做与兼容无关的重构；完整保留旧版入口。
+
+工作过程中持续汇报根因、变更、Gate 状态；不需要每完成一阶段都停下来等我回复，同一轮工作树连续施工到 R5，并在最终说明哪些能力已真实 PASS、哪些是兼容缺口或需要我在 Windows 实测。若发现必须由我确认的高风险动作（运行不可信插件、下载执行外部代码、覆盖存档、安装系统级依赖），先做安全的 code-only 实现，保留待确认步骤，不静默实施。

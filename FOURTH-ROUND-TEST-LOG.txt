@@ -1,0 +1,173 @@
+FOURTH ROUND TESTS (2026-10-12)
+Third source archive SHA256: 6ebd3310de0edfc295bfcd7039fcff41a1607f1edf6e649498e2664ac2568bf2
+
+PASS smoke-compat-r1-r5.js
+PASS smoke-compat-rework-real-png.js
+PASS smoke-compat-rework-store.js
+PASS smoke-compat-rework-turn.js
+PASS smoke-compat-rework-worker.js
+PASS smoke-fourth-memory-p0-lease.js
+PASS smoke-session-history-v1.1.2.js
+PASS smoke-third-api-diagnostics.js
+PASS smoke-third-compat-concurrency.js
+PASS smoke-third-memory-journal.js
+PASS smoke-v1.1.0.js
+PASS smoke-v1.1.1.js
+PASS smoke-v1.1.10.js
+PASS smoke-v1.1.2.js
+PASS smoke-v1.1.3.js
+PASS smoke-v1.1.4.js
+PASS smoke-v1.1.5-repair-failure.js
+PASS smoke-v1.1.5-repair.js
+PASS smoke-v1.1.5.js
+PASS smoke-v1.1.6.js
+PASS smoke-v1.1.7.js
+PASS smoke-v1.1.8.js
+PASS smoke-v1.1.9.js
+PASS smoke-v1.2.0.js
+PASS smoke-v1.3.0.js
+PASS smoke-v1.3.1.js
+PASS smoke-v1.3.2-root-closure.js
+PASS smoke-v1.3.3-backup-integrity.js
+PASS smoke-v1.3.3-legacy-memory.js
+PASS smoke-v1.3.4-legacy-quarantine.js
+PASS smoke-v1.3.4-rework.js
+PASS smoke-v1.3.5-persisted-arrays.js
+PASS smoke-v1.3.6-historical-v4-contract.js
+PASS smoke-v1.3.7-theme.js
+PASS smoke-v1.3.9-memory-facts.js
+PASS smoke-v1.3.9-png-memory.js
+PASS smoke-v1.4.0-png-resources.js
+RESULT pass=37 fail=0
+
+SOURCE PROBE: source-root fourth, original fourth-round probes
+Independent 03: 30,100,200,500 prompt preview all produced bounded prompt without exception.
+Independent 04: success=false, errCode=E_MEMORY_OUTPUT_INVALID, injectsRefusal=false.
+
+RAW PER-TEST OUTPUT
+
+=============== smoke-compat-r1-r5.js.log ===============
+PASS compatibility smoke: 25 explicit assertions/groups; synthetic PNG dual-card, CCv1/v2/v3, unknown bytes, ZIP/CHARX, traversal, CRC, budget, WI/regex, prompt, plugin sandbox, store digest, UI refs
+
+=============== smoke-compat-rework-real-png.js.log ===============
+SKIP private PNG golden input not provided
+
+=============== smoke-compat-rework-store.js.log ===============
+PASS snapshot contract: SHA256 seal/tamper, orphan session and grant, legacy unsealed explicit status
+
+=============== smoke-compat-rework-turn.js.log ===============
+PASS P0 lifecycle mock: failure projection, stable retry, stale fencing, abort, competing begins, killable regex
+
+=============== smoke-compat-rework-worker.js.log ===============
+PASS plugin Worker: SDK RPC and killable busy loop, iframe CSP not browser-tested
+
+=============== smoke-fourth-memory-p0-lease.js.log ===============
+PASS long history rounds=50 estimatedTokens=1544 retrieved=1 omitted=88
+PASS long history rounds=200 estimatedTokens=1544 retrieved=1 omitted=388
+PASS long history rounds=500 estimatedTokens=1544 retrieved=1 omitted=988
+Rolling summary background debt {
+  sessionId: 'sess_1791742321182_rtrxjtg',
+  code: 'E_API_HTTP_429',
+  stage: 'rolling',
+  settlementError: ''
+}
+PASS fourth memory P0: rejected core/facts refusal; source-proven JSON memory injected; invalid evidence held; exact lease takeover and old-attempt fencing
+
+=============== smoke-session-history-v1.1.2.js.log ===============
+PASS v1.1.2 session history: rename preserves story data; delete removes only target session
+
+=============== smoke-third-api-diagnostics.js.log ===============
+PASS third API diagnostics: 200 reasoning-only, refusal, 400, 429, truncated memory, transport error, valid body; no API key in structured trace
+
+=============== smoke-third-compat-concurrency.js.log ===============
+regex 100 items batch elapsed 45ms
+regex 500 items batch elapsed 44ms
+regex 1000 items batch elapsed 48ms
+PASS third compat: CSS concurrent settlement, aborted late event not failed, 100/500/1000 regex batching, pathological kill
+
+=============== smoke-third-memory-journal.js.log ===============
+PASS third memory journal: Direct Reply concurrent with Rolling Summary; unsummarized gap preserved, append-only rebase persisted
+PASS third memory job transaction fake: chat concurrent, CAS commit, prompt injection, stale source rejection, empty API preserves old, stable job states
+
+=============== smoke-v1.1.0.js.log ===============
+PASS v1.1.0: migration + regex fail-closed/token-saving + multiline story input + real SSE story streaming
+
+=============== smoke-v1.1.1.js.log ===============
+PASS v1.1.1: assistant model keeps story API connection but no longer inherits story Max Tokens
+
+=============== smoke-v1.1.10.js.log ===============
+PASS v1.1.10: BOND fill is hydrated from visible numeric value even when --value is absent
+
+=============== smoke-v1.1.2.js.log ===============
+PASS v1.1.2: collapsed assistant model panel + edit/delete history + safe in-place regenerate
+
+=============== smoke-v1.1.3.js.log ===============
+PASS v1.1.3: strict artifacts parse; common model JSON glitches auto-repair; irreparable artifacts surface diagnostics
+
+=============== smoke-v1.1.4.js.log ===============
+PASS v1.1.4: artifact self-healing + compact iOS assistant + reader-controlled streaming + cache observability/context pruning
+
+=============== smoke-v1.1.5-repair-failure.js.log ===============
+PASS v1.1.5 repair failure: one paid call only; original preserved; failed model response archived and surfaced
+
+=============== smoke-v1.1.5-repair.js.log ===============
+PASS v1.1.5 repair: one paid call only; broken V1 -> V2; original and repair attempt archived
+
+=============== smoke-v1.1.5.js.log ===============
+PASS v1.1.5: V2 Zero-Escape artifacts preserve regex/HTML/CSS, legacy V1 remains compatible, invalid V2 fails closed, paid repair is explicit and archived
+
+=============== smoke-v1.1.6.js.log ===============
+PASS v1.1.6: persona macros resolve in Persona/Preset/Worldbook/Memory/history/display without mutating source or machine roles
+
+=============== smoke-v1.1.7.js.log ===============
+PASS v1.1.7: AIRP speech/action/private-thought semantics are compiled at prompt time with epistemic boundaries while raw Store/UI data stays intact
+
+=============== smoke-v1.1.8.js.log ===============
+PASS v1.1.8: player typography + Safe HTML live preview + responsive Settings during streaming + recoverable per-message deletion
+
+=============== smoke-v1.1.9.js.log ===============
+PASS v1.1.9: Safe HTML preserves only bounded --value percentages for legacy BOND meters
+
+=============== smoke-v1.2.0.js.log ===============
+PASS v1.2.0: canonical BOND hydration + native meters + conservative browser transport + non-duplicating manual retry coexist
+
+=============== smoke-v1.3.0.js.log ===============
+PASS v1.3.0: migration + TXT + chapters + prompt + same-generation append + Draft/accept + partial memory + fail-closed memory + themes + RP coexistence
+
+=============== smoke-v1.3.1.js.log ===============
+v1.3.1 user regression PASS
+
+=============== smoke-v1.3.2-root-closure.js.log ===============
+v1.3.2 root closure: invalid backups, async novel CAS, source-aware facts, spoiler isolation, merge retention, finish reason, RP deletion PASS
+
+=============== smoke-v1.3.3-backup-integrity.js.log ===============
+PASS v1.3.3 backup integrity: nested validation, unchanged state, legacy import, interrupted write, CAS
+
+=============== smoke-v1.3.3-legacy-memory.js.log ===============
+PASS v1.3.3 legacy memory: v1.3.1 fixture, prompt retention, source-bound rollback, newer deltas, review marker and spoiler isolation
+
+=============== smoke-v1.3.4-legacy-quarantine.js.log ===============
+PASS v1.3.4 legacy quarantine: future spoiler filtered, verified legacy retained, human review chapter-scoped, edits/reorder/re-analysis invalidate
+
+=============== smoke-v1.3.4-rework.js.log ===============
+PASS v1.3.4 full v4 export/import, 16 corrupted field guards and unchanged canonical, valid empty fields, failed-write rollback, v2/v3 migration
+
+=============== smoke-v1.3.5-persisted-arrays.js.log ===============
+PASS v1.3.5 complete v4 durable arrays and legacy, corrupted field guards and unchanged canonical, valid empty fields, failed-write rollback, v2/v3 migration
+
+=============== smoke-v1.3.6-historical-v4-contract.js.log ===============
+PASS v1.3.6: corrupt owner memory rejected via validator+both imports, durable/runtime unchanged; real v1.3.1/1.3.2/1.3.3 exports migrated without content loss; marked roundtrip and write failure
+
+=============== smoke-v1.3.7-theme.js.log ===============
+PASS v1.3.7: legacy + new themes, HTML references, CSS layer, user CSS parity, meta and color scheme
+
+=============== smoke-v1.3.9-memory-facts.js.log ===============
+PASS v1.3.9: multi-range fact summary, atomic replace-all failure, concurrent settings preservation and source-message retention
+
+=============== smoke-v1.3.9-png-memory.js.log ===============
+PASS v1.3.9: V2/V3 tEXt+compressed metadata, CRC, duplicate rejection, append-safe memory commit, manual conflict, abort, one-call core, independent request owner
+
+=============== smoke-v1.4.0-png-resources.js.log ===============
+PASS v1.4.0 PNG read-only full metadata, V3 precedence, CSS/preset/worldbook extraction, incompatible script isolation, loss guard, tamper refusal
+
+SYNTAX: all 62 JS files node --check PASS

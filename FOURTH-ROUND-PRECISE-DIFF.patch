@@ -1,0 +1,371 @@
+--- THIRD/app.js
++++ FOURTH/app.js
+@@ -572,7 +572,7 @@
+     host.replaceChildren();
+     for(const job of rows){const line=document.createElement('div');line.className='entry-card';
+         const label=document.createElement('div');label.textContent=`${job.kind} · ${job.status==='running'?'当前页面状态不确定（刷新后需核实）':job.status} · ${job.stage} · ${job.code||''}`;line.appendChild(label);
+-        const btn=document.createElement('button');btn.className='tool-mini';btn.textContent='人工确认旧尝试失效并重新总结';
++        const btn=document.createElement('button');btn.className='tool-mini';btn.textContent=job.status==='running'&&Number(job.leaseUntilEpoch||0)>Date.now()?'其他窗口可能仍运行（查看状态）':'安全恢复 / 重试原任务';
+         btn.onclick=()=>resumeMemoryJob(job.kind,job.id);line.appendChild(btn);host.appendChild(line);
+     }
+ }
+@@ -580,11 +580,13 @@
+     try{if(memoryTask)return toast('本页面仍有正在运行的记忆任务，先停止并等待结算。');
+         const sessionId=currentSessionId,old=await MimaLocalStore.getMemoryJob(sessionId,kind);
+         if(!old||old.id!==jobId)return toast('任务版本已发生变化，请刷新。');
+-        if(old.status==='running'){
+-            if(!confirm('此任务可能在其他标签页仍在运行。确认人工接管并隔离旧 attempt？迟到结果不会覆盖新版本。'))return;
+-            await MimaLocalStore.interruptMemoryJob(sessionId,kind,jobId);
+-        }
+-        if(kind==='rolling')return toast('滚动总结可在后续正文结束后重新调度；当前已阻止旧任务提交。');
++        if(old.status==='running'&&Number(old.leaseUntilEpoch||0)>Date.now()){
++            return toast('任务租约仍有效，可能在另一标签页运行；为避免重复结算，当前不能抢占。');
++        }
++        if(kind==='rolling'){
++            const result=await MimaStandalone.runRecordedMemory('rolling',sessionId,old.options||{},null,null);
++            toast('原滚动摘要债务已恢复并结算。');return result;
++        }
+         await runMemorySummary(kind,sessionId,old.options||{});
+     }catch(e){toast('恢复任务失败：'+(e.code||e.message));}
+     finally{refreshDurableMemoryJobs().catch(console.error);}
+@@ -881,7 +883,7 @@
+     <div class="form-full"><label class="form-label">API Key（接口密钥）</label><input id="api-key" class="field" type="password" autocomplete="off" placeholder="sk-..." value="${escapeHtml(c.apiKey||'')}"></div>
+     <div class="form-full"><label class="form-label">Model（模型）</label><div class="model-picker-stack"><div class="inline-field-row"><select id="api-model-select" class="field" onchange="syncApiModelSelect()"><option value="">先点“拉取模型”，然后从这里展开选择</option>${c.model?`<option value="${escapeHtml(c.model)}" selected>${escapeHtml(c.model)} · 当前</option>`:''}</select><button class="ghost-btn" onclick="loadApiModels()">拉取模型</button></div><input id="api-model" class="field" placeholder="也可以手动填写模型名" value="${escapeHtml(c.model||'')}"><div class="row-sub">iPhone / iPad（苹果移动设备）会使用原生下拉选择器；选择后会自动同步到下方模型名输入框。</div></div></div>
+     <div class="form-full"><label class="form-label">Temperature（温度） <span id="api-temp-value" class="value-pill">${temp.toFixed(2)}</span></label><div class="temperature-row"><input id="api-temp-range" class="temp-range" type="range" min="0.1" max="2" step="0.05" value="${temp}" oninput="syncTemperature('range')"><input id="api-temperature" class="field temp-number" type="number" min="0.1" max="2" step="0.05" value="${temp}" oninput="syncTemperature('number')"></div><div class="row-sub">数值越高通常越发散，越低通常越稳定。具体有效范围以模型/中转站为准。</div></div>
+-    <div><label class="form-label">Max Tokens（最大 Token 数量，0=不发送）</label><input id="api-max-tokens" class="field" type="number" min="0" value="${Number(c.maxTokens||0)}"></div>
++    <div><label class="form-label">模型上下文窗口（Tokens，0=未确认，使用保守估算）</label><input id="api-context-window" class="field" type="number" min="0" value="${Number(c.contextWindowTokens||0)}"><div class="row-sub">请按模型提供商的真实数值填写。预算仅控制本轮输入和原文检索，不改变云端/本地模型设置或删除原文。</div></div><div><label class="form-label">Max Tokens（最大 Token 数量，0=不发送）</label><input id="api-max-tokens" class="field" type="number" min="0" value="${Number(c.maxTokens||0)}"></div>
+     <div><label class="check-row api-check"><input id="api-send-temp" type="checkbox" ${c.sendTemperature!==false?'checked':''}> 发送 Temperature（温度）参数</label><label class="check-row"><input id="api-stream" type="checkbox" ${c.stream?'checked':''}> Streaming（流式传输）</label></div>
+     <div class="form-full"><details><summary>Advanced（高级设置）</summary><div class="form-grid advanced-grid"><div class="form-full"><label class="form-label">Chat Endpoint Override（聊天端点覆盖，可空）</label><input id="api-chat-endpoint" class="field" placeholder="例如 /v1/chat/completions" value="${escapeHtml(c.chatEndpoint||'')}"></div><div class="form-full"><label class="form-label">Models Endpoint Override（模型端点覆盖，可空）</label><input id="api-models-endpoint" class="field" placeholder="例如 /v1/models" value="${escapeHtml(c.modelsEndpoint||'')}"></div><div class="form-full"><label class="form-label">Extra Headers JSON（额外请求头 JSON 数据，可空）</label><textarea id="api-extra-headers" class="field textarea" placeholder='{"X-Custom-Key":"value"}'>${escapeHtml(c.extraHeaders||'')}</textarea></div></div></details></div></div>
+     <div class="toolbar"><button class="primary-btn" onclick="saveApiSettings()">保存 API（接口）</button><button class="ghost-btn" onclick="testApiConnection()">测试连接</button><button class="ghost-btn" onclick="chooseApiImport()">⇧ 导入 API（接口）配置</button></div><div id="api-status" class="api-status"></div></section>
+@@ -890,7 +892,7 @@
+ function syncApiModelSelect(){const sel=qs('api-model-select'),input=qs('api-model');if(sel?.value&&input){input.value=sel.value;MimaStandalone.saveApiConfig({...MimaStandalone.getApiConfig(),model:sel.value});const status=qs('api-status');if(status)status.textContent=`✅ 已选择 Model（模型）：${sel.value}`}}
+ function syncTemperature(source){const range=qs('api-temp-range'),num=qs('api-temperature'),pill=qs('api-temp-value');let v=Number(source==='range'?range?.value:num?.value);if(!Number.isFinite(v))v=.85;v=Math.max(.1,Math.min(2,v));if(range&&source!=='range')range.value=v;if(num&&source!=='number')num.value=v.toFixed(2);if(pill)pill.textContent=v.toFixed(2)}
+ function populateApiModelSelect(models){const sel=qs('api-model-select');if(!sel)return;const current=qs('api-model')?.value.trim()||'';sel.innerHTML='<option value="">请选择 Model（模型）</option>'+models.map(x=>`<option value="${escapeHtml(x)}" ${x===current?'selected':''}>${escapeHtml(x)}</option>`).join('');if(current&&!models.includes(current)){const opt=document.createElement('option');opt.value=current;opt.textContent=`${current} · 手动`;opt.selected=true;sel.appendChild(opt)}}
+-function collectApiForm(){const temp=Math.max(.1,Math.min(2,Number(qs('api-temperature')?.value||.85)));return{apiBase:qs('api-base').value.trim(),apiKey:qs('api-key').value.trim(),model:qs('api-model').value.trim(),chatEndpoint:qs('api-chat-endpoint').value.trim(),modelsEndpoint:qs('api-models-endpoint').value.trim(),extraHeaders:qs('api-extra-headers').value.trim(),sendTemperature:qs('api-send-temp').checked,temperature:temp,stream:qs('api-stream').checked,maxTokens:Number(qs('api-max-tokens').value||0)}}
++function collectApiForm(){const temp=Math.max(.1,Math.min(2,Number(qs('api-temperature')?.value||.85)));return{apiBase:qs('api-base').value.trim(),apiKey:qs('api-key').value.trim(),model:qs('api-model').value.trim(),chatEndpoint:qs('api-chat-endpoint').value.trim(),modelsEndpoint:qs('api-models-endpoint').value.trim(),extraHeaders:qs('api-extra-headers').value.trim(),sendTemperature:qs('api-send-temp').checked,temperature:temp,stream:qs('api-stream').checked,maxTokens:Number(qs('api-max-tokens').value||0),contextWindowTokens:Number(qs('api-context-window')?.value||0)}}
+ function saveApiSettings(){try{const c=collectApiForm();if(c.extraHeaders)JSON.parse(c.extraHeaders);MimaStandalone.saveApiConfig(c);localStorage.setItem(TEMP_KEY,String(c.temperature));toast('API（接口）配置只保存到了这个浏览器');const el=qs('api-status');if(el)el.textContent='✅ 已保存。';return true}catch(e){const info=describeApiError(e);toast(`API（接口）配置错误：${info.message}`);const el=qs('api-status');if(el)el.textContent=`❌ ${info.code} · ${info.message}\n可能原因：${info.hint}`;return false}}
+ async function loadApiModels(){if(!saveApiSettings())return;const status=qs('api-status');status.textContent='正在拉取模型……';try{const models=await MimaStandalone.listModels();populateApiModelSelect(models);status.textContent=`✅ 拉到 ${models.length} 个 Model（模型）。现在可以点击上方下拉框展开选择，也可以继续手填。`;if(models.length&&!qs('api-model').value){qs('api-model').value=models[0];populateApiModelSelect(models);MimaStandalone.saveApiConfig({...collectApiForm(),model:models[0]})}}catch(e){const info=describeApiError(e);status.textContent=`❌ ${info.code}${info.status?` · HTTP（状态码） ${info.status}`:''}\n${info.message}\n可能原因：${info.hint}`}}
+ async function testApiConnection(){if(!saveApiSettings())return;const status=qs('api-status');status.textContent='正在测试 API（接口）……';try{const r=await MimaStandalone.testApi();status.textContent=`✅ API（接口）可访问，模型列表 ${r.count} 个。`;populateApiModelSelect(r.models)}catch(e){const info=describeApiError(e);status.textContent=`❌ ${info.code}${info.status?` · HTTP（状态码） ${info.status}`:''}\n${info.message}\n可能原因：${info.hint}`}}
+@@ -908,7 +910,7 @@
+     const cached=u?.cachedTokens;
+     const cacheText=Number.isFinite(Number(cached))?Number(cached).toLocaleString():'—';
+     const cacheNote=u?`最近一次上游 usage${u.model?` · ${escapeHtml(u.model)}`:''}${Number.isFinite(Number(cached))?`：缓存命中 ${Number(cached).toLocaleString()} tokens`:'：未提供 cached tokens 字段'}。`:'当前中转/模型尚未返回可识别的 usage 统计。';
+-    root.innerHTML=`<div class="prompt-stats"><div class="stat-card"><div class="stat-num">${Number(d.estimatedInputTokens||0).toLocaleString()}</div><div class="stat-label">估算输入 Tokens</div></div><div class="stat-card"><div class="stat-num">${d.recentMessageCount}/${d.recentMessageLimit||'—'}</div><div class="stat-label">最近消息窗口</div></div><div class="stat-card"><div class="stat-num">${d.matchedWorldbookEntries.length}</div><div class="stat-label">世界书命中</div></div><div class="stat-card"><div class="stat-num">${cacheText}</div><div class="stat-label">最近缓存命中 Tokens</div></div><div class="stat-card"><div class="stat-num">${d.systemChars}</div><div class="stat-label">System 字符</div></div><div class="stat-card"><div class="stat-num">${d.finalMessageCount}</div><div class="stat-label">最终 Messages</div></div></div><div class="cache-insight-card"><strong>🧊 Cache Insight（缓存观察）</strong><div class="row-sub">${cacheNote} 缓存是否真正命中由上游 Provider 决定；咪嘛馆不会伪造“已缓存”。</div></div><h4>本轮世界书</h4><div class="hit-list">${d.matchedWorldbookEntries.length?d.matchedWorldbookEntries.map(x=>`<div class="hit-item">✅ ${escapeHtml(x.bookName)} / ${escapeHtml(x.entryName)} · Depth（深度） ${x.depth} · ${escapeHtml(x.position)} · ${escapeHtml(x.reason)}${x.hits?.length?` · 命中：${escapeHtml(x.hits.join(', '))}`:''}</div>`).join(''):'<div class="hit-item">本轮没有触发世界书条目；未触发条目不会进入本轮 Prompt。</div>'}</div><h4 style="margin-top:16px">System Prompt（系统提示词）</h4><pre class="prompt-pre">${escapeHtml(d.systemPreview)}</pre><details style="margin-top:12px"><summary>查看完整 Message（消息）队列</summary><pre class="prompt-pre">${escapeHtml(d.messagePreview.map(x=>`#${x.index} ${x.role}\n${x.content}`).join('\n\n'))}</pre></details>`;
++    root.innerHTML=`<div class="prompt-stats"><div class="stat-card"><div class="stat-num">${Number(d.estimatedInputTokens||0).toLocaleString()}</div><div class="stat-label">估算输入 Tokens</div></div><div class="stat-card"><div class="stat-num">${d.recentMessageCount}/${d.recentMessageLimit||'—'}</div><div class="stat-label">最近消息窗口</div></div><div class="stat-card"><div class="stat-num">${d.matchedWorldbookEntries.length}</div><div class="stat-label">世界书命中</div></div><div class="stat-card"><div class="stat-num">${cacheText}</div><div class="stat-label">最近缓存命中 Tokens</div></div><div class="stat-card"><div class="stat-num">${d.systemChars}</div><div class="stat-label">System 字符</div></div><div class="stat-card"><div class="stat-num">${d.finalMessageCount}</div><div class="stat-label">最终 Messages</div></div></div><div class="cache-insight-card"><strong>🧊 Cache Insight（缓存观察）</strong><div class="row-sub">${cacheNote} 缓存是否真正命中由上游 Provider 决定；咪嘛馆不会伪造“已缓存”。</div></div><div class="row-sub">${d.contextTrace?.uncoveredRawCount?`本轮有 ${d.contextTrace.uncoveredRawCount} 条待总结旧原文处于最近窗口外；相关检索 ${d.contextTrace.retrievedCount} 条，未覆盖 ${d.contextTrace.omittedCount} 条（原文仍在本地）。`:'旧原文覆盖无额外缺口。'} ${d.contextTrace?.budgetVerified?'上下文预算：使用已配置模型窗口。':'模型上下文窗口尚未核实，当前显示估算预算；请到 API 设置核对。'}</div><h4>本轮世界书</h4><div class="hit-list">${d.matchedWorldbookEntries.length?d.matchedWorldbookEntries.map(x=>`<div class="hit-item">✅ ${escapeHtml(x.bookName)} / ${escapeHtml(x.entryName)} · Depth（深度） ${x.depth} · ${escapeHtml(x.position)} · ${escapeHtml(x.reason)}${x.hits?.length?` · 命中：${escapeHtml(x.hits.join(', '))}`:''}</div>`).join(''):'<div class="hit-item">本轮没有触发世界书条目；未触发条目不会进入本轮 Prompt。</div>'}</div><h4 style="margin-top:16px">System Prompt（系统提示词）</h4><pre class="prompt-pre">${escapeHtml(d.systemPreview)}</pre><details style="margin-top:12px"><summary>查看完整 Message（消息）队列</summary><pre class="prompt-pre">${escapeHtml(d.messagePreview.map(x=>`#${x.index} ${x.role}\n${x.content}`).join('\n\n'))}</pre></details>`;
+ }
+ 
+ function setupEditorButtons(deleteFn,saveFn){qs('editor-save').textContent='保存';const del=qs('editor-delete');if(deleteFn){del.classList.remove('hidden');del.onclick=deleteFn}else{del.classList.add('hidden');del.onclick=null}qs('editor-save').onclick=saveFn}
+--- THIRD/local-store.js
++++ FOURTH/local-store.js
+@@ -369,6 +369,7 @@
+   // Durable per-session memory journal is stored next to, but independent from,
+   // the canonical state record. No new database/version or destructive migration.
+   const jobKey=(sessionId,kind)=>`memory_job:${sessionId}:${kind}`;
++  const MEMORY_LEASE_MS=45000; // durable ownership, not a Provider request timeout
+   async function getMemoryJob(sessionId,kind){return get(jobKey(sessionId,kind));}
+   async function memoryJobTransaction(sessionId,kind,work){
+     const db=await openDb();return new Promise((resolve,reject)=>{
+@@ -380,16 +381,34 @@
+   }
+   async function beginMemoryJob({sessionId,kind,options,sourceHash,sourceCount,configSignature}){
+     return memoryJobTransaction(sessionId,kind,(old,kv)=>{
+-      if(old?.status==='running')throw new Error('E_MEMORY_JOB_PENDING: 检测到尚未确认结算的任务，请先核实/终止后重试，可能仍有其他标签页正在运行');
+-      const resumeCandidates={};if(old?.status!=='running'&&old?.sourceHash===sourceHash&&old?.configSignature===configSignature&&JSON.stringify(old?.options)===JSON.stringify(options)){for(const candidate of old.checkpoints||[]){if(typeof candidate.output==='string'&&candidate.stage.endsWith('_received'))resumeCandidates[candidate.stage.slice(0,-9)]=candidate.output;}}
+-      const now=new Date().toISOString();const job={resumeCandidates,configSignature,id:`mem_${Date.now()}_${Math.random().toString(36).slice(2)}`,attemptId:`a_${Date.now()}_${Math.random().toString(36).slice(2)}`,sessionId,kind,options,sourceHash,sourceCount,status:'running',stage:'prepared',startedAt:now,updatedAt:now,checkpoints:[],revision:(old?.revision||0)+1};
++      const live=old?.status==='running'&&Number(old.leaseUntilEpoch||0)>Date.now();
++      if(live)throw new Error('E_MEMORY_JOB_PENDING: 另一个尚有租约的 attempt 正在运行；不能竞争结算');
++      if(old?.status==='running'&&Number(old.recoveryCount||0)>=3)throw new Error('E_MEMORY_RECOVERY_LIMIT: 连续恢复已达到上限，请检查后台任务错误记录并人工操作');
++      const sameSource=old?.sourceHash===sourceHash&&old?.configSignature===configSignature&&JSON.stringify(old?.options)===JSON.stringify(options);
++      const resumeCandidates={};
++      if(sameSource&&['running','failed','interrupted','aborted'].includes(old?.status)){for(const candidate of old.checkpoints||[]){if(typeof candidate.output==='string'&&candidate.stage.endsWith('_received'))resumeCandidates[candidate.stage.slice(0,-9)]=candidate.output;}}
++      const now=new Date().toISOString(),recovering=old?.status==='running';
++      const job={resumeCandidates,configSignature,
++        id:recovering?old.id:`mem_${Date.now()}_${Math.random().toString(36).slice(2)}`,
++        attemptId:`a_${Date.now()}_${Math.random().toString(36).slice(2)}`,sessionId,kind,options,sourceHash,sourceCount,
++        status:'running',stage:recovering?'recovered_pending':'prepared',startedAt:recovering?old.startedAt:now,updatedAt:now,
++        checkpoints:sameSource?(old.checkpoints||[]):[],revision:(old?.revision||0)+1,
++        leaseUntilEpoch:Date.now()+MEMORY_LEASE_MS,recoveryCount:recovering?(Number(old.recoveryCount||0)+1):0,
++        recoveredFromAttemptId:recovering?old.attemptId:null};
+       kv.put(job,jobKey(sessionId,kind));return job;
++    });
++  }
++  async function heartbeatMemoryJob(job){
++    return memoryJobTransaction(job.sessionId,job.kind,(old,kv)=>{
++      if(old?.id!==job.id||old?.attemptId!==job.attemptId||old.status!=='running')throw new Error('E_MEMORY_JOB_FENCED');
++      const next={...old,updatedAt:new Date().toISOString(),leaseUntilEpoch:Date.now()+MEMORY_LEASE_MS,revision:old.revision+1};
++      kv.put(next,jobKey(job.sessionId,job.kind));return next;
+     });
+   }
+   async function checkpointMemoryJob(job,stage,extra={}){
+     return memoryJobTransaction(job.sessionId,job.kind,(old,kv)=>{
+       if(old?.id!==job.id||old?.attemptId!==job.attemptId||old.status!=='running')throw new Error('E_MEMORY_JOB_FENCED');
+-      const next={...old,stage,updatedAt:new Date().toISOString(),revision:old.revision+1,checkpoints:[...(old.checkpoints||[]),{stage,time:new Date().toISOString(),...extra}].slice(-300)};
++      const next={...old,stage,updatedAt:new Date().toISOString(),leaseUntilEpoch:Date.now()+MEMORY_LEASE_MS,revision:old.revision+1,checkpoints:[...(old.checkpoints||[]),{stage,time:new Date().toISOString(),...extra}].slice(-300)};
+       kv.put(next,jobKey(job.sessionId,job.kind));return next;
+     });
+   }
+@@ -435,5 +454,5 @@
+       tx.oncomplete=()=>{db.close();resolve(committed);};tx.onabort=()=>{db.close();reject(problem||tx.error||new Error('E_MEMORY_COMMIT_ABORTED'));};
+     });
+   }
+-  window.MimaLocalStore={loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,clearSettingsSnapshot,getMemoryJob,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob};
++  window.MimaLocalStore={loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,clearSettingsSnapshot,getMemoryJob,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob};
+ })();
+--- THIRD/standalone-core.js
++++ FOURTH/standalone-core.js
+@@ -181,7 +181,15 @@
+       throw e;
+     }
+   }
+-  async function init() { state = normalizeState(await window.MimaLocalStore.loadState()); window.MimaThemeEngine?.apply?.(state.themeSettings); return state; }
++  async function init() {
++    state = normalizeState(await window.MimaLocalStore.loadState());window.MimaThemeEngine?.apply?.(state.themeSettings);
++    // Browser-only startup: pick up a crashed Rolling job after its durable
++    // owner lease has expired. A surviving other tab keeps its lease; no dual
++    // settlement, and nothing here blocks a user's Direct Reply.
++    if(typeof document!=='undefined'&&typeof window.MimaLocalStore?.getMemoryJob==='function')
++      setTimeout(()=>resumeExpiredRollingJobs().catch(e=>console.warn('Memory recovery scan failed',{code:e.code||e.message,stage:'startup_scan'})),0);
++    return state;
++  }
+ 
+   function getSession(id) { return state.sessions.find(x => x.id === id); }
+   function getMask(id) { return state.masks.find(x => x.id === id); }
+@@ -329,23 +337,96 @@
+   function toHistoryMessage(m,session){if(!m?.content)return null;const content=m.role==='user'?userMessagePromptContent(m,session):messagePromptContent(m,session);if(m.role==='assistant')return{role:'assistant',content};if(m.role==='user')return{role:'user',content};return{role:'user',content:`【${m.role}】${content}`};}
+   function applyDepth(history,items,session){const result=history.slice(),debug=[];const sorted=items.slice().sort((a,b)=>Number(b.entry.depth||0)-Number(a.entry.depth||0)||Number(a.entry.priority||50)-Number(b.entry.priority||50));for(const item of sorted){const {book,entry}=item;const depth=Math.max(1,Number(entry.depth||1));const anchor=Math.max(0,result.length-depth);let index=anchor;if(entry.position==='front')index=Math.max(0,anchor-1);else if(entry.position==='back')index=Math.min(result.length,anchor+1);const content=resolveMacrosForSession(session,`【Worldbook Context · ${book.name} / ${entry.name} · depth=${depth}】\n${clip(entry.content,entry.maxChars)}`);result.splice(index,0,{role:'user',content});debug.push({bookId:book.id,bookName:book.name,entryId:entry.id,entryName:entry.name,depth,position:entry.position,insertedAt:index,chars:content.length});}return{messages:result,debug};}
+   function enforceBudget(matched,budget){let used=0;const kept=[],dropped=[];const sorted=matched.slice().sort((a,b)=>Number(a.entry.priority||50)-Number(b.entry.priority||50)||Number(a.entry.depth||0)-Number(b.entry.depth||0));for(const item of sorted){const cost=clip(item.entry.content,item.entry.maxChars).length;if(used+cost<=budget||!kept.length){kept.push(item);used+=cost}else dropped.push({...item,activation:{...item.activation,reason:'budget'}});}return{kept,dropped,used};}
+-  function assemble(sessionInput,options={}){const session=normalizeSession(sessionInput);const activation=collectWorldbookEntries(session);const budget=Math.max(1000,Number(session.promptSettings?.worldbookBudgetChars||16000));const budgeted=enforceBudget(activation.matched,budget),matched=budgeted.kept;const sys=buildSystemPrompt(session,options,matched);const limit=Math.max(6,Number(session.promptSettings?.recentMessageLimit||34));const visibleHistory=session.messages.filter(m=>m.role!=='director');
+-    // While rolling memory runs off-thread, keep every original message not yet
+-    // covered by a valid summary. The old last-N projection silently dropped
+-    // this gap; never trade missing story context for faster UI response.
++  // The complete source chronology remains in the canonical session. Projection
++  // is a traceable retrieval operation, NEVER a mutation of History. If a
++  // provider context size is unknown we use an explicitly labelled *estimate*,
++  // not a claim about that model's actual tokenizer/context limit.
++  function promptBudget(){
++    const cfg=getApiConfig(),configured=Number(cfg.contextWindowTokens);
++    const windowTokens=Number.isFinite(configured)&&configured>=4096?Math.floor(configured):32768;
++    const reserve=Math.max(1024,Number(cfg.maxTokens)>0?Math.floor(Number(cfg.maxTokens)):4096);
++    return {windowTokens,reserve,usable:Math.max(1024,Math.floor(windowTokens*.85)-reserve),verified:configured>=4096};
++  }
++  function retrievalTerms(input){
++    const source=String(input||'').toLowerCase(),pieces=(source.match(/[\p{Script=Han}]{2,}|[a-z0-9_]{3,}/gu)||[]);
++    const terms=new Set();for(const part of pieces){
++      if(/[\p{Script=Han}]/u.test(part)){for(let i=0;i<part.length-1;i++)terms.add(part.slice(i,i+2));}
++      else terms.add(part);
++    }
++    return [...terms].filter(x=>!['剧情','角色','继续','主人','回复','这样','发生','故事','之后','可以'].includes(x)).slice(0,120);
++  }
++  function retrieveRawGap(session,history,coreCount,anchor,available){
++    const older=history.slice(0,Math.max(0,history.length-coreCount));
++    if(!older.length||available<=0)return {chosen:[],omitted:older,usedTokens:0,terms:[]};
++    const terms=retrievalTerms(anchor),items=older.map((m,index)=>{
++      const projected=toHistoryMessage(m,session),content=projected?.content||'';
++      const plain=(m.rawContent||m.content||'').toLowerCase();
++      const matches=terms.reduce((n,t)=>n+(plain.includes(t)?1:0),0);
++      const importance=(m.metadata?.pinned===true?100:0)+(/承诺|约定|关键|线索|秘密|身份|名字|物品|位置|誓言|决定|失踪|结局/.test(plain)?2:0);
++      return {m,index,projected,cost:estimateTokens(content)+10,score:matches*5+importance};
++    });
++    // Retrieve evidence-bearing turns rather than pulling a massive uncapped
++    // prefix. Round-trip chronology is kept for selected evidence, with stable
++    // IDs, not new invented summary text.
++    items.sort((a,b)=>b.score-a.score||b.index-a.index);
++    let usedTokens=0;const chosen=[];
++    for(const item of items){if(!item.score)continue;if(usedTokens+item.cost>available)continue;chosen.push(item);usedTokens+=item.cost;}
++    chosen.sort((a,b)=>a.index-b.index);
++    const chosenIds=new Set(chosen.map(x=>x.m.id));
++    return {chosen,omitted:older.filter(m=>!chosenIds.has(m.id)),usedTokens,terms};
++  }
++  function assemble(sessionInput,options={}){
++    const session=normalizeSession(sessionInput),activation=collectWorldbookEntries(session);
++    const budget=Math.max(1000,Number(session.promptSettings?.worldbookBudgetChars||16000)),budgeted=enforceBudget(activation.matched,budget),matched=budgeted.kept;
++    const sys=buildSystemPrompt(session,options,matched),limit=Math.max(6,Number(session.promptSettings?.recentMessageLimit||34));
++    const visibleHistory=session.messages.filter(m=>m.role!=='director'),recentRaw=visibleHistory.slice(-limit);
+     const summaryValid=!session.rollingSourceFingerprint||memorySourceFingerprint(session.messages,session.rollingSourceCount)===session.rollingSourceFingerprint;
+     const coverageStart=summaryValid?Math.max(0,session.lastSummarizedIndex||0):0;
+     const needsRawGap=session.promptSettings?.summaryEnabled!==false&&(summaryNeeded(session)||rollingInFlight.has(session.id));
+-    const unsummarized=new Set(!needsRawGap?[]:session.messages.slice(coverageStart).filter(m=>m.role!=='director'));
+-    const historyForPrompt=visibleHistory.filter((m,i)=>i>=Math.max(0,visibleHistory.length-limit)||unsummarized.has(m));
+-    const recent=historyForPrompt.map(m=>toHistoryMessage(m,session)).filter(Boolean);
+-    const unsummarizedGapCount=Math.max(0,recent.length-Math.min(limit,visibleHistory.length));
+-    const depthApplied=applyDepth(recent,matched.filter(x=>Number(x.entry.depth||0)>0),session);const messages=[{role:'system',content:sys.prompt},...depthApplied.messages];const estimatedInputTokens=messages.reduce((sum,m)=>sum+estimateTokens(m?.content||''),0);return{messages,inspector:{systemChars:sys.prompt.length,estimatedInputTokens,recentMessageCount:recent.length,unsummarizedGapCount,recentMessageLimit:limit,finalMessageCount:messages.length,worldbookBudgetChars:budget,worldbookUsedChars:budgeted.used,upstreamUsage:lastUsage?clone(lastUsage):null,sections:sys.sections.map(({name,chars})=>({name,chars})),memoryTrace:sys.memoryTrace,rollingTrace:{sourceCount:session.rollingSourceCount||0,valid:!session.rollingSourceFingerprint||memorySourceFingerprint(session.messages,session.rollingSourceCount)===session.rollingSourceFingerprint},matchedWorldbookEntries:matched.map(({book,entry,activation:a})=>({bookId:book.id,bookName:book.name,entryId:entry.id,entryName:entry.name,depth:entry.depth,position:entry.position,priority:entry.priority,reason:a.reason,hits:a.hits||[],secondaryHits:a.secondaryHits||[]})),skippedWorldbookEntries:[...activation.skipped,...budgeted.dropped].map(({book,entry,activation:a})=>({bookId:book.id,bookName:book.name,entryId:entry.id,entryName:entry.name,reason:a.reason})),depthInjections:depthApplied.debug,systemPreview:sys.prompt,messagePreview:messages.map((m,index)=>({index,role:m.role,content:m.content}))}};}
++    const pendingRaw=needsRawGap?session.messages.slice(coverageStart).filter(m=>m.role!=='director'):[];
++    const recentIds=new Set(recentRaw.map(m=>m.id));
++    const uncoveredOlder=pendingRaw.filter(m=>!recentIds.has(m.id));
++    const promptCap=promptBudget(),recent=recentRaw.map(m=>toHistoryMessage(m,session)).filter(Boolean);
++    const depthOnly=matched.filter(x=>Number(x.entry.depth||0)>0);
++    const baseline=applyDepth(recent,depthOnly,session);
++    const baselineTokens=estimateTokens(sys.prompt)+baseline.messages.reduce((n,m)=>n+estimateTokens(m.content),0);
++    // Hard guard protects Persona/Worldbook/Recent configured context: these
++    // sections must never be silently shortened to make space for memory.
++    if(baselineTokens>promptCap.usable){
++      throw new ApiError('E_CONTEXT_BUDGET_BASE','本轮必需的角色/世界书/最近剧情超过上下文预算；已保留原文，未请求模型。',{
++        details:JSON.stringify({stage:'assemble',estimatedTokens:baselineTokens,usableTokens:promptCap.usable,configuredWindow:promptCap.verified,recentMessageLimit:limit}),
++        hint:'请核对当前模型的真实 Context Window 并在 API 设置中填写；或调整用户指定的提示词预算。不会删除原始剧情或自动压缩 Persona。'});
++    }
++    const anchor=options.draft||recentRaw.filter(m=>m.role==='user').slice(-1).map(m=>m.rawContent||m.content).join(' ')||recentRaw.slice(-1).map(m=>m.rawContent||m.content).join(' ');
++    const retrievalBudget=Math.min(Math.floor(promptCap.usable*.38),Math.max(0,promptCap.usable-baselineTokens-600));
++    const candidateHistory=uncoveredOlder;
++    const retrieved=retrieveRawGap(session,candidateHistory,0,anchor,retrievalBudget);
++    const trace={pendingRawCount:pendingRaw.length,uncoveredRawCount:uncoveredOlder.length,retrievedCount:retrieved.chosen.length,
++      omittedCount:retrieved.omitted.length,retrievedIds:retrieved.chosen.map(x=>x.m.id),omittedIds:retrieved.omitted.slice(0,60).map(x=>x.id),
++      sourceFingerprint:memorySourceFingerprint(session.messages.filter(m=>m.metadata?.source!=='prompt_preview_draft'),session.messages.filter(m=>m.metadata?.source!=='prompt_preview_draft').length),sourceCount:session.messages.filter(m=>m.metadata?.source!=='prompt_preview_draft').length,
++      sourceWindow:promptCap.windowTokens,budgetVerified:promptCap.verified,retrievalEstimateTokens:retrieved.usedTokens,
++      coverageComplete:!retrieved.omitted.length,summarySourceValid:summaryValid,summarySourceCount:session.rollingSourceCount};
++    const recall=tracked=>tracked.map(x=>x.projected).filter(Boolean);
++    const olderMessages=recall(retrieved.chosen);
++    const marker=uncoveredOlder.length?`【原始剧情检索覆盖提示】\n待后台摘要的原始剧情共 ${uncoveredOlder.length} 条在最近窗口之外；本轮按输入相关性从本地原文检索 ${retrieved.chosen.length} 条，尚未覆盖 ${retrieved.omitted.length} 条。\n历史原文仍完整保存在本地；未检索到的旧事件不能据此推断“不存在”，请不要编造缺失往事。` : '';
++    const header=marker?`${sys.prompt}\n\n${marker}`:sys.prompt;
++    const depthApplied=applyDepth([...olderMessages,...recent],depthOnly,session);
++    const messages=[{role:'system',content:header},...depthApplied.messages];
++    const estimatedInputTokens=messages.reduce((sum,m)=>sum+estimateTokens(m?.content||''),0);
++    if(estimatedInputTokens>promptCap.usable)throw new ApiError('E_CONTEXT_BUDGET','上下文检索结果超过本轮预算，已中止发送但保留全部资料。',{details:JSON.stringify({estimatedInputTokens,promptCap,trace})});
++    return{messages,inspector:{systemChars:header.length,estimatedInputTokens,recentMessageCount:recent.length,unsummarizedGapCount:uncoveredOlder.length,recentMessageLimit:limit,finalMessageCount:messages.length,
++      contextTrace:trace,worldbookBudgetChars:budget,worldbookUsedChars:budgeted.used,upstreamUsage:lastUsage?clone(lastUsage):null,
++      sections:sys.sections.map(({name,chars})=>({name,chars})),memoryTrace:sys.memoryTrace,
++      rollingTrace:{sourceCount:session.rollingSourceCount||0,valid:summaryValid,coverage:trace},
++      matchedWorldbookEntries:matched.map(({book,entry,activation:a})=>({bookId:book.id,bookName:book.name,entryId:entry.id,entryName:entry.name,depth:entry.depth,position:entry.position,priority:entry.priority,reason:a.reason,hits:a.hits||[],secondaryHits:a.secondaryHits||[]})),
++      skippedWorldbookEntries:[...activation.skipped,...budgeted.dropped].map(({book,entry,activation:a})=>({bookId:book.id,bookName:book.name,entryId:entry.id,entryName:entry.name,reason:a.reason})),
++      depthInjections:depthApplied.debug,systemPreview:header,messagePreview:messages.map((m,index)=>({index,role:m.role,content:m.content}))}};
++  }
+ 
+   // ---------- API ----------
+   // V1.0.2 patch: keep the old OpenAI-compatible route, but add strict empty-reply protection,
+   // structured diagnostics, real streaming, and a persisted temperature setting.
+-  function defaultApiConfig(){return{apiBase:'',apiKey:'',model:'',chatEndpoint:'',modelsEndpoint:'',extraHeaders:'',sendTemperature:true,temperature:0.85,stream:false,maxTokens:0};}
++  function defaultApiConfig(){return{apiBase:'',apiKey:'',model:'',chatEndpoint:'',modelsEndpoint:'',extraHeaders:'',sendTemperature:true,temperature:0.85,stream:false,maxTokens:0,contextWindowTokens:0};}
+   function getApiConfig(){try{return{...defaultApiConfig(),...JSON.parse(localStorage.getItem(API_CONFIG_KEY)||'{}')}}catch(_){return defaultApiConfig();}}
+   function saveApiConfig(cfg){const next={...defaultApiConfig(),...cfg};next.temperature=clampTemp(next.temperature);next.stream=!!next.stream;localStorage.setItem(API_CONFIG_KEY,JSON.stringify(next));return next;}
+   function baseWithoutSlash(s){return String(s||'').trim().replace(/\/+$/,'');}
+@@ -728,16 +809,22 @@
+     const store=window.MimaLocalStore;
+     const snapshot=getSession(id);if(!snapshot)throw new ApiError('E_STORY_SESSION_MISSING','剧情已不存在');
+     if(typeof store?.beginMemoryJob!=='function')return kind==='core'?generateCoreMemory(id,opts,signal,progress):kind==='facts'?generateFactMemories(id,opts,signal,progress):refreshSummary(snapshot,opts.temperature,signal,progress);
+-    const original=normalizeSession(clone(snapshot));if(kind==='rolling'&&!summaryNeeded(original))return original;let job=null;
++    const original=normalizeSession(clone(snapshot));if(kind==='rolling'&&!summaryNeeded(original))return original;let job=null,heartbeat=null;
+     try{
+       const cfg=getApiConfig();const configSignature=fingerprint([cfg.apiBase,cfg.chatEndpoint,cfg.model,cfg.sendTemperature,cfg.maxTokens,cfg.stream]);
+       const sourceHash=fingerprint([memorySourceFingerprint(original.messages,original.messages.length),kind==='core'&&opts.source==='facts'?original.manualMemory.facts:null,kind==='rolling'?original.rollingSummary:null]);
+       job=await store.beginMemoryJob({sessionId:id,kind,options:opts,sourceHash,sourceCount:original.messages.length,configSignature});
++      if(typeof store.heartbeatMemoryJob==='function'&&typeof setInterval==='function'){
++        heartbeat=setInterval(()=>store.heartbeatMemoryJob(job).catch(e=>{
++          console.warn('Memory lease heartbeat failed',{sessionId:id,kind,jobId:job.id,attemptId:job.attemptId,stage:'heartbeat',code:e.code||e.message});
++        }),10000);
++      }
+       await store.checkpointMemoryJob(job,'request_planned',{sourceCount:original.messages.length,sourceRevision:original.recordRevision});
+       if(kind==='core')return await generateCoreMemory(id,opts,signal,progress,job,original);
+       if(kind==='facts')return await generateFactMemories(id,opts,signal,progress,job,original);
+       return await refreshSummary(original,opts.temperature,signal,progress,job);
+     }catch(e){if(job){try{await store.settleMemoryJob(job,signal?.aborted||e.name==='AbortError'?'aborted':'failed',e.code||e.message||'E_MEMORY_FAILED');}catch(settle){e.settlementError=settle.message;}}throw e;}
++    finally{if(heartbeat!==null)clearInterval(heartbeat);}
+   }
+   async function checkpoint(job,stage,info={}){if(job)await window.MimaLocalStore.checkpointMemoryJob(job,stage,info);}
+   async function storeMemoryResult(job,snapshot,patch){
+@@ -745,11 +832,63 @@
+     // Merge persisted current state, not the stale pre-request snapshot.
+     state=normalizeState(committed);return getSession(job.sessionId);
+   }
++  function validateMemoryCandidate(messages,candidate,stage,finishReason='unknown',requiresSourceLink=false){
++    const raw=String(candidate||'').trim();const source=messages.filter(m=>m.role==='user').map(m=>m.content||'').join('\n');
++    const invalid=(reason)=>{throw new ApiError('E_MEMORY_OUTPUT_INVALID','记忆候选未通过来源与输出契约校验，旧记忆已保留。',{
++      details:JSON.stringify({stage,reason,chars:raw.length,finishReason}),hint:'请查看任务阶段诊断并对原任务重试；拒绝模板和缺少来源证据的文字不会进入长期记忆。'});};
++    if(!raw||/^(?:\.{3,}|[.…]{2,}|null|undefined|n\/?a|todo|placeholder)$/i.test(raw))invalid('placeholder');
++    if(/^(?:system|developer|assistant)\s*:/i.test(raw)||/\[im_start\]|<\|im_start\|>|<!--\s*(system|developer)/i.test(raw))invalid('control_plane');
++    if(['length','max_tokens','content_filter'].includes(String(finishReason).toLowerCase()))invalid('truncated_or_filtered');
++    let memory=raw,formal=false,evidence=[];
++    if(/^```(?:json)?/i.test(raw)||raw.startsWith('{')){
++      let parsed;try{parsed=JSON.parse(raw.replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'').trim());}
++      catch{invalid('malformed_structured_output');}
++      if(!parsed||typeof parsed!=='object'||Array.isArray(parsed)||typeof parsed.memory!=='string')invalid('structured_schema');
++      memory=parsed.memory.trim();formal=true;evidence=Array.isArray(parsed.evidence)?parsed.evidence:[];
++      if(!evidence.length||!evidence.every(e=>typeof e?.quote==='string'&&e.quote.trim().length>=3&&source.includes(e.quote.trim())))invalid('evidence_not_in_source');
++      const lowerMemory=memory.toLowerCase();
++      const supporting=evidence.some(e=>{
++        const quote=e.quote.toLowerCase();
++        const tokens=quote.match(/[\p{Script=Han}]{2,}|[a-z0-9]{4,}/gu)||[];
++        return tokens.some(t=>{
++          if(/[\p{Script=Han}]/u.test(t)){for(let i=0;i<t.length-1;i++)if(lowerMemory.includes(t.slice(i,i+2)))return true;return false;}
++          return lowerMemory.includes(t);
++        });
++      });
++      if(!supporting)invalid('evidence_unrelated_to_memory');
++    }
++    if(!memory||/^(?:\.{3,}|null|n\/?a|todo|placeholder)$/i.test(memory))invalid('empty_memory');
++    // Discriminate a provider refusal *as the entire output* from a quoted
++    // refusal in a real story. A source quote with narrative framing is not
++    // rejected just because one character once said similar words.
++    const standaloneRefusal=/^(?:i(?:'| a)?m sorry[,!. ]*(?:but )?(?:i (?:can(?:not|'t)|am unable)|as an ai)|i can(?:not|'t) (?:assist|help|comply)|as an ai (?:language )?model|对不起[，, ]*(?:我无法|我不能|作为)|抱歉[，, ]*(?:我无法|我不能|作为)|很抱歉[，, ]*(?:我无法|我不能|作为))/i;
++    if(standaloneRefusal.test(memory)&&!(/(?:说道|回答|告诉|表示|原话|台词|说[:：]|said|replied|quoted|“|「)/i.test(memory)&&source.includes(memory)))invalid('provider_refusal');
++    if(standaloneRefusal.test(memory)&&!source.includes(memory))invalid('provider_refusal');
++    // A prose-only legacy API has no citation field. Keep support, but demand
++    // at least a small lexical link to the source instead of trusting a nonempty string.
++    if(!formal&&requiresSourceLink){
++      const segments=(memory.toLowerCase().match(/[\p{Script=Han}]{2,}|[a-z0-9]{4,}/gu)||[]),lower=source.toLowerCase();
++      const linked=segments.some(term=>{if(/[\p{Script=Han}]/u.test(term)){for(let i=0;i<term.length-1;i++)if(lower.includes(term.slice(i,i+2)))return true;return false;}return lower.includes(term);});
++      if(!linked)invalid('no_legacy_source_evidence');
++    }
++    return {memory,contract:formal?'json_evidence':'legacy_source_overlap',evidenceCount:evidence.length};
++  }
+   async function memoryModel(messages,temp,signal,job,stage){
+-    if(job?.resumeCandidates&&Object.hasOwn(job.resumeCandidates,stage)){await checkpoint(job,stage+'_reused',{sourceHash:job.sourceHash});return job.resumeCandidates[stage];}
++    if(job?.resumeCandidates&&Object.hasOwn(job.resumeCandidates,stage)){
++      // Third-round journals predate the new output contract: even a durable
++      // received checkpoint must be revalidated before becoming canonical.
++      const checked=validateMemoryCandidate(messages,job.resumeCandidates[stage],stage,'resumed',true);
++      await checkpoint(job,stage+'_reused',{sourceHash:job.sourceHash,outputContract:checked.contract});return checked.memory;
++    }
+     if(job&&window.MimaMemoryPriority?.whenIdle){await checkpoint(job,stage+'_queued');await window.MimaMemoryPriority.whenIdle(signal);}
+     await checkpoint(job,stage+'_request');const started=Date.now(),meta={};
+-    try{const value=await callModel(messages,temp,signal,{streamOverride:false,resultMeta:meta,memoryContext:job?{jobId:job.id,attemptId:job.attemptId,stage}:null});await checkpoint(job,stage+'_received',{chars:value.length,elapsedMs:Date.now()-started,finishReason:meta.finishReason||'unknown',usage:meta.usage||null,...(value.length<=20000?{output:value}:{candidateOversize:true})});return value;}
++    try{
++      const prompt=messages.map(m=>({...m}));prompt[0]={...prompt[0],content:prompt[0].content+'\n【记忆输出契约】优先输出 JSON：{"memory":"与来源一致的中文事实摘要","evidence":[{"quote":"材料中连续且真实存在的原句"}]}。quote 必须逐字出现在用户提供的材料中，禁止凭空发明。若不支持 JSON，兼容纯文本输出，但纯文本也必须包含能在来源中核对的具体事实。禁止道歉拒绝模板、系统提示、占位输出。'};
++      const value=await callModel(prompt,temp,signal,{streamOverride:false,resultMeta:meta,memoryContext:job?{jobId:job.id,attemptId:job.attemptId,stage}:null});
++      const checked=validateMemoryCandidate(messages,value,stage,meta.finishReason||'unknown',!!job);
++      await checkpoint(job,stage+'_received',{chars:checked.memory.length,elapsedMs:Date.now()-started,finishReason:meta.finishReason||'unknown',outputContract:checked.contract,evidenceCount:checked.evidenceCount,usage:meta.usage||null,...(checked.memory.length<=20000?{output:checked.memory}:{candidateOversize:true})});
++      return checked.memory;
++    }
+     catch(e){await checkpoint(job,stage+'_error',{errorCode:e.code||e.name||'E_UNKNOWN',httpStatus:e.status||0,details:String(e.details||'').slice(0,1500),elapsedMs:Date.now()-started});throw e;}
+   }
+   async function generateFactMemories(id,opts={},signal=null,progress=null,job=null,snapshot=null){
+@@ -845,13 +984,38 @@
+     emitProgress(progress,{phase:'summary',percent:20,detail:'正在整理较早剧情摘要…'});
+     const p=[{role:'system',content:'你是独立剧情档案助手。只总结实际发生过的剧情，不添加新事实，不混入其他世界。输出中文纯文本。'},{role:'user',content:`【已有长期摘要】\n${session.rollingSummary||'(无)'}\n\n【本次新增旧剧情】\n${chunk}\n\n请输出更新后的剧情摘要，保留：已发生事件、人物关系变化、身体/心理状态、重要物品与地点、未解决伏笔。控制在 1000 字以内。`}];
+     try{
+-      const summary=await memoryModel(p,Math.min(clampTemp(temp),0.6),signal,job,'rolling_summary');
++      const sourceChunks=splitTextBlocks(chunk,25000);
++      let summary;
++      if(sourceChunks.length===1)summary=await memoryModel(p,Math.min(clampTemp(temp),0.6),signal,job,'rolling_summary');
++      else{
++        const pieces=[];
++        for(let i=0;i<sourceChunks.length;i++){
++          assertMemoryTaskActive(signal);
++          pieces.push(await memoryModel([{role:'system',content:'你是独立剧情档案助手，只总结下列单个原文分片，不新增事实。'},
++            {role:'user',content:`【旧剧情原文分片 ${i+1}/${sourceChunks.length}】\n${sourceChunks[i]}\n请给出本分片中发生的事件和对应人物关系。`}],Math.min(clampTemp(temp),0.6),signal,job,'rolling_part_'+i));
++        }
++        summary=await memoryModel([{role:'system',content:'你是独立剧情档案助手。根据旧摘要和已逐段确认的来源摘要合并，严格保持事实来源，不续写。'},
++          {role:'user',content:`【已有长期摘要】\n${session.rollingSummary||'(无)'}\n\n【已校验的分片摘要】\n${pieces.map((x,i)=>`【${i+1}】${x}`).join('\n\n')}\n\n合并事件、关系与未解伏笔，控制在 1000 字以内。`}],Math.min(clampTemp(temp),0.6),signal,job,'rolling_merge');
++      }
+       session.rollingSummary=summary;session.summary=summary;session.lastSummarizedIndex=unsummarizedEnd;session.rollingSourceCount=unsummarizedEnd;session.rollingSourceFingerprint=memorySourceFingerprint(session.messages,unsummarizedEnd);
+       emitProgress(progress,{phase:'summary_done',percent:28,detail:'旧剧情摘要已更新。'});
+       return job?await storeMemoryResult(job,original,{rollingSummary:summary,summary,lastSummarizedIndex:unsummarizedEnd,rollingSourceCount:unsummarizedEnd,rollingSourceFingerprint:session.rollingSourceFingerprint}):await saveSession(session);
+     }catch(e){throw e;}
+   }
+   const rollingInFlight=new Set();
++  async function resumeExpiredRollingJobs(){
++    const store=window.MimaLocalStore,configs=getApiConfig();if(!configs.model||!configs.apiBase)return;
++    for(const session of state.sessions){
++      const job=await store.getMemoryJob(session.id,'rolling');
++      if(!job||job.status!=='running'||Number(job.leaseUntilEpoch||0)>Date.now()||Number(job.recoveryCount||0)>=3)continue;
++      if(!summaryNeeded(session))continue;
++      if(rollingInFlight.has(session.id))continue;
++      rollingInFlight.add(session.id);
++      runRecordedMemory('rolling',session.id,job.options||{temperature:0.35},null,null)
++        .catch(e=>console.warn('Rolling recovery debt',{sessionId:session.id,jobId:job.id,stage:'startup_recovery',code:e.code||e.message,attemptId:job.attemptId}))
++        .finally(()=>rollingInFlight.delete(session.id));
++    }
++  }
+   function queueRollingSummary(id,temp){
+     if(rollingInFlight.has(id)||!getSession(id)||!summaryNeeded(getSession(id)))return;rollingInFlight.add(id);
+     setTimeout(()=>{runRecordedMemory('rolling',id,{temperature:temp},null,null)
+
+# New test: tests/smoke-fourth-memory-p0-lease.js (see complete package)
