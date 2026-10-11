@@ -9,7 +9,8 @@ const app=fs.readFileSync(path.join(ROOT,'app.js'),'utf8');
 const studio=fs.readFileSync(path.join(ROOT,'novel-studio.js'),'utf8');
 
 assert(html.includes('release=1.3.1'),'v1.3.1 release marker missing');
-for(const f of ['theme-engine.js','novel-memory.js','novel-engine.js','novel-prompt-assembler.js','novel-studio.js'])assert(html.includes(`./${f}?v=1.3.1`),`${f} cache marker missing`);
+assert(html.includes('./theme-engine.js?v=1.4.0'),'theme-engine.js cache marker missing');
+for(const f of ['novel-memory.js','novel-engine.js','novel-prompt-assembler.js','novel-studio.js'])assert(html.includes(`./${f}?v=1.3.1`),`${f} cache marker missing`);
 for(const old of ['./standalone-core.js?v=1.1.0&release=1.3.1','./app.js?v=1.1.2&release=1.3.1','./assistant-studio.js?v=1.1.2&hotfix=1.1.3&release=1.3.1'])assert(html.includes(old),`legacy component version contract changed: ${old}`);
 const scripts=[...html.matchAll(/<script\s+src="([^"]+)"/g)].map(x=>x[1]);
 const pos=n=>scripts.findIndex(x=>x.includes(n));

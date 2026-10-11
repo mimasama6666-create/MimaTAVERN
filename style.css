@@ -680,3 +680,11 @@ html[data-mima-theme="eink"] .novel-text-unit[open]>summary,html[data-mima-theme
 .memory-task-actions{display:flex;gap:7px;align-items:center}
 .memory-task-actions button{font-size:12px;padding:6px 11px}
 @media(max-width:600px){.memory-task-floating{right:10px;bottom:10px;max-width:calc(100vw - 20px)}}
+
+/* PNG resource inspection: long original data stays scrollable on phones. */
+@layer mima-builtins {
+.png-resource-card summary {cursor:pointer;overflow-wrap:anywhere}
+.png-resource-card .png-resource-body {padding-top:12px;min-width:0}
+.png-resource-raw {max-height:min(54vh,540px);white-space:pre-wrap;overflow-wrap:anywhere;overflow:auto;user-select:text}
+.png-resource-card .check-row {min-width:0;max-width:100%}
+}

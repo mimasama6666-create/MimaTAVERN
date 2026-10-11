@@ -142,5 +142,62 @@
       img.src=uri;
     });
   }
-  return Object.freeze({parse,toMask,avatarDataUrl,MAX_PNG_BYTES});
+  // Inspection runs without a character-card write. Include every PNG textual
+  // metadata chunk, not only chara/ccv3; preserve unknown types as view-only.
+  async function inspect(file){
+    if(!file||typeof file.arrayBuffer!=='function')throw outOfSpec('未选择有效 PNG。');
+    if(file.size>MAX_PNG_BYTES)throw outOfSpec('PNG 超过 20MB 安全上限。');
+    const bytes=new Uint8Array(await file.arrayBuffer());
+    if(bytes.length<45||bytes.length>MAX_PNG_BYTES||PNG_SIGNATURE.some((n,i)=>bytes[i]!==n))throw outOfSpec('不是合法 PNG 文件。');
+    const metadata=[];let offset=8,count=0,ended=false,total=0,hasCard=false;
+    while(offset<bytes.length){
+      if(++count>MAX_CHUNKS)throw outOfSpec('PNG 区块数量异常。');
+      if(offset+12>bytes.length)throw outOfSpec('PNG 区块头部不完整。');
+      const len=read32(bytes,offset),type=ascii(bytes,offset+4,offset+8),stop=offset+len+12;
+      if(len>MAX_PNG_BYTES||stop>bytes.length)throw outOfSpec('PNG 区块长度无效。');
+      if(count===1&&(type!=='IHDR'||len!==13))throw outOfSpec('PNG 缺少 IHDR。');
+      if(crc32(bytes,offset+4,offset+8+len)!==read32(bytes,offset+8+len))throw outOfSpec(`PNG ${type} 区块 CRC 校验失败。`);
+      if(['tEXt','zTXt','iTXt'].includes(type)){
+        if(metadata.length>=256)throw outOfSpec('文本元数据区块超过 256 个。');
+        const payload=bytes.subarray(offset+8,offset+8+len),at=nul(payload,0,payload.length);
+        if(at<1||at>79)throw outOfSpec('PNG 文本元数据关键字无效。');
+        const keyword=ascii(payload,0,at);let body;
+        if(type==='tEXt')body=payload.subarray(at+1);
+        else if(type==='zTXt'){
+          if(at+2>payload.length||payload[at+1]!==0)throw outOfSpec('zTXt 压缩方法无效。');
+          body=await inflated(payload.subarray(at+2));
+        }else{
+          if(at+3>=payload.length)throw outOfSpec('iTXt 字段不完整。');
+          const flag=payload[at+1],method=payload[at+2],lang=nul(payload,at+3,payload.length);
+          if(![0,1].includes(flag)||method!==0||lang<0)throw outOfSpec('iTXt 压缩/语言字段无效。');
+          const translated=nul(payload,lang+1,payload.length);
+          if(translated<0)throw outOfSpec('iTXt 翻译名称无效。');
+          body=flag?await inflated(payload.subarray(translated+1)):payload.subarray(translated+1);
+        }
+        total+=body.byteLength;
+        if(total>MAX_TEXT_BYTES)throw outOfSpec('PNG 文本元数据总量超过 4MB。');
+        const text=(type==='iTXt'||['chara','ccv3'].includes(keyword)?decoder:new TextDecoder('windows-1252')).decode(body);
+        metadata.push({keyword,type,text});
+        if(keyword==='chara'||keyword==='ccv3')hasCard=true;
+      }
+      offset=stop;
+      if(type==='IEND'){
+        if(len!==0||offset!==bytes.length)throw outOfSpec('PNG 结束区块无效。');
+        ended=true;break;
+      }
+    }
+    if(!ended)throw outOfSpec('PNG 缺少结束区块。');
+    let card=null,cardError='',rawCard=null;
+    if(hasCard){
+      const candidateKeyword=metadata.some(x=>x.keyword==='ccv3')?'ccv3':'chara';
+      const matches=metadata.filter(x=>x.keyword===candidateKeyword);
+      // A valid JSON payload can still be a non-importable character. Keep it
+      // inspectable so an embedded worldbook isn't mistaken for absent data.
+      if(matches.length===1){try{rawCard=decodeBase64Json(matches[0].text)}catch(e){cardError=e.message;}}
+      else cardError='PNG 存在重复的首选角色卡文本块，无法确定权威数据。';
+      if(!cardError){try{card=await parse(file)}catch(e){cardError=e.message;}}
+    }
+    return {filename:file.name||'card.png',metadata,card,rawCard,cardError};
+  }
+  return Object.freeze({parse,inspect,toMask,avatarDataUrl,MAX_PNG_BYTES});
 });

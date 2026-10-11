@@ -241,3 +241,89 @@
   .novel-theme-card[data-theme-choice="sakura-milk"]::before {background:linear-gradient(115deg,#f9e4ec 35%,#fff9fc 35% 65%,#98506e 65%)}
   .novel-theme-card[data-theme-choice="lilac-cloud"]::before {background:linear-gradient(115deg,#eae4f5 35%,#fffaff 35% 65%,#706094 65%)}
 }
+
+/* v1.4.0: softly rounded Korean pastel refinements and new built-ins.
+   Extend existing tokens; do not touch user-defined CSS or output HTML. */
+@layer mima-builtins {
+  html[data-mima-theme="sakura-milk"] {
+    --bg:#fff4f8;--bg-deep:#ffe9f1;--panel:#fffaff;--panel-solid:#fffafd;
+    --text:#604552;--muted:#87727b;--line:#f4dce6;
+    --accent:#b46286;--accent-strong:#944a70;--accent-soft:#ffe3ef;
+    --reader-bg:#fffafd;--reader-panel:#fff0f6;--reader-line:#efd9e2;
+    --skin-body:radial-gradient(circle at 15% 0%,#fff,transparent 40%),radial-gradient(circle at 95% 5%,#ffe0ed,transparent 44%),linear-gradient(150deg,#fff6fa,#ffedf5);
+    --skin-panel:#fffaff;--skin-glass:rgba(255,250,253,.9);
+    --skin-surface:#fff0f5;--skin-card:#fffaff;--skin-control:#fff9fc;
+    --skin-bubble:#ffe5ef;--skin-bubble-text:#604552;
+    --skin-accent:#b46286;--skin-highlight:#ffedf5;
+    --skin-border-strong:#e4b8ca;--skin-avatar:linear-gradient(135deg,#fff,#ffe3f0);
+    --skin-lift:0 9px 28px rgba(193,121,151,.11);
+    --skin-composer-glow:0 0 0 1px #ecc1d2,0 0 20px rgba(238,165,197,.24)
+  }
+  html[data-mima-theme="lilac-cloud"] {
+    --bg:#f8f5ff;--bg-deep:#f0eafc;--panel:#fefcff;--panel-solid:#fefcff;
+    --text:#514762;--muted:#7e748d;--line:#e9dff5;
+    --accent:#9476bb;--accent-strong:#775da3;--accent-soft:#eee6fa;
+    --reader-bg:#fefcff;--reader-panel:#f6f1fe;--reader-line:#e4daf2;
+    --skin-body:radial-gradient(circle at 10% -5%,#fff,transparent 45%),radial-gradient(circle at 96% 9%,#eaddff,transparent 45%),linear-gradient(150deg,#faf7ff,#f1eafd);
+    --skin-panel:#fffcff;--skin-glass:rgba(253,250,255,.9);
+    --skin-surface:#f3ecfc;--skin-card:#fffaff;--skin-control:#fcf9ff;
+    --skin-bubble:#eee4fa;--skin-bubble-text:#514762;
+    --skin-accent:#9476bb;--skin-highlight:#f0e8fc;
+    --skin-border-strong:#cfbde9;--skin-avatar:linear-gradient(145deg,#fff,#eadcfa);
+    --skin-lift:0 10px 28px rgba(127,98,174,.10)
+  }
+  html[data-mima-theme="aqua-sky"] {
+    --bg:#edf9fd;--bg-deep:#dff2f9;--panel:#f9fdff;--panel-solid:#fff;
+    --text:#2d5266;--muted:#627e8d;--line:#cfe7f0;
+    --accent:#267a9e;--accent-strong:#1e6282;--accent-soft:#d9f1fa;
+    --danger:#ac5e73;--shadow:0 14px 36px rgba(60,137,170,.11);
+    --reader-bg:#fbfeff;--reader-text:#2d5266;--reader-muted:#627e8d;--reader-line:#cfe7f0;--reader-panel:#effaff;
+    --skin-body:radial-gradient(circle at 18% -10%,#fff,transparent 42%),radial-gradient(circle at 95% 12%,#bceafb,transparent 44%),linear-gradient(145deg,#f4fcff,#dff5fd);
+    --skin-panel:#f8fdff;--skin-glass:rgba(247,253,255,.88);--skin-surface:#e2f4fb;
+    --skin-card:#fff;--skin-control:#f7fcfe;--skin-bubble:#d9eff9;--skin-bubble-text:#2d5266;
+    --skin-accent:#267a9e;--skin-accent-text:#fff;--skin-highlight:#e0f4fb;
+    --skin-border-strong:#9cc9dd;--skin-overlay:rgba(35,74,91,.32);
+    --skin-avatar:linear-gradient(135deg,#fff,#c9ecfc);--skin-focus:#267a9e;--skin-ring:rgba(38,122,158,.19);
+    --skin-lift:0 10px 26px rgba(67,128,162,.11);--skin-ink:#2d5266;
+    --skin-composer-glow:0 0 0 1px #aed5e7,0 0 18px rgba(98,190,230,.2)
+  }
+  html[data-mima-theme="material-snow"] {
+    --bg:#f6f8fc;--bg-deep:#e9eef7;--panel:#fff;--panel-solid:#fff;
+    --text:#303b4d;--muted:#667488;--line:#dfe5ef;
+    --accent:#2865bd;--accent-strong:#20539e;--accent-soft:#e5efff;
+    --reader-bg:#fff;--reader-text:#303b4d;--reader-muted:#667488;--reader-line:#dfe5ef;--reader-panel:#f5f8fd;
+    --skin-body:linear-gradient(135deg,#fafcff,#edf3fb);--skin-panel:#fff;--skin-glass:rgba(255,255,255,.94);
+    --skin-surface:#eef3fb;--skin-card:#fff;--skin-control:#f9fbff;
+    --skin-bubble:#e5effd;--skin-bubble-text:#303b4d;
+    --skin-accent:#2865bd;--skin-accent-text:#fff;--skin-highlight:#ebf3ff;
+    --skin-border-strong:#b9cae2;--skin-overlay:rgba(45,57,75,.34);
+    --skin-avatar:linear-gradient(135deg,#d8eaff,#fce8e6,#fff1ce);--skin-focus:#2865bd;--skin-ring:rgba(40,101,189,.18);
+    --skin-lift:0 5px 16px rgba(63,91,130,.10);--skin-ink:#303b4d;
+    --skin-composer-glow:0 0 0 1px #a9c4eb,0 0 16px rgba(66,133,244,.14)
+  }
+  html[data-mima-theme="fluent-blue"] {
+    --bg:#eef5fe;--bg-deep:#e3ecf8;--panel:#f8fbff;--panel-solid:#fff;
+    --text:#2e405b;--muted:#687993;--line:#d7e2ee;
+    --accent:#176cbb;--accent-strong:#125997;--accent-soft:#dcefff;
+    --reader-bg:#fafdff;--reader-text:#2e405b;--reader-muted:#687993;--reader-line:#d7e2ee;--reader-panel:#edf5ff;
+    --skin-body:radial-gradient(circle at 90% 5%,#d1e9ff,transparent 42%),linear-gradient(150deg,#f4f9ff,#e3eefb);
+    --skin-panel:rgba(248,252,255,.96);--skin-glass:rgba(248,251,255,.79);
+    --skin-surface:#e8f1fb;--skin-card:#fff;--skin-control:#fbfdff;
+    --skin-bubble:#dfeefa;--skin-bubble-text:#2e405b;
+    --skin-accent:#176cbb;--skin-accent-text:#fff;--skin-highlight:#e2f1ff;
+    --skin-border-strong:#abc6e4;--skin-overlay:rgba(42,58,81,.35);
+    --skin-avatar:linear-gradient(145deg,#fff,#d6e9ff);--skin-focus:#176cbb;--skin-ring:rgba(23,108,187,.19);
+    --skin-lift:0 8px 25px rgba(50,93,149,.11);--skin-ink:#2e405b;
+    --skin-composer-glow:0 0 0 1px #a6c9ed,0 0 17px rgba(69,147,215,.18)
+  }
+  html[data-mima-theme="sakura-milk"] .glass-card,
+  html[data-mima-theme="lilac-cloud"] .glass-card,
+  html[data-mima-theme="aqua-sky"] .glass-card {border-radius:19px}
+  html[data-mima-theme="material-snow"] .primary-btn,
+  html[data-mima-theme="material-snow"] .ghost-btn {border-radius:12px}
+  html[data-mima-theme="fluent-blue"] .glass-card,
+  html[data-mima-theme="fluent-blue"] .modal-panel {backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px)}
+  .novel-theme-card[data-theme-choice="aqua-sky"]::before {background:linear-gradient(115deg,#dff5fd 35%,#fff 35% 65%,#267a9e 65%)}
+  .novel-theme-card[data-theme-choice="material-snow"]::before {background:linear-gradient(115deg,#edf3fb 35%,#fff 35% 65%,#2865bd 65%)}
+  .novel-theme-card[data-theme-choice="fluent-blue"]::before {background:linear-gradient(115deg,#e3eefb 35%,#fff 35% 65%,#176cbb 65%)}
+}

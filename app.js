@@ -15,6 +15,8 @@ let isGenerating = false;
 let settingsTab = 'roles';
 let editorState = null;
 let pendingPersonaType = 'character';
+let pngResourceInspection = null;
+let pngResourceBusy = false;
 let fontRecords = [];
 let memoryGenerating = false;
 let memoryTask = null; // UI-independent, single owner for story-memory requests.
@@ -210,6 +212,7 @@ function renderSettings(){
     qsa('.settings-tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===settingsTab));
     syncAppearancePreviewMode(settingsTab==='appearance');
     const box=qs('settings-content');
+    if(settingsTab==='png-resources'){renderPngResourcesTab(box);return;}
     if(!currentSessionData){box.innerHTML='<div class="empty-state"><p>请先创建或打开一个剧情。</p></div>';return}
     if(settingsTab==='roles')renderRolesTab(box);
     else if(settingsTab==='worldbook')renderWorldbookTab(box);
@@ -286,6 +289,138 @@ async function importPersonaFile(file){
         if(warnings.length)alert(`角色卡「${res.data.name}」已导入，但请留意：\n${warnings.join('\n')}`);
     }catch(e){console.error('角色卡导入失败',e);toast(`角色卡导入失败：${e.message}`)}
 }
+
+// PNG Resource Inspector is a review-first import surface. A scan performs no writes.
+// Unrecognized or semantically lossy metadata remains fully inspectable and exportable.
+function choosePngResourceInspection(){const field=qs('png-inspector-input');if(!field)return;field.value='';field.click();}
+async function inspectPngResources(file){
+    if(!file)return;
+    if(pngResourceBusy)return toast('正在保存上次选择，请完成后再解析文件。');
+    pngResourceInspection=null;
+    try{
+        const parsed=await MimaPngCardImport.inspect(file);
+        const resources=MimaPngResourceInspector.discover(parsed);
+        pngResourceInspection={parsed,resources,file};
+        if(settingsTab==='png-resources'&&isSettingsOpen())renderPngResourcesTab(qs('settings-content'));
+        toast(`已扫描 PNG：识别 ${resources.length} 个资源/元数据项目；目前尚未写入存档。`);
+    }catch(e){console.error('PNG 资源检查失败',e);toast('PNG 资源检查失败：'+e.message)}
+}
+function pngResourceCategory(kind){return({character:'角色卡',worldbook:'世界书',preset:'提示词预设',css:'CSS 美化',regex:'正则包',metadata:'PNG 原始文本',unknown:'待人工处理'}[kind]||'原始内容')}
+function renderPngResourcesTab(box){
+    const info=pngResourceInspection;
+    box.innerHTML=`<section class="settings-section"><h3>📦 PNG 资源检查器</h3><p class="helper">只读扫描 PNG 全部文本元数据。先查看资源，再选择保存到咪嘛馆资源库；“同时挂载到当前剧情”默认关闭。未知格式、特殊脚本和无法等价转换的世界书规则只开放查看/导出，不会自动执行或吞掉字段。</p><div class="toolbar"><button class="primary-btn" onclick="choosePngResourceInspection()" ${pngResourceBusy?'disabled':''}>⇧ 选择 PNG 角色卡</button></div>${info?`<p class="helper">文件：${escapeHtml(info.parsed.filename)} · ${info.parsed.metadata.length} 个文本元数据区块 · ${info.resources.length} 个可检查项目</p>`:'<p class="row-sub">请选择酒馆原始 PNG 角色卡。PNG 截图不会自动伪装成角色卡。</p>'}</section>`;
+    if(!info)return;
+    const section=document.createElement('section');section.className='settings-section';
+    section.innerHTML='<h3>识别结果 · 逐项选择</h3><p class="helper">只有能够等价转换的项目才可勾选。默认不勾选；重复保存同一资源会产生副本，请先检查列表。</p>';
+    const list=document.createElement('div');list.className='entry-list';
+    info.resources.forEach((resource,index)=>{
+        const item=document.createElement('details');item.className='entry-card png-resource-card';
+        const summary=document.createElement('summary');
+        const title=document.createElement('strong');title.textContent=`${pngResourceCategory(resource.kind)} · ${resource.name}`;
+        const loc=document.createElement('div');loc.className='entry-meta';loc.textContent=`路径：${resource.path} · ${resource.canImport?'支持安全导入':'仅检查和导出'}`;
+        summary.append(title,loc);item.appendChild(summary);
+        const body=document.createElement('div');body.className='png-resource-body';
+        if(resource.warnings.length){const warn=document.createElement('p');warn.className='helper';warn.textContent='⚠ '+resource.warnings.join('；');body.appendChild(warn);}
+        const buttons=document.createElement('div');buttons.className='toolbar';
+        if(resource.canImport){
+            const label=document.createElement('label');label.className='check-row';
+            const cb=document.createElement('input');cb.type='checkbox';cb.checked=resource.selected&&!resource.imported;cb.disabled=!!resource.imported||pngResourceBusy;
+            cb.addEventListener('change',()=>{resource.selected=cb.checked});
+            label.append(cb,document.createTextNode(resource.imported?'已保存到资源库':'勾选导入此资源'));
+            buttons.appendChild(label);
+        }
+        const exportButton=document.createElement('button');exportButton.className='ghost-btn';exportButton.type='button';exportButton.textContent='导出当前项目 JSON';
+        exportButton.addEventListener('click',()=>downloadJson(`${resource.kind}-${index+1}.json`,{path:resource.path,source:resource.source,converted:resource.payload,warnings:resource.warnings}));
+        buttons.appendChild(exportButton);body.appendChild(buttons);
+        const pre=document.createElement('pre');pre.className='prompt-pre png-resource-raw';
+        pre.textContent=typeof resource.source==='string'?resource.source:JSON.stringify(resource.source,null,2);
+        const raw=document.createElement('details');const rawTitle=document.createElement('summary');rawTitle.textContent='完整内容查看 · 原始字段（仅显示，不执行）';raw.append(rawTitle,pre);body.appendChild(raw);
+        item.appendChild(body);list.appendChild(item);
+    });
+    if(!info.resources.length){const empty=document.createElement('p');empty.className='row-sub';empty.textContent='PNG 中没有找到可识别的文本资源。';list.appendChild(empty)}
+    section.appendChild(list);box.appendChild(section);
+    const all=document.createElement('section');all.className='settings-section';
+    const allDetails=document.createElement('details');allDetails.className='entry-card';
+    const allSummary=document.createElement('summary');allSummary.textContent='完整内容查看 · PNG 解码数据（包括全部未知字段）';
+    const allPre=document.createElement('pre');allPre.className='prompt-pre png-resource-raw';
+    allDetails.append(allSummary,allPre);
+    allDetails.addEventListener('toggle',()=>{
+        if(allDetails.open&&!allPre.textContent){
+            allPre.textContent=JSON.stringify({metadata:info.parsed.metadata,card:info.parsed.card?.raw||info.parsed.rawCard||null,cardError:info.parsed.cardError},null,2);
+        }
+    });
+    all.appendChild(allDetails);box.appendChild(all);
+    const actions=document.createElement('section');actions.className='settings-section';
+    actions.innerHTML=`<h3>保存与挂载</h3><p class="helper">保存角色、世界书、预设和 CSS 时只创建新记录，不覆盖现有记录。勾选挂载后才修改当前剧情的资源引用。CSS 只挂载聊天范围，不会改全局主题；外来正则不自动启用。</p><label class="check-row"><input id="png-mount-current" type="checkbox" ${info.mountCurrent?'checked':''} ${pngResourceBusy?'disabled':''}> 保存成功后同时挂载当前剧情</label><div class="toolbar"><button class="primary-btn" id="png-save-selected" ${pngResourceBusy?'disabled':''} onclick="savePngSelectedResources()">保存选中的资源</button><button class="ghost-btn" onclick="exportPngInspection()">导出完整解析报告 JSON</button></div>`;
+    box.appendChild(actions);
+    qs('png-mount-current')?.addEventListener('change',e=>{if(pngResourceInspection)pngResourceInspection.mountCurrent=e.target.checked});
+}
+function exportPngInspection(){
+    const info=pngResourceInspection;if(!info)return toast('请先检查一个 PNG。');
+    // Preserve unrecognized data. Explicit export, never automatic writes.
+    downloadJson(`${info.parsed.filename.replace(/\.png$/i,'')}-完整解码报告.json`,{
+        filename:info.parsed.filename,metadata:info.parsed.metadata,
+        card:info.parsed.card?.raw||info.parsed.rawCard||null,cardError:info.parsed.cardError,
+        resources:info.resources.map(r=>({kind:r.kind,name:r.name,path:r.path,source:r.source,converted:r.payload,warnings:r.warnings}))
+    });
+}
+async function savePngSelectedResources(){
+    const info=pngResourceInspection;
+    if(!info||pngResourceBusy)return;
+    const chosen=info.resources.filter(r=>r.selected&&r.canImport&&!r.imported);
+    if(!chosen.length)return toast('请先勾选可导入的项目。');
+    const targetSessionId=currentSessionId;
+    const mount=!!info.mountCurrent;
+    if(mount&&['character','css'].some(kind=>chosen.filter(r=>r.kind===kind).length>1))return toast('同时挂载时只能选择一张角色卡和一份聊天 CSS；其他资源可单独保存。');
+    if(mount&&!targetSessionId)return toast('没有打开的剧情，无法自动挂载；可以取消挂载仅保存资源。');
+    if(mount&&!confirm('确定将选中的 PNG 资源保存并挂载到当前剧情？已有挂载不删除；CSS 将影响当前聊天显示。'))return;
+    pngResourceBusy=true;renderPngResourcesTab(qs('settings-content'));
+    const successes=[],failures=[],ids={worldbookIds:[],presetIds:[],regexPackIds:[]};
+    let charId=null,cssId=null;
+    for(const r of chosen){
+        try{
+            let endpoint='',payload=r.payload;
+            if(r.kind==='character'){
+                endpoint='/masks';let avatar='';
+                try{avatar=await MimaPngCardImport.avatarDataUrl(r.payload.source.imageBytes)}catch(e){console.warn('PNG 头像缩略图失败',e)}
+                payload=MimaPngCardImport.toMask(r.payload.source,'character',info.parsed.filename,avatar);
+            }else if(r.kind==='worldbook')endpoint='/worldbooks';
+            else if(r.kind==='preset')endpoint='/presets';
+            else if(r.kind==='css')endpoint='/css-presets';
+            else{failures.push(`${r.name}：没有安全适配器`);continue;}
+            const result=await fetchStory(endpoint,'POST',payload);
+            if(!result.success||!result.data?.id)throw new Error(result.msg||result.code||'资源保存失败');
+            r.imported=true;r.selected=false;successes.push(r.name);
+            if(r.kind==='character')charId=result.data.id;
+            if(r.kind==='css')cssId=result.data.id;
+            if(r.kind==='worldbook')ids.worldbookIds.push(result.data.id);
+            if(r.kind==='preset')ids.presetIds.push(result.data.id);
+        }catch(e){console.error('PNG 资源保存失败',{name:r.name,kind:r.kind,error:e});failures.push(`${r.name}：${e.message}`);break;}
+    }
+    if(mount&&successes.length){
+        try{
+            if(currentSessionId!==targetSessionId)throw new Error('当前剧情已切换；资源已保存在库中，但没有挂载。');
+            const latest=await fetchStory(`/sessions/${targetSessionId}`);
+            if(!latest.success)throw new Error(latest.msg||'读取最新剧情失败，资源保留在库中');
+            const patch={};
+            for(const key of ['worldbookIds','presetIds','regexPackIds'])if(ids[key].length)patch[key]=[...new Set([...(latest.data[key]||[]),...ids[key]])];
+            if(charId)patch.loadedCharMaskId=charId;
+            if(cssId){patch.customCssId=cssId;patch.customCssEnabled=true;}
+            if(Object.keys(patch).length){
+                const saved=await fetchStory(`/sessions/${targetSessionId}`,'PATCH',patch);
+                if(!saved.success)throw new Error(saved.msg||'挂载失败');
+                if(currentSessionId===targetSessionId)currentSessionData=saved.data;
+            }
+        }catch(e){failures.push(`自动挂载：${e.message}`)}
+    }
+    try{await loadAll();applyCustomCss()}catch(e){failures.push('界面刷新失败：'+e.message)}
+    pngResourceBusy=false;
+    if(settingsTab==='png-resources'&&isSettingsOpen())renderPngResourcesTab(qs('settings-content'));
+    const msg=`资源导入：已保存 ${successes.length} 项${failures.length?`；${failures.length} 项失败或未挂载（详见提示）`:''}。`;
+    toast(msg);
+    if(failures.length)alert(`${msg}\n${failures.join('\n')}\n成功保存的资源未回滚，不会覆盖旧记录。`);
+}
+
 function exportMask(id){const m=masks.find(x=>x.id===id);if(m)downloadJson(`${m.name}.mimamao-persona.json`,m)}
 
 function renderWorldbookTab(box){
@@ -933,7 +1068,7 @@ function sanitizeAllowedHtml(html){
 function restoreLegacyFont(){const url=localStorage.getItem(LEGACY_FONT_URL_KEY);if(!url)return;let tag=document.createElement('style');tag.id='legacy-url-font-style';document.head.appendChild(tag);const fam=localStorage.getItem(LEGACY_FONT_FAMILY_KEY)||'MimaUrlFont';const fmt=fontFormat(url);const apply=`.assistant-msg .story-prose,.assistant-msg .msg-content.safe-html-content,.user-msg .story-prose{font-family:'${fam}',-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif!important}`;tag.textContent=url.includes('fonts.googleapis.com')||url.endsWith('.css')?`@import url('${url}'); ${apply}`:`@font-face{font-family:'${fam}';src:url('${url}')${fmt?` format('${fmt}')`:''};font-display:swap;} ${apply}`}
 
 // Expose inline handlers
-Object.assign(window,{goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,clearCoreMemory,deleteFactMemory,clearAllFactMemories,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,syncTemperature,updateStoryTypography,resetStoryTypography,setAppearancePreviewSurface,setBuiltInTheme,dismissGenerationPanel,retryFailedGeneration,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,continueMsg,autoAdvance,stopGeneration});
+Object.assign(window,{goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,choosePngResourceInspection,savePngSelectedResources,exportPngInspection,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,clearCoreMemory,deleteFactMemory,clearAllFactMemories,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,syncTemperature,updateStoryTypography,resetStoryTypography,setAppearancePreviewSurface,setBuiltInTheme,dismissGenerationPanel,retryFailedGeneration,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,continueMsg,autoAdvance,stopGeneration});
 
 
 window.MimaTavernBridge={
@@ -960,6 +1095,7 @@ window.addEventListener('load',async()=>{
     bindStoryStreamScroll();
     syncComposerContentState();
     qs('session-file-input').addEventListener('change',e=>importSessionFile(e.target.files?.[0]));
+    qs('png-inspector-input').addEventListener('change',e=>inspectPngResources(e.target.files?.[0]));
     qs('persona-file-input').addEventListener('change',e=>importPersonaFile(e.target.files?.[0]));
     qs('worldbook-file-input').addEventListener('change',e=>importWorldbookFile(e.target.files?.[0]));
     qs('regex-file-input').addEventListener('change',e=>importRegexFile(e.target.files?.[0]));

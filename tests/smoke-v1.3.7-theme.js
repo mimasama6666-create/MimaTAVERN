@@ -5,7 +5,7 @@ const path=require('node:path');
 const root=path.join(__dirname,'..');
 require('../theme-engine.js');
 const engine=globalThis.MimaThemeEngine;
-const ids=['default','midnight','eink','paper','seoul-mist','sakura-milk','lilac-cloud'];
+const ids=['default','midnight','eink','paper','seoul-mist','sakura-milk','lilac-cloud','aqua-sky','material-snow','fluent-blue'];
 assert.deepEqual(engine.getBuiltins().map(x=>x.id),ids);
 for (const id of ids) assert.equal(engine.normalizeSettings({theme:id}).theme,id);
 assert.equal(engine.normalizeSettings({theme:'invalid-from-old-backup'}).theme,'default');
@@ -13,7 +13,7 @@ assert.equal(engine.normalizeSettings({theme:'sakura-milk',globalCssPresetId:'my
 const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
 const skin=fs.readFileSync(path.join(root,'theme-skin.css'),'utf8');
 const base=fs.readFileSync(path.join(root,'style.css'),'utf8');
-assert(html.includes('theme-skin.css?v=1.3.9'));
+assert(html.includes('theme-skin.css?v=1.4.0'));
 assert(html.indexOf('style.css?v=')<html.indexOf('theme-skin.css?v='));
 assert(html.indexOf('theme-skin.css?v=')<html.indexOf('theme-engine.js?v='));
 assert(skin.includes('@layer mima-builtins')&&base.includes('@layer mima-builtins'));
