@@ -168,7 +168,7 @@ require(path.join(ROOT,'standalone-core.js'));
   assert.strictEqual(MimaNovelEngine.getChapterText(MimaNovelEngine.getChapter(afterBad.data,active)),acceptedText,'memory failure mutated accepted prose');
 
   // Theme semantics: default is a no-override state; normalization is stable.
-  assert.deepStrictEqual(MimaThemeEngine.getBuiltins().map(x=>x.id),['default','midnight','eink','paper']);
+  assert.deepStrictEqual(MimaThemeEngine.getBuiltins().map(x=>x.id).slice(0,4),['default','midnight','eink','paper']); // legacy IDs/order must survive additive skins
   let theme=await MimaStandalone.handle('/theme','PATCH',{theme:'eink'});assert(theme.success&&theme.data.theme==='eink','theme route failed');
   theme=await MimaStandalone.handle('/theme','PATCH',{theme:'default'});assert(theme.success&&theme.data.theme==='default','default theme restore failed');
 

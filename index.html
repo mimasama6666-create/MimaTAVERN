@@ -6,7 +6,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="theme-color" content="#dfe1e4">
     <title>咪嘛馆 · MIMAMAO Tavern（酒馆） · Standalone（独立版）</title>
-    <link rel="stylesheet" href="./style.css?v=1.1.2&hotfix=1.1.3&release=1.3.1&auditfix=1.3.2">
+    <link rel="stylesheet" href="./style.css?v=1.1.2&hotfix=1.1.3&release=1.3.1&auditfix=1.3.2&themefix=1.3.7&memoryfix=1.3.9">
+    <link rel="stylesheet" href="./theme-skin.css?v=1.3.9">
 <!-- v1.1.5 compatibility regression marker: release=1.1.5 -->
 <!-- v1.1.6 compatibility regression marker: release=1.1.6 -->
 <!-- v1.1.7 compatibility regression marker: release=1.1.7 -->
@@ -166,7 +167,7 @@
 </div>
 
 <input id="session-file-input" class="hidden" type="file" accept=".json,application/json">
-<input id="persona-file-input" class="hidden" type="file" accept=".txt,.json,application/json,text/plain">
+<input id="persona-file-input" class="hidden" type="file" accept=".txt,.json,.png,application/json,text/plain,image/png">
 <input id="worldbook-file-input" class="hidden" type="file" accept=".json,application/json">
 <input id="regex-file-input" class="hidden" type="file" accept=".json,application/json">
 <input id="font-file-input" class="hidden" type="file" accept=".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2">
@@ -177,17 +178,18 @@
 <input id="novel-file-input" class="hidden" type="file" accept=".txt,text/plain">
 
 <script src="./local-store.js?v=1.3.1&auditfix=1.3.2&rework=1.3.3&reworkfix=1.3.4&arrayguard=1.3.5&legacycontract=1.3.6"></script>
-<script src="./theme-engine.js?v=1.3.1&auditfix=1.3.2"></script>
+<script src="./theme-engine.js?v=1.3.1&auditfix=1.3.2&themefix=1.3.7"></script>
 <script src="./regex-engine.js?v=1.1.0"></script>
 <script src="./persona-macro-resolver.js?v=1.1.6"></script>
 <script src="./user-input-semantic-parser.js?v=1.1.7"></script>
 <script src="./novel-memory.js?v=1.3.1&auditfix=1.3.2&rework=1.3.3&reworkfix=1.3.4"></script>
 <script src="./novel-engine.js?v=1.3.1&auditfix=1.3.2&rework=1.3.3"></script>
 <script src="./novel-prompt-assembler.js?v=1.3.1&auditfix=1.3.2&rework=1.3.3"></script>
-<script src="./standalone-core.js?v=1.1.0&release=1.3.1&auditfix=1.3.2&rework=1.3.3&reworkfix=1.3.4&legacycontract=1.3.6"></script>
+<script src="./standalone-core.js?v=1.1.0&release=1.3.1&auditfix=1.3.2&rework=1.3.3&reworkfix=1.3.4&legacycontract=1.3.6&memoryfix=1.3.9"></script>
 <script src="./font-manager.js?v=1.1.0"></script>
-<script src="./app.js?v=1.1.2&release=1.3.1&auditfix=1.3.2"></script>
+<script src="./png-card-import.js?v=1.3.9"></script>
+<script src="./app.js?v=1.1.2&release=1.3.1&auditfix=1.3.2&themefix=1.3.7&pngcard=1.3.8&memoryfix=1.3.9"></script>
 <script src="./assistant-studio.js?v=1.1.2&hotfix=1.1.3&release=1.3.1&auditfix=1.3.2"></script>
-<script src="./novel-studio.js?v=1.3.1&auditfix=1.3.2&release=1.3.1&auditfix=1.3.2&rework=1.3.3&reworkfix=1.3.4"></script>
+<script src="./novel-studio.js?v=1.3.1&auditfix=1.3.2&release=1.3.1&auditfix=1.3.2&rework=1.3.3&reworkfix=1.3.4&themefix=1.3.7&memoryfix=1.3.9"></script>
 </body>
 </html>

@@ -1,0 +1,243 @@
+/* MimaTAVERN v1.3.7 — semantic built-in theme skins.
+ * The original default theme stays untouched. This stylesheet only applies to
+ * named built-in themes; no JS styling, persistent migrations or !important.
+ * Same cascade layer as style.css; later unlayered user CSS has priority.
+ */
+@layer mima-builtins {
+  /* All values are skin-specific component tokens, never persisted data. */
+  html[data-mima-theme="midnight"] {
+    --skin-body:radial-gradient(circle at 16% -12%,#282b35,transparent 36%),linear-gradient(150deg,#16191f,#0e1014 75%);
+    --skin-panel:rgba(25,28,35,.96);--skin-glass:rgba(27,30,37,.89);
+    --skin-surface:#252932;--skin-card:#2b303a;--skin-control:#303540;
+    --skin-bubble:#323946;--skin-bubble-text:#eff1f5;
+    --skin-accent:#536d91;--skin-accent-text:#fff;--skin-highlight:#303743;
+    --skin-border-strong:#64748c;--skin-overlay:rgba(4,6,10,.66);
+    --skin-avatar:linear-gradient(145deg,#3b424f,#222834);
+    --skin-focus:rgba(126,157,204,.76);--skin-ring:rgba(116,147,194,.27);
+    --skin-lift:0 8px 22px rgba(0,0,0,.2);--skin-ink:#e2e3e6;
+    --skin-composer-glow:0 0 0 1px rgba(112,146,193,.5),0 0 18px rgba(84,120,179,.22);
+  }
+  html[data-mima-theme="eink"] {
+    --skin-body:#c7c8c2;--skin-panel:#d0d1cb;--skin-glass:#cfd0ca;
+    --skin-surface:#c5c7c0;--skin-card:#cfd0ca;--skin-control:#d5d6d0;
+    --skin-bubble:#b9bcb5;--skin-bubble-text:#272a26;
+    --skin-accent:#565952;--skin-accent-text:#fff;--skin-highlight:#bec0b9;
+    --skin-border-strong:#8e928b;--skin-overlay:rgba(48,50,46,.55);
+    --skin-avatar:linear-gradient(#d0d1cb,#c3c5be);
+    --skin-focus:#484b45;--skin-ring:rgba(66,69,63,.14);
+    --skin-lift:none;--skin-ink:#343632;--skin-composer-glow:none;
+  }
+  html[data-mima-theme="paper"] {
+    --skin-body:radial-gradient(circle at 15% -8%,#f5efe5,transparent 36%),linear-gradient(150deg,#ebe3d7,#ddd2c2);
+    --skin-panel:#f2eadd;--skin-glass:rgba(241,233,220,.91);
+    --skin-surface:#e9dfd1;--skin-card:#f5eddf;--skin-control:#f9f2e7;
+    --skin-bubble:#e3d6c3;--skin-bubble-text:#3f3932;
+    --skin-accent:#73634f;--skin-accent-text:#fff;--skin-highlight:#e3d8c8;
+    --skin-border-strong:#a4937b;--skin-overlay:rgba(68,53,38,.38);
+    --skin-avatar:linear-gradient(145deg,#faf2e6,#e6d8c6);
+    --skin-focus:#867157;--skin-ring:rgba(129,113,94,.15);
+    --skin-lift:0 8px 22px rgba(94,78,60,.09);--skin-ink:#3f3932;
+    --skin-composer-glow:0 0 0 1px rgba(135,112,82,.4),0 0 18px rgba(170,145,113,.14);
+  }
+  html[data-mima-theme="seoul-mist"] {
+    --bg:#f1f2f4;--bg-deep:#e4e6e9;--panel:#ffffffee;--panel-solid:#fff;
+    --text:#333944;--muted:#656d78;--line:#d6dbe1;
+    --accent:#586a7c;--accent-strong:#455869;--accent-soft:#dfe5ea;
+    --danger:#aa5262;--shadow:0 12px 36px rgba(71,80,90,.08);
+    --reader-bg:#f9fafb;--reader-text:#333944;--reader-muted:#656d78;--reader-line:#d6dbe1;--reader-panel:#f0f2f5;
+    --skin-body:radial-gradient(circle at 12% -7%,#fff,transparent 38%),linear-gradient(145deg,#f5f6f7,#e7e9ed);
+    --skin-panel:#fdfdfe;--skin-glass:rgba(251,252,253,.93);
+    --skin-surface:#eef0f3;--skin-card:#fff;--skin-control:#fafbfc;
+    --skin-bubble:#e4e9ed;--skin-bubble-text:#303843;
+    --skin-accent:#586a7c;--skin-accent-text:#fff;--skin-highlight:#e2e7eb;
+    --skin-border-strong:#b6c1ca;--skin-overlay:rgba(55,63,75,.32);
+    --skin-avatar:linear-gradient(145deg,#fff,#e2e7ec);
+    --skin-focus:#637c92;--skin-ring:rgba(88,106,124,.13);
+    --skin-lift:0 7px 20px rgba(71,80,90,.07);--skin-ink:#333944;
+    --skin-composer-glow:0 0 0 1px #b4c4d2,0 0 15px rgba(143,162,179,.2);
+  }
+  html[data-mima-theme="sakura-milk"] {
+    --bg:#fff0f5;--bg-deep:#f8e4ed;--panel:#fff9fb;--panel-solid:#fffafb;
+    --text:#593d4a;--muted:#846775;--line:#efd4df;
+    --accent:#98506e;--accent-strong:#884060;--accent-soft:#f7dae5;
+    --danger:#b34868;--shadow:0 14px 42px rgba(150,76,108,.12);
+    --reader-bg:#fff9fb;--reader-text:#593d4a;--reader-muted:#846775;--reader-line:#efd4df;--reader-panel:#fff1f6;
+    --skin-body:radial-gradient(circle at 10% -10%,#fff,transparent 40%),radial-gradient(circle at 100% 4%,#f4d5e4,transparent 40%),linear-gradient(150deg,#fff3f7,#f9e4ec);
+    --skin-panel:#fff8fb;--skin-glass:rgba(255,248,251,.94);
+    --skin-surface:#fae7ef;--skin-card:#fff9fc;--skin-control:#fff6fa;
+    --skin-bubble:#f6dbe6;--skin-bubble-text:#593d4a;
+    --skin-accent:#98506e;--skin-accent-text:#fff;--skin-highlight:#f9e2eb;
+    --skin-border-strong:#d9a8bc;--skin-overlay:rgba(91,54,71,.37);
+    --skin-avatar:linear-gradient(145deg,#fff,#f4d5e2);
+    --skin-focus:#b36c8a;--skin-ring:rgba(179,108,138,.18);
+    --skin-lift:0 7px 22px rgba(147,79,105,.10);--skin-ink:#593d4a;
+    --skin-composer-glow:0 0 0 1px #ecc1d0,0 0 19px rgba(215,151,179,.25);
+  }
+  html[data-mima-theme="lilac-cloud"] {
+    --bg:#f3effb;--bg-deep:#e9e2f4;--panel:#fcfaff;--panel-solid:#fcfaff;
+    --text:#464057;--muted:#736d82;--line:#ddd4ed;
+    --accent:#706094;--accent-strong:#5f4f83;--accent-soft:#e6def4;
+    --danger:#ab577e;--shadow:0 14px 44px rgba(107,85,151,.11);
+    --reader-bg:#fcfaff;--reader-text:#464057;--reader-muted:#736d82;--reader-line:#ddd4ed;--reader-panel:#f1edf8;
+    --skin-body:radial-gradient(circle at 14% -10%,#fff,transparent 40%),radial-gradient(circle at 95% 5%,#dfd4f6,transparent 38%),linear-gradient(150deg,#f6f2fe,#eae4f5);
+    --skin-panel:#faf8ff;--skin-glass:rgba(250,248,255,.94);
+    --skin-surface:#eee9f7;--skin-card:#fffaff;--skin-control:#fcfaff;
+    --skin-bubble:#e9e0f4;--skin-bubble-text:#464057;
+    --skin-accent:#706094;--skin-accent-text:#fff;--skin-highlight:#ebe3f7;
+    --skin-border-strong:#b9a9d2;--skin-overlay:rgba(68,51,94,.37);
+    --skin-avatar:linear-gradient(145deg,#fff,#e5dbf4);
+    --skin-focus:#8676ad;--skin-ring:rgba(134,118,173,.17);
+    --skin-lift:0 7px 22px rgba(107,85,151,.09);--skin-ink:#464057;
+    --skin-composer-glow:0 0 0 1px #cbbde3,0 0 19px rgba(158,140,199,.22);
+  }
+
+  /* Component surfaces: chat, settings, drawers, cards, editor, novel and assistant.
+   * No forced color on generated HTML descendants: Safe HTML and users' scoped
+   * CSS retain the original authoring contract. */
+  html[data-mima-theme] body {background:var(--skin-body);color:var(--text)}
+  html[data-mima-theme] .glass-bar,
+  html[data-mima-theme] .sticky-head,
+  html[data-mima-theme] .sticky-bottom,
+  html[data-mima-theme] .session-drawer,
+  html[data-mima-theme] .modal-panel {background:var(--skin-glass);border-color:var(--line)}
+  html[data-mima-theme] .glass-bar,
+  html[data-mima-theme] .sticky-head,
+  html[data-mima-theme] .sticky-bottom {box-shadow:var(--skin-lift)}
+  html[data-mima-theme] .glass-card,
+  html[data-mima-theme] .library-card,
+  html[data-mima-theme] .stat-card,
+  html[data-mima-theme] .entry-card,
+  html[data-mima-theme] .worldbook-row,
+  html[data-mima-theme] .preset-row,
+  html[data-mima-theme] .fact-row,
+  html[data-mima-theme] .font-row,
+  html[data-mima-theme] .mount-box,
+  html[data-mima-theme] .memory-card,
+  html[data-mima-theme] .memory-progress,
+  html[data-mima-theme] .regex-tester,
+  html[data-mima-theme] .assistant-config-card,
+  html[data-mima-theme] .assistant-artifact-card,
+  html[data-mima-theme] .novel-text-unit,
+  html[data-mima-theme] .novel-draft-record {background:var(--skin-card);border-color:var(--line);color:var(--text)}
+  html[data-mima-theme] .modal-panel {background:var(--skin-panel)}
+  html[data-mima-theme] .session-drawer {background:var(--skin-panel)}
+  html[data-mima-theme] .top-avatar {background:var(--skin-avatar);border-color:var(--line)}
+  html[data-mima-theme] .context-ribbon {background:var(--skin-highlight)}
+  html[data-mima-theme] .user-msg .msg-content,
+  html[data-mima-theme] .typography-preview-user .msg-content,
+  html[data-mima-theme] .assistant-chat-user .assistant-chat-text {
+    background:var(--skin-bubble);border-color:var(--skin-border-strong);
+    color:var(--skin-bubble-text);box-shadow:var(--skin-lift)
+  }
+  html[data-mima-theme] .icon-btn,
+  html[data-mima-theme] .chip-btn,
+  html[data-mima-theme] .ghost-btn,
+  html[data-mima-theme] .tool-mini,
+  html[data-mima-theme] .session-item,
+  html[data-mima-theme] .session-mini-btn,
+  html[data-mima-theme] .field,
+  html[data-mima-theme] .composer-row textarea,
+  html[data-mima-theme] .assistant-input-row textarea,
+  html[data-mima-theme] .assistant-msg-actions button,
+  html[data-mima-theme] .assistant-type-btn,
+  html[data-mima-theme] .appearance-preview-tabs button {
+    background:var(--skin-control);border-color:var(--line);color:var(--text)
+  }
+  html[data-mima-theme] .session-item.active,
+  html[data-mima-theme] .settings-tabs button.active,
+  html[data-mima-theme] .assistant-type-btn.active,
+  html[data-mima-theme] .appearance-preview-tabs button.active {
+    background:var(--skin-highlight);color:var(--text);border-color:var(--skin-border-strong)
+  }
+  html[data-mima-theme] .composer-row textarea.has-content,
+  html[data-mima-theme] .composer-row textarea.has-content:focus {
+    background:var(--skin-control);border-color:var(--skin-focus);
+    box-shadow:var(--skin-composer-glow)
+  }
+  html[data-mima-theme] .field:focus,
+  html[data-mima-theme] .composer-row textarea:focus,
+  html[data-mima-theme] .assistant-input-row textarea:focus {
+    border-color:var(--skin-focus);box-shadow:0 0 0 3px var(--skin-ring)
+  }
+  html[data-mima-theme] .composer-row textarea.has-content:focus {box-shadow:var(--skin-composer-glow)}
+  html[data-mima-theme] .assistant-type-btn.active {box-shadow:0 0 0 1px var(--skin-ring)}
+  html[data-mima-theme] .primary-btn,
+  html[data-mima-theme] .send-btn {background:var(--skin-accent);color:var(--skin-accent-text)}
+  html[data-mima-theme] .danger-btn {background:color-mix(in srgb,var(--danger) 11%,var(--skin-card));border-color:color-mix(in srgb,var(--danger) 27%,transparent);color:var(--danger)}
+  html[data-mima-theme] .quick-actions .chip-btn.danger {color:var(--danger)}
+  html[data-mima-theme] .session-mini-btn:hover,
+  html[data-mima-theme] .assistant-msg-actions button:hover {background:var(--skin-highlight);color:var(--text)}
+  html[data-mima-theme] .scrim {background:var(--skin-overlay)}
+  html[data-mima-theme] .modal {background:var(--skin-overlay)}
+  html[data-mima-theme] .auth-lock {background:var(--skin-overlay)}
+  html[data-mima-theme] .assistant-sidebar,
+  html[data-mima-theme] .assistant-composer {background:var(--skin-surface)}
+  html[data-mima-theme] .assistant-main {background:var(--skin-panel)}
+  html[data-mima-theme] .assistant-mode-banner,
+  html[data-mima-theme] .assistant-artifact-error-detail {background:var(--skin-highlight);color:var(--text)}
+  html[data-mima-theme] .assistant-artifact-error {background:var(--skin-card);border-color:var(--danger)}
+  html[data-mima-theme] .assistant-follow-stream {background:var(--skin-accent);border-color:var(--skin-border-strong);color:var(--skin-accent-text)}
+  html[data-mima-theme] .appearance-preview-stage {background:var(--skin-surface)}
+  html[data-mima-theme] .typography-preview-statusbar,
+  html[data-mima-theme] .typography-preview-safe-placeholder {background:var(--skin-card);border-color:var(--line);color:var(--text)}
+  html[data-mima-theme] .novel-studio-root {background:var(--reader-panel)}
+  html[data-mima-theme] .novel-sidebar,
+  html[data-mima-theme] .novel-inspector {background:var(--reader-panel)}
+  html[data-mima-theme] .novel-reader {background:var(--reader-bg);color:var(--reader-text)}
+  html[data-mima-theme] .novel-director-box,
+  html[data-mima-theme] .novel-draft,
+  html[data-mima-theme] .novel-memory-card,
+  html[data-mima-theme] .novel-settings-card,
+  html[data-mima-theme] .novel-prompt-inspector {background:var(--skin-card);border-color:var(--reader-line)}
+  html[data-mima-theme] .novel-theme-card.active {background:var(--skin-highlight);border-color:var(--skin-border-strong)}
+  html[data-mima-theme] .generation-retry {background:var(--skin-control);border-color:var(--line);color:var(--text)}
+  html[data-mima-theme] .memory-progress-track {background:var(--skin-highlight)}
+  html[data-mima-theme] .memory-progress-bar {background:var(--skin-accent)}
+  /* Older v1.0.x and v1.1.x feature panels were hard-coded to white or
+     pale silver. Cover their actual surfaces instead of changing logic/DOM. */
+  html[data-mima-theme] .hit-item,
+  html[data-mima-theme] .api-status,
+  html[data-mima-theme] .css-scope-note,
+  html[data-mima-theme] .typography-control,
+  html[data-mima-theme] .typography-indent-hint,
+  html[data-mima-theme] .data-backup-card,
+  html[data-mima-theme] .cache-insight-card,
+  html[data-mima-theme] .generation-panel,
+  html[data-mima-theme] .assistant-artifact-billing-note {
+    background:var(--skin-card);border-color:var(--line);color:var(--text)
+  }
+  html[data-mima-theme] .generation-panel.error {
+    border-color:color-mix(in srgb,var(--danger) 50%,var(--line));
+    background:color-mix(in srgb,var(--danger) 9%,var(--skin-card))
+  }
+  html[data-mima-theme] .generation-close,
+  html[data-mima-theme] .value-pill {background:var(--skin-control);border-color:var(--line);color:var(--text)}
+  html[data-mima-theme] .generation-track {background:var(--skin-highlight)}
+  html[data-mima-theme] .generation-progress-bar {background:var(--skin-accent)}
+  html[data-mima-theme] .story-follow-stream {background:var(--skin-accent);border-color:var(--skin-border-strong);color:var(--skin-accent-text)}
+  html[data-mima-theme] .tool-mini.danger,
+  html[data-mima-theme] .assistant-clear-btn {color:var(--danger);border-color:color-mix(in srgb,var(--danger) 25%,transparent)}
+  html[data-mima-theme] .tool-mini.danger:hover {background:color-mix(in srgb,var(--danger) 12%,var(--skin-control));color:var(--danger)}
+  html[data-mima-theme] .typography-range,
+  html[data-mima-theme] .temp-range {accent-color:var(--skin-accent)}
+
+  /* E-Ink must remain low-motion and flat even for the new components. */
+  html[data-mima-theme="eink"] .generation-panel::before {display:none}
+  html[data-mima-theme="eink"] .user-msg .msg-content,
+  html[data-mima-theme="eink"] .assistant-chat-user .assistant-chat-text {box-shadow:none}
+}
+
+/* Small, actual-color theme samples in both Appearance and Novel settings. */
+@layer mima-builtins {
+  .novel-theme-card[data-theme-choice]::before {
+    content:"";display:block;height:24px;width:100%;border-radius:8px;
+    border:1px solid rgba(110,110,120,.15);
+  }
+  .novel-theme-card[data-theme-choice="default"]::before {background:linear-gradient(115deg,#e4e6e8 35%,#f9fafb 35% 65%,#747981 65%)}
+  .novel-theme-card[data-theme-choice="midnight"]::before {background:linear-gradient(115deg,#121317 35%,#313843 35% 65%,#536d91 65%)}
+  .novel-theme-card[data-theme-choice="eink"]::before {background:linear-gradient(115deg,#c7c8c2 35%,#d5d6d0 35% 65%,#565952 65%)}
+  .novel-theme-card[data-theme-choice="paper"]::before {background:linear-gradient(115deg,#e7dfd1 35%,#f5eddf 35% 65%,#73634f 65%)}
+  .novel-theme-card[data-theme-choice="seoul-mist"]::before {background:linear-gradient(115deg,#e7e9ed 35%,#fff 35% 65%,#586a7c 65%)}
+  .novel-theme-card[data-theme-choice="sakura-milk"]::before {background:linear-gradient(115deg,#f9e4ec 35%,#fff9fc 35% 65%,#98506e 65%)}
+  .novel-theme-card[data-theme-choice="lilac-cloud"]::before {background:linear-gradient(115deg,#eae4f5 35%,#fffaff 35% 65%,#706094 65%)}
+}

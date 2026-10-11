@@ -534,7 +534,7 @@
   ];}
   async function analyzeNovelChapterInMemory(project,chapter,signal=null,progress=null){const engine=window.MimaNovelEngine,memory=window.MimaNovelMemory;if(!engine||!memory)throw new Error('Novel Memory 未加载');const body=engine.getChapterText(chapter);if(!body.trim())return project;const cfg=novelModelConfig(project),raw=await callModelWithConfig(analysisPrompt(project,chapter),cfg,0.25,signal,{streamOverride:false,onProgress:progress}),parsed=memory.validateAnalysisPayload(raw),revision=chapter.revision,hash=engine.chapterHash(chapter),summary={...parsed.summary,sourceRevision:revision,sourceHash:hash,generatedAt:nowIso()};chapter.summary=summary;chapter.summarySourceRevision=revision;chapter.summarySourceHash=hash;chapter.summaryStatus='fresh';chapter.memoryDelta=clone(parsed.delta);project.narrativeState=memory.deriveFromChapters(project);const otherCovered=project.chapters.filter(c=>engine.getChapterText(c).trim()&&c.id!==chapter.id);const hasStale=otherCovered.some(c=>c.summaryStatus==='stale'||(c.summaryStatus==='fresh'&&memory.isSummaryStale(c)));const hasMissing=otherCovered.some(c=>c.summaryStatus==='missing'||!c.summarySourceRevision||!c.summarySourceHash);project.memoryStatus={status:hasStale?'stale':(hasMissing?'missing':'fresh'),error:'',updatedAt:nowIso()};return project;}
   async function updateNovelMemory(id,chapterId,signal=null,progress=null){const p=getNovelProject(id),c=window.MimaNovelEngine.getChapter(p,chapterId||p.activeChapterId);if(!c)throw new Error('未找到章节');try{await analyzeNovelChapterInMemory(p,c,signal,progress);return await saveNovelProject(p);}catch(e){const latest=getNovel(id);if(latest&&Number(latest.recordRevision)===Number(p.recordRevision)){const patched=clone(latest);patched.memoryStatus={status:'degraded',error:e?.message||String(e),updatedAt:nowIso()};await saveNovelProject(patched);}throw e;}}
-  async function rebuildNovelMemory(id,signal=null,progress=null){const original=clone(getNovelProject(id)),p=clone(original);p.narrativeState=window.MimaNovelMemory.seedForRebuild(p.narrativeState);p.legacyNarrativeCheckpoint=null;for(const c of p.chapters){c.summaryStatus='missing';c.summarySourceRevision=0;c.summarySourceHash='';}try{for(const chapterId of p.chapterOrder){const c=window.MimaNovelEngine.getChapter(p,chapterId);if(c&&window.MimaNovelEngine.getChapterText(c).trim())await analyzeNovelChapterInMemory(p,c,signal,progress);}p.memoryStatus={status:'fresh',error:'',updatedAt:nowIso()};return await saveNovelProject(p);}catch(e){const current=getNovel(id);if(current&&Number(current.recordRevision)===Number(original.recordRevision)){const marked=clone(current);marked.memoryStatus={status:'degraded',error:e?.message||String(e),updatedAt:nowIso()};await saveNovelProject(marked);}throw e;}}
+  async function rebuildNovelMemory(id,signal=null,progress=null){const original=clone(getNovelProject(id)),p=clone(original);p.narrativeState=window.MimaNovelMemory.seedForRebuild(p.narrativeState);p.legacyNarrativeCheckpoint=null;for(const c of p.chapters){c.summaryStatus='missing';c.summarySourceRevision=0;c.summarySourceHash='';}try{for(const [i,chapterId] of p.chapterOrder.entries()){const c=window.MimaNovelEngine.getChapter(p,chapterId);if(c&&window.MimaNovelEngine.getChapterText(c).trim()){emitProgress(progress,{phase:'novel_memory_rebuild',percent:6+Math.round((i/p.chapterOrder.length)*85),detail:`剧情档案 · 正在分析 ${i+1}/${p.chapterOrder.length} 章 · ${c.title}`});await analyzeNovelChapterInMemory(p,c,signal,progress);}}p.memoryStatus={status:'fresh',error:'',updatedAt:nowIso()};return await saveNovelProject(p);}catch(e){const current=getNovel(id);if(current&&Number(current.recordRevision)===Number(original.recordRevision)){const marked=clone(current);marked.memoryStatus={status:'degraded',error:e?.message||String(e),updatedAt:nowIso()};await saveNovelProject(marked);}throw e;}}
   function findDraft(p,id){return arr(p.drafts).find(x=>x.id===id)||null;}function findGeneration(p,id){return arr(p.generations).find(x=>x.id===id)||null;}
   function assertNovelDraftBaseCurrent(project,draft,generation){
     const engine=window.MimaNovelEngine,chapter=engine.getChapter(project,draft.chapterId);if(!chapter)throw new Error('Draft 对应章节不存在');
@@ -679,6 +679,27 @@
       {role:'user',content:`【分段事实摘要】\n${partials.map((x,i)=>`[${i+1}] ${x}`).join('\n\n')}\n\n合并去重，保持事件先后与主体清晰，目标约 ${targetChars} 字。`}
     ],temp,signal,{streamOverride:false});
   }
+  function assertMemoryTaskActive(signal){
+    if(signal?.aborted)throw new DOMException('记忆总结已由用户停止。','AbortError');
+  }
+  function commitMemoryIntoLatest(snapshot,kind,sourceType,apply){
+    const latestRaw=getSession(snapshot.id);
+    if(!latestRaw)throw new ApiError('E_STORY_SESSION_MISSING','会话已删除，迟到的记忆结果不能复活会话。');
+    const latest=normalizeSession(latestRaw),base=normalizeSession(snapshot);
+    // Full source prefix check: append-only chat is safe; edits, deletions, forks are not.
+    const baselineMsgs=JSON.stringify(base.messages);
+    if(JSON.stringify(latest.messages.slice(0,base.messages.length))!==baselineMsgs)
+      throw new ApiError('E_MEMORY_SOURCE_STALE','总结过程中原剧情发生修改，结果尚未保存；请重新总结。');
+    const oldMem=normalizeManualMemory(base.manualMemory),nowMem=normalizeManualMemory(latest.manualMemory);
+    if(kind==='facts' && JSON.stringify(oldMem.facts)!==JSON.stringify(nowMem.facts))
+      throw new ApiError('E_MEMORY_FACTS_CONFLICT','总结过程中事实记忆已被修改，未用旧结果覆盖新修改。');
+    if(kind==='core' && JSON.stringify(oldMem.core)!==JSON.stringify(nowMem.core))
+      throw new ApiError('E_MEMORY_CORE_CONFLICT','总结过程中核心记忆已被修改，未用旧结果覆盖新修改。');
+    if(kind==='core'&&sourceType==='facts'&&JSON.stringify(oldMem.facts)!==JSON.stringify(nowMem.facts))
+      throw new ApiError('E_MEMORY_SOURCE_STALE','用于总结的事实记忆已变化，请重新生成核心记忆。');
+    latest.manualMemory=apply(nowMem);
+    return latest;
+  }
   async function generateFactMemories(id,opts={},signal=null,progress=null){
     let session=getSession(id);if(!session)throw new ApiError('E_STORY_SESSION_MISSING','未找到剧情 Session。');session=normalizeSession(session);
     const data=storyRoundData(session),total=data.rounds.length;
@@ -691,16 +712,25 @@
     for(let i=0;i<ranges.length;i++){
       const [a,b]=ranges[i],source=formatRoundRange(data,a,b,{includeOpening:a===1,session});
       emitProgress(progress,{phase:'memory_fact_range',percent:8+Math.round((i/ranges.length)*78),detail:`事实记忆 · 第 ${a}–${b} 轮（${i+1}/${ranges.length}）`});
-      const content=await summarizeFactText(source,targetChars,temp,signal,progress,`第 ${a}–${b} 轮`);
+      assertMemoryTaskActive(signal);
+      const report=ev=>{
+        const local=Math.max(0,Math.min(1,((Number(ev?.percent)||12)-12)/78));
+        emitProgress(progress,{...ev,percent:10+Math.round(((i+local)/ranges.length)*78)});
+      };
+      const content=await summarizeFactText(source,targetChars,temp,signal,report,`第 ${a}–${b} 轮`);
       generated.push(normalizeFactMemory({startRound:a,endRound:b,content,source:'manual_fact_summary',targetChars,temperature:temp,sourceMessageCount:data.rounds.filter(r=>r.index>=a&&r.index<=b).reduce((n,r)=>n+r.messages.length,0)}));
     }
-    const memory=normalizeManualMemory(session.manualMemory||{}),replace=scope==='all'&&opts.replaceExisting===true;
-    let facts=replace?[]:memory.facts.slice();
-    for(const item of generated){const same=facts.findIndex(x=>x.startRound===item.startRound&&x.endRound===item.endRound);if(same>=0)facts[same]=item;else facts.push(item);}
-    facts.sort((a,b)=>a.startRound-b.startRound||a.endRound-b.endRound||String(a.createdAt).localeCompare(String(b.createdAt)));
-    session.manualMemory={...memory,facts,settings:{...memory.settings,summaryTemperature:temp}};
+    assertMemoryTaskActive(signal);
+    const replace=scope==='all'&&opts.replaceExisting===true;
+    const fresh=commitMemoryIntoLatest(session,'facts','',memory=>{
+      const facts=replace?[]:memory.facts.slice();
+      for(const item of generated){const same=facts.findIndex(x=>x.startRound===item.startRound&&x.endRound===item.endRound);if(same>=0)facts[same]=item;else facts.push(item);}
+      facts.sort((a,b)=>a.startRound-b.startRound||a.endRound-b.endRound||String(a.createdAt).localeCompare(String(b.createdAt)));
+      return {...memory,facts,settings:{...memory.settings,summaryTemperature:temp}};
+    });
     emitProgress(progress,{phase:'memory_fact_saving',percent:94,detail:`正在保存 ${generated.length} 段事实记忆…`});
-    const saved=await saveSession(session);emitProgress(progress,{phase:'done',percent:100,detail:`事实记忆完成 · ${generated.length} 段`});return saved;
+    assertMemoryTaskActive(signal);
+    const saved=await saveSession(fresh);emitProgress(progress,{phase:'done',percent:100,detail:`事实记忆完成 · ${generated.length} 段`});return saved;
   }
   async function generateCoreMemory(id,opts={},signal=null,progress=null){
     let session=getSession(id);if(!session)throw new ApiError('E_STORY_SESSION_MISSING','未找到剧情 Session。');session=normalizeSession(session);
@@ -714,20 +744,34 @@
       source=formatRoundRange(data,1,Math.max(1,data.rounds.length),{includeOpening:true,session});
     }
     const chunks=splitTextBlocks(source,30000),partials=[];
-    for(let i=0;i<chunks.length;i++){
+    for(let i=0;i<(chunks.length===1?0:chunks.length);i++){
+      assertMemoryTaskActive(signal);
       emitProgress(progress,{phase:'memory_core',percent:10+Math.round(((i+.2)/chunks.length)*58),detail:`核心记忆 · 整理材料 ${i+1}/${chunks.length}`});
       partials.push(await callModel([
         {role:'system',content:'你是“咪嘛馆”的核心记忆整理器。你的任务是提炼长期剧情记忆，不续写、不新增事实、不杜撰角色心理。输出中文纯文本。'},
         {role:'user',content:`【材料来源：${sourceType==='facts'?'事实记忆':'剧情原文'}】\n${chunks[i]}\n\n请提炼这部分材料中的长期核心信息。重点保留：决定后续关系与行为的重要事件；角色关系变化与关系阶段；明确承诺、约定、誓言、边界与背叛/和解；持续性的心理/身体/身份状态改变；关键人物、地点、物品与未解决问题。不要按轮次流水账，不要写空泛感想。`}
       ],temp,signal,{streamOverride:false}));
     }
+    assertMemoryTaskActive(signal);
     emitProgress(progress,{phase:'memory_core_merge',percent:76,detail:'核心记忆 · 正在做最终去重与关系提炼…'});
-    const final=await callModel([
-      {role:'system',content:'你是“咪嘛馆”的长期核心记忆编辑器。根据材料输出最终核心记忆。不得新增任何事实；如果材料之间信息重复，要合并而不是复述。输出中文纯文本。'},
-      {role:'user',content:`【候选核心材料】\n${partials.map((x,i)=>`[${i+1}] ${x}`).join('\n\n')}\n\n请写成约 ${targetChars} 字的最终“核心记忆”。绝对不要写成“第1轮……第2轮……”的流水账。按主题与关系组织，优先记录：关系转变、重要承诺/约定、关键选择及其后果、长期状态变化、身份与世界观关键事实、重要未解决事项。保留必要的因果关系与主体，不要为了凑字数重复内容。`}
-    ],temp,signal,{streamOverride:false});
-    session.manualMemory={...memory,core:{content:final,updatedAt:nowIso(),source:sourceType,targetChars,temperature:temp,sourceRoundCount:data.rounds.length,sourceFactCount},settings:{...memory.settings,summaryTemperature:temp}};
-    emitProgress(progress,{phase:'memory_core_saving',percent:95,detail:'正在保存核心记忆…'});const saved=await saveSession(session);emitProgress(progress,{phase:'done',percent:100,detail:'核心记忆已更新。'});return saved;
+    const final=chunks.length===1
+      ? await callModel([
+          {role:'system',content:'你是“咪嘛馆”的长期核心记忆编辑器。只根据材料输出最终核心记忆，不续写、不虚构、不杜撰角色心理，不加入推测。输出中文纯文本。'},
+          {role:'user',content:`【完整来源：${sourceType==='facts'?'事实记忆':'剧情原文'}】\n${source}\n\n写成约 ${targetChars} 字的长期核心记忆。按主题与关系组织，优先记录：关系转变、重要承诺/约定、关键选择及其后果、持续状态变化、身份和世界观重要事实、未解决事项。保留主体和因果，不写流水账，不凑字数。`}
+        ],temp,signal,{streamOverride:false})
+      : await callModel([
+          {role:'system',content:'你是“咪嘛馆”的长期核心记忆编辑器。根据材料输出最终核心记忆。不得新增任何事实；如果材料之间信息重复，要合并而不是复述。输出中文纯文本。'},
+          {role:'user',content:`【候选核心材料】\n${partials.map((x,i)=>`[${i+1}] ${x}`).join('\n\n')}\n\n请写成约 ${targetChars} 字的最终“核心记忆”。绝对不要写成“第1轮……第2轮……”的流水账。按主题与关系组织，优先记录：关系转变、重要承诺/约定、关键选择及其后果、长期状态变化、身份与世界观关键事实、重要未解决事项。保留必要的因果关系与主体，不要为了凑字数重复内容。`}
+        ],temp,signal,{streamOverride:false});
+    assertMemoryTaskActive(signal);
+    const fresh=commitMemoryIntoLatest(session,'core',sourceType,nowMemory=>({
+      ...nowMemory,
+      core:{content:final,updatedAt:nowIso(),source:sourceType,targetChars,temperature:temp,sourceRoundCount:data.rounds.length,sourceFactCount},
+      settings:{...nowMemory.settings,summaryTemperature:temp}
+    }));
+    emitProgress(progress,{phase:'memory_core_saving',percent:95,detail:'正在保存核心记忆…'});
+    assertMemoryTaskActive(signal);
+    const saved=await saveSession(fresh);emitProgress(progress,{phase:'done',percent:100,detail:'核心记忆已更新。'});return saved;
   }
   async function updateManualMemory(id,body={}){
     let session=getSession(id);if(!session)throw new ApiError('E_STORY_SESSION_MISSING','未找到剧情 Session。');session=normalizeSession(session);const memory=normalizeManualMemory(session.manualMemory||{});
