@@ -1,5 +1,5 @@
 /* Advanced workbench: all DOM and state scoped to #compat-lab; native app remains untouched. */
-(function(root){'use strict';if(typeof document==='undefined')return;const $=id=>document.getElementById(id),s=()=>root.MimaCompatStore,i=()=>root.MimaCompatImport,r=()=>root.MimaCompatRuntime;let opened=false,scan=null,activeId='',busy=false,player=null,assetUrls=[],cardPreviewUrl='',scanGeneration=0,sessionGeneration=0;const approvedBasicPreflights=new Map();
+(function(root){'use strict';if(typeof document==='undefined')return;const $=id=>document.getElementById(id),s=()=>root.MimaCompatStore,i=()=>root.MimaCompatImport,r=()=>root.MimaCompatRuntime;let opened=false,scan=null,activeId='',busy=false,creating=false,player=null,assetUrls=[],cardPreviewUrl='',scanGeneration=0,sessionGeneration=0;const approvedBasicPreflights=new Map();
 function el(tag,props={},parent){const node=document.createElement(tag);for(const[k,v]of Object.entries(props)){if(k==='text')node.textContent=String(v);else if(k==='className')node.className=v;else if(k==='onclick')node.addEventListener('click',v);else if(k==='title')node.title=v;else node.setAttribute(k,v);}if(parent)parent.append(node);return node;}
 function clear(node){node.replaceChildren();}function message(text,type='info'){const output=$('compat-notice');output.textContent=text;output.dataset.kind=type;}
 function download(name,data,type='application/json'){const blob=data instanceof Blob?data:new Blob([data],{type}),url=URL.createObjectURL(blob),a=document.createElement('a');a.download=name.replace(/[\\/:*?"<>|]/g,'_');a.href=url;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),5000);}
@@ -54,11 +54,23 @@ function diagnostics(){
 function refreshGreetingChoice(){const idx=Number($('compat-card-choice').value),item=scan?.resources?.[idx],select=$('compat-greeting-choice');clear(select);if(item?.kind!=='character')return;const d=item.raw||{};el('option',{value:'0',text:'默认开场白 · '+String(d.first_mes||'（无）').slice(0,56)},select);for(const [i,opening] of (Array.isArray(d.alternate_greetings)?d.alternate_greetings:[]).entries())el('option',{value:String(i+1),text:'备用开场 '+(i+1)+' · '+String(opening).slice(0,56)},select);}
 async function doImport(fileOverride=null){const generation=++scanGeneration,file=fileOverride&&typeof fileOverride.arrayBuffer==='function'?fileOverride:$('compat-file').files[0];if(!file)return message('请先选择 PNG、JSON、CHARX 或 ZIP','error');scan=null;$('compat-create').disabled=true;$('compat-save').disabled=true;clear($('compat-quick-status'));clear($('compat-card-choice'));clear($('compat-greeting-choice'));message('正在读取角色卡…');try{const next=await i().inspect(file);if(generation!==scanGeneration)return;scan=next;diagnostics();$('compat-save').disabled=false;message(`已读取 ${scan.resources.length} 项资料，选择开场后即可开始聊天；外部代码仍不会自动运行。`);}catch(e){if(generation===scanGeneration)reportImportFailure(e,file);}}
 async function commit(){if(!scan)return;try{const result=await s().importSource({sha256:scan.sha256,filename:scan.filename,format:scan.format,bytes:scan.bytes,versions:scan.versions,warnings:scan.warnings},scan.resources);message(result.reused?'相同来源包已存在，未重复写入。':`已原子保存来源包与 ${result.resources} 项资源，不写旧版剧情资料。`);await refreshSourceList();}catch(e){message(`${e.code||'E_IMPORT'}: ${e.message}`,'error');}}
-async function create(){if(!scan)return;try{const sourceId='sha256:'+scan.sha256;const found=await s().get('source_capsules',sourceId);if(!found){
-  // One deliberate user gesture: lossless save followed by new session.
-  // IndexedDB importSource is atomic and idempotent by source SHA256.
-  await s().importSource({sha256:scan.sha256,filename:scan.filename,format:scan.format,bytes:scan.bytes,versions:scan.versions,warnings:scan.warnings},scan.resources);
-}const selected=Number($('compat-card-choice').value),index=scan.resources[selected]?.index;const rsrc=(await s().all('resource_ir')).find(v=>v.sourceId===sourceId&&v.index===index&&v.kind==='character');if(!rsrc)throw new Error('未找到明确选中的角色来源');const ses=await r().createSession(sourceId,{characterResourceId:rsrc.id,greetingIndex:Number($('compat-greeting-choice').value||0)});await loadSession(ses.id);$('compat-lab').classList.add('in-chat');$('compat-lab').classList.remove('show-advanced');message('已进入角色剧情。人物和原始卡片保存在当前浏览器，原生剧情不受影响。');}catch(e){message(`${e.code||'E_COMPAT'}: ${e.message}`,'error');}}
+async function create(){if(creating||!scan)return;
+ const selectedScan=scan,scanTicket=scanGeneration,button=$('compat-create');
+ creating=true;button.disabled=true;
+ try{
+  const sourceId='sha256:'+selectedScan.sha256;
+  // Always recheck source bytes through the idempotent atomic import. An
+  // existing capsule is not evidence that its resource projection is intact.
+  await s().importSource({sha256:selectedScan.sha256,filename:selectedScan.filename,format:selectedScan.format,bytes:selectedScan.bytes,versions:selectedScan.versions,warnings:selectedScan.warnings},selectedScan.resources);
+  if(scanGeneration!==scanTicket||scan!==selectedScan)throw Object.assign(new Error('选卡期间已切换文件，本次未建立旧角色剧情；请再次点击开始'),{code:'E_IMPORT_SELECTION_CHANGED'});
+  const selected=Number($('compat-card-choice').value),choice=selectedScan.resources[selected];
+  const resources=await s().all('resource_ir');
+  if(scanGeneration!==scanTicket||scan!==selectedScan)throw Object.assign(new Error('选择的原始卡片已经变化，请重新确认角色'),{code:'E_IMPORT_SELECTION_CHANGED'});
+  const saved=r().resolveCharacterSelection(sourceId,choice,resources);
+  const ses=await r().createSession(sourceId,{characterResourceId:saved.id,greetingIndex:Number($('compat-greeting-choice').value||0)});
+  await loadSession(ses.id);$('compat-lab').classList.add('in-chat');$('compat-lab').classList.remove('show-advanced');message('已进入角色剧情。人物和原始卡片保存在当前浏览器，原生剧情不受影响。');
+ }catch(e){message(`${e.code||'E_COMPAT'}: ${e.message}`,'error');}
+ finally{creating=false;button.disabled=!scan||!scan.resources?.some(item=>item.kind==='character');}}
 async function refreshSourceList(){
  const [sources,allResources]=await Promise.all([s().all('source_capsules'),s().all('resource_ir')]);
  const box=$('compat-sources');clear(box);const active=activeId?await r().getSession(activeId):null;
@@ -104,8 +116,22 @@ for(const item of ses){const row=el('div',{className:'compat-line'},box);el('spa
 async function loadSession(id){$('compat-lab').classList.add('in-chat');const generation=++sessionGeneration;if(activeId!==id)root.MimaCompatPlugins?.unmountAll();activeId=id;const ses=await r().getSession(id);if(generation!==sessionGeneration)return;$('compat-current').textContent=`咪嘛馆兼容引擎 · ${ses.title}`;$('compat-conversation').hidden=false;await refreshSessionList();if(generation!==sessionGeneration)return;await refreshSourceList();if(generation!==sessionGeneration)return;await refreshMessages();if(generation!==sessionGeneration)return;await refreshExtensionUI();if(generation!==sessionGeneration)return;await inspectPreview();root.MimaCompatPlugins?.publish?.(id,'session.mounted',{sessionId:id},'session.mounted:'+id+':'+generation)?.catch(e=>message('插件会话事件失败：'+e.message,'error'));}
 const STYLE_BASE=`:host{display:block;min-height:90px;max-height:420px;overflow-y:auto;font-family:inherit;color:inherit}article{white-space:pre-wrap;overflow-wrap:anywhere;background:rgba(128,128,128,.1);padding:11px;border-radius:10px;margin:7px 0;line-height:1.55}article.user{margin-left:12%}article.assistant{margin-right:12%}strong{display:block;margin-bottom:7px}`;
 function cssSafe(css){if(typeof css!=='string'||css.length>65536||/@(?:import|font-face|namespace|document|property)\b|url\s*\(|expression\s*\(|\\[0-9a-f]{1,6}\s/gi.test(css))throw new Error('E_RESOURCE_SEMANTIC_GAP: 此 CSS 需要外部资源或未验证特性，拒绝自动挂载');return css;}
-async function refreshMessages(){if(!activeId)return;const items=await r().displayMessages(activeId),box=$('compat-messages'),shadow=box.shadowRoot||box.attachShadow({mode:'open'});clear(shadow);let css=STYLE_BASE;const session=await r().getSession(activeId);if(session.styleResourceId){const style=await s().get('resource_ir',session.styleResourceId);if(style&&style.kind==='css'){const allowed=(await r().resourcesFor(session)).some(x=>x.id===style.id);if(allowed)css+='\n'+cssSafe(style.raw);}}
-el('style',{text:css},shadow);for(const item of items){const article=el('article',{className:'compat-message '+item.role},shadow);el('strong',{text:item.role==='assistant'?'角色':'玩家'},article);el('div',{text:item.displayView},article);if(item.status!=='committed')el('small',{text:'本回合 '+item.status+'（未纳入已完成对话上下文）'},article);if(item.displayError)el('small',{text:'正则显示失败，已显示完整原文：'+item.displayError.code+' '+item.displayError.message},article);}box.scrollTop=box.scrollHeight;}
+async function refreshMessages(){if(!activeId)return;
+ const sessionId=activeId,generation=sessionGeneration;
+ // Prepare the complete view off-DOM first: a slow regex Worker/IDB read
+ // from session A must not overwrite the currently open session B.
+ const items=await r().displayMessages(sessionId);
+ if(activeId!==sessionId||sessionGeneration!==generation)return;
+ const session=await r().getSession(sessionId);
+ let css=STYLE_BASE;
+ if(session.styleResourceId){const style=await s().get('resource_ir',session.styleResourceId);
+  if(style&&style.kind==='css'){const allowed=(await r().resourcesFor(session)).some(x=>x.id===style.id);if(allowed)css+='\n'+cssSafe(style.raw);}}
+ if(activeId!==sessionId||sessionGeneration!==generation)return;
+ const box=$('compat-messages'),shadow=box.shadowRoot||box.attachShadow({mode:'open'});
+ clear(shadow);el('style',{text:css},shadow);
+ for(const item of items){const article=el('article',{className:'compat-message '+item.role},shadow);el('strong',{text:item.role==='assistant'?'角色':'玩家'},article);el('div',{text:item.displayView},article);if(item.status!=='committed')el('small',{text:'本回合 '+item.status+'（未纳入已完成对话上下文）'},article);if(item.displayError)el('small',{text:'正则显示失败，已显示完整原文：'+item.displayError.code+' '+item.displayError.message},article);}
+ box.scrollTop=box.scrollHeight;
+}
 async function mountStyle(resourceId){const ses=await r().getSession(activeId),res=await s().get('resource_ir',resourceId);if(!res||(res.sourceId!==ses.sourceId&&!(ses.mountGraph||[]).some(m=>m.resourceId===res.id))||res.kind!=='css')throw new Error('CSS 资源未挂载到当前剧情');cssSafe(res.raw);await s().putCAS('compat_sessions',{...ses,styleResourceId:resourceId},ses.revision);await refreshMessages();message('局部 CSS 已启用，只作用于高级剧情的 Shadow DOM；原生主题不变。');}
 async function disableStyle(){const ses=await r().getSession(activeId);await s().putCAS('compat_sessions',{...ses,styleResourceId:null},ses.revision);await refreshMessages();message('已卸载局部 CSS，剧情原文未变。');}
 function standalonePluginSource(resource){const v=resource.raw;const sources=Array.isArray(v)?v:[v];return sources.map((x,index)=>({label:String(x?.name||x?.scriptName||('脚本 '+(index+1))),code:typeof x==='string'?x:(x?.script||x?.code||x?.content||'')})).filter(x=>typeof x.code==='string'&&x.code.length>0);}
