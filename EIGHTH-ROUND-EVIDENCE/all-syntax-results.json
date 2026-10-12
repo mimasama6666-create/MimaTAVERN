@@ -1,0 +1,377 @@
+[
+  {
+    "path": "FIFTH-ROUND-COUNTEREXAMPLE-20261012.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "SPECIFICATION/FOURTH-ROUND-20261012/03_长剧情未摘要上下文积压_独立复现.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "SPECIFICATION/FOURTH-ROUND-20261012/04_记忆拒绝模板污染_独立复现.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "app.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "assistant-studio.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "compat-import.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "compat-plugins.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "compat-regex-isolation.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "compat-regex-worker.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "compat-runtime.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "compat-store.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "compat-ui.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "font-manager.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "local-store.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "novel-engine.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "novel-memory.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "novel-prompt-assembler.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "novel-studio.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "persona-macro-resolver.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "plugin-frame-controller.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "plugin-frame.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "plugin-worker.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "png-card-import.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "png-resource-inspector.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "regex-engine.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "standalone-core.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/fifth-counterexample-original.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-compat-r1-r5.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-compat-rework-real-png.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-compat-rework-store.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-compat-rework-turn.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-compat-rework-worker.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-eighth-multi-part.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-eighth-root-closure.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-fifth-memory-root-closure.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-fourth-memory-p0-lease.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-session-history-v1.1.2.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-seventh-memory-benchmark.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-seventh-memory-coverage.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-sixth-compat-end-to-end-fake-idb.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-sixth-r6-memory.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-third-api-diagnostics.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-third-compat-concurrency.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-third-memory-journal.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-v1.1.0.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-v1.1.1.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-v1.1.10.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-v1.1.2.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-v1.1.3.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-v1.1.4.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-v1.1.5-repair-failure.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-v1.1.5-repair.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-v1.1.5.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-v1.1.6.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-v1.1.7.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-v1.1.8.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-v1.1.9.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-v1.2.0.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-v1.3.0.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-v1.3.1.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-v1.3.2-root-closure.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-v1.3.3-backup-integrity.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-v1.3.3-legacy-memory.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-v1.3.4-legacy-quarantine.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-v1.3.4-rework.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-v1.3.5-persisted-arrays.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-v1.3.6-historical-v4-contract.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-v1.3.7-theme.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-v1.3.9-memory-facts.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-v1.3.9-png-memory.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "tests/smoke-v1.4.0-png-resources.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "theme-engine.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "user-input-semantic-parser.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "ux-r6.js",
+    "status": "PASS",
+    "stderr": ""
+  },
+  {
+    "path": "ux-r7.js",
+    "status": "PASS",
+    "stderr": ""
+  }
+]

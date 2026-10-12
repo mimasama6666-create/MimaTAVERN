@@ -1,0 +1,61 @@
+{
+  "baseZip": "咪嘛馆_R1-R5_第五轮根因续修_完整源码包_20261012.zip",
+  "baseSha256": "10bcc3b99e8899ddc04fc6171e7328ad7b0a19ed74e4892bf74a93767029ceee",
+  "baseFileCount": 162,
+  "retainedOriginalFiles": 162,
+  "unchangedOriginalFiles": 156,
+  "modifiedOriginalFiles": 6,
+  "newFiles": 4,
+  "removedFiles": 0,
+  "changed": [
+    {
+      "path": "app.js",
+      "old_sha256": "147a2eae0f91b41c825d6709c698689ef40ddfd3570a37f942f30346794e3fef",
+      "new_sha256": "1058f2e48eb6f4caca215d5b3fbc9f16abd63efb95d7640081ccf2474c678803",
+      "old_bytes": 171305,
+      "new_bytes": 174336
+    },
+    {
+      "path": "compat-runtime.js",
+      "old_sha256": "fc542833f884c4fbb84fd6f70121dd62d9b131598e7799e0fbd6c4ef5ba0943d",
+      "new_sha256": "c3fd1aa57c45dc180b3a6cfd4b4b0cd3e11715929665569b6271febf4bf29796",
+      "old_bytes": 31242,
+      "new_bytes": 31769
+    },
+    {
+      "path": "compat-ui.js",
+      "old_sha256": "771b1381c2900c8e3bd9c4ee657ce6b2d40a80d6eb62542b3495525ef3ceb913",
+      "new_sha256": "2155533014edd54bbcde06ab5282a3806ecf003a2124ddb0cf44e081a98fb9be",
+      "old_bytes": 20891,
+      "new_bytes": 25037
+    },
+    {
+      "path": "index.html",
+      "old_sha256": "dc83e5a865c9030267fc5ca0b8f351ecf8c50bc7f203c732b7c07e9ad3422431",
+      "new_sha256": "a203d0866fee9a6b4fbaac0888f96740239ea93a52403b4be390b2a4df8bb630",
+      "old_bytes": 16178,
+      "new_bytes": 18095
+    },
+    {
+      "path": "local-store.js",
+      "old_sha256": "4e911d11e881c3685d573394956fdc3fa333c95f360ff33a8c6f3ec95f8f173a",
+      "new_sha256": "3018930b8f14d40e44c4e27e3bb988aba0b0b5b172808391824e2bfcec61760e",
+      "old_bytes": 32100,
+      "new_bytes": 36909
+    },
+    {
+      "path": "standalone-core.js",
+      "old_sha256": "fde374ec03e16e5d135b39e6e02c306152077ec2ef9cdf009b7011c61f745084",
+      "new_sha256": "57d78f7185aa100998171226cd4f0dcd03869fdeba1f0c7b2aa7d6ed47b07776",
+      "old_bytes": 137541,
+      "new_bytes": 140130
+    }
+  ],
+  "added": [
+    "tests/smoke-sixth-compat-end-to-end-fake-idb.js",
+    "tests/smoke-sixth-r6-memory.js",
+    "ux-r6.css",
+    "ux-r6.js"
+  ],
+  "removed": []
+}

@@ -1,0 +1,505 @@
+diff --git a/WINDOWS-README.md b/WINDOWS-README.md
+index 90989b9..8bfc98d 100644
+--- a/WINDOWS-README.md
++++ b/WINDOWS-README.md
+@@ -1,6 +1,6 @@
+ # Windows 独立原版 SillyTavern Sidecar（可选；未实测）
+ 
+-`WINDOWS-SIDECAR/upstream-lock.json` 记录官方仓库 `SillyTavern/SillyTavern`、tag `1.19.0`、GitHub release 短 SHA 前缀 `7e8663c`、许可证 AGPL-3.0。因为此施工环境无法连接 GitHub 验证完整 40 位 commit SHA，锁定文件注明 **fullCommitSha=null**；安装器在用户的 Windows 主机上核对 tag 和前缀，保存安装时获取的完整 SHA。此为有限来源验证，不是签名/供应链完全验签。
++`WINDOWS-SIDECAR/upstream-lock.json` 记录官方仓库 `SillyTavern/SillyTavern`、tag `1.19.0`、GitHub release 短 SHA 前缀 `7e8663c`、许可证 AGPL-3.0。锁定文件当前已填写完整 40 位 `fullCommitSha=7e8663cd9c184a550b37238218bdd32c6efc68e9`，安装器应在 Windows 主机上验证检出的 HEAD 与该 SHA 一致。**此处仅核对源码配置与校验设计**；本轮未联网独立验证官方 tag 的真实指向，也未在 Windows 执行安装/启动，不能声称已经完成供应链或设备验收。
+ 
+ 1. 安装 Git for Windows 和官方说明支持的 Node.js LTS，确认 `git`, `node`, `npm` 命令可用。由用户亲自选择执行，不自动联网下载。
+ 2. 双击 `WINDOWS-SIDECAR/Install.cmd` 安装到 `%USERPROFILE%\SillyTavern-Compat-1.19.0`（可在 PowerShell 传入 `-Destination` 指定新路径）。只会在**不存在的**目录中 staged clone，再 `npm ci`；失败保留 stage 排查，不覆盖已存在的 ST 或配置。
+diff --git a/app.js b/app.js
+index e9a964c..4c4434f 100644
+--- a/app.js
++++ b/app.js
+@@ -206,6 +206,27 @@ function refreshHeader(){
+     const ribbon=qs('context-ribbon');
+     if(currentSessionData&&(char||mountedBooks.length)){ribbon.classList.remove('hidden');ribbon.textContent=`独立宇宙 · ${char?`🤍 ${char.name}`:'未挂角色'}${mountedBooks.length?` · 📚 ${mountedBooks.map(w=>w.name).join(' / ')}`:''}`}
+     else ribbon.classList.add('hidden');
++    // Durable memory jobs are separate from Direct Reply. Never block chat
++    // while reading review debt, and never treat a failed IDB read as empty.
++    refreshMemoryDebtRibbon(currentSessionId).catch(e=>console.warn('Memory debt UI failed',{sessionId:currentSessionId,error:e.message}));
++}
++let memoryRibbonGeneration=0;
++async function refreshMemoryDebtRibbon(sessionId){
++    const generation=++memoryRibbonGeneration;if(!sessionId)return;
++    let pending=[],loadError=null;
++    try{
++        const jobs=await Promise.all(['rolling','facts','core'].map(k=>MimaLocalStore.getMemoryJob(sessionId,k)));
++        pending=jobs.filter(job=>job&&['needs_review','interrupted'].includes(job.status));
++    }catch(e){loadError=e;}
++    if(generation!==memoryRibbonGeneration||sessionId!==currentSessionId)return;
++    if(!loadError&&!pending.length)return;
++    const ribbon=qs('context-ribbon');if(!ribbon)return;
++    ribbon.classList.remove('hidden');
++    const status=document.createElement('span');
++    status.textContent=loadError?' · 剧情记忆状态无法读取，请检查任务记录。':` · 剧情记忆有 ${pending.length} 项待核对，原始剧情已保留。`;
++    ribbon.appendChild(status);
++    const open=document.createElement('button');open.type='button';open.className='tool-mini';open.textContent='查看记忆';
++    open.addEventListener('click',()=>openSettings('memory'));ribbon.appendChild(open);
+ }
+ 
+ function renderSettings(){
+@@ -481,9 +502,9 @@ async function importRegexFile(file){if(!file)return;try{const raw=JSON.parse(aw
+ function exportRegexPack(id){const p=regexPacks.find(x=>x.id===id);if(p)downloadJson(`${p.name}.mimamao-regex.json`,{format:'mimamao-tavern-regex-pack',version:1,data:p})}
+ 
+ function renderContextTab(box){const ps=currentSessionData.promptSettings||{};box.innerHTML=`<section class="settings-section"><h3>🪐 Session（剧情会话）</h3><div class="form-grid"><div class="form-full"><label class="form-label">标题</label><input id="ctx-title" class="field" value="${escapeHtml(currentSessionData.title||'')}"></div><div><label class="form-label">Canon Level（设定层级）</label><select id="ctx-canon" class="field">${['temporary','alternate','soft','core'].map(x=>`<option value="${x}" ${currentSessionData.canonLevel===x?'selected':''}>${canonLabel(x)}</option>`).join('')}</select></div><div><label class="form-label">Temperature（温度）</label><input id="ctx-temp" class="field" type="number" min="0.1" max="2" step="0.05" value="${getTemp()}"></div></div><p class="helper">Standalone（独立版）中所有 Session（剧情会话）都是浏览器本地独立宇宙，不会写入任何 MIMAMAO / Telegram 世界。</p></section>
+-<section class="settings-section"><h3>🧠 长剧情 Context（上下文）</h3><div class="form-grid"><div><label class="form-label">最近原文消息数</label><input id="ctx-recent" class="field" type="number" min="6" max="200" value="${Number(ps.recentMessageLimit||34)}"></div><div><label class="form-label">世界书总预算（字符）</label><input id="ctx-wbbudget" class="field" type="number" min="1000" max="160000" value="${Number(ps.worldbookBudgetChars||16000)}"></div><div class="form-full"><label class="form-label">🎭 AIRP 输入语义</label><select id="ctx-airp-mode" class="field"><option value="auto" ${(ps.inputSemanticMode||'auto')==='auto'?'selected':''}>智能自动（推荐）</option><option value="dialogue_first" ${ps.inputSemanticMode==='dialogue_first'?'selected':''}>对话优先：普通文本=台词，括号=动作/心理</option><option value="quote_dialogue" ${ps.inputSemanticMode==='quote_dialogue'?'selected':''}>引号台词：引号=台词，其余普通文本=动作</option><option value="raw" ${ps.inputSemanticMode==='raw'?'selected':''}>旧版原样：关闭语义解析</option></select><div class="row-sub">智能自动会兼容两种常见 AIRP：有明确引号时把引号当台词、周围当动作；没有引号时普通文本默认台词，括号永远不是台词。括号中的明确“心想/内心/OS”等会标记为私密想法。</div></div><div class="form-full"><label class="check-row"><input id="ctx-summary" type="checkbox" ${ps.summaryEnabled!==false?'checked':''}> 自动 Rolling Summary（滚动摘要）</label><label class="check-row"><input id="ctx-pinned-on" type="checkbox" ${ps.pinnedFactsEnabled!==false?'checked':''}> 注入 Pinned Facts（固定事实）</label></div><div class="form-full"><label class="form-label">📌 Pinned Facts（固定事实，一行一条）</label><textarea id="ctx-pinned" class="field textarea">${escapeHtml(arr(currentSessionData.pinnedFacts).join('\n'))}</textarea></div><div class="form-full"><label class="form-label">玩家备注</label><textarea id="ctx-usernotes" class="field textarea">${escapeHtml(currentSessionData.userNotes||'')}</textarea></div><div class="form-full"><label class="form-label">AI（人工智能）备注</label><textarea id="ctx-ainotes" class="field textarea">${escapeHtml(currentSessionData.aiNotes||'')}</textarea></div></div></section>
++<section class="settings-section"><h3>🧠 长剧情 Context（上下文）</h3><div class="form-grid"><div><label class="form-label">最近原文消息数</label><input id="ctx-recent" class="field" type="number" min="6" max="200" value="${Number(ps.recentMessageLimit||34)}"></div><div><label class="form-label">累计多少条旧剧情后自动整理记忆</label><input id="ctx-summary-trigger" class="field" type="number" min="12" max="200" value="${Number(ps.summaryTriggerMessages||28)}"><div class="row-sub">默认 28 条；不删减原始剧情，也不影响手动整理。</div></div><div><label class="form-label">世界书总预算（字符）</label><input id="ctx-wbbudget" class="field" type="number" min="1000" max="160000" value="${Number(ps.worldbookBudgetChars||16000)}"></div><div class="form-full"><label class="form-label">🎭 AIRP 输入语义</label><select id="ctx-airp-mode" class="field"><option value="auto" ${(ps.inputSemanticMode||'auto')==='auto'?'selected':''}>智能自动（推荐）</option><option value="dialogue_first" ${ps.inputSemanticMode==='dialogue_first'?'selected':''}>对话优先：普通文本=台词，括号=动作/心理</option><option value="quote_dialogue" ${ps.inputSemanticMode==='quote_dialogue'?'selected':''}>引号台词：引号=台词，其余普通文本=动作</option><option value="raw" ${ps.inputSemanticMode==='raw'?'selected':''}>旧版原样：关闭语义解析</option></select><div class="row-sub">智能自动会兼容两种常见 AIRP：有明确引号时把引号当台词、周围当动作；没有引号时普通文本默认台词，括号永远不是台词。括号中的明确“心想/内心/OS”等会标记为私密想法。</div></div><div class="form-full"><label class="check-row"><input id="ctx-summary" type="checkbox" ${ps.summaryEnabled!==false?'checked':''}> 自动 Rolling Summary（滚动摘要）</label><label class="check-row"><input id="ctx-pinned-on" type="checkbox" ${ps.pinnedFactsEnabled!==false?'checked':''}> 注入 Pinned Facts（固定事实）</label></div><div class="form-full"><label class="form-label">📌 Pinned Facts（固定事实，一行一条）</label><textarea id="ctx-pinned" class="field textarea">${escapeHtml(arr(currentSessionData.pinnedFacts).join('\n'))}</textarea></div><div class="form-full"><label class="form-label">玩家备注</label><textarea id="ctx-usernotes" class="field textarea">${escapeHtml(currentSessionData.userNotes||'')}</textarea></div><div class="form-full"><label class="form-label">AI（人工智能）备注</label><textarea id="ctx-ainotes" class="field textarea">${escapeHtml(currentSessionData.aiNotes||'')}</textarea></div></div></section>
+ <section class="settings-section"><h3>💾 本地档案</h3><p class="helper">剧情、角色卡、世界书、预设、正则包保存在当前浏览器 IndexedDB（本地数据库）。建议偶尔导出剧情资料备份；字体与 API Key（接口密钥）不会被打进这份“剧情资料备份”。</p><div class="toolbar"><button class="ghost-btn" onclick="exportCurrentSession()">⇩ 导出当前剧情</button><button class="ghost-btn" onclick="exportWholeLibrary()">⇩ 完整剧情资料备份</button><button class="ghost-btn" onclick="chooseLibraryImport()">⇧ 导入剧情资料备份</button><button class="danger-btn" onclick="deleteCurrentSession()">删除当前剧情</button></div></section>`}
+-async function saveContextSettings(){const temp=Math.max(.1,Math.min(2,Number(qs('ctx-temp').value||.85)));localStorage.setItem(TEMP_KEY,String(temp));MimaStandalone.saveApiConfig({...MimaStandalone.getApiConfig(),temperature:temp});await patchCurrent({title:qs('ctx-title').value||'未命名咪嘛宇宙',canonLevel:qs('ctx-canon').value,pinnedFacts:lines(qs('ctx-pinned').value),userNotes:qs('ctx-usernotes').value,aiNotes:qs('ctx-ainotes').value,enabledPersonaSources:{sandalphonPersona:false,userPersona:false,telegramContext:false,longTermMemory:false,sandalphonState:false},promptSettings:{...(currentSessionData.promptSettings||{}),recentMessageLimit:Number(qs('ctx-recent').value||34),worldbookBudgetChars:Number(qs('ctx-wbbudget').value||16000),inputSemanticMode:qs('ctx-airp-mode')?.value||'auto',summaryEnabled:qs('ctx-summary').checked,pinnedFactsEnabled:qs('ctx-pinned-on').checked}});toast('Context（上下文）已保存')}
++async function saveContextSettings(){const temp=Math.max(.1,Math.min(2,Number(qs('ctx-temp').value||.85)));localStorage.setItem(TEMP_KEY,String(temp));MimaStandalone.saveApiConfig({...MimaStandalone.getApiConfig(),temperature:temp});await patchCurrent({title:qs('ctx-title').value||'未命名咪嘛宇宙',canonLevel:qs('ctx-canon').value,pinnedFacts:lines(qs('ctx-pinned').value),userNotes:qs('ctx-usernotes').value,aiNotes:qs('ctx-ainotes').value,enabledPersonaSources:{sandalphonPersona:false,userPersona:false,telegramContext:false,longTermMemory:false,sandalphonState:false},promptSettings:{...(currentSessionData.promptSettings||{}),recentMessageLimit:Number(qs('ctx-recent').value||34),summaryTriggerMessages:Math.max(12,Math.min(200,Number(qs('ctx-summary-trigger')?.value||28))),worldbookBudgetChars:Number(qs('ctx-wbbudget').value||16000),inputSemanticMode:qs('ctx-airp-mode')?.value||'auto',summaryEnabled:qs('ctx-summary').checked,pinnedFactsEnabled:qs('ctx-pinned-on').checked}});toast('Context（上下文）已保存')}
+ 
+ 
+ function memoryStore(){
+diff --git a/compat-ui.js b/compat-ui.js
+index 89b8313..d364014 100644
+--- a/compat-ui.js
++++ b/compat-ui.js
+@@ -1,5 +1,5 @@
+ /* Advanced workbench: all DOM and state scoped to #compat-lab; native app remains untouched. */
+-(function(root){'use strict';if(typeof document==='undefined')return;const $=id=>document.getElementById(id),s=()=>root.MimaCompatStore,i=()=>root.MimaCompatImport,r=()=>root.MimaCompatRuntime;let opened=false,scan=null,activeId='',busy=false,player=null,assetUrls=[],cardPreviewUrl='',scanGeneration=0,sessionGeneration=0;
++(function(root){'use strict';if(typeof document==='undefined')return;const $=id=>document.getElementById(id),s=()=>root.MimaCompatStore,i=()=>root.MimaCompatImport,r=()=>root.MimaCompatRuntime;let opened=false,scan=null,activeId='',busy=false,player=null,assetUrls=[],cardPreviewUrl='',scanGeneration=0,sessionGeneration=0;const approvedBasicPreflights=new Map();
+ function el(tag,props={},parent){const node=document.createElement(tag);for(const[k,v]of Object.entries(props)){if(k==='text')node.textContent=String(v);else if(k==='className')node.className=v;else if(k==='onclick')node.addEventListener('click',v);else if(k==='title')node.title=v;else node.setAttribute(k,v);}if(parent)parent.append(node);return node;}
+ function clear(node){node.replaceChildren();}function message(text,type='info'){const output=$('compat-notice');output.textContent=text;output.dataset.kind=type;}
+ function download(name,data,type='application/json'){const blob=data instanceof Blob?data:new Blob([data],{type}),url=URL.createObjectURL(blob),a=document.createElement('a');a.download=name.replace(/[\\/:*?"<>|]/g,'_');a.href=url;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),5000);}
+@@ -107,7 +107,39 @@ el('button',{text:'明确授权并运行此脚本',onclick:async()=>{try{const s
+ el('button',{text:'撤销并卸载',onclick:async()=>{try{await root.MimaCompatPlugins.revoke(ses.id,hash);frame.hidden=true;slot.replaceChildren();message('已撤销当前脚本授权和 iframe。');}catch(e){message(e.message,'error');}}},row);
+ }}
+ async function inspectPreview(){if(!activeId)return;try{const preview=await r().preview(activeId,$('compat-input').value||'（未输入）');$('compat-prompt').textContent=JSON.stringify(preview,null,2);$('compat-gap').textContent=preview.gaps.length?'提醒：这张卡有 '+preview.gaps.length+' 项高级效果尚未完整适配。可以直接进行基础剧情；未适配的手机、插件或复杂演出不会自动运行。具体影响请展开本轮追踪。':'人物设定可以用于基础剧情；本引擎尚未与原版酒馆逐项对照。';$('compat-accept-gaps').closest('label').hidden=true;}catch(e){$('compat-prompt').textContent=`${e.code||'E_PREVIEW'}: ${e.message}`;}}
+-async function send(){if(busy||!activeId)return;const sessionId=activeId,input=$('compat-input').value.trim();if(!input)return;busy=true;$('compat-send').disabled=true;try{const response=await r().send(sessionId,input,{basicRoleplay:true});if(activeId===sessionId){$('compat-input').value='';await refreshMessages();const trigger=response.envelope?.worldInfo;$('compat-gap').textContent=trigger?`本轮实际加入 ${trigger.inserted.length} 条世界设定；${trigger.skipped.length} 条未触发或未适配。高级效果差异 ${response.envelope.gaps.length} 项，不会自动执行不可信脚本。`:'回复已保存。';}message('角色已回复，剧情记录已保存到当前浏览器。');}catch(e){message(`${e.code||'E_TURN'}: ${e.message}${e.settlementError?'; settlement: '+e.settlementError:''}`,'error');if(activeId===sessionId)await refreshMessages();}finally{busy=false;$('compat-send').disabled=false;await refreshSessionList();}}
++async function send(){
++ if(busy||!activeId)return;
++ const sessionId=activeId,input=$('compat-input').value.trim();if(!input)return;
++ busy=true;$('compat-send').disabled=true;
++ try{
++   // Preflight is read-only and happens before posting the player's message.
++   // Known incompatible effects are disclosed, never silently counted as ran.
++   const strict=document.querySelector('input[name="compat-mode"]:checked')?.value==='strict';
++   const preflight=await r().preview(sessionId,input);
++   if(activeId!==sessionId)return;
++   const gaps=Array.isArray(preflight.gaps)?preflight.gaps:[];
++   if(gaps.length){
++     $('compat-gap').textContent=`本次预计有 ${gaps.length} 项高级规则不能保证运行。基础聊天仍可使用人物设定；未适配的脚本或演出不会擅自执行。点击“查看本轮发送内容”可查看具体缺口。`;
++     $('compat-prompt').textContent=JSON.stringify(preflight,null,2);
++   }else $('compat-gap').textContent='已完成当前已支持规则的发送前检查；不代表与原版酒馆全部功能等价。';
++   if(strict&&gaps.length){message('严格模式已在发送前阻止：请展开本轮发送内容检查缺口，或明确选择基础聊天。','error');return;}
++   if(!strict){
++     const signature=JSON.stringify(gaps);
++     if(approvedBasicPreflights.get(sessionId)!==signature){
++       const detail=gaps.slice(0,4).map(x=>x.reason||x.slot||x.entryId||'高级规则缺口').join('；');
++       const notice=`这张角色卡将以“基础聊天”方式发送。\n高级脚本、动态状态栏及部分世界书/正则规则未保证按原版酒馆运行。${gaps.length?`\n检测到 ${gaps.length} 项差异：${detail}${gaps.length>4?' 等':''}`:''}\n是否确认使用基础聊天？取消不会发送消息或扣费。`;
++       if(!root.confirm(notice)){message('已取消发送，输入仍然保留。');return;}
++       approvedBasicPreflights.set(sessionId,signature);
++     }
++   }
++   const response=await r().send(sessionId,input,{basicRoleplay:!strict,strictCompat:strict,acceptGaps:false});
++   if(activeId===sessionId){$('compat-input').value='';await refreshMessages();const trigger=response.envelope?.worldInfo;
++     $('compat-gap').textContent=trigger?`本轮实际加入 ${trigger.inserted.length} 条世界设定；${trigger.skipped.length} 条未触发或未适配。高级效果差异 ${response.envelope.gaps.length} 项，不会自动执行不可信脚本。`:'回复已保存。';
++   }
++   message('角色已回复，剧情记录已保存到当前浏览器。');
++ }catch(e){message(`${e.code||'E_TURN'}: ${e.message}${e.settlementError?'; settlement: '+e.settlementError:''}`,'error');if(activeId===sessionId)await refreshMessages();}
++ finally{busy=false;$('compat-send').disabled=false;await refreshSessionList();}
++}
+ async function exportCompat(){try{const snapshot=await s().snapshot();download('咪嘛馆-兼容资料-哈希备份.json',await s().packBackup(snapshot));message('已导出兼容资料（包含原始卡片与兼容剧情，不包含原生账户密钥）。');}catch(e){message('备份失败，未生成假文件：'+e.message,'error');}}
+ async function exportBoth(){try{const a=await s().snapshot(),native=await root.MimaStandalone.exportLibrary();root.MimaStandalone.validateLibrary(native);const again=await s().snapshot();const revisionList=o=>JSON.stringify(Object.fromEntries(s().STORES.map(name=>[name,o.records[name].map(x=>[x.id,x.revision??null]).sort((a,b)=>String(a[0]).localeCompare(String(b[0])))])));const first=revisionList(a),second=revisionList(again);if(first!==second)throw new Error('兼容库资源/会话/消息或权限修订版在快照过程中改变，请重试');const nativeAgain=await root.MimaStandalone.exportLibrary();if(native.storeRevision!==nativeAgain.storeRevision)throw new Error('原生库在快照过程中改变，请重试');const manifest={nativeSha256:await i().digest(new TextEncoder().encode(JSON.stringify(native))),compatSha256:await i().digest(new TextEncoder().encode(s().jsonify(a)))};const envelope={contractRevision:2,label:'non-atomic-dual-snapshot',nativeRevision:native.storeRevision,manifest,compat:a,native};download('咪嘛馆-双库完整备份.json',s().jsonify(envelope));message('双库数据已导出；浏览器两库无法原子同时提交，已对可见修订进行复核。');}catch(e){message('完整备份失败：'+e.message,'error');}}
+ async function restoreCompat(){const f=$('compat-restore-file').files[0];if(!f)return;try{const parsed=await s().unpackBackup(await f.text());const result=await s().restoreVerified(parsed,{dryRun:true});message('备份关系校验完成（'+(parsed.integrityVerified?'外层 SHA256 已验证':'旧版无外层哈希；仅能人工确认')+'）：'+JSON.stringify(result.counts)+'。未覆盖现有数据。');}catch(e){message('恢复检查失败：'+e.message,'error');}}
+diff --git a/index.html b/index.html
+index 673a933..960d176 100644
+--- a/index.html
++++ b/index.html
+@@ -203,7 +203,7 @@
+   </section>
+   <section id="compat-chat-panel"><h3>② 和角色聊天 <button type="button" id="compat-manage-toggle">管理卡片与功能</button></h3><div id="compat-current">咪嘛馆兼容引擎 · 未进入剧情</div><div id="compat-conversation" hidden>
+    <div id="compat-messages" aria-live="polite"></div><textarea id="compat-input" placeholder="输入剧情"></textarea>
+-   <div class="compat-actions"><label class="compat-gap-choice" hidden><input id="compat-accept-gaps" type="checkbox"> 只在专家严格对照模式中确认差异</label><button id="compat-send">发送消息</button><button id="compat-preview">查看本轮发送内容</button></div>
++   <div class="compat-actions"><label class="compat-gap-choice" hidden><input id="compat-accept-gaps" type="checkbox"> 只在专家严格对照模式中确认差异</label><label class="compat-mode-label"><input type="radio" name="compat-mode" value="basic" checked>基础聊天</label><label class="compat-mode-label"><input type="radio" name="compat-mode" value="strict">严格检查高级规则</label><button id="compat-send">发送消息</button><button id="compat-preview">查看本轮发送内容</button></div>
+    <div id="compat-gap"></div><details><summary>真实 Provider 消息 / 触发追踪</summary><pre id="compat-prompt"></pre></details>
+    <div class="compat-actions"><label>本地音频（用户手动播放）<input type="file" id="compat-audio" accept="audio/*"></label><div id="compat-media"></div></div>
+   </div></section>
+diff --git a/standalone-core.js b/standalone-core.js
+index e0fee91..c9843ff 100644
+--- a/standalone-core.js
++++ b/standalone-core.js
+@@ -312,11 +312,19 @@
+     const memory=normalizeManualMemory(session.manualMemory||{});const memoryTrace=[];
+     const coreValid=memorySourceValid(session,memory.core)&&(memory.core.source!=='facts'||!memory.core.sourceFactsHash||fingerprint(memory.facts)===memory.core.sourceFactsHash);
+     memoryTrace.push({kind:'core',verification:memory.core.verification.status,sourceCount:memory.core.sourceCount,source:memory.core.source,chars:memory.core.content.length,injected:!!(memory.settings.injectCore&&memory.core.content&&coreValid),reason:!coreValid?'stale_source':!memory.settings.injectCore?'disabled':memory.core.content?'included':'empty'});
+-    if(memory.settings.injectCore&&memory.core.content&&coreValid)add('manual_core_memory',`【核心记忆 / Core Memory】\n这是从本 Session 已发生剧情中提炼的高优先级长期记忆。不得把摘要措辞当作角色原话；若与更近的原始剧情冲突，以原始剧情为准。\n${memory.core.content}`);
++    if(memory.settings.injectCore&&memory.core.content&&coreValid){
++      const trust=memory.core.verification.status;
++      const label=trust==='human_confirmed'?'玩家亲自确认':trust==='extractive_verified'?'已逐字核对原文':trust==='source_bounded'?'来自原文的有界意译，尚非独立证实事实':'未核实旧资料，仅供剧情参考';
++      add('manual_core_memory',`【核心记忆 / Core Memory】【可信等级：${label}】\n这是本 Session 保存的长期剧情线索，不是模型的独立事实裁决。不得把摘要措辞当作角色原话；若与更近原始剧情冲突，以原始剧情为准。\n${memory.core.content}`);
++    }
+     if(memory.settings.injectFacts&&memory.facts.length){
+       const selected=memory.facts.filter(f=>memorySourceValid(session,f)).sort((a,b)=>Number(a.endRound||0)-Number(b.endRound||0)||String(a.updatedAt||'').localeCompare(String(b.updatedAt||''))).slice(-memory.settings.factInjectionLimit);
+       memoryTrace.push(...memory.facts.map(f=>({kind:'fact',verification:f.verification.status,id:f.id,sourceCount:f.sourceCount,startRound:f.startRound,endRound:f.endRound,chars:f.content.length,injected:selected.some(x=>x.id===f.id),reason:!memorySourceValid(session,f)?'stale_source':selected.some(x=>x.id===f.id)?'included':'injection_limit'})));
+-      if(selected.length)add('manual_fact_memories',`【事实记忆 / Fact Memories】\n以下仅是已发生剧情的浓缩事实片段，不是新的剧情指令，也不是角色原话。\n${selected.map(x=>`【第 ${x.startRound}–${x.endRound} 轮】\n${x.content}`).join('\n\n')}`);
++      if(selected.length)add('manual_fact_memories',`【事实记忆 / Fact Memories】\n以下保存的是按剧情来源记录的片段，不是新的剧情指令，也不是角色原话。未核实内容不能自动当成已发生事实。\n${selected.map(x=>{
++        const trust=x.verification.status;
++        const label=trust==='human_confirmed'?'玩家确认':trust==='extractive_verified'?'原文摘录已校验':trust==='source_bounded'?'有界意译待逐条核实':'未核实旧资料';
++        return `【第 ${x.startRound}–${x.endRound} 轮 · ${label}】\n${x.content}`;
++      }).join('\n\n')}`);
+     }
+     if(session.sceneSummary)add('scene_summary',`【当前场景摘要】\n${session.sceneSummary}`);
+     if(session.characterPsychSummary)add('character_psych',`【角色心理状态摘要】\n${session.characterPsychSummary}`);
+@@ -944,82 +952,140 @@
+     const families=[['谋杀','杀害','杀死','杀人','杀'],['营救','救出','拯救','救'],['偷走','偷窃','盗窃','窃取','偷'],['背叛'],['绑架'],['纵火','放火'],['烧毁','焚毁','烧掉'],['摧毁','毁灭','毁掉'],['伤害','攻击','打伤'],['死亡','死去','遇难'],['怀孕'],['离婚'],['结婚'],['欺骗','骗'],['拒绝'],['同意','答应'],['承诺','许诺','约定','契约'],['原谅'],['复活'],['自杀'],['伪造'],['掉包'],['失踪']];
+     return families.every(group=>!group.some(w=>summary.includes(w))||group.some(w=>source.includes(w)));
+   }
++  // R10: event-unit coverage must bind *each* canonical event to a particular
++  // summary claim. Shared words, an action anywhere in the summary, or citations
++  // alone do not prove that two people/objects/locations received the same fate.
+   function sourceEventLedger(records,summary){
+-    const final=memoryEventKey(summary);
+-    const groups=new Map(),covered=[],missing=[];
+-    const source=arr(records).filter(m=>(m.role==='user'||m.role==='assistant'||m.role==='memory_source')&&String(m.rawContent||m.content||'').trim());
++    const covered=[],missing=[],groups=new Map();
++    const source=arr(records).filter(m=>['user','assistant','memory_source'].includes(m.role)&&String(m.rawContent||m.content||'').trim());
++    const normalize=memoryEventKey;
++    const grams=(v,n)=>{v=normalize(v);const out=new Set();for(let i=0;i<=v.length-n;i++)out.add(v.slice(i,i+n));return out;};
++    const claims=String(summary||'').split(/[。！？；;\n，,]+/).map(x=>x.trim()).filter(Boolean);
++    const highImpact=['杀死','杀害','谋杀','击败','营救','救出','偷走','盗窃','背叛','烧毁','毁灭','打伤','攻击','拒绝','同意','答应','承诺','约定','原谅','复活','失踪','死亡','死去','伪造','绑架','离婚','结婚','否认'];
++    const hasImpact=t=>highImpact.some(w=>t.includes(w));
++    // Split true independent sentences; never mistake multiple messages sharing
++    // one template for a single event. Preserve offsets for audit/review.
+     for(let i=0;i<source.length;i++){
+-      const m=source[i],body=String(m.rawContent||m.content||'').trim();
+-      const normalized=memoryEventKey(body);
+-      if(normalized.length<4)continue;
+-      // Only identical templates with varying ordinal markers can collapse.
+-      // Different actions, polarity and objects remain distinct events.
+-      const template=normalized.replace(/第[0-9一二三四五六七八九十百千]+(天|封|条|轮|日|次)/g,'第# $1');
+-      const key=template+'|'+JSON.stringify(eventFrameFlags(body));
+-      if(!groups.has(key))groups.set(key,{body,template,normalized,members:[],numbers:[],varied:false});
+-      const group=groups.get(key);
+-      const numbers=[...normalized.matchAll(/第([0-9]+)(天|封|条|轮|日|次)/g)].map(x=>Number(x[1]));
+-      group.members.push({record:m,body,index:m.messageIndex??i});
+-      if(numbers.length)group.numbers.push(numbers[0]);
+-      if(normalized!==group.normalized)group.varied=true;
++      const m=source[i],body=String(m.rawContent||m.content||'');
++      const parts=[...body.matchAll(/[^。！？；;\n]+[。！？；;\n]?/g)];
++      for(const match of parts){
++        const part=match[0].trim(),norm=normalize(part);
++        if(!norm)continue; // "同意" and "拒绝" are meaningful events, not noise.
++        const template=norm.replace(/第[0-9一二三四五六七八九十百千]+(天|封|条|轮|日|次)/g,'第#$1');
++        const flags=eventFrameFlags(part),key=template+'|'+JSON.stringify(flags);
++        if(!groups.has(key))groups.set(key,{template,body:part,normalized:norm,flags,members:[],numbers:[],varied:false});
++        const group=groups.get(key);
++        const numbers=[...norm.matchAll(/第([0-9]+)(天|封|条|轮|日|次)/g)].map(x=>Number(x[1]));
++        group.members.push({record:m,part,index:m.messageIndex??i,offset:match.index||0});
++        if(numbers.length)group.numbers.push(numbers[0]);
++        if(norm!==group.normalized)group.varied=true;
++      }
++    }
++    const list=[...groups.values()];
++    // Extract the discriminating span between near-identical source events.
++    // E.g. 艾琳杀死了[甲]方 vs 艾琳杀死了[乙]方; both MUST be accounted for.
++    // This is not a semantic theorem: uncertain cases stay reviewable.
++    function contrast(a,b){
++      const x=a.normalized,y=b.normalized;
++      if(x===y)return '';
++      let start=0;while(start<Math.min(x.length,y.length)&&x[start]===y[start])start++;
++      let end=0;while(end<x.length-start&&end<y.length-start&&x[x.length-1-end]===y[y.length-1-end])end++;
++      const diff=x.slice(start,x.length-end);
++      const common=Math.min(start+end,Math.min(x.length,y.length));
++      return diff&&common>=Math.max(3,Math.floor(Math.min(x.length,y.length)*0.48))?diff:'';
+     }
+-    const grams=(t,n)=>{const v=memoryEventKey(t),out=new Set();for(let i=0;i<=v.length-n;i++)out.add(v.slice(i,i+n));return out;};
+-    const finalBigrams=grams(final,2),finalTrigrams=grams(final,3);
+-    for(const group of groups.values()){
+-      const original=group.members.map(x=>x.body).join('\n');
+-      const flags=eventFrameFlags(original),candidateFlags=eventFrameFlags(summary);
+-      const originalBigrams=grams(group.body,2),originalTrigrams=grams(group.body,3);
+-      const bOverlap=[...originalBigrams].filter(g=>finalBigrams.has(g)).length;
+-      const triOverlap=[...originalTrigrams].filter(g=>finalTrigrams.has(g)).length;
+-      // Exact originals, or substantial cross-message phrasing are both
+-      // admissible; quotations alone without the rest of the event are not.
+-      const direct=final.includes(group.normalized);
+-      const lexical=originalBigrams.size>0&&bOverlap/originalBigrams.size>=0.40&&triOverlap>=2;
+-      const flagsPreserved=Object.keys(flags).every(k=>!flags[k]||candidateFlags[k]);
+-      const sourcedAction=eventActionGuard(original,summary);
+-      let cardinality=true;
++    function preciseNumber(count,unit='次'){
++      return new RegExp('(?:连续|共计|累计|历时|总共|共|合计|前后|一连|整整|重复|先后|发生|做了)?[^。；\\n]{0,3}(?:'+count+'|'+chineseCount(count)+')'+unit).test(summary);
++    }
++    function eventSlotsPreserved(original,claim,isOrdinalSeries){
++      // Actor/object/place assertions are checked against THIS clause; an
++      // invented victim must not pass only because actor/action words overlap.
++      // Unknown word orders are left for review, not called verified.
++      if(isOrdinalSeries)return true; // Quantified canonical ordinal ranges.
++      const src=normalize(original),dst=normalize(claim);
++      const verbs=['杀死','杀害','谋杀','击败','营救','救出','偷走','背叛','绑架','烧毁','放火','拒绝','同意','答应','承诺','约定','原谅','放进','放到','送回','交给','归还','交出','偷窃','摧毁','毁掉','打伤','攻击','关闭','打开','获得','失去','目击'];
++      const verb=verbs.find(w=>src.includes(w));
++      if(!verb)return true;
++      const at=src.indexOf(verb),after=src.slice(at+verb.length).replace(/^[了过掉得将把向给]/,'');
++      // For a short unambiguous object, the actual object MUST occur locally.
++      // Compound objects are separate assertions; they all need grounding.
++      const object=after.split(/(?:然后|随后|接着|因此|因为|于是|同时|并且)/)[0];
++      if(object&&object.length<=14){
++        const items=object.split(/(?:和|与|以及|及)/).filter(t=>t.length>=2);
++        if(items.length&&!items.every(t=>dst.includes(t)))return false;
++      }
++      // The candidate must not introduce an additional object into the SAME
++      // action claim (e.g. source 甲方 -> claim 甲方和乙方). Check nouns after
++      // the matched action rather than relying on global n-gram overlap.
++      if(hasImpact(original)&&dst.includes(verb)){
++        const candidateTail=dst.slice(dst.indexOf(verb)+verb.length)
++          .replace(/^[了过掉得将把向给]/,'')
++          .replace(/(?:共计|累计|总共|共|先后|连续|各|整整)?[0-9一二三四五六七八九十百]+(?:次|回|遍|天|条|封)$/, '');
++        const claimedObjects=candidateTail.split(/(?:和|与|以及|及)/).filter(v=>v.length>=2);
++        if(claimedObjects.length&&!claimedObjects.every(v=>src.includes(v)))return false;
++      }
++      const location=src.match(/在([^，。]{2,12}?)(?=击败|杀死|杀害|攻击|拒绝|偷走|放火)/);
++      if(location&&!dst.includes(location[1]))return false;
++      const prefix=src.slice(0,at).replace(/^(?:第[0-9一二三四五六七八九十百千]+[天日轮次])/, '').replace(/[了将把]/g,'');
++      if(prefix&&prefix.length>=2&&prefix.length<=12&&!dst.includes(prefix))return false;
++      return true;
++    }
++    for(const group of list){
++      const original=group.members.map(x=>x.part).join('\n');
++      const allFlags=group.flags;
++      const bi=grams(group.body,2),tri=grams(group.body,3);
++      const differences=list.filter(other=>other!==group).map(other=>contrast(group,other)).filter(Boolean);
++      let quantityOK=true;
+       if(group.varied){
+-        const nums=[...new Set(group.numbers)].sort((a,b)=>a-b),count=nums.length;
+-        // An ordinal series is compressible only when it is consecutive;
+-        // the summary must explicitly convey its span or its exact count.
+-        const consecutive=count===group.members.length&&nums.every((n,i)=>n===nums[0]+i);
++        const nums=[...new Set(group.numbers)].sort((a,b)=>a-b),n=nums.length;
++        const consecutive=n===group.members.length&&nums.every((v,i)=>v===nums[0]+i);
+         const units=[...new Set([...group.body.matchAll(/第[0-9一二三四五六七八九十百千]+(天|封|条|轮|日|次)/g)].map(x=>x[1]))];
+-        const countWords=String(count)+'|'+chineseCount(count);
+-        const explicitQuantity=units.some(u=>new RegExp('(?:连续|共计|累计|历时|总共|共|合计|前后|一连|整整)[^。；\\n]{0,5}(?:'+countWords+')'+u).test(summary));
++        const countWords=String(n)+'|'+chineseCount(n);
++        const explicit=units.some(unit=>new RegExp('(?:连续|共计|累计|历时|总共|共|合计|前后|一连|整整)[^。；\\n]{0,5}(?:'+countWords+')'+unit).test(summary));
+         const first=nums[0],last=nums[nums.length-1];
+-        const inclusiveRange=units.some(u=>new RegExp('第(?:'+first+'|'+chineseCount(first)+')(?:'+u+')?(?:至|到|—|～|~|-)(?:第)?(?:'+last+'|'+chineseCount(last)+')'+u).test(summary));
+-        // Mentions of only the first and last original messages are NOT a
+-        // proof of the intervening sequence. A quantity/range claim must be
+-        // explicit and its cardinality must match the canonical series.
+-        cardinality=consecutive&&count>=2&&(explicitQuantity||inclusiveRange);
++        const range=units.some(unit=>new RegExp('第(?:'+first+'|'+chineseCount(first)+')(?:'+unit+')?(?:至|到|—|～|~|-)(?:第)?(?:'+last+'|'+chineseCount(last)+')'+unit).test(summary));
++        quantityOK=consecutive&&n>1&&(explicit||range);
++      }else if(group.members.length>1){
++        const n=group.members.length,exact=(normalize(summary).split(group.normalized).length-1)>=n;
++        quantityOK=exact||['次','回','遍'].some(u=>preciseNumber(n,u));
+       }
+-      const ok=(direct||lexical)&&flagsPreserved&&sourcedAction&&cardinality;
++      const supports=(group.varied?[summary]:claims).some(claim=>{
++        const text=normalize(claim),cbi=grams(text,2),ctri=grams(text,3);
++        const direct=text.includes(group.normalized);
++        const overlap=bi.size>0&&[...bi].filter(g=>cbi.has(g)).length/bi.size>=0.40&&[...tri].filter(g=>ctri.has(g)).length>=2;
++        const brief=group.normalized.length<4&&text.includes(group.normalized);
++        const flags=eventFrameFlags(claim);
++        const framing=Object.keys(allFlags).every(k=>!allFlags[k]||flags[k]);
++        const notContradicted=Object.keys(flags).every(k=>!flags[k]||allFlags[k]);
++        const actionOK=eventActionGuard(group.body,claim) &&
++          (!hasImpact(group.body)||hasImpact(claim) && highImpact.some(w=>group.body.includes(w)&&claim.includes(w)));
++        // A contrast is anchored to THIS claim, not to unrelated words elsewhere
++        // in the candidate. Grouping can compress *ordinals*, not actual actors.
++        const distinguish=differences.every(diff=>text.includes(diff));
++        const slots=eventSlotsPreserved(group.body,claim,group.varied);
++        return (direct||overlap||brief)&&framing&&notContradicted&&actionOK&&distinguish&&slots;
++      });
++      const ok=quantityOK&&supports;
+       for(const item of group.members){
+-        const m=item.record;
+-        const entry={messageId:m.id,index:item.index,sourceFingerprint:fingerprint([m.id,m.role,m.rawContent,m.content,m.versions]),anchor:item.body.slice(0,120),proof:ok?(direct?'exact_source':'bounded_event_lexical'):null};
++        const m=item.record,entry={messageId:m.id,index:item.index,eventId:String(m.id)+':'+item.offset,offset:item.offset,
++          sourceFingerprint:fingerprint([m.id,m.role,m.rawContent,m.content,m.versions]),anchor:item.part.slice(0,120),
++          proof:ok?(group.varied?'bounded_ordinal_series':group.members.length>1?'counted_repeat':'local_event_claim'):null};
+         (ok?covered:missing).push(entry);
+       }
+     }
+-    // A source with no events, or a newly asserted high-impact action, cannot
+-    // gain verified authority. These flags are globally checked even when
+-    // individual source units overlap lexically.
+     const allText=source.map(m=>String(m.rawContent||m.content||'')).join('\n');
+-    // Every independent assertion in a proposed summary needs some source
+-    // substance. A well-grounded first sentence cannot hide a fabricated
+-    // second sentence, even when the overall bigram overlap remains high.
+     const sourceBi=grams(allText,2),sourceTri=grams(allText,3);
+-    const clauses=String(summary||'').split(/[。！？；;\n，,]+/).map(x=>x.trim()).filter(x=>memoryEventKey(x).length>=6);
+-    const clausesGrounded=clauses.length>0&&clauses.every(clause=>{
+-      const bi=grams(clause,2),tri=grams(clause,3),joined=memoryEventKey(allText);
+-      return (joined.includes(memoryEventKey(clause))||
+-        ([...bi].filter(g=>sourceBi.has(g)).length/Math.max(1,bi.size)>=0.29&&
+-         [...tri].some(g=>sourceTri.has(g))))&&eventActionGuard(allText,clause);
++    const grounded=claims.length>0&&claims.every(claim=>{
++      const token=normalize(claim),bi=grams(token,2),tri=grams(token,3);
++      if(token.length<4)return normalize(allText).includes(token);
++      return normalize(allText).includes(token)||(
++        [...bi].filter(g=>sourceBi.has(g)).length/Math.max(1,bi.size)>=0.29&&[...tri].some(g=>sourceTri.has(g)));
+     });
+-    const globalSafe=source.length>0&&clausesGrounded&&eventActionGuard(allText,summary)&&
++    const safe=source.length>0&&grounded&&eventActionGuard(allText,summary)&&
+       Object.keys(eventFrameFlags(summary)).every(k=>!eventFrameFlags(summary)[k]||eventFrameFlags(allText)[k]);
+-    if(!globalSafe){missing.push(...covered.splice(0));}
+-    return {complete:source.length>0&&missing.length===0,covered,missing,expected:covered.length+missing.length,
+-      units:groups.size,contract:'bounded_source_events'};
++    if(!safe)missing.push(...covered.splice(0));
++    return {complete:source.length>0&&covered.length+missing.length>0&&missing.length===0,
++      covered,missing,expected:covered.length+missing.length,units:list.length,contract:'r10_canonical_event_claims'};
+   }
+   function validateRollingCoverage(session,start,end,summary,job,stage){
+     const source=arr(session.messages).slice(start,end).map((m,i)=>({...m,messageIndex:start+i}));
+@@ -1234,7 +1300,7 @@
+         const local=Math.max(0,Math.min(1,((Number(ev?.percent)||12)-12)/78));
+         emitProgress(progress,{...ev,percent:10+Math.round(((i+local)/ranges.length)*78)});
+       };
+-      const rangeMessages=data.rounds.filter(r=>r.index>=a&&r.index<=b).flatMap(r=>r.messages);
++      const rangeMessages=[...(a===1?data.opening:[]),...data.rounds.filter(r=>r.index>=a&&r.index<=b).flatMap(r=>r.messages)];
+       const positions=rangeMessages.map(m=>session.messages.findIndex(src=>src.id===m.id)).filter(x=>x>=0);
+       const rangeScope={sourceStartIndex:Math.min(...positions),sourceEndExclusive:Math.max(...positions)+1,startRound:a,endRound:b,
+         messageIds:rangeMessages.map(m=>m.id)};
+@@ -1327,7 +1393,16 @@
+     }
+     flush();return out;
+   }
+-  function summaryNeeded(session){const limit=Math.max(18,Number(session.promptSettings?.recentMessageLimit||34)-4);const end=(session.messages||[]).length-limit;return session.promptSettings?.summaryEnabled!==false&&end>8&&(session.lastSummarizedIndex||0)<end;}
++  function summaryNeeded(session,{automatic=false}={}){
++    const limit=Math.max(18,Number(session.promptSettings?.recentMessageLimit||34)-4);
++    const end=(session.messages||[]).length-limit;
++    const pending=end-Math.max(0,Number(session.lastSummarizedIndex)||0);
++    // Explicit user-triggered summaries keep the R9 behavior. Background jobs
++    // respect the existing persisted setting instead of launching every turn.
++    // This is an input-volume gate, never a sleep or a dropped source window.
++    const trigger=Number(session.promptSettings?.summaryTriggerMessages||28);
++    return session.promptSettings?.summaryEnabled!==false&&end>8&&pending>0&&(!automatic||pending>=trigger);
++  }
+   async function refreshSummary(session,temp,signal,progress,job=null){
+     const original=clone(session);
+     if(session.promptSettings?.summaryEnabled===false){if(job)await window.MimaLocalStore.settleMemoryJob(job,'skipped','E_MEMORY_DISABLED');return session;}
+@@ -1422,7 +1497,7 @@
+     for(const session of state.sessions){
+       const job=await store.getMemoryJob(session.id,'rolling');
+       if(!job||job.status!=='running'||Number(job.leaseUntilEpoch||0)>Date.now()||Number(job.recoveryCount||0)>=3)continue;
+-      if(!summaryNeeded(session))continue;
++      if(!summaryNeeded(session,{automatic:true}))continue;
+       if(rollingInFlight.has(session.id))continue;
+       rollingInFlight.add(session.id);
+       runRecordedMemory('rolling',session.id,job.options||{temperature:0.35},null,null)
+@@ -1431,7 +1506,7 @@
+     }
+   }
+   function queueRollingSummary(id,temp){
+-    if(rollingInFlight.has(id)||!getSession(id)||!summaryNeeded(getSession(id)))return;rollingInFlight.add(id);
++    if(rollingInFlight.has(id)||!getSession(id)||!summaryNeeded(getSession(id),{automatic:true}))return;rollingInFlight.add(id);
+     setTimeout(async()=>{try{
+       const job=await window.MimaLocalStore?.getMemoryJob?.(id,'rolling');
+       // Explicit human review owns this candidate. Normal chats must not
+diff --git a/tests/smoke-r10-automatic-summary-trigger.js b/tests/smoke-r10-automatic-summary-trigger.js
+new file mode 100644
+index 0000000..2877f95
+--- /dev/null
++++ b/tests/smoke-r10-automatic-summary-trigger.js
+@@ -0,0 +1,16 @@
++'use strict';
++const assert=require('node:assert/strict'),path=require('node:path');
++const root=path.resolve(__dirname,'..');
++const data=new Map(),copy=x=>x===undefined?undefined:structuredClone(x);
++function db(){return{close(){},transaction(){let n=0,ended=false,aborted=false;const snapshot=new Map([...data].map(([k,v])=>[k,copy(v)]));const tx={oncomplete:null,onabort:null,abort(){aborted=true;setImmediate(()=>tx.onabort?.())}};function done(){if(ended||aborted||n)return;ended=true;setImmediate(()=>{if(!aborted){data.clear();for(const [k,v]of snapshot)data.set(k,copy(v));tx.oncomplete?.();}})}const obj={get(k){n++;const r={result:undefined,onsuccess:null};setImmediate(()=>{r.result=copy(snapshot.get(k));r.onsuccess?.();n--;setImmediate(done)});return r;},put(v,k){snapshot.set(k,copy(v));return{}},delete(k){snapshot.delete(k);return{}}};tx.objectStore=()=>obj;return tx;}}}
++global.window=global;global.indexedDB={open(){const req={result:db(),onsuccess:null};setImmediate(()=>req.onsuccess?.());return req}};global.MimaThemeEngine={apply(){},normalizeSettings:x=>x};const pref=new Map();global.localStorage={getItem:x=>pref.get(x)||null,setItem:(x,y)=>pref.set(x,y)};
++require(path.join(root,'local-store.js'));require(path.join(root,'standalone-core.js'));
++let chatCalls=0,memoryCalls=0;
++global.fetch=async (_url,opts)=>{const body=JSON.parse(opts.body);const memory=body.messages?.[0]?.content?.includes('剧情档案助手');if(memory)memoryCalls++;else chatCalls++;const content=memory?'仅供待审核的摘要。':'守卫继续巡逻。';return{ok:true,status:200,headers:{get:()=> 'application/json'},json:async()=>({choices:[{message:{content},finish_reason:'stop'}]}),text:async()=>JSON.stringify({choices:[{message:{content},finish_reason:'stop'}]})};};
++const tick=()=>new Promise(r=>setTimeout(r,40));
++(async()=>{await MimaStandalone.init();MimaStandalone.saveApiConfig({apiBase:'http://127.0.0.1:5999/v1',model:'local-test',stream:false});const s=(await MimaStandalone.handle('/sessions','POST',{title:'auto trigger'})).data;
++const messages=Array.from({length:42},(_,i)=>({id:'auto-'+i,role:i%2?'assistant':'user',content:`第${i+1}天玩家巡视走廊。`,rawContent:`第${i+1}天玩家巡视走廊。`,versions:[]}));await MimaStandalone.handle(`/sessions/${s.id}`,'PATCH',{messages,promptSettings:{recentMessageLimit:12,summaryTriggerMessages:28}});
++await MimaStandalone.handle(`/sessions/${s.id}/chat`,'POST',{text:'巡逻继续。'});await tick();assert.equal(chatCalls,1);assert.equal(memoryCalls,0,'Below 28 uncovered messages, no automatic memory call');
++await MimaStandalone.handle(`/sessions/${s.id}/chat`,'POST',{text:'再次巡逻。'});await tick();assert.equal(chatCalls,2);assert.equal(memoryCalls,1,'At 28 uncovered messages, exactly one background summary request');
++const stored=(await MimaStandalone.handle(`/sessions/${s.id}`,'GET')).data;assert.equal(stored.messages.length,46);assert.equal(stored.lastSummarizedIndex,0);console.log('PASS persisted trigger=28; no premature automatic calls, background only at threshold; 46 raw messages intact');
++})().catch(e=>{console.error(e);process.exitCode=1});
+diff --git a/tests/smoke-r10-event-ledger-pairs.js b/tests/smoke-r10-event-ledger-pairs.js
+new file mode 100644
+index 0000000..12011e6
+--- /dev/null
++++ b/tests/smoke-r10-event-ledger-pairs.js
+@@ -0,0 +1,36 @@
++'use strict';
++// Provider + fake IndexedDB integration: positive compression and negative omissions.
++const assert=require('node:assert/strict'),path=require('node:path'),{spawnSync}=require('node:child_process');
++const CASES=[
++ ['victim omitted',['艾琳杀死了甲方。','艾琳杀死了乙方。'],'艾琳杀死了甲方。',false],
++ ['location omitted',['艾琳在东城击败了士兵。','艾琳在西城击败了士兵。'],'艾琳在东城击败了士兵。',false],
++ ['repeated action omitted',['艾琳杀死了甲方。'],'艾琳杀死了甲方。',false],
++ ['repeated short consent',['同意。'],'同意。',false],
++ ['second sentence omitted',['艾琳拒绝了请求。守卫把钥匙送回码头。'],'艾琳拒绝了请求。',false],
++ ['explicit repeat count',['艾琳杀死了甲方。'],'艾琳杀死了甲方共二十四次。',true],
++ ['invented victim within repeat',['艾琳杀死了甲方。'],'艾琳杀死了乙方共二十四次。',false],
++ ['invented extra victim',['艾琳杀死了甲方。'],'艾琳杀死了甲方和乙方二十四次。',false],
++ ['both victims counted',['艾琳杀死了甲方。','艾琳杀死了乙方。'],'艾琳杀死了甲方十二次，艾琳杀死了乙方十二次。',true]
++];
++if(!process.env.R10_CASE){
++ for(let i=0;i<CASES.length;i++){
++  const r=spawnSync(process.execPath,[__filename],{env:{...process.env,R10_CASE:String(i)},encoding:'utf8',timeout:25000});
++  if(r.status!==0)console.error(CASES[i][0],r.stdout,r.stderr);
++  assert.equal(r.status,0,`R10 ${CASES[i][0]} integration`);
++  console.log('PASS',CASES[i][0]);
++ }
++}else{
++ const c=CASES[Number(process.env.R10_CASE)],data=new Map(),cp=x=>x===undefined?undefined:structuredClone(x);
++ function db(){return{close(){},transaction(){let n=0,ended=false,aborted=false;const copy=new Map([...data].map(([k,v])=>[k,cp(v)]));const tx={oncomplete:null,onabort:null,abort(){aborted=true;setImmediate(()=>tx.onabort?.())}};function done(){if(ended||aborted||n)return;ended=true;setImmediate(()=>{if(!aborted){data.clear();for(const [k,v]of copy)data.set(k,cp(v));tx.oncomplete?.();}})}const obj={get(k){n++;const r={result:undefined,onsuccess:null};setImmediate(()=>{r.result=cp(copy.get(k));r.onsuccess?.();n--;setImmediate(done)});return r;},put(v,k){copy.set(k,cp(v));return{}},delete(k){copy.delete(k);return{}}};tx.objectStore=()=>obj;return tx;}}}
++ global.window=global;global.indexedDB={open(){const req={result:db(),onsuccess:null};setImmediate(()=>req.onsuccess?.());return req}};global.MimaThemeEngine={apply(){},normalizeSettings:x=>x};const pref=new Map();global.localStorage={getItem:x=>pref.get(x)||null,setItem:(x,y)=>pref.set(x,y)};
++ require(path.join(__dirname,'..','local-store.js'));require(path.join(__dirname,'..','standalone-core.js'));
++ let requests=0;global.fetch=async()=>{requests++;const content=c[2];return{ok:true,status:200,headers:{get:()=> 'application/json'},json:async()=>({choices:[{message:{content},finish_reason:'stop'}]}),text:async()=>JSON.stringify({choices:[{message:{content},finish_reason:'stop'}]})};};
++ (async()=>{await MimaStandalone.init();MimaStandalone.saveApiConfig({apiBase:'http://127.0.0.1:5999/v1',model:'local-test',stream:false});const s=(await MimaStandalone.handle('/sessions','POST',{title:c[0]})).data;
++ const messages=Array.from({length:42},(_,i)=>({id:'event-'+i,role:i%2?'assistant':'user',content:i<24?c[1][i%c[1].length]:'后续日常剧情。',rawContent:i<24?c[1][i%c[1].length]:'后续日常剧情。',versions:[]}));
++ await MimaStandalone.handle(`/sessions/${s.id}`,'PATCH',{messages,promptSettings:{recentMessageLimit:12}});
++ const result=await MimaStandalone.runRecordedMemory('rolling',s.id,{}).then(()=>true).catch(e=>{assert.equal(e.code,'E_MEMORY_NEEDS_REVIEW');return false});
++ const saved=(await MimaStandalone.handle(`/sessions/${s.id}`,'GET')).data,job=await MimaLocalStore.getMemoryJob(s.id,'rolling');
++ assert.equal(requests,1);assert.equal(saved.messages.length,42);assert.equal(result,c[3]);assert.equal(saved.lastSummarizedIndex,c[3]?24:0);assert.equal(job.status,c[3]?'committed':'needs_review');
++ if(!c[3])assert(job.checkpoints.some(x=>(x.stage==='rolling_final_coverage'&&x.missingCount>0)||x.stage.endsWith('_needs_review')));
++ })().catch(e=>{console.error(e);process.exitCode=1});
++}
+diff --git a/tests/smoke-r10-opening-fact-source.js b/tests/smoke-r10-opening-fact-source.js
+new file mode 100644
+index 0000000..3cd2d70
+--- /dev/null
++++ b/tests/smoke-r10-opening-fact-source.js
+@@ -0,0 +1,12 @@
++'use strict';
++const assert=require('node:assert/strict'),path=require('node:path');
++const root=path.resolve(__dirname,'..');
++const data=new Map(),copy=x=>x===undefined?undefined:structuredClone(x);
++function db(){return{close(){},transaction(){let n=0,ended=false,aborted=false;const snapshot=new Map([...data].map(([k,v])=>[k,copy(v)]));const tx={oncomplete:null,onabort:null,abort(){aborted=true;setImmediate(()=>tx.onabort?.())}};function done(){if(ended||aborted||n)return;ended=true;setImmediate(()=>{if(!aborted){data.clear();for(const [k,v]of snapshot)data.set(k,copy(v));tx.oncomplete?.();}})}const obj={get(k){n++;const r={result:undefined,onsuccess:null};setImmediate(()=>{r.result=copy(snapshot.get(k));r.onsuccess?.();n--;setImmediate(done)});return r;},put(v,k){snapshot.set(k,copy(v));return{}},delete(k){snapshot.delete(k);return{}}};tx.objectStore=()=>obj;return tx;}}}
++global.window=global;global.indexedDB={open(){const req={result:db(),onsuccess:null};setImmediate(()=>req.onsuccess?.());return req}};global.MimaThemeEngine={apply(){},normalizeSettings:x=>x};const pref=new Map();global.localStorage={getItem:x=>pref.get(x)||null,setItem:(x,y)=>pref.set(x,y)};
++require(path.join(root,'local-store.js'));require(path.join(root,'standalone-core.js'));
++let calls=0;
++global.fetch=async()=>{calls++;const content='开场传令员公布了暗号。';return{ok:true,status:200,headers:{get:()=> 'application/json'},json:async()=>({choices:[{message:{content},finish_reason:'stop'}]}),text:async()=>JSON.stringify({choices:[{message:{content},finish_reason:'stop'}]})};};
++(async()=>{await MimaStandalone.init();MimaStandalone.saveApiConfig({apiBase:'http://127.0.0.1:5999/v1',model:'local-test',stream:false});const s=(await MimaStandalone.handle('/sessions','POST',{title:'opening source'})).data;
++const contents=[['assistant','开场传令员公布了暗号。'],['user','玩家走进庭院。'],['assistant','守卫关闭了大门。']];const messages=contents.map(([role,content],i)=>({id:'open-'+i,role,content,rawContent:content,versions:[]}));await MimaStandalone.handle(`/sessions/${s.id}`,'PATCH',{messages});
++const res=await MimaStandalone.runRecordedMemory('facts',s.id,{scope:'all',chunkRounds:2});const current=(await MimaStandalone.handle(`/sessions/${s.id}`,'GET')).data;assert.equal(calls,1);assert.equal(current.messages.length,3);assert(current.manualMemory.facts.some(f=>f.content==='开场传令员公布了暗号。'));console.log('PASS opening seen AND accepted within first fact source scope');})().catch(e=>{console.error(e.code,e.message);process.exitCode=1});
+diff --git a/tests/smoke-r10-p0-original.js b/tests/smoke-r10-p0-original.js
+new file mode 100644
+index 0000000..9c77a2b
+--- /dev/null
++++ b/tests/smoke-r10-p0-original.js
+@@ -0,0 +1,23 @@
++'use strict';
++const path=require('node:path');
++const root=process.env.MIMATAVERN_ROOT || path.resolve(__dirname,'..');
++const assert=require('node:assert/strict');
++const cp=x=>x===undefined?undefined:structuredClone(x);
++const data=new Map();
++function db(){return{close(){},transaction(){let n=0,ended=false,aborted=false;const copy=new Map([...data].map(([k,v])=>[k,cp(v)]));const tx={oncomplete:null,onabort:null,abort(){aborted=true;setImmediate(()=>tx.onabort?.())}};function done(){if(ended||aborted||n)return;ended=true;setImmediate(()=>{if(!aborted){data.clear();for(const [k,v]of copy)data.set(k,cp(v));tx.oncomplete?.();}})}const obj={get(k){n++;const r={result:undefined,onsuccess:null};setImmediate(()=>{r.result=cp(copy.get(k));r.onsuccess?.();n--;setImmediate(done)});return r;},put(v,k){copy.set(k,cp(v));return{}},delete(k){copy.delete(k);return{}}};tx.objectStore=()=>obj;return tx;}}}
++global.window=global;global.indexedDB={open(){const req={result:db(),onsuccess:null};setImmediate(()=>req.onsuccess?.());return req}};global.MimaThemeEngine={apply(){},normalizeSettings:x=>x};const pref=new Map();global.localStorage={getItem:x=>pref.get(x)||null,setItem:(x,y)=>pref.set(x,y)};
++require(path.join(root,'local-store.js'));require(path.join(root,'standalone-core.js'));
++let calls=0,outputs=[];
++global.fetch=async (_url,opts)=>{calls++;const body=JSON.parse(opts.body);outputs.push(body.messages?.at(-1)?.content?.slice(0,70)); const content='艾琳杀死了甲方。';return{ok:true,status:200,headers:{get:()=> 'application/json'},json:async()=>({choices:[{message:{content},finish_reason:'stop'}]}),text:async()=>JSON.stringify({choices:[{message:{content},finish_reason:'stop'}]})};};
++const messages=Array.from({length:42},(_,i)=>({id:'event-'+i,role:i%2?'assistant':'user',content:i<24?(i%2?'艾琳杀死了乙方。':'艾琳杀死了甲方。'):'后续日常剧情。',rawContent:i<24?(i%2?'艾琳杀死了乙方。':'艾琳杀死了甲方。'):'后续日常剧情。',versions:[]}));
++(async()=>{
++ await MimaStandalone.init();MimaStandalone.saveApiConfig({apiBase:'http://127.0.0.1:5999/v1',model:'local-test',stream:false,contextWindowTokens:32768});
++ const s=(await MimaStandalone.handle('/sessions','POST',{title:'False coverage regression demonstrator'})).data;
++ await MimaStandalone.handle(`/sessions/${s.id}`,'PATCH',{messages,promptSettings:{recentMessageLimit:12}});
++ const result=await MimaStandalone.runRecordedMemory('rolling',s.id,{}).then(v=>({ok:true,cursor:v.lastSummarizedIndex})).catch(e=>({ok:false,code:e.code,reason:e.message}));
++ const stored=(await MimaStandalone.handle(`/sessions/${s.id}`,'GET')).data;
++ const job=await MimaLocalStore.getMemoryJob(s.id,'rolling');
++ console.log(JSON.stringify({result,historyLength:stored.messages.length,summaryCursor:stored.lastSummarizedIndex,summaryLength:stored.rollingSummary.length,jobStatus:job.status,requests:calls,sourceChars:messages.slice(0,24).map(x=>x.content).join('').length,testSummaryChars:'艾琳杀死了甲方。'.length,checkpoints:job.checkpoints.map(x=>({stage:x.stage,reason:x.reason,missingCount:x.missingCount}))},null,2));
++ assert.equal(stored.messages.length,42);assert.equal(result.ok,false,'A summary omitting distinct 乙方 events MUST NOT commit');assert.equal(stored.lastSummarizedIndex,0,'Cursor MUST remain unchanged');assert.equal(job.status,'needs_review','Uncovered source events MUST require review');assert(job.checkpoints.some(x=>x.stage==='rolling_final_coverage'&&x.missingCount>0),'Missing coverage must be explicit');
++ console.log('PASS: source event omission did not settle the rolling summary cursor.');
++})().catch(e=>{console.error(e);process.exitCode=1})

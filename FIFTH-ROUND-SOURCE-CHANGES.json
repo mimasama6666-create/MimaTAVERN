@@ -1,0 +1,19 @@
+{
+  "base_sha256": "eefcc9b278fad19530d5875b8d14a974302fb86e3ceec2aa2017d929fd975b2d",
+  "base_count": 155,
+  "changed": [
+    "app.js",
+    "index.html",
+    "local-store.js",
+    "standalone-core.js"
+  ],
+  "added_at_diff": [
+    "tests/fifth-counterexample-original.js",
+    "tests/smoke-fifth-memory-root-closure.js"
+  ],
+  "removed": [],
+  "regression": {
+    "PASS": 35,
+    "FAIL": 3
+  }
+}

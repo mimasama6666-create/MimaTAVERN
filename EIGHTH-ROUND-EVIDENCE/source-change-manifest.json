@@ -1,0 +1,46 @@
+{
+  "baseFile": "咪嘛馆_R1-R5_第七轮精准续修_完整源码安装包_20261012.zip",
+  "baseSha256": "7c8f57d44a0d06361509c30fbc1de83466a04a56fa21f03732bf9dfd98efdc55",
+  "baselineFileCount": 186,
+  "workingFileCount": 199,
+  "modified": [
+    "app.js",
+    "standalone-core.js"
+  ],
+  "added": [
+    "EIGHTH-ROUND-EVIDENCE/all-smoke-results.json",
+    "EIGHTH-ROUND-EVIDENCE/all-syntax-results.json",
+    "EIGHTH-ROUND-EVIDENCE/browser-probe.json",
+    "EIGHTH-ROUND-EVIDENCE/repro_core_from_facts.js",
+    "EIGHTH-ROUND-EVIDENCE/repro_core_from_facts.js.log",
+    "EIGHTH-ROUND-EVIDENCE/repro_missing_merge_coverage.js",
+    "EIGHTH-ROUND-EVIDENCE/repro_missing_merge_coverage.js.log",
+    "EIGHTH-ROUND-EVIDENCE/source-change-manifest.json",
+    "EIGHTH-ROUND-EVIDENCE/test-summary.json",
+    "EIGHTH-ROUND-OPEN-GAPS.md",
+    "EIGHTH-ROUND-ROOT-REPORT.md",
+    "tests/smoke-eighth-multi-part.js",
+    "tests/smoke-eighth-root-closure.js"
+  ],
+  "removed": [],
+  "originalTestsModified": [],
+  "oldIndexHtmlUnchanged": true,
+  "preserved": {
+    "history": true,
+    "persona": true,
+    "worldbook": true,
+    "nativeEntryPoints": true,
+    "css": true,
+    "windowsSidecar": true
+  },
+  "modifiedFilesHashes": {
+    "app.js": {
+      "before": "cab16e580fd3af00bbd01e433417f2c937e2cd5f594b220bce4a66758ad3937f",
+      "after": "911edea3b19c629643f0863647dc39f524714661e0f64e2ce43a305d534d88e4"
+    },
+    "standalone-core.js": {
+      "before": "dea9b1739a1b609781ccc926c897c655c59f76e940ea689c70d82f264ae58f66",
+      "after": "98329e5c71f2b54a89f6f5894e7458a9cc3b71fdca8ee563bca6d07de09533f5"
+    }
+  }
+}

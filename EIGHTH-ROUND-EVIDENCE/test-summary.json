@@ -1,0 +1,12 @@
+{
+  "date": "2026-10-12",
+  "total": 44,
+  "passed": 37,
+  "failed": 7,
+  "timedOut": 0,
+  "syntaxFiles": 75,
+  "syntaxFailed": [],
+  "privatePNGPresent": true,
+  "privatePNGOnlyRuntimeFixture": true,
+  "assertionsUnmodified": true
+}

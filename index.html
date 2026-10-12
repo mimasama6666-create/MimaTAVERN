@@ -18,6 +18,7 @@
 <!-- v1.2.0 canonical branch merge marker: release=1.2.0 -->
 <!-- v1.3.1 Novel Studio Root Fix marker: release=1.3.1&auditfix=1.3.2 -->
 <!-- v1.1.9 regression compatibility marker only: ./app.js?v=1.1.2&release=1.1.9 -->
+    <link rel="stylesheet" href="./ux-r6.css?v=r6-20261012&seventh=20261012">
 </head>
 <body>
 <div id="drawer-scrim" class="scrim hidden" onclick="closeDrawer()"></div>
@@ -29,7 +30,7 @@
         </div>
         <button class="icon-btn" onclick="closeDrawer()">✕</button>
     </div>
-    <div class="toolbar"><button class="ghost-btn" id="compat-open">🔬 高级 · 酒馆卡 / 插件</button></div>
+    <div class="toolbar"><button class="primary-btn" id="compat-open">🎴 玩酒馆角色卡</button></div>
     <div class="toolbar"><button class="primary-btn" style="flex:1" onclick="openNewSessionModal()">＋ 新建剧情</button><button class="ghost-btn" onclick="chooseSessionImport()">⇧ 导入</button></div>
     <div id="session-list" class="session-list"></div>
     <div class="drawer-footer">
@@ -40,17 +41,25 @@
 
 <div class="app-shell">
     <header class="topbar glass-bar">
-        <button class="icon-btn" onclick="openDrawer()" aria-label="剧情列表">☰</button>
-        <div id="top-avatar" class="top-avatar">🤍</div>
-        <div class="top-title-wrap">
+        <button class="nav-label" onclick="openDrawer()" aria-label="剧情列表">☰ <span>剧情</span></button>
+        <button id="top-avatar" class="top-avatar" onclick="openSettings('roles')" title="切换角色" aria-label="切换角色">🤍</button>
+        <div class="top-title-wrap" aria-label="当前角色和剧情">
             <div id="current-character" class="top-character">未挂载角色</div>
             <div id="current-title" class="top-title">欢迎来到咪嘛馆</div>
         </div>
-        <button class="icon-btn" onclick="openSettings('roles')" aria-label="角色设置">🤍</button>
-        <button class="icon-btn" onclick="MimaNovelStudio.open()" aria-label="小说续写">✒</button>
-        <button class="icon-btn" onclick="MimaAssistantStudio.open('regex')" aria-label="咪嘛助手">✦</button>
-        <button class="icon-btn" onclick="openSettings('worldbook')" aria-label="酒馆设置">⚙️</button>
+        <button class="nav-label nav-desktop" onclick="MimaNovelStudio.open()" aria-label="小说续写">小说</button>
+        <button class="nav-label nav-desktop" onclick="MimaAssistantStudio.open('regex')">AI 工具</button>
+        <button class="nav-label" id="mima-feature-toggle" aria-expanded="false" aria-controls="mima-feature-menu">功能</button>
+        <button class="nav-label" onclick="openSettings('api')">设置</button>
     </header>
+    <nav id="mima-feature-menu" class="mima-feature-menu hidden" aria-label="全部功能">
+      <button onclick="MimaNovelStudio.open();MimaR6Nav.close()">✒ 小说创作</button>
+      <button onclick="MimaAssistantStudio.open('regex');MimaR6Nav.close()">✦ AI 工具（文字效果与美化）</button>
+      <button onclick="MimaCompatUI.open();MimaR6Nav.close()">🎴 玩酒馆角色卡</button>
+      <button onclick="openSettings('roles');MimaR6Nav.close()">🤍 管理角色资料（高级）</button>
+      <button onclick="openSettings('worldbook');MimaR6Nav.close()">📚 世界书</button>
+      <button onclick="openSettings('memory');MimaR6Nav.close()">🧠 剧情记忆</button>
+    </nav>
 
     <div id="context-ribbon" class="context-ribbon hidden"></div>
 
@@ -165,7 +174,7 @@
         <select id="new-session-mode" class="field">
             <option value="tavern" selected>Standalone（独立版） · 完全独立宇宙</option>
         </select>
-        <button class="primary-btn wide" onclick="createSession()">创建并进入</button>
+        <button class="primary-btn wide" onclick="createSession()">创建并进入</button><button class="ghost-btn wide" onclick="closeNewSessionModal();MimaCompatUI.open()">🎴 或者：用酒馆角色卡开始聊天</button>
     </div>
 </div>
 
@@ -183,29 +192,34 @@
 
 
 <!-- Independent compatibility lab: it does not mount inside the native chat's DOM tree. -->
-<div id="compat-lab" class="hidden" role="dialog" aria-modal="true" aria-label="酒馆兼容实验室">
- <header class="compat-head"><div><strong>🔬 酒馆兼容实验室</strong><small style="display:block">高级工作区 · 与原生咪嘛馆隔离</small></div><button id="compat-close">退出兼容模式 · 返回原生</button></header>
+<div id="compat-lab" class="hidden" role="dialog" aria-modal="true" aria-label="玩酒馆角色卡">
+ <header class="compat-head"><div><strong>🎴 玩酒馆角色卡</strong><small style="display:block">手机浏览器就能聊天，复杂互动功能可能需要额外授权</small></div><button id="compat-close">← 返回咪嘛馆</button></header>
  <div class="compat-main">
-  <section><h3>① 导入与检查</h3><p>PNG、角色卡 JSON、独立世界书/正则/预设、CHARX、扩展 ZIP。读取不代表自动运行脚本。</p>
-   <div class="compat-actions"><input id="compat-file" type="file" accept=".png,.json,.charx,.zip"><button id="compat-scan">完整分析</button><button id="compat-save">保存无损卡包</button></div>
-   <div id="compat-report" aria-live="polite"></div><div class="compat-actions"><label for="compat-card-choice">选择角色版本</label><select id="compat-card-choice"></select><label for="compat-greeting-choice">开场白</label><select id="compat-greeting-choice"></select><button id="compat-create" disabled>开始独立兼容剧情</button></div>
+  <section id="compat-import-panel"><div id="compat-continue-list" class="compat-continue-list" aria-live="polite"></div><h3>① 选择喜欢的角色</h3><p>可以选择 PNG、JSON 或 CHARX。读取卡片不会运行里面的脚本，也不需要 Windows。</p>
+   <div class="compat-actions"><input id="compat-file" type="file" accept=".png,.json,.charx,.zip"><button id="compat-scan">重新读取</button><button id="compat-save">保存原始卡片</button></div>
+   <div id="compat-quick-status" class="compat-quick-status" role="status">选择一张卡片，查看人物与可以使用的功能。</div>
+   <div class="compat-start-controls"><label for="compat-card-choice">角色卡版本</label><select id="compat-card-choice"></select><label for="compat-greeting-choice">怎么开始</label><select id="compat-greeting-choice"></select><button id="compat-create" class="compat-main-cta" disabled>开始聊天</button></div>
+   <details class="compat-advanced"><summary>查看卡片包含的功能与原始信息</summary><div id="compat-report" aria-live="polite"></div></details>
   </section>
-  <section><h3>② 兼容剧情</h3><div id="compat-current">咪嘛馆兼容引擎 · 未进入剧情</div><div id="compat-conversation" hidden>
+  <section id="compat-chat-panel"><h3>② 和角色聊天 <button type="button" id="compat-manage-toggle">管理卡片与功能</button></h3><div id="compat-current">咪嘛馆兼容引擎 · 未进入剧情</div><div id="compat-conversation" hidden>
    <div id="compat-messages" aria-live="polite"></div><textarea id="compat-input" placeholder="输入剧情"></textarea>
-   <div class="compat-actions"><label><input id="compat-accept-gaps" type="checkbox"> 我已阅读未验证语义，允许有限兼容模式生成（不是原版等价）</label><button id="compat-send">发送</button><button id="compat-preview">本轮提示词预览</button></div>
+   <div class="compat-actions"><label class="compat-gap-choice" hidden><input id="compat-accept-gaps" type="checkbox"> 只在专家严格对照模式中确认差异</label><label class="compat-mode-label"><input type="radio" name="compat-mode" value="basic" checked>基础聊天</label><label class="compat-mode-label"><input type="radio" name="compat-mode" value="strict">严格检查高级规则</label><button id="compat-send">发送消息</button><button id="compat-preview">查看本轮发送内容</button></div>
    <div id="compat-gap"></div><details><summary>真实 Provider 消息 / 触发追踪</summary><pre id="compat-prompt"></pre></details>
    <div class="compat-actions"><label>本地音频（用户手动播放）<input type="file" id="compat-audio" accept="audio/*"></label><div id="compat-media"></div></div>
   </div></section>
-  <section><h3>插件与演出（手动授权）</h3><p>不自动运行来源中的 JavaScript。只有隔离 iframe 的特定 SDK 可受控调用；原版 Tavern Helper 的其它 API 不保证运行。</p><div id="compat-plugins"></div><div id="compat-css-list"></div><div id="compat-plugin-slot"></div><div id="compat-html-preview"></div></section>
-  <section><h3>③ 原始文件与已存档</h3><p>原始字节可原样导出；该资源未因检查而成为可执行插件。</p><div id="compat-sources"></div><div id="compat-sessions"></div></section>
-  <section><h3>④ 数据安全与回滚</h3><div class="compat-actions"><button id="compat-export">仅导出兼容数据库</button><button id="compat-export-both">导出原生 + 兼容</button><input id="compat-restore-file" type="file" accept=".json"><button id="compat-restore-check">只读检查备份</button></div>
+  <section class="compat-advanced-panel"><h3>互动功能（手动授权）</h3><p>不自动运行来源中的 JavaScript。只有隔离 iframe 的特定 SDK 可受控调用；原版 Tavern Helper 的其它 API 不保证运行。</p><div id="compat-plugins"></div><div id="compat-css-list"></div><div id="compat-plugin-slot"></div><div id="compat-html-preview"></div></section>
+  <section class="compat-advanced-panel"><h3>我的卡片与外部资源</h3><p>原始字节可原样导出；该资源未因检查而成为可执行插件。</p><div id="compat-sources"></div><div id="compat-sessions"></div></section>
+  <section class="compat-advanced-panel"><h3>资料备份与恢复检查</h3><div class="compat-actions"><button id="compat-export">仅导出兼容数据库</button><button id="compat-export-both">导出原生 + 兼容</button><input id="compat-restore-file" type="file" accept=".json"><button id="compat-restore-check">只读检查备份</button></div>
   <p>检查操作不会覆盖存档。自动跨库恢复未开放：两个浏览器数据库没有跨库原子事务，不能假装一键回滚安全。</p></section>
-  <section><h3>⑤ 原版 SillyTavern（可选）</h3><p>Windows 上使用交付包内的 sidecar 工具，由用户确认安装官方宿主。在原版宿主内运行的插件不受本兼容沙箱保护，也不算咪嘛馆内部插件兼容。</p><p>独立窗口入口（安装成功后）：<a href="http://127.0.0.1:8000" target="_blank" rel="noopener noreferrer">打开本机原版 SillyTavern</a>。端口须与安装配置一致。</p></section>
+  <section class="compat-advanced-panel"><h3>连接完整酒馆服务（可选）</h3><p>普通聊天只需手机或电脑浏览器。需要复杂插件时，可以在 Windows、macOS、Linux 或受信任服务器运行完整 SillyTavern，再由手机安全连接；本包的 Windows 工具仅是其中一种安装方式。跨设备存档不会自动同步，远程连接必须单独配置认证与安全网络。</p><p>连接地址由你自己配置。<strong>127.0.0.1 只代表当前这台设备</strong>，手机不能用它连接电脑。请先在电脑上为 SillyTavern 配置受信任网络访问、身份验证与防火墙许可；尽量使用 HTTPS 或私有 VPN，切勿直接公开无认证端口。</p>
+    <label for="compat-sidecar-url">原版酒馆服务器地址（可选，高级）</label>
+    <div class="compat-actions"><input id="compat-sidecar-url" type="url" inputmode="url" autocomplete="url" placeholder="例如 https://tavern.example.com 或 http://192.168.1.20:8000"><button type="button" id="compat-sidecar-open">确认地址并打开</button></div>
+    <p id="compat-sidecar-status" role="status">此功能仅打开你自行部署的原版宿主，不会自动同步咪嘛馆资料。</p></section>
   <p id="compat-notice" role="status"></p>
  </div>
 </div>
 
-<script src="./local-store.js?v=1.3.1&auditfix=1.3.2&rework=1.3.3&reworkfix=1.3.4&arrayguard=1.3.5&legacycontract=1.3.6"></script>
+<script src="./local-store.js?v=1.3.1&auditfix=1.3.2&rework=1.3.3&reworkfix=1.3.4&arrayguard=1.3.5&legacycontract=1.3.6&fifth=20261012&seventh=20261012&r10plus=20261012-facts1"></script>
 <script src="./theme-engine.js?v=1.4.0"></script>
 <script src="./regex-engine.js?v=1.1.0"></script>
 <script src="./persona-macro-resolver.js?v=1.1.6"></script>
@@ -213,11 +227,11 @@
 <script src="./novel-memory.js?v=1.3.1&auditfix=1.3.2&rework=1.3.3&reworkfix=1.3.4"></script>
 <script src="./novel-engine.js?v=1.3.1&auditfix=1.3.2&rework=1.3.3"></script>
 <script src="./novel-prompt-assembler.js?v=1.3.1&auditfix=1.3.2&rework=1.3.3"></script>
-<script src="./standalone-core.js?v=1.1.0&release=1.3.1&auditfix=1.3.2&rework=1.3.3&reworkfix=1.3.4&legacycontract=1.3.6&memoryfix=1.3.9&pnginspect=1.4.0"></script>
+<script src="./standalone-core.js?v=1.1.0&release=1.3.1&auditfix=1.3.2&rework=1.3.3&reworkfix=1.3.4&legacycontract=1.3.6&memoryfix=1.3.9&pnginspect=1.4.0&fifth=20261012&seventh=20261012"></script>
 <script src="./font-manager.js?v=1.1.0"></script>
 <script src="./png-card-import.js?v=1.4.0"></script>
 <script src="./png-resource-inspector.js?v=1.4.0"></script>
-<script src="./app.js?v=1.1.2&release=1.3.1&auditfix=1.3.2&themefix=1.4.0&pngcard=1.3.8&memoryfix=1.3.9&pnginspect=1.4.0"></script>
+<script src="./app.js?v=1.1.2&release=1.3.1&auditfix=1.3.2&themefix=1.4.0&pngcard=1.3.8&memoryfix=1.3.9&pnginspect=1.4.0&fifth=20261012&seventh=20261012"></script>
 <script src="./compat-store.js?v=r1r5-p0fix"></script>
 <script src="./compat-import.js?v=r1r5-1"></script>
 <script src="./compat-regex-isolation.js?v=r1r5-p0fix"></script>
@@ -226,5 +240,7 @@
 <script src="./compat-ui.js?v=r1r5-p0fix"></script>
 <script src="./assistant-studio.js?v=1.1.2&hotfix=1.1.3&release=1.3.1&auditfix=1.3.2"></script>
 <script src="./novel-studio.js?v=1.3.1&auditfix=1.3.2&release=1.3.1&auditfix=1.3.2&rework=1.3.3&reworkfix=1.3.4&themefix=1.4.0&memoryfix=1.3.9&pnginspect=1.4.0"></script>
+<script src="./ux-r6.js?v=r6-20261012"></script>
+<script src="./ux-r7.js?v=r7-20261012"></script>
 </body>
 </html>

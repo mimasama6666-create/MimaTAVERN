@@ -1,0 +1,202 @@
+[
+  {
+    "script": "tests/smoke-compat-r1-r5.js",
+    "status": "FAIL",
+    "stdout": "AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:\n\n  assert(envelope.messages[0].content.includes('花园是红的'))\n\n    at /mnt/data/sixth_round/work/MimaTAVERN-R1-R5-REWORK-20261011/tests/smoke-compat-r1-r5.js:25:210 {\n  generatedMessage: true,\n  code: 'ERR_ASSERTION',\n  actual: false,\n  expected: true,\n  operator: '=='\n}"
+  },
+  {
+    "script": "tests/smoke-compat-rework-real-png.js",
+    "status": "PASS",
+    "stdout": "PASS private PNG png.chara[0]: constant=4, trigger=1, disabled/unmatched=8; ST golden oracle NOT RUN\nPASS private PNG png.ccv3[1]: constant=4, trigger=1, disabled/unmatched=8; ST golden oracle NOT RUN"
+  },
+  {
+    "script": "tests/smoke-compat-rework-store.js",
+    "status": "PASS",
+    "stdout": "PASS snapshot contract: SHA256 seal/tamper, orphan session and grant, legacy unsealed explicit status"
+  },
+  {
+    "script": "tests/smoke-compat-rework-turn.js",
+    "status": "PASS",
+    "stdout": "PASS P0 lifecycle mock: failure projection, stable retry, stale fencing, abort, competing begins, killable regex"
+  },
+  {
+    "script": "tests/smoke-compat-rework-worker.js",
+    "status": "PASS",
+    "stdout": "PASS plugin Worker: SDK RPC and killable busy loop, iframe CSP not browser-tested"
+  },
+  {
+    "script": "tests/smoke-fifth-memory-root-closure.js",
+    "status": "PASS",
+    "stdout": "PASS review fenced: new demon\nPASS review fenced: reversed actor\nPASS review fenced: negation\nPASS review fenced: new promise\nPASS review fenced: plain unsupported\nPASS repeated core 1\nPASS repeated core 2\nPASS repeated core 3\nPASS human edit CAS fenced\nPASS budget fails before provider\nPASS generic long continuation 50 retrieved 1 omitted 88\nPASS generic long continuation 200 retrieved 1 omitted 388\nPASS generic long continuation 500 retrieved 1 omitted 988\nPASS FIFTH ROUND causal regressions"
+  },
+  {
+    "script": "tests/smoke-fourth-memory-p0-lease.js",
+    "status": "PASS",
+    "stdout": "PASS long history rounds=50 estimatedTokens=1626 retrieved=1 omitted=88\nPASS long history rounds=200 estimatedTokens=1626 retrieved=1 omitted=388\nPASS long history rounds=500 estimatedTokens=1626 retrieved=1 omitted=988\nRolling summary background debt {\n  sessionId: 'sess_1791752073648_nk7zch5',\n  code: 'E_API_HTTP_429',\n  stage: 'rolling',\n  settlementError: ''\n}\nPASS fourth memory P0: rejected core/facts refusal; source-proven JSON memory injected; invalid evidence held; exact lease takeover and old-attempt fencing"
+  },
+  {
+    "script": "tests/smoke-session-history-v1.1.2.js",
+    "status": "PASS",
+    "stdout": "PASS v1.1.2 session history: rename preserves story data; delete removes only target session"
+  },
+  {
+    "script": "tests/smoke-sixth-compat-end-to-end-fake-idb.js",
+    "status": "PASS",
+    "stdout": "R6 TRACE 1 parser\nR6 TRACE 2 import\nR6 TRACE 3 reimport\nR6 TRACE 4 create\nR6 TRACE 5 preview\nR6 TRACE 6 send\nPASS actual private PNG dual-version read -> SHA import & dedup -> explicit CCV3 -> create -> WI trigger -> 3 mock provider turns -> journal settled -> module reload reads 3 turns -> external mount/unmount -> durable snapshot\nUNTESTED: actual paid Provider / browser IndexedDB / official SillyTavern golden"
+  },
+  {
+    "script": "tests/smoke-sixth-r6-memory.js",
+    "status": "PASS",
+    "stdout": "PASS rumor stays review, human adoption CAS persists, next prompt data only\nPASS human edit fences pending approval\nPASS fact review accepted\nPASS rolling review accepted, accurate coverage fingerprint, all messages retained\nPASS SIXTH ROUND memory review + trust projection"
+  },
+  {
+    "script": "tests/smoke-third-api-diagnostics.js",
+    "status": "PASS",
+    "stdout": "PASS third API diagnostics: 200 reasoning-only, refusal, 400, 429, truncated memory, transport error, valid body; no API key in structured trace"
+  },
+  {
+    "script": "tests/smoke-third-compat-concurrency.js",
+    "status": "PASS",
+    "stdout": "regex 100 items batch elapsed 63ms\nregex 500 items batch elapsed 44ms\nregex 1000 items batch elapsed 66ms\nPASS third compat: CSS concurrent settlement, aborted late event not failed, 100/500/1000 regex batching, pathological kill"
+  },
+  {
+    "script": "tests/smoke-third-memory-journal.js",
+    "status": "FAIL",
+    "stdout": "AssertionError [ERR_ASSERTION]: {\"success\":false,\"msg\":\"摘要包含无法由原文逐字验证的叙述，已作为候选保留，未写入长期记忆。\",\"code\":\"E_MEMORY_NEEDS_REVIEW\",\"status\":0,\"hint\":\"请在记忆任务记录中查看待核查候选；核对原始剧情后可通过手工编辑记忆明确采纳。\",\"details\":\"{\\\"stage\\\":\\\"fact_part_0\\\",\\\"reason\\\":\\\"plain_text_requires_review\\\",\\\"chars\\\":13,\\\"finishReason\\\":\\\"stop\\\",\\\"formatValidated\\\":true,\\\"sourceVerified\\\":false,\\\"factVerified\\\":false}\"}\n\nfalse !== true\n\n    at /mnt/data/sixth_round/work/MimaTAVERN-R1-R5-REWORK-20261011/tests/smoke-third-memory-journal.js:24:53 {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: false,\n  expected: true,\n  operator: 'strictEqual'\n}"
+  },
+  {
+    "script": "tests/smoke-v1.1.0.js",
+    "status": "PASS",
+    "stdout": "PASS v1.1.0: migration + regex fail-closed/token-saving + multiline story input + real SSE story streaming"
+  },
+  {
+    "script": "tests/smoke-v1.1.1.js",
+    "status": "PASS",
+    "stdout": "PASS v1.1.1: assistant model keeps story API connection but no longer inherits story Max Tokens"
+  },
+  {
+    "script": "tests/smoke-v1.1.10.js",
+    "status": "PASS",
+    "stdout": "PASS v1.1.10: BOND fill is hydrated from visible numeric value even when --value is absent"
+  },
+  {
+    "script": "tests/smoke-v1.1.2.js",
+    "status": "PASS",
+    "stdout": "PASS v1.1.2: collapsed assistant model panel + edit/delete history + safe in-place regenerate"
+  },
+  {
+    "script": "tests/smoke-v1.1.3.js",
+    "status": "PASS",
+    "stdout": "PASS v1.1.3: strict artifacts parse; common model JSON glitches auto-repair; irreparable artifacts surface diagnostics"
+  },
+  {
+    "script": "tests/smoke-v1.1.4.js",
+    "status": "PASS",
+    "stdout": "PASS v1.1.4: artifact self-healing + compact iOS assistant + reader-controlled streaming + cache observability/context pruning"
+  },
+  {
+    "script": "tests/smoke-v1.1.5-repair-failure.js",
+    "status": "PASS",
+    "stdout": "PASS v1.1.5 repair failure: one paid call only; original preserved; failed model response archived and surfaced"
+  },
+  {
+    "script": "tests/smoke-v1.1.5-repair.js",
+    "status": "PASS",
+    "stdout": "PASS v1.1.5 repair: one paid call only; broken V1 -> V2; original and repair attempt archived"
+  },
+  {
+    "script": "tests/smoke-v1.1.5.js",
+    "status": "PASS",
+    "stdout": "PASS v1.1.5: V2 Zero-Escape artifacts preserve regex/HTML/CSS, legacy V1 remains compatible, invalid V2 fails closed, paid repair is explicit and archived"
+  },
+  {
+    "script": "tests/smoke-v1.1.6.js",
+    "status": "PASS",
+    "stdout": "PASS v1.1.6: persona macros resolve in Persona/Preset/Worldbook/Memory/history/display without mutating source or machine roles"
+  },
+  {
+    "script": "tests/smoke-v1.1.7.js",
+    "status": "PASS",
+    "stdout": "PASS v1.1.7: AIRP speech/action/private-thought semantics are compiled at prompt time with epistemic boundaries while raw Store/UI data stays intact"
+  },
+  {
+    "script": "tests/smoke-v1.1.8.js",
+    "status": "PASS",
+    "stdout": "PASS v1.1.8: player typography + Safe HTML live preview + responsive Settings during streaming + recoverable per-message deletion"
+  },
+  {
+    "script": "tests/smoke-v1.1.9.js",
+    "status": "PASS",
+    "stdout": "PASS v1.1.9: Safe HTML preserves only bounded --value percentages for legacy BOND meters"
+  },
+  {
+    "script": "tests/smoke-v1.2.0.js",
+    "status": "PASS",
+    "stdout": "PASS v1.2.0: canonical BOND hydration + native meters + conservative browser transport + non-duplicating manual retry coexist"
+  },
+  {
+    "script": "tests/smoke-v1.3.0.js",
+    "status": "PASS",
+    "stdout": "PASS v1.3.0: migration + TXT + chapters + prompt + same-generation append + Draft/accept + partial memory + fail-closed memory + themes + RP coexistence"
+  },
+  {
+    "script": "tests/smoke-v1.3.1.js",
+    "status": "PASS",
+    "stdout": "v1.3.1 user regression PASS"
+  },
+  {
+    "script": "tests/smoke-v1.3.2-root-closure.js",
+    "status": "PASS",
+    "stdout": "v1.3.2 root closure: invalid backups, async novel CAS, source-aware facts, spoiler isolation, merge retention, finish reason, RP deletion PASS"
+  },
+  {
+    "script": "tests/smoke-v1.3.3-backup-integrity.js",
+    "status": "PASS",
+    "stdout": "PASS v1.3.3 backup integrity: nested validation, unchanged state, legacy import, interrupted write, CAS"
+  },
+  {
+    "script": "tests/smoke-v1.3.3-legacy-memory.js",
+    "status": "PASS",
+    "stdout": "PASS v1.3.3 legacy memory: v1.3.1 fixture, prompt retention, source-bound rollback, newer deltas, review marker and spoiler isolation"
+  },
+  {
+    "script": "tests/smoke-v1.3.4-legacy-quarantine.js",
+    "status": "PASS",
+    "stdout": "PASS v1.3.4 legacy quarantine: future spoiler filtered, verified legacy retained, human review chapter-scoped, edits/reorder/re-analysis invalidate"
+  },
+  {
+    "script": "tests/smoke-v1.3.4-rework.js",
+    "status": "PASS",
+    "stdout": "PASS v1.3.4 full v4 export/import, 16 corrupted field guards and unchanged canonical, valid empty fields, failed-write rollback, v2/v3 migration"
+  },
+  {
+    "script": "tests/smoke-v1.3.5-persisted-arrays.js",
+    "status": "PASS",
+    "stdout": "PASS v1.3.5 complete v4 durable arrays and legacy, corrupted field guards and unchanged canonical, valid empty fields, failed-write rollback, v2/v3 migration"
+  },
+  {
+    "script": "tests/smoke-v1.3.6-historical-v4-contract.js",
+    "status": "PASS",
+    "stdout": "PASS v1.3.6: corrupt owner memory rejected via validator+both imports, durable/runtime unchanged; real v1.3.1/1.3.2/1.3.3 exports migrated without content loss; marked roundtrip and write failure"
+  },
+  {
+    "script": "tests/smoke-v1.3.7-theme.js",
+    "status": "PASS",
+    "stdout": "PASS v1.3.7: legacy + new themes, HTML references, CSS layer, user CSS parity, meta and color scheme"
+  },
+  {
+    "script": "tests/smoke-v1.3.9-memory-facts.js",
+    "status": "FAIL",
+    "stdout": "AssertionError [ERR_ASSERTION]: {\"success\":false,\"msg\":\"摘要包含无法由原文逐字验证的叙述，已作为候选保留，未写入长期记忆。\",\"code\":\"E_MEMORY_NEEDS_REVIEW\",\"status\":0,\"hint\":\"请在记忆任务记录中查看待核查候选；核对原始剧情后可通过手工编辑记忆明确采纳。\",\"details\":\"{\\\"stage\\\":\\\"fact_part_0\\\",\\\"reason\\\":\\\"plain_text_requires_review\\\",\\\"chars\\\":6,\\\"finishReason\\\":\\\"stop\\\",\\\"formatValidated\\\":true,\\\"sourceVerified\\\":false,\\\"factVerified\\\":false}\"}\n\nfalse !== true\n\n    at /mnt/data/sixth_round/work/MimaTAVERN-R1-R5-REWORK-20261011/tests/smoke-v1.3.9-memory-facts.js:17:9 {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: false,\n  expected: true,\n  operator: 'strictEqual'\n}"
+  },
+  {
+    "script": "tests/smoke-v1.3.9-png-memory.js",
+    "status": "FAIL",
+    "stdout": "AssertionError [ERR_ASSERTION]: {\"success\":false,\"msg\":\"摘要包含无法由原文逐字验证的叙述，已作为候选保留，未写入长期记忆。\",\"code\":\"E_MEMORY_NEEDS_REVIEW\",\"status\":0,\"hint\":\"请在记忆任务记录中查看待核查候选；核对原始剧情后可通过手工编辑记忆明确采纳。\",\"details\":\"{\\\"stage\\\":\\\"core_final_single\\\",\\\"reason\\\":\\\"plain_text_requires_review\\\",\\\"chars\\\":8,\\\"finishReason\\\":\\\"stop\\\",\\\"formatValidated\\\":true,\\\"sourceVerified\\\":false,\\\"factVerified\\\":false}\"}\n\nfalse !== true\n\n    at /mnt/data/sixth_round/work/MimaTAVERN-R1-R5-REWORK-20261011/tests/smoke-v1.3.9-png-memory.js:38:47\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5) {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: false,\n  expected: true,\n  operator: 'strictEqual'\n}"
+  },
+  {
+    "script": "tests/smoke-v1.4.0-png-resources.js",
+    "status": "PASS",
+    "stdout": "PASS v1.4.0 PNG read-only full metadata, V3 precedence, CSS/preset/worldbook extraction, incompatible script isolation, loss guard, tamper refusal"
+  }
+]

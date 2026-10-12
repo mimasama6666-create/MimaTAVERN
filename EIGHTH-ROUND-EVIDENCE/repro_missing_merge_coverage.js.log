@@ -1,0 +1,62 @@
+Exit: 0
+{
+  "result": {
+    "success": false,
+    "code": "E_MEMORY_NEEDS_REVIEW"
+  },
+  "calls": 3,
+  "stages": [
+    {
+      "merge": false,
+      "foundIndexes": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "picked": 0
+    },
+    {
+      "merge": false,
+      "foundIndexes": [
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36
+      ],
+      "picked": 25
+    },
+    {
+      "merge": true,
+      "foundIndexes": [
+        0,
+        25
+      ],
+      "picked": 0
+    }
+  ],
+  "rawHistory": 60,
+  "markedSummarized": 0,
+  "summaryMentionsLastIndex": false,
+  "summaryMentionsFirstIndex": false,
+  "summaryLength": 0,
+  "jobStatus": "needs_review"
+}
+PASS: final merged memory does not falsely cover omitted chunk
+

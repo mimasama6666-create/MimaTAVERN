@@ -1,0 +1,68 @@
+{
+  "historical_44": {
+    "PASS": 37,
+    "FAIL": 7,
+    "SKIP": 0
+  },
+  "new_ninth_tests": {
+    "PASS": 3,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "full_smoke": {
+    "PASS": 40,
+    "FAIL": 7,
+    "SKIP": 0
+  },
+  "independent_repros": {
+    "PASS": 3,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "syntax_total": 81,
+  "syntax_pass": 81,
+  "historical_failed": [
+    {
+      "name": "smoke-compat-r1-r5.js",
+      "error": "AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:\n\n  assert(envelope.messages[0].content.includes('花园是红的'))\n\n    at /mnt/data/r9_work/MimaTAVERN-R1-R5-REWORK-20261011/tests/smoke-compat-r1-r5.js:25:210 {\n  generatedMessage: true,\n  code: 'ERR_ASSERTION',\n  actual: false,\n  expected: true,\n  operator: '=='\n}\n"
+    },
+    {
+      "name": "smoke-fifth-memory-root-closure.js",
+      "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n+ actual - expected\n\n+ 'needs_review'\n- 'failed'\n\n    at /mnt/data/r9_work/MimaTAVERN-R1-R5-REWORK-20261011/tests/smoke-fifth-memory-root-closure.js:33:71 {\n  generatedMessage: true,\n  code: 'ERR_ASSERTION',\n  actual: 'needs_review',\n  expected: 'failed',\n  operator: 'strictEqual'\n}\n"
+    },
+    {
+      "name": "smoke-seventh-memory-coverage.js",
+      "error": "AssertionError [ERR_ASSERTION]: {\"success\":false,\"code\":\"E_MEMORY_NEEDS_REVIEW\",\"message\":\"最终合并遗漏了有来源的剧情事件，原文和摘要游标未修改，已保存待核对候选。\"}\n\nfalse !== true\n\n    at /mnt/data/r9_work/MimaTAVERN-R1-R5-REWORK-20261011/tests/smoke-seventh-memory-coverage.js:32:9 {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: false,\n  expected: true,\n  operator: 'strictEqual'\n}\n"
+    },
+    {
+      "name": "smoke-sixth-r6-memory.js",
+      "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n+ actual - expected\n\n+ 'needs_review'\n- 'failed'\n\n    at /mnt/data/r9_work/MimaTAVERN-R1-R5-REWORK-20261011/tests/smoke-sixth-r6-memory.js:25:66 {\n  generatedMessage: true,\n  code: 'ERR_ASSERTION',\n  actual: 'needs_review',\n  expected: 'failed',\n  operator: 'strictEqual'\n}\n"
+    },
+    {
+      "name": "smoke-third-memory-journal.js",
+      "error": "Rolling summary background debt {\n  sessionId: 'sess_1791783297546_s4zjhb8',\n  code: 'E_MEMORY_NEEDS_REVIEW',\n  stage: 'rolling',\n  settlementError: ''\n}\nAssertionError [ERR_ASSERTION]: Rolling job should settle independently\n+ actual - expected\n\n+ 'needs_review'\n- 'committed'\n\n    at /mnt/data/r9_work/MimaTAVERN-R1-R5-REWORK-20261011/tests/smoke-third-memory-journal.js:58:9 {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: 'needs_review',\n  expected: 'committed',\n  operator: 'strictEqual'\n}\n"
+    },
+    {
+      "name": "smoke-v1.3.9-memory-facts.js",
+      "error": "AssertionError [ERR_ASSERTION]: {\"success\":false,\"msg\":\"摘要包含无法由原文逐字验证的叙述，已作为候选保留，未写入长期记忆。\",\"code\":\"E_MEMORY_NEEDS_REVIEW\",\"status\":0,\"hint\":\"请在记忆任务记录中查看待核查候选；核对原始剧情后可通过手工编辑记忆明确采纳。\",\"details\":\"{\\\"stage\\\":\\\"fact_range_1_1_part_0\\\",\\\"reason\\\":\\\"plain_text_requires_review\\\",\\\"chars\\\":6,\\\"finishReason\\\":\\\"stop\\\",\\\"formatValidated\\\":true,\\\"sourceVerified\\\":false,\\\"factVerified\\\":false}\"}\n\nfalse !== true\n\n    at /mnt/data/r9_work/MimaTAVERN-R1-R5-REWORK-20261011/tests/smoke-v1.3.9-memory-facts.js:17:9 {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: false,\n  expected: true,\n  operator: 'strictEqual'\n}\n"
+    },
+    {
+      "name": "smoke-v1.3.9-png-memory.js",
+      "error": "AssertionError [ERR_ASSERTION]: {\"success\":false,\"msg\":\"摘要包含无法由原文逐字验证的叙述，已作为候选保留，未写入长期记忆。\",\"code\":\"E_MEMORY_NEEDS_REVIEW\",\"status\":0,\"hint\":\"请在记忆任务记录中查看待核查候选；核对原始剧情后可通过手工编辑记忆明确采纳。\",\"details\":\"{\\\"stage\\\":\\\"core_final_single\\\",\\\"reason\\\":\\\"plain_text_requires_review\\\",\\\"chars\\\":8,\\\"finishReason\\\":\\\"stop\\\",\\\"formatValidated\\\":true,\\\"sourceVerified\\\":false,\\\"factVerified\\\":false}\"}\n\nfalse !== true\n\n    at /mnt/data/r9_work/MimaTAVERN-R1-R5-REWORK-20261011/tests/smoke-v1.3.9-png-memory.js:38:47\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5) {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: false,\n  expected: true,\n  operator: 'strictEqual'\n}\n"
+    }
+  ],
+  "independent": [
+    {
+      "name": "repro_core_from_facts.js",
+      "status": "PASS"
+    },
+    {
+      "name": "repro_missing_merge_coverage.js",
+      "status": "PASS"
+    },
+    {
+      "name": "FIFTH-ROUND-COUNTEREXAMPLE-20261012.js",
+      "status": "PASS"
+    }
+  ]
+}

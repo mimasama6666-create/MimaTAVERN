@@ -1,0 +1,391 @@
+--- a/EIGHTH-ROUND-EVIDENCE/repro_core_from_facts.js
++++ b/EIGHTH-ROUND-EVIDENCE/repro_core_from_facts.js
+@@ -1,6 +1,6 @@
+ 'use strict';
+ const assert=require('node:assert/strict');const path=require('node:path');
+-const root=path.resolve(process.env.MIMATAVERN_ROOT||path.join(__dirname,'MimaTAVERN-R1-R5-REWORK-20261011')),deep=x=>x===undefined?undefined:structuredClone(x),raw=new Map();
++const root=path.resolve(process.env.MIMATAVERN_ROOT||path.join(__dirname,'..')),deep=x=>x===undefined?undefined:structuredClone(x),raw=new Map();
+ function db(){return {close(){},transaction(){let pending=0,finished=false,abort=false;const staged=new Map([...raw].map(([k,v])=>[k,deep(v)]));const tx={oncomplete:null,onabort:null,error:null,abort(){abort=true;setImmediate(()=>tx.onabort?.())}};
+ const done=()=>{if(finished||abort||pending)return;finished=true;setImmediate(()=>{if(!abort){raw.clear();for(const [k,v]of staged)raw.set(k,deep(v));tx.oncomplete?.();}})};
+ const obj={get(key){pending++;const req={result:undefined,onsuccess:null,onerror:null};setImmediate(()=>{req.result=deep(staged.get(key));req.onsuccess?.();pending--;setImmediate(done)});return req;},put(value,key){staged.set(key,deep(value));return{}},delete(key){staged.delete(key);return{}}};tx.objectStore=()=>obj;return tx;}};}
+--- a/EIGHTH-ROUND-EVIDENCE/repro_missing_merge_coverage.js
++++ b/EIGHTH-ROUND-EVIDENCE/repro_missing_merge_coverage.js
+@@ -1,6 +1,6 @@
+ 'use strict';
+ const assert=require('node:assert/strict');const path=require('node:path');
+-const root=path.resolve(process.env.MIMATAVERN_ROOT||path.join(__dirname,'MimaTAVERN-R1-R5-REWORK-20261011')),deep=x=>x===undefined?undefined:structuredClone(x),raw=new Map();
++const root=path.resolve(process.env.MIMATAVERN_ROOT||path.join(__dirname,'..')),deep=x=>x===undefined?undefined:structuredClone(x),raw=new Map();
+ function db(){return {close(){},transaction(){let pending=0,finished=false,abort=false;const staged=new Map([...raw].map(([k,v])=>[k,deep(v)]));const tx={oncomplete:null,onabort:null,error:null,abort(){abort=true;setImmediate(()=>tx.onabort?.())}};
+ const done=()=>{if(finished||abort||pending)return;finished=true;setImmediate(()=>{if(!abort){raw.clear();for(const [k,v]of staged)raw.set(k,deep(v));tx.oncomplete?.();}})};
+ const obj={get(key){pending++;const req={result:undefined,onsuccess:null,onerror:null};setImmediate(()=>{req.result=deep(staged.get(key));req.onsuccess?.();pending--;setImmediate(done)});return req;},put(value,key){staged.set(key,deep(value));return{}},delete(key){staged.delete(key);return{}}};tx.objectStore=()=>obj;return tx;}};}
+--- a/FIFTH-ROUND-COUNTEREXAMPLE-20261012.js
++++ b/FIFTH-ROUND-COUNTEREXAMPLE-20261012.js
+@@ -9,7 +9,7 @@
+  tx.objectStore=()=>({get(k){pending++;const r={result:undefined,error:null,onsuccess:null,onerror:null};setImmediate(()=>{if(!aborted){r.result=copy(staged.get(k));r.onsuccess?.();}pending--;setImmediate(done)});return r;},put(v,k){staged.set(k,copy(v));return{};},delete(k){staged.delete(k);}});return tx;}}}
+ global.window=global;global.MimaThemeEngine={apply(){},normalizeSettings:x=>x};const prefs=new Map();global.localStorage={getItem:k=>prefs.get(k)||null,setItem:(k,v)=>prefs.set(k,v)};
+ global.indexedDB={open(){const r={result:db(),onsuccess:null,onerror:null};setImmediate(()=>r.onsuccess?.());return r;}};
+-require('../local-store.js');require('../standalone-core.js');
++require('./local-store.js');require('./standalone-core.js');
+ const apiText=(body,code=200)=>({ok:code===200,status:code,headers:{get:()=> 'application/json'},clone(){return this},json:async()=>code===200?{choices:[{message:{content:body},finish_reason:'stop'}]}:{error:{message:body}},text:async()=>JSON.stringify(code===200?{choices:[{message:{content:body},finish_reason:'stop'}]}:{error:{message:body}})});
+ (async()=>{
+  await MimaStandalone.init(); MimaStandalone.saveApiConfig({apiBase:'http://localhost:4009/v1',model:'mock',contextWindowTokens:32768,stream:false});
+--- a/standalone-core.js
++++ b/standalone-core.js
+@@ -55,7 +55,7 @@
+ 
+   function normalizeMemoryVerification(v={}){
+     // Canonical provenance records never store arbitrary model instructions.
+-    const status=['extractive_verified','human_confirmed','legacy_unverified'].includes(v?.status)?v.status:'legacy_unverified';
++    const status=['extractive_verified','human_confirmed','source_bounded','legacy_unverified'].includes(v?.status)?v.status:'legacy_unverified';
+     return {status,stage:String(v?.stage||'').slice(0,100),
+       citations:arr(v?.citations).slice(0,100).map(c=>({messageId:String(c.messageId||''),role:String(c.role||''),start:Math.max(0,Number(c.start)||0),end:Math.max(0,Number(c.end)||0),quote:String(c.quote||'').slice(0,4000)})).filter(c=>c.messageId&&c.end>=c.start)};
+   }
+@@ -912,27 +912,119 @@
+       return !!m&&body.slice(c.start,c.end)===c.quote;
+     });
+   }
++  // R9: verify source-derived event units, not the presence of an entire
++  // utterance in an abbreviated summary. This is a conservative, deterministic
++  // *bounded* abstraction verifier, NOT a semantic truth oracle. A source
++  // citation alone never counts as event coverage. Unsupported/ambiguous
++  // interpretations remain reviewable, with the existing journal and cursor.
++  function memoryEventKey(text){
++    return String(text||'').replace(/[\s\p{P}\p{S}]/gu,'').toLowerCase();
++  }
++  function chineseCount(n){
++    if(n<1||n>999)return String(n);
++    const digit='零一二三四五六七八九';
++    if(n<10)return digit[n];
++    if(n<20)return '十'+(n===10?'':digit[n%10]);
++    if(n<100)return digit[Math.floor(n/10)]+'十'+(n%10?digit[n%10]:'');
++    return digit[Math.floor(n/100)]+'百'+(n%100?(n%100<10?'零':'')+chineseCount(n%100):'');
++  }
++  function eventFrameFlags(t){
++    t=String(t||'');
++    return {
++      neg:/(?:没有|并未|未曾|不曾|否认|绝非|并不|不是|不会|拒绝|无意)/.test(t),
++      rumor:/(?:谣言|造谣|传闻|据说|听说|声称|未经证实|尚未证实|没有确证)/.test(t),
++      conditional:/(?:假设|假如|如果|倘若|可能|或许|猜测|怀疑|似乎)/.test(t),
++      dream:/(?:梦见|梦中|梦里|幻想|想象)/.test(t)
++    };
++  }
++  function eventActionGuard(source,summary){
++    // High-impact changes require a matching source action family. Every
++    // asserted group must already occur in the canonical material; shared
++    // names/objects or made-up citations cannot make a reversal permissible.
++    const families=[['谋杀','杀害','杀死','杀人','杀'],['营救','救出','拯救','救'],['偷走','偷窃','盗窃','窃取','偷'],['背叛'],['绑架'],['纵火','放火'],['烧毁','焚毁','烧掉'],['摧毁','毁灭','毁掉'],['伤害','攻击','打伤'],['死亡','死去','遇难'],['怀孕'],['离婚'],['结婚'],['欺骗','骗'],['拒绝'],['同意','答应'],['承诺','许诺','约定','契约'],['原谅'],['复活'],['自杀'],['伪造'],['掉包'],['失踪']];
++    return families.every(group=>!group.some(w=>summary.includes(w))||group.some(w=>source.includes(w)));
++  }
++  function sourceEventLedger(records,summary){
++    const final=memoryEventKey(summary);
++    const groups=new Map(),covered=[],missing=[];
++    const source=arr(records).filter(m=>(m.role==='user'||m.role==='assistant'||m.role==='memory_source')&&String(m.rawContent||m.content||'').trim());
++    for(let i=0;i<source.length;i++){
++      const m=source[i],body=String(m.rawContent||m.content||'').trim();
++      const normalized=memoryEventKey(body);
++      if(normalized.length<4)continue;
++      // Only identical templates with varying ordinal markers can collapse.
++      // Different actions, polarity and objects remain distinct events.
++      const template=normalized.replace(/第[0-9一二三四五六七八九十百千]+(天|封|条|轮|日|次)/g,'第# $1');
++      const key=template+'|'+JSON.stringify(eventFrameFlags(body));
++      if(!groups.has(key))groups.set(key,{body,template,normalized,members:[],numbers:[],varied:false});
++      const group=groups.get(key);
++      const numbers=[...normalized.matchAll(/第([0-9]+)(天|封|条|轮|日|次)/g)].map(x=>Number(x[1]));
++      group.members.push({record:m,body,index:m.messageIndex??i});
++      if(numbers.length)group.numbers.push(numbers[0]);
++      if(normalized!==group.normalized)group.varied=true;
++    }
++    const grams=(t,n)=>{const v=memoryEventKey(t),out=new Set();for(let i=0;i<=v.length-n;i++)out.add(v.slice(i,i+n));return out;};
++    const finalBigrams=grams(final,2),finalTrigrams=grams(final,3);
++    for(const group of groups.values()){
++      const original=group.members.map(x=>x.body).join('\n');
++      const flags=eventFrameFlags(original),candidateFlags=eventFrameFlags(summary);
++      const originalBigrams=grams(group.body,2),originalTrigrams=grams(group.body,3);
++      const bOverlap=[...originalBigrams].filter(g=>finalBigrams.has(g)).length;
++      const triOverlap=[...originalTrigrams].filter(g=>finalTrigrams.has(g)).length;
++      // Exact originals, or substantial cross-message phrasing are both
++      // admissible; quotations alone without the rest of the event are not.
++      const direct=final.includes(group.normalized);
++      const lexical=originalBigrams.size>0&&bOverlap/originalBigrams.size>=0.40&&triOverlap>=2;
++      const flagsPreserved=Object.keys(flags).every(k=>!flags[k]||candidateFlags[k]);
++      const sourcedAction=eventActionGuard(original,summary);
++      let cardinality=true;
++      if(group.varied){
++        const nums=[...new Set(group.numbers)].sort((a,b)=>a-b),count=nums.length;
++        // An ordinal series is compressible only when it is consecutive;
++        // the summary must explicitly convey its span or its exact count.
++        const consecutive=count===group.members.length&&nums.every((n,i)=>n===nums[0]+i);
++        const units=[...new Set([...group.body.matchAll(/第[0-9一二三四五六七八九十百千]+(天|封|条|轮|日|次)/g)].map(x=>x[1]))];
++        const countWords=String(count)+'|'+chineseCount(count);
++        const explicitQuantity=units.some(u=>new RegExp('(?:连续|共计|累计|历时|总共|共|合计|前后|一连|整整)[^。；\\n]{0,5}(?:'+countWords+')'+u).test(summary));
++        const first=nums[0],last=nums[nums.length-1];
++        const inclusiveRange=units.some(u=>new RegExp('第(?:'+first+'|'+chineseCount(first)+')(?:'+u+')?(?:至|到|—|～|~|-)(?:第)?(?:'+last+'|'+chineseCount(last)+')'+u).test(summary));
++        // Mentions of only the first and last original messages are NOT a
++        // proof of the intervening sequence. A quantity/range claim must be
++        // explicit and its cardinality must match the canonical series.
++        cardinality=consecutive&&count>=2&&(explicitQuantity||inclusiveRange);
++      }
++      const ok=(direct||lexical)&&flagsPreserved&&sourcedAction&&cardinality;
++      for(const item of group.members){
++        const m=item.record;
++        const entry={messageId:m.id,index:item.index,sourceFingerprint:fingerprint([m.id,m.role,m.rawContent,m.content,m.versions]),anchor:item.body.slice(0,120),proof:ok?(direct?'exact_source':'bounded_event_lexical'):null};
++        (ok?covered:missing).push(entry);
++      }
++    }
++    // A source with no events, or a newly asserted high-impact action, cannot
++    // gain verified authority. These flags are globally checked even when
++    // individual source units overlap lexically.
++    const allText=source.map(m=>String(m.rawContent||m.content||'')).join('\n');
++    // Every independent assertion in a proposed summary needs some source
++    // substance. A well-grounded first sentence cannot hide a fabricated
++    // second sentence, even when the overall bigram overlap remains high.
++    const sourceBi=grams(allText,2),sourceTri=grams(allText,3);
++    const clauses=String(summary||'').split(/[。！？；;\n，,]+/).map(x=>x.trim()).filter(x=>memoryEventKey(x).length>=6);
++    const clausesGrounded=clauses.length>0&&clauses.every(clause=>{
++      const bi=grams(clause,2),tri=grams(clause,3),joined=memoryEventKey(allText);
++      return (joined.includes(memoryEventKey(clause))||
++        ([...bi].filter(g=>sourceBi.has(g)).length/Math.max(1,bi.size)>=0.29&&
++         [...tri].some(g=>sourceTri.has(g))))&&eventActionGuard(allText,clause);
++    });
++    const globalSafe=source.length>0&&clausesGrounded&&eventActionGuard(allText,summary)&&
++      Object.keys(eventFrameFlags(summary)).every(k=>!eventFrameFlags(summary)[k]||eventFrameFlags(allText)[k]);
++    if(!globalSafe){missing.push(...covered.splice(0));}
++    return {complete:source.length>0&&missing.length===0,covered,missing,expected:covered.length+missing.length,
++      units:groups.size,contract:'bounded_source_events'};
++  }
+   function validateRollingCoverage(session,start,end,summary,job,stage){
+-    const source=arr(session.messages).slice(start,end);
+-    const squash=t=>String(t||'').replace(/[\s\p{P}\p{S}]/gu,'').toLowerCase();
+-    const finalText=squash(summary);
+-    const finalCitations=arr(job?.verifiedStages?.[stage]?.provenance);
+-    const missing=[],covered=[],dedup=new Set();
+-    for(let i=0;i<source.length;i++){
+-      const m=source[i],body=String(m?.rawContent||m?.content||'').trim(),key=squash(body);
+-      if(key.length<4||dedup.has(key))continue;
+-      dedup.add(key);
+-      // Source excerpt: matching a three-word fragment does not certify the
+-      // whole event; require a substantial original excerpt in final memory.
+-      const quote=body.length<=144?body:body.slice(0,72)+' … '+body.slice(-72);
+-      const inFinal=key.length>=4&&finalText.includes(key);
+-      // A shared first sentence cannot prove that an independent event in
+-      // the middle or end of a long message survived the final merge.
+-      const cited=finalCitations.some(c=>c.messageId===m.id&&squash(c.quote)===key&&finalText.includes(key));
+-      const entry={messageId:m.id,index:start+i,sourceFingerprint:fingerprint([m.id,m.role,m.rawContent,m.content,m.versions]),anchor:quote.slice(0,120)};
+-      (inFinal||cited?covered:missing).push(entry);
+-    }
+-    return {complete:missing.length===0,covered,missing,expected:covered.length+missing.length,range:[start,end],stage};
++    const source=arr(session.messages).slice(start,end).map((m,i)=>({...m,messageIndex:start+i}));
++    const proof=sourceEventLedger(source,summary);
++    return {...proof,range:[start,end],stage};
+   }
+   function validateMemoryCandidate(messages,candidate,stage,finishReason='unknown',requiresSourceLink=false,sourceRecords=[]){
+     const raw=String(candidate||'').trim();
+@@ -999,8 +1091,14 @@
+         }
+       }
+     }
+-    if(!verifiable&&!groundedQuotes)invalid(formal?'unsupported_abstractive_claim':'plain_text_requires_review',true);
+-    if(groundedQuotes)memory=groundedQuotes.join('\n');
++    // Preserve faithful, source-bounded natural compression as natural text.
++    // This independent proof scans all canonical source messages, not merely
++    // the two citations selected by the provider. It never upgrades a source-
++    // bounded interpretation into an extractively verified historical fact.
++    const semanticProof=sourceRecords.length&&sourceEventLedger(sourceRecords,memory);
++    const bounded=!!semanticProof?.complete;
++    if(!verifiable&&!bounded&&!groundedQuotes)invalid(formal?'unsupported_abstractive_claim':'plain_text_requires_review',true);
++    if(!verifiable&&!bounded&&groundedQuotes)memory=groundedQuotes.join('\n');
+     // An instruction string is not an event source. Resolve actual canonical
+     // message IDs and exact byte offsets before reporting evidence as verified.
+     const provenance=[];
+@@ -1010,15 +1108,27 @@
+         const raw=String(m.rawContent||m.content||'');const offset=raw.indexOf(quote);
+         return offset<0?[]:[{messageId:m.id,role:m.role,start:offset,end:offset+quote.length,quote}];
+       });
+-      if(sourceRecords.length&&!linked.length)invalid('evidence_not_in_original_messages',true);
++      if(sourceRecords.length&&!linked.length&&!bounded)invalid('evidence_not_in_original_messages',true);
+       provenance.push(...linked);
++    }
++    if(bounded&&!verifiable){
++      // The audit trail comes from canonical source records, never the
++      // provider's selectively cited first/last examples. Bound each anchor
++      // to a real source offset without copying massive original messages
++      // into the memory metadata; the unchanged History retains full text.
++      provenance.length=0;
++      for(const m of sourceRecords){
++        const body=String(m.rawContent||m.content||'');
++        const quote=body.slice(0,120);
++        if(quote)provenance.push({messageId:m.id,role:m.role,start:0,end:quote.length,quote});
++      }
+     }
+     if(sourceRecords.length&&!provenance.length)invalid('no_message_provenance',true);
+     // Provenance proves that words appeared, not that a rumored, denied or
+     // hypothetical event happened. Only a complete source utterance can pass
+     // automatic extractive mode. Partial quotations and rephrasings require
+     // a reviewable human decision. No claim is promoted solely by its overlap.
+-    if(sourceRecords.length){
++    if(sourceRecords.length&&!bounded){
+       const supported=provenance.some(p=>{
+         const src=sourceRecords.find(m=>m.id===p.messageId);
+         const content=String(src?.rawContent||src?.content||'').trim();
+@@ -1026,8 +1136,9 @@
+       });
+       if(!supported)invalid('claim_not_whole_source_utterance',true);
+     }
+-    return {memory,contract:groundedQuotes?'source_quote_projection':formal?'extractive_json':'extractive_plain_text',evidenceCount:evidence.length,
+-      provenance,verification:{format:'valid',source:sourceRecords.length?'message_offsets':'prompt_extract_only',fact:'extractive',stage}};
++    return {memory,contract:bounded&&!verifiable?'bounded_source_events':groundedQuotes?'source_quote_projection':formal?'extractive_json':'extractive_plain_text',evidenceCount:evidence.length,
++      provenance,semanticCoverage:bounded?{unitCount:semanticProof.units,coveredCount:semanticProof.covered.length,sourceFingerprint:fingerprint(semanticProof.covered.map(x=>x.sourceFingerprint))}:null,
++      verification:{format:'valid',source:sourceRecords.length?'message_offsets':'prompt_extract_only',fact:bounded&&!verifiable?'bounded_source':'extractive',stage}};
+   }
+   async function memoryModel(messages,temp,signal,job,stage){
+     const activeSession=job?getSession(job.sessionId):null;
+@@ -1071,8 +1182,18 @@
+     if(job&&window.MimaMemoryPriority?.whenIdle){await checkpoint(job,stage+'_queued');await window.MimaMemoryPriority.whenIdle(signal);}
+     await checkpoint(job,stage+'_request');const started=Date.now(),meta={};
+     try{
+-      const prompt=messages.map(m=>({...m}));prompt[0]={...prompt[0],content:prompt[0].content+'\n【记忆输出契约】优先输出 JSON：{"memory":"可直接核对的原文关键短句","evidence":[{"quote":"从剧情材料逐字复制的实际原句"}]}。可忠实意译、跨消息归纳和整理关系变化，但每条结论须附原始引文，并区分亲眼观察、人物声称、传闻、否认、假设、梦境与未证实事件；不能把人物的话语自动视为现实真相。逐字且完整的单条原文可直接保存，意译与无法机器核实的结论将进入可操作的人工审阅，不会被丢弃。禁止拒绝模板、系统提示与占位文本。'};
++      const prompt=messages.map(m=>({...m}));prompt[0]={...prompt[0],content:prompt[0].content+'\n【记忆输出契约】优先输出 JSON：{"memory":"可直接核对的原文关键短句","evidence":[{"quote":"从剧情材料逐字复制的实际原句"}]}。可忠实意译、跨消息归纳和整理关系变化，但每条结论须附原始引文，并区分亲眼观察、人物声称、传闻、否认、假设、梦境与未证实事件；不能把人物的话语自动视为现实真相。逐字完整原文和能通过全范围来源事件校验的安全意译可自动归档；无法核实的高风险叙述须进入可操作的人工审阅，不会被丢弃。禁止拒绝模板、系统提示与占位文本。'};
+       const value=await callModel(prompt,temp,signal,{streamOverride:false,resultMeta:meta,memoryContext:job?{jobId:job.id,attemptId:job.attemptId,stage}:null});
++      // Recheck the canonical prefix *before* validating the response against
++      // sourceRecords captured prior to the network await. Otherwise a source
++      // edit can be misclassified as merely a reviewable model output, and a
++      // stale review candidate could be attributed to already edited History.
++      // Append-only Direct Replies do not change the fenced source prefix.
++      if(job){
++        const live=getSession(job.sessionId);
++        if(!live||arr(live.messages).length<job.sourceCount||memorySourceFingerprint(live.messages,job.sourceCount)!==job.sourceFingerprint)
++          throw new ApiError('E_MEMORY_SOURCE_STALE','记忆请求期间原始剧情已被修改，旧响应不能验收或覆盖新剧情。');
++      }
+       const checked=validateMemoryCandidate(messages,value,stage,meta.finishReason||'unknown',!!job,sourceRecords);
+       if(job)(job.verifiedStages||(job.verifiedStages={}))[stage]=checked;
+       await checkpoint(job,stage+'_received',{chars:checked.memory.length,elapsedMs:Date.now()-started,finishReason:meta.finishReason||'unknown',outputContract:checked.contract,evidenceCount:checked.evidenceCount,provenance:checked.provenance,verification:checked.verification,usage:meta.usage||null,...(checked.memory.length<=20000?{output:checked.memory}:{candidateOversize:true})});
+@@ -1093,7 +1214,7 @@
+   }
+   function verifiedMemoryMetadata(job,stage){
+     const checked=job?.verifiedStages?.[stage];
+-    return {status:checked?.verification?.fact==='extractive'?'extractive_verified':checked?.verification?.fact==='human_confirmed'?'human_confirmed':'legacy_unverified',stage,
++    return {status:checked?.verification?.fact==='extractive'?'extractive_verified':checked?.verification?.fact==='human_confirmed'?'human_confirmed':checked?.verification?.fact==='bounded_source'?'source_bounded':'legacy_unverified',stage,
+       citations:checked?.provenance||[]};
+   }
+   async function generateFactMemories(id,opts={},signal=null,progress=null,job=null,snapshot=null){
+--- /dev/null
++++ b/tests/smoke-ninth-memory-concurrent.js
+@@ -0,0 +1,49 @@
++ 'use strict';
++const assert=require('node:assert/strict'),path=require('node:path');
++const cp=x=>x===undefined?undefined:structuredClone(x),storage=new Map();
++function db(){return{close(){},transaction(){let pending=0,finished=false,aborted=false;const staged=new Map([...storage].map(([k,v])=>[k,cp(v)]));const tx={oncomplete:null,onabort:null,abort(){aborted=true;setImmediate(()=>tx.onabort?.())}};function done(){if(finished||aborted||pending)return;finished=true;setImmediate(()=>{if(!aborted){storage.clear();for(const [k,v]of staged)storage.set(k,cp(v));tx.oncomplete?.();}})}const store={get(k){pending++;const r={result:undefined,onsuccess:null};setImmediate(()=>{r.result=cp(staged.get(k));r.onsuccess?.();pending--;setImmediate(done)});return r;},put(v,k){staged.set(k,cp(v));return{}},delete(k){staged.delete(k);return{}}};tx.objectStore=()=>store;return tx;}}}
++global.window=global;global.indexedDB={open(){const r={result:db(),onsuccess:null};setImmediate(()=>r.onsuccess?.());return r}};global.MimaThemeEngine={apply(){},normalizeSettings:x=>x};const pref=new Map();global.localStorage={getItem:x=>pref.get(x)||null,setItem:(x,v)=>pref.set(x,v)};
++require('../local-store.js');require('../standalone-core.js');
++
++const normal='玩家和守卫连续二十四天将收到的求援信封存到档案室，并反复确认封条完好。';
++const dayMessages=Array.from({length:42},(_,i)=>({id:'d'+i,role:i%2?'assistant':'user',content:`第${i+1}天，玩家和守卫一起将第${i+1}封求援信放进档案室，清点信封并确认封条完好。`,rawContent:`第${i+1}天，玩家和守卫一起将第${i+1}封求援信放进档案室，清点信封并确认封条完好。`,versions:[]}));
++const defer=()=>{let resolve;const promise=new Promise(r=>resolve=r);return{promise,resolve}};
++let gate=null,requested=0,chatCount=0;
++const response=value=>({ok:true,status:200,headers:{get:()=> 'application/json'},json:async()=>({choices:[{message:{content:value},finish_reason:'stop'}]}),text:async()=>JSON.stringify({choices:[{message:{content:value},finish_reason:'stop'}]})});
++global.fetch=async(_url,opts)=>{
++ const prompt=JSON.parse(opts.body).messages?.[0]?.content||'';
++ if(prompt.includes('剧情档案助手')){requested++;const old=gate;if(old)await old.promise;return response(normal);}
++ chatCount++;return response('角色回复 '+chatCount);
++};
++const route=(a,b,c)=>MimaStandalone.handle(a,b,c);
++(async()=>{
++ await MimaStandalone.init();MimaStandalone.saveApiConfig({apiBase:'http://localhost:4009/v1',model:'mock',stream:false,contextWindowTokens:32768});
++ const s=(await route('/sessions','POST',{title:'R9 append-only background concurrency'})).data;
++ await route(`/sessions/${s.id}`,'PATCH',{messages:dayMessages,promptSettings:{recentMessageLimit:12}});
++ gate=defer();requested=0;
++ const pending=MimaStandalone.runRecordedMemory('rolling',s.id,{});
++ for(let i=0;i<80&&requested<1;i++)await new Promise(r=>setTimeout(r,5));
++ assert.equal(requested,1,'rolling started');
++ const chat=await route(`/sessions/${s.id}/chat`,'POST',{text:'主人决定继续探险',action:'send'});
++ assert.equal(chat.success,true,JSON.stringify(chat));assert(chat.data.messages.at(-1).content.includes('角色回复'));
++ gate.resolve();gate=null;
++ const result=await pending;assert.equal(result.lastSummarizedIndex,24);
++ const after=(await route(`/sessions/${s.id}`,'GET')).data;
++ assert.equal(after.messages.length,44);assert(after.messages.some(x=>x.content==='主人决定继续探险'));
++ assert.equal((await MimaLocalStore.getMemoryJob(s.id,'rolling')).status,'committed');
++ console.log('PASS R9 Direct Reply proceeds while rolling provider awaits; append-only chat preserved after summary settlement');
++ const t=(await route('/sessions','POST',{title:'R9 stale edit during summarization'})).data;
++ await route(`/sessions/${t.id}`,'PATCH',{messages:dayMessages,promptSettings:{recentMessageLimit:12}});
++ gate=defer();const start=requested;
++ const inFlight=MimaStandalone.runRecordedMemory('rolling',t.id,{}).then(()=>({ok:true})).catch(e=>({ok:false,code:e.code}));
++ for(let i=0;i<80&&requested<=start;i++)await new Promise(r=>setTimeout(r,5));
++ assert(requested>start,'second request started');
++ const edit=await route(`/sessions/${t.id}/messages/d0`,'PATCH',{content:'第1天的封条实际已经破损。'});
++ assert.equal(edit.success,true,JSON.stringify(edit));
++ gate.resolve();gate=null;
++ const run=await inFlight;assert.equal(run.ok,false);assert.equal(run.code,'E_MEMORY_SOURCE_STALE',JSON.stringify(run));
++ const final=(await route(`/sessions/${t.id}`,'GET')).data;
++ assert.equal(final.lastSummarizedIndex,0);assert.equal(final.rollingSummary,'');
++ assert.equal(final.messages[0].content,'第1天的封条实际已经破损。');
++ console.log('PASS R9 original-history edit fences stale memory response; no cursor or summary overwrite');
++})().catch(e=>{console.error(e);process.exitCode=1});
+--- /dev/null
++++ b/tests/smoke-ninth-memory-adversarial.js
+@@ -0,0 +1,40 @@
++ 'use strict';
++const assert=require('node:assert/strict'),path=require('node:path');
++const cp=x=>x===undefined?undefined:structuredClone(x),storage=new Map();
++function db(){return{close(){},transaction(){let pending=0,finished=false,aborted=false;const staged=new Map([...storage].map(([k,v])=>[k,cp(v)]));const tx={oncomplete:null,onabort:null,abort(){aborted=true;setImmediate(()=>tx.onabort?.())}};function done(){if(finished||aborted||pending)return;finished=true;setImmediate(()=>{if(!aborted){storage.clear();for(const [k,v]of staged)storage.set(k,cp(v));tx.oncomplete?.();}})}const store={get(k){pending++;const r={result:undefined,onsuccess:null};setImmediate(()=>{r.result=cp(staged.get(k));r.onsuccess?.();pending--;setImmediate(done)});return r;},put(v,k){staged.set(k,cp(v));return{}},delete(k){staged.delete(k);return{}}};tx.objectStore=()=>store;return tx;}}}
++global.window=global;global.indexedDB={open(){const r={result:db(),onsuccess:null};setImmediate(()=>r.onsuccess?.());return r}};global.MimaThemeEngine={apply(){},normalizeSettings:x=>x};const pref=new Map();global.localStorage={getItem:x=>pref.get(x)||null,setItem:(x,v)=>pref.set(x,v)};
++require('../local-store.js');require('../standalone-core.js');
++const normal='玩家和守卫连续二十四天将收到的求援信封存到档案室，并反复确认封条完好。';
++let payload=normal,code=200,requests=0;
++global.fetch=async()=>{requests++;if(code!==200)return{ok:false,status:code,headers:{get:()=> 'application/json'},text:async()=>JSON.stringify({error:{message:'test '+code}})};const value=payload;return{ok:true,status:200,headers:{get:()=> 'application/json'},json:async()=>({choices:[{message:{content:value},finish_reason:'stop'}]}),text:async()=>JSON.stringify({choices:[{message:{content:value},finish_reason:'stop'}]})}};
++const route=(a,b,c)=>MimaStandalone.handle(a,b,c);
++const dayMessages=Array.from({length:42},(_,i)=>({id:'day-'+i,role:i%2?'assistant':'user',content:`第${i+1}天，玩家和守卫一起将第${i+1}封求援信放进档案室，清点信封并确认封条完好。`,rawContent:`第${i+1}天，玩家和守卫一起将第${i+1}封求援信放进档案室，清点信封并确认封条完好。`,versions:[]}));
++const message=(id,content)=>({id,role:'user',content,rawContent:content,versions:[]});
++async function examine(label,messages,result,expectedCode='',apiCode=200){
++ const s=(await route('/sessions','POST',{title:label})).data;
++ await route(`/sessions/${s.id}`,'PATCH',{messages,promptSettings:{recentMessageLimit:12}});
++ payload=result;code=apiCode;
++ const before=requests;
++ const ran=await MimaStandalone.runRecordedMemory('rolling',s.id,{}).then(v=>({ok:true,cursor:v.lastSummarizedIndex})).catch(e=>({ok:false,code:e.code}));
++ const stored=(await route(`/sessions/${s.id}`,'GET')).data;
++ const job=await MimaLocalStore.getMemoryJob(s.id,'rolling');
++ assert.equal(stored.messages.length,messages.length,label+' History preserved');
++ if(expectedCode){assert.equal(ran.ok,false,label+' should reject');assert.equal(ran.code,expectedCode,label+' error code');assert.equal(stored.lastSummarizedIndex,0,label+' false cursor');assert.equal(stored.rollingSummary,'',label+' no false summary');}
++ else{assert.equal(ran.ok,true,JSON.stringify({label,ran}));assert.equal(stored.lastSummarizedIndex,24,label+' cursor');assert.equal(stored.rollingSummary,result.startsWith('{')?JSON.parse(result).memory:result,label+' text');assert.equal(job.status,'committed');}
++ console.log('PASS',label,{code:ran.code||'committed',requests:requests-before,cursor:stored.lastSummarizedIndex,job:job.status});
++}
++(async()=>{
++ await MimaStandalone.init();MimaStandalone.saveApiConfig({apiBase:'http://127.0.0.1:5000/v1',model:'mock',stream:false,contextWindowTokens:32768});
++ const evidence=[{quote:dayMessages[0].content},{quote:dayMessages[23].content}];
++ await examine('normal JSON paraphrase',dayMessages,JSON.stringify({memory:normal,evidence}));
++ await examine('normal plain text paraphrase',dayMessages,normal);
++ await examine('wrong series count',dayMessages,JSON.stringify({memory:normal.replace('二十四','二十三'),evidence}),'E_MEMORY_NEEDS_REVIEW');
++ await examine('omits other days',dayMessages,JSON.stringify({memory:dayMessages[0].content,evidence}),'E_MEMORY_NEEDS_REVIEW');
++ await examine('invented destruction',dayMessages,JSON.stringify({memory:normal+'守卫随后烧毁了所有信件。',evidence}),'E_MEMORY_NEEDS_REVIEW');
++ const rumors=Array.from({length:42},(_,i)=>message('rumor'+i,`第${i+1}天，守卫听说国王已经遇难，但没有证据证实此传闻。`));
++ await examine('rumor promoted to fact',rumors,'守卫连续二十四天确认国王已经遇难。','E_MEMORY_NEEDS_REVIEW');
++ const refused=Array.from({length:42},(_,i)=>message('ref'+i,`第${i+1}天，玩家拒绝答应守卫偷走钥匙。`));
++ await examine('refusal inverted',refused,'玩家连续二十四天同意守卫偷走钥匙。','E_MEMORY_NEEDS_REVIEW');
++ await examine('429 failed no cursor',dayMessages,normal,'E_API_HTTP_429',429);
++ await examine('400 failed no cursor',dayMessages,normal,'E_API_HTTP_400',400);
++})().catch(e=>{console.error(e);process.exitCode=1});
+--- /dev/null
++++ b/tests/smoke-ninth-normal-abstract-summary.js
+@@ -0,0 +1,23 @@
++'use strict';
++const path=require('node:path');
++const root=path.resolve(__dirname,'..');
++const assert=require('node:assert/strict');
++const cp=x=>x===undefined?undefined:structuredClone(x);
++const data=new Map();
++function db(){return{close(){},transaction(){let n=0,ended=false,aborted=false;const copy=new Map([...data].map(([k,v])=>[k,cp(v)]));const tx={oncomplete:null,onabort:null,abort(){aborted=true;setImmediate(()=>tx.onabort?.())}};function done(){if(ended||aborted||n)return;ended=true;setImmediate(()=>{if(!aborted){data.clear();for(const [k,v]of copy)data.set(k,cp(v));tx.oncomplete?.();}})}const obj={get(k){n++;const r={result:undefined,onsuccess:null};setImmediate(()=>{r.result=cp(copy.get(k));r.onsuccess?.();n--;setImmediate(done)});return r;},put(v,k){copy.set(k,cp(v));return{}},delete(k){copy.delete(k);return{}}};tx.objectStore=()=>obj;return tx;}}}
++global.window=global;global.indexedDB={open(){const req={result:db(),onsuccess:null};setImmediate(()=>req.onsuccess?.());return req}};global.MimaThemeEngine={apply(){},normalizeSettings:x=>x};const pref=new Map();global.localStorage={getItem:x=>pref.get(x)||null,setItem:(x,y)=>pref.set(x,y)};
++require(path.join(root,'local-store.js'));require(path.join(root,'standalone-core.js'));
++let calls=0,outputs=[];
++global.fetch=async (_url,opts)=>{calls++;const body=JSON.parse(opts.body);outputs.push(body.messages?.at(-1)?.content?.slice(0,70)); const content=JSON.stringify({memory:'玩家和守卫连续二十四天将收到的求援信封存到档案室，并反复确认封条完好。',evidence:[{quote:messages[0].content},{quote:messages[23].content}]});return{ok:true,status:200,headers:{get:()=> 'application/json'},json:async()=>({choices:[{message:{content},finish_reason:'stop'}]}),text:async()=>JSON.stringify({choices:[{message:{content},finish_reason:'stop'}]})};};
++const messages=Array.from({length:42},(_,i)=>({id:'day-'+i,role:i%2?'assistant':'user',content:`第${i+1}天，玩家和守卫一起将第${i+1}封求援信放进档案室，清点信封并确认封条完好。`,rawContent:`第${i+1}天，玩家和守卫一起将第${i+1}封求援信放进档案室，清点信封并确认封条完好。`,versions:[]}));
++(async()=>{
++ await MimaStandalone.init();MimaStandalone.saveApiConfig({apiBase:'http://127.0.0.1:5999/v1',model:'local-test',stream:false,contextWindowTokens:32768});
++ const s=(await MimaStandalone.handle('/sessions','POST',{title:'日常正常摘要兼容测试'})).data;
++ await MimaStandalone.handle(`/sessions/${s.id}`,'PATCH',{messages,promptSettings:{recentMessageLimit:12}});
++ const result=await MimaStandalone.runRecordedMemory('rolling',s.id,{}).then(v=>({ok:true,cursor:v.lastSummarizedIndex})).catch(e=>({ok:false,code:e.code,reason:e.message}));
++ const stored=(await MimaStandalone.handle(`/sessions/${s.id}`,'GET')).data;
++ const job=await MimaLocalStore.getMemoryJob(s.id,'rolling');
++ console.log(JSON.stringify({result,historyLength:stored.messages.length,summaryCursor:stored.lastSummarizedIndex,summaryLength:stored.rollingSummary.length,jobStatus:job.status,requests:calls,sourceChars:messages.slice(0,24).map(x=>x.content).join('').length,normalSummaryChars:'玩家和守卫连续二十四天将收到的求援信封存到档案室，并反复确认封条完好。'.length,checkpoints:job.checkpoints.map(x=>({stage:x.stage,reason:x.reason,missingCount:x.missingCount}))},null,2));
++ assert.equal(stored.messages.length,42);assert.equal(stored.lastSummarizedIndex,24);assert.equal(job.status,'committed');assert.equal(stored.rollingSummary,'玩家和守卫连续二十四天将收到的求援信封存到档案室，并反复确认封条完好。');
++ console.log('PASS R9 normal multi-event summary saved automatically; 42 raw history messages retained');
++})().catch(e=>{console.error(e);process.exitCode=1})

@@ -1,0 +1,18 @@
+{
+  "total": 51,
+  "pass": 42,
+  "fail": 9,
+  "failed_tests": [
+    "smoke-compat-r1-r5.js",
+    "smoke-eighth-multi-part.js",
+    "smoke-eighth-root-closure.js",
+    "smoke-fifth-memory-root-closure.js",
+    "smoke-seventh-memory-coverage.js",
+    "smoke-sixth-r6-memory.js",
+    "smoke-third-memory-journal.js",
+    "smoke-v1.3.9-memory-facts.js",
+    "smoke-v1.3.9-png-memory.js"
+  ],
+  "private_png": "used in test only, excluded from package",
+  "real_device": "untested"
+}

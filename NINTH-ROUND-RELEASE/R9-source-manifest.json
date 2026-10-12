@@ -1,0 +1,78 @@
+{
+  "release": "R9 (review candidate: NO-GO)",
+  "source": "第八轮较新完整源码包",
+  "base_sha256": "5ad949a3f776c57448d41df7f20dbe4e9a28514122193aac4f3bf1be5b95cb93",
+  "discarded_noncanonical_r8_sha256": "e32559927b973077ac7c859aa3cb350e7e1e98a12aeb26a417d8c4c5b51abba7",
+  "r7_rollback_sha256": "7c8f57d44a0d06361509c30fbc1de83466a04a56fa21f03732bf9dfd98efdc55",
+  "existing_r8_files": 199,
+  "r8_files_preserved": 199,
+  "changed": [
+    {
+      "path": "EIGHTH-ROUND-EVIDENCE/repro_core_from_facts.js",
+      "before_sha256": "9f22d6efde285cbdd373efa01da39f3e653db3a24a7cda3a02195f81104cf070",
+      "after_sha256": "060c27e7d65229aa342d2bdc4557761dc9be9c9f790e9d01200c0bbb61866488",
+      "before_size": 3404,
+      "after_size": 3374
+    },
+    {
+      "path": "EIGHTH-ROUND-EVIDENCE/repro_missing_merge_coverage.js",
+      "before_sha256": "15eb4f6096033dd5c2dc25b046b057f981470c38c8c339c7e275f5efa88636cb",
+      "after_sha256": "c6d78f0bd4f8adf54e21c0971b1a4d19864a6a5b7f0b7618f983f03772821e08",
+      "before_size": 3998,
+      "after_size": 3968
+    },
+    {
+      "path": "FIFTH-ROUND-COUNTEREXAMPLE-20261012.js",
+      "before_sha256": "4ec51c370fb4f40d026221d13ee5d9b6edca4337d647608218888dc8282cb5d4",
+      "after_sha256": "ef7052947419be530f24d4973e34c8c826370640c2c30c02ca7888e30d7844d9",
+      "before_size": 4987,
+      "after_size": 4985
+    },
+    {
+      "path": "standalone-core.js",
+      "before_sha256": "98329e5c71f2b54a89f6f5894e7458a9cc3b71fdca8ee563bca6d07de09533f5",
+      "after_sha256": "d974f1552cba2841904ad3b9cfa878291d76d422dccaf2f208c1dd25821e09e3",
+      "before_size": 156260,
+      "after_size": 165096
+    }
+  ],
+  "added": [
+    "tests/smoke-ninth-memory-concurrent.js",
+    "tests/smoke-ninth-memory-adversarial.js",
+    "tests/smoke-ninth-normal-abstract-summary.js"
+  ],
+  "application_code_changed": [
+    "standalone-core.js"
+  ],
+  "application_code_untouched": [
+    "app.js",
+    "compat-runtime.js",
+    "compat-import.js",
+    "local-store.js",
+    "index.html"
+  ],
+  "testing": {
+    "historical_44": {
+      "PASS": 37,
+      "FAIL": 7,
+      "SKIP": 0
+    },
+    "new_ninth_tests": {
+      "PASS": 3,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    "full_smoke": {
+      "PASS": 40,
+      "FAIL": 7,
+      "SKIP": 0
+    },
+    "independent_repros": {
+      "PASS": 3,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    "syntax_total": 81,
+    "syntax_pass": 81
+  }
+}

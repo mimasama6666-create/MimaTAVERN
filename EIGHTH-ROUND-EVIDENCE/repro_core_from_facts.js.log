@@ -1,0 +1,15 @@
+Exit: 0
+fact loaded [
+  {
+    status: 'human_confirmed',
+    stage: 'user_manual_edit',
+    citations: []
+  }
+]
+{
+  "success": true,
+  "core": "玩家和塔主在清晨约定一起守护铜制钥匙。",
+  "job": "committed"
+}
+PASS: verified facts may be consolidated to core memory
+

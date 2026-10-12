@@ -1,0 +1,354 @@
+[
+  {
+    "test": "smoke-compat-r1-r5.js",
+    "status": "FAIL",
+    "exitCode": 1,
+    "seconds": 0.058,
+    "stdout": "",
+    "stderr": "AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:\n\n  assert(envelope.messages[0].content.includes('花园是红的'))\n\n    at /mnt/data/eighth_round/work/MimaTAVERN-R1-R5-REWORK-20261011/tests/smoke-compat-r1-r5.js:25:210 {\n  generatedMessage: true,\n  code: 'ERR_ASSERTION',\n  actual: false,\n  expected: true,\n  operator: '=='\n}\n"
+  },
+  {
+    "test": "smoke-compat-rework-real-png.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.179,
+    "stdout": "PASS private PNG png.chara[0]: constant=4, trigger=1, disabled/unmatched=8; ST golden oracle NOT RUN\nPASS private PNG png.ccv3[1]: constant=4, trigger=1, disabled/unmatched=8; ST golden oracle NOT RUN\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-compat-rework-store.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.035,
+    "stdout": "PASS snapshot contract: SHA256 seal/tamper, orphan session and grant, legacy unsealed explicit status\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-compat-rework-turn.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.188,
+    "stdout": "PASS P0 lifecycle mock: failure projection, stable retry, stale fencing, abort, competing begins, killable regex\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-compat-rework-worker.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.211,
+    "stdout": "PASS plugin Worker: SDK RPC and killable busy loop, iframe CSP not browser-tested\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-eighth-multi-part.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.667,
+    "stdout": "PASS R8 missing merge 2 partitions 60 messages; original history retained; journal=needs_review; calls=3\nPASS R8 missing merge 4 partitions 90 messages; original history retained; journal=needs_review; calls=5\nPASS R8 missing merge 19 partitions 240 messages; original history retained; journal=needs_review; calls=20\nPASS R8 bounded source-validated repair restores genuine automatic completion for small omissions\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-eighth-root-closure.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.106,
+    "stdout": "PASS R8 human_confirmed facts -> core\nPASS R8 legacy_unverified cannot be promoted\nPASS R8 stale human fact cannot be promoted\nPASS R8 invalid fact citation cannot be laundered\nPASS R8 duplicate true-source event rolls without losing repeated originals\nPASS R8 merge with dropped messages is REVIEW not COMMITTED, journal missingCount=41, source and cursor untouched\nPASS R8 explicit full-scope human approval retains original history\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-fifth-memory-root-closure.js",
+    "status": "FAIL",
+    "exitCode": 1,
+    "seconds": 0.042,
+    "stdout": "",
+    "stderr": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n+ actual - expected\n\n+ 'needs_review'\n- 'failed'\n\n    at /mnt/data/eighth_round/work/MimaTAVERN-R1-R5-REWORK-20261011/tests/smoke-fifth-memory-root-closure.js:33:71 {\n  generatedMessage: true,\n  code: 'ERR_ASSERTION',\n  actual: 'needs_review',\n  expected: 'failed',\n  operator: 'strictEqual'\n}\n"
+  },
+  {
+    "test": "smoke-fourth-memory-p0-lease.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.705,
+    "stdout": "PASS long history rounds=50 estimatedTokens=1626 retrieved=1 omitted=88\nPASS long history rounds=200 estimatedTokens=1626 retrieved=1 omitted=388\nPASS long history rounds=500 estimatedTokens=1626 retrieved=1 omitted=988\nPASS fourth memory P0: rejected core/facts refusal; source-proven JSON memory injected; invalid evidence held; exact lease takeover and old-attempt fencing\n",
+    "stderr": "Rolling summary background debt {\n  sessionId: 'sess_1791778528329_wslv4aj',\n  code: 'E_API_HTTP_429',\n  stage: 'rolling',\n  settlementError: ''\n}\n"
+  },
+  {
+    "test": "smoke-session-history-v1.1.2.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.032,
+    "stdout": "PASS v1.1.2 session history: rename preserves story data; delete removes only target session\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-seventh-memory-benchmark.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.131,
+    "stdout": "{\n  \"environment\": \"Node offline fake IndexedDB and synthetic cited JSON Provider (NOT actual model success-rate evidence)\",\n  \"summary\": [\n    {\n      \"messages\": 10,\n      \"requests\": 1,\n      \"elapsedMs\": 9,\n      \"sourceMessagesRetained\": 10,\n      \"manualReview\": 0,\n      \"memoryStored\": true\n    },\n    {\n      \"messages\": 50,\n      \"requests\": 1,\n      \"elapsedMs\": 6,\n      \"sourceMessagesRetained\": 50,\n      \"manualReview\": 0,\n      \"memoryStored\": true\n    },\n    {\n      \"messages\": 200,\n      \"requests\": 1,\n      \"elapsedMs\": 14,\n      \"sourceMessagesRetained\": 200,\n      \"manualReview\": 0,\n      \"memoryStored\": true\n    },\n    {\n      \"messages\": 500,\n      \"requests\": 1,\n      \"elapsedMs\": 35,\n      \"sourceMessagesRetained\": 500,\n      \"manualReview\": 0,\n      \"memoryStored\": true\n    }\n  ]\n}\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-seventh-memory-coverage.js",
+    "status": "FAIL",
+    "exitCode": 1,
+    "seconds": 0.097,
+    "stdout": "",
+    "stderr": "AssertionError [ERR_ASSERTION]: {\"success\":false,\"code\":\"E_MEMORY_NEEDS_REVIEW\",\"message\":\"最终合并遗漏了有来源的剧情事件，原文和摘要游标未修改，已保存待核对候选。\"}\n\nfalse !== true\n\n    at /mnt/data/eighth_round/work/MimaTAVERN-R1-R5-REWORK-20261011/tests/smoke-seventh-memory-coverage.js:32:9 {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: false,\n  expected: true,\n  operator: 'strictEqual'\n}\n"
+  },
+  {
+    "test": "smoke-sixth-compat-end-to-end-fake-idb.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.61,
+    "stdout": "R6 TRACE 1 parser\nR6 TRACE 2 import\nR6 TRACE 3 reimport\nR6 TRACE 4 create\nR6 TRACE 5 preview\nR6 TRACE 6 send\nPASS actual private PNG dual-version read -> SHA import & dedup -> explicit CCV3 -> create -> WI trigger -> 3 mock provider turns -> journal settled -> module reload reads 3 turns -> external mount/unmount -> durable snapshot\nUNTESTED: actual paid Provider / browser IndexedDB / official SillyTavern golden\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-sixth-r6-memory.js",
+    "status": "FAIL",
+    "exitCode": 1,
+    "seconds": 0.041,
+    "stdout": "",
+    "stderr": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n+ actual - expected\n\n+ 'needs_review'\n- 'failed'\n\n    at /mnt/data/eighth_round/work/MimaTAVERN-R1-R5-REWORK-20261011/tests/smoke-sixth-r6-memory.js:25:66 {\n  generatedMessage: true,\n  code: 'ERR_ASSERTION',\n  actual: 'needs_review',\n  expected: 'failed',\n  operator: 'strictEqual'\n}\n"
+  },
+  {
+    "test": "smoke-third-api-diagnostics.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.051,
+    "stdout": "PASS third API diagnostics: 200 reasoning-only, refusal, 400, 429, truncated memory, transport error, valid body; no API key in structured trace\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-third-compat-concurrency.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.268,
+    "stdout": "regex 100 items batch elapsed 40ms\nregex 500 items batch elapsed 29ms\nregex 1000 items batch elapsed 35ms\nPASS third compat: CSS concurrent settlement, aborted late event not failed, 100/500/1000 regex batching, pathological kill\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-third-memory-journal.js",
+    "status": "FAIL",
+    "exitCode": 1,
+    "seconds": 0.046,
+    "stdout": "",
+    "stderr": "AssertionError [ERR_ASSERTION]: {\"success\":false,\"msg\":\"摘要包含无法由原文逐字验证的叙述，已作为候选保留，未写入长期记忆。\",\"code\":\"E_MEMORY_NEEDS_REVIEW\",\"status\":0,\"hint\":\"请在记忆任务记录中查看待核查候选；核对原始剧情后可通过手工编辑记忆明确采纳。\",\"details\":\"{\\\"stage\\\":\\\"fact_range_1_6_part_0\\\",\\\"reason\\\":\\\"plain_text_requires_review\\\",\\\"chars\\\":13,\\\"finishReason\\\":\\\"stop\\\",\\\"formatValidated\\\":true,\\\"sourceVerified\\\":false,\\\"factVerified\\\":false}\"}\n\nfalse !== true\n\n    at /mnt/data/eighth_round/work/MimaTAVERN-R1-R5-REWORK-20261011/tests/smoke-third-memory-journal.js:24:53 {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: false,\n  expected: true,\n  operator: 'strictEqual'\n}\n"
+  },
+  {
+    "test": "smoke-v1.1.0.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.054,
+    "stdout": "PASS v1.1.0: migration + regex fail-closed/token-saving + multiline story input + real SSE story streaming\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-v1.1.1.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.023,
+    "stdout": "PASS v1.1.1: assistant model keeps story API connection but no longer inherits story Max Tokens\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-v1.1.10.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.025,
+    "stdout": "PASS v1.1.10: BOND fill is hydrated from visible numeric value even when --value is absent\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-v1.1.2.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.038,
+    "stdout": "PASS v1.1.2: collapsed assistant model panel + edit/delete history + safe in-place regenerate\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-v1.1.3.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.028,
+    "stdout": "PASS v1.1.3: strict artifacts parse; common model JSON glitches auto-repair; irreparable artifacts surface diagnostics\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-v1.1.4.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.061,
+    "stdout": "PASS v1.1.4: artifact self-healing + compact iOS assistant + reader-controlled streaming + cache observability/context pruning\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-v1.1.5-repair-failure.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.028,
+    "stdout": "PASS v1.1.5 repair failure: one paid call only; original preserved; failed model response archived and surfaced\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-v1.1.5-repair.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.029,
+    "stdout": "PASS v1.1.5 repair: one paid call only; broken V1 -> V2; original and repair attempt archived\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-v1.1.5.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.045,
+    "stdout": "PASS v1.1.5: V2 Zero-Escape artifacts preserve regex/HTML/CSS, legacy V1 remains compatible, invalid V2 fails closed, paid repair is explicit and archived\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-v1.1.6.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.036,
+    "stdout": "PASS v1.1.6: persona macros resolve in Persona/Preset/Worldbook/Memory/history/display without mutating source or machine roles\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-v1.1.7.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.036,
+    "stdout": "PASS v1.1.7: AIRP speech/action/private-thought semantics are compiled at prompt time with epistemic boundaries while raw Store/UI data stays intact\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-v1.1.8.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.045,
+    "stdout": "PASS v1.1.8: player typography + Safe HTML live preview + responsive Settings during streaming + recoverable per-message deletion\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-v1.1.9.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.024,
+    "stdout": "PASS v1.1.9: Safe HTML preserves only bounded --value percentages for legacy BOND meters\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-v1.2.0.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.066,
+    "stdout": "PASS v1.2.0: canonical BOND hydration + native meters + conservative browser transport + non-duplicating manual retry coexist\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-v1.3.0.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.067,
+    "stdout": "PASS v1.3.0: migration + TXT + chapters + prompt + same-generation append + Draft/accept + partial memory + fail-closed memory + themes + RP coexistence\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-v1.3.1.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.051,
+    "stdout": "v1.3.1 user regression PASS\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-v1.3.2-root-closure.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.072,
+    "stdout": "v1.3.2 root closure: invalid backups, async novel CAS, source-aware facts, spoiler isolation, merge retention, finish reason, RP deletion PASS\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-v1.3.3-backup-integrity.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.055,
+    "stdout": "PASS v1.3.3 backup integrity: nested validation, unchanged state, legacy import, interrupted write, CAS\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-v1.3.3-legacy-memory.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.033,
+    "stdout": "PASS v1.3.3 legacy memory: v1.3.1 fixture, prompt retention, source-bound rollback, newer deltas, review marker and spoiler isolation\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-v1.3.4-legacy-quarantine.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.048,
+    "stdout": "PASS v1.3.4 legacy quarantine: future spoiler filtered, verified legacy retained, human review chapter-scoped, edits/reorder/re-analysis invalidate\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-v1.3.4-rework.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.052,
+    "stdout": "PASS v1.3.4 full v4 export/import, 16 corrupted field guards and unchanged canonical, valid empty fields, failed-write rollback, v2/v3 migration\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-v1.3.5-persisted-arrays.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.074,
+    "stdout": "PASS v1.3.5 complete v4 durable arrays and legacy, corrupted field guards and unchanged canonical, valid empty fields, failed-write rollback, v2/v3 migration\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-v1.3.6-historical-v4-contract.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.046,
+    "stdout": "PASS v1.3.6: corrupt owner memory rejected via validator+both imports, durable/runtime unchanged; real v1.3.1/1.3.2/1.3.3 exports migrated without content loss; marked roundtrip and write failure\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-v1.3.7-theme.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.027,
+    "stdout": "PASS v1.3.7: legacy + new themes, HTML references, CSS layer, user CSS parity, meta and color scheme\n",
+    "stderr": ""
+  },
+  {
+    "test": "smoke-v1.3.9-memory-facts.js",
+    "status": "FAIL",
+    "exitCode": 1,
+    "seconds": 0.063,
+    "stdout": "",
+    "stderr": "AssertionError [ERR_ASSERTION]: {\"success\":false,\"msg\":\"摘要包含无法由原文逐字验证的叙述，已作为候选保留，未写入长期记忆。\",\"code\":\"E_MEMORY_NEEDS_REVIEW\",\"status\":0,\"hint\":\"请在记忆任务记录中查看待核查候选；核对原始剧情后可通过手工编辑记忆明确采纳。\",\"details\":\"{\\\"stage\\\":\\\"fact_range_1_1_part_0\\\",\\\"reason\\\":\\\"plain_text_requires_review\\\",\\\"chars\\\":6,\\\"finishReason\\\":\\\"stop\\\",\\\"formatValidated\\\":true,\\\"sourceVerified\\\":false,\\\"factVerified\\\":false}\"}\n\nfalse !== true\n\n    at /mnt/data/eighth_round/work/MimaTAVERN-R1-R5-REWORK-20261011/tests/smoke-v1.3.9-memory-facts.js:17:9 {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: false,\n  expected: true,\n  operator: 'strictEqual'\n}\n"
+  },
+  {
+    "test": "smoke-v1.3.9-png-memory.js",
+    "status": "FAIL",
+    "exitCode": 1,
+    "seconds": 0.076,
+    "stdout": "",
+    "stderr": "AssertionError [ERR_ASSERTION]: {\"success\":false,\"msg\":\"摘要包含无法由原文逐字验证的叙述，已作为候选保留，未写入长期记忆。\",\"code\":\"E_MEMORY_NEEDS_REVIEW\",\"status\":0,\"hint\":\"请在记忆任务记录中查看待核查候选；核对原始剧情后可通过手工编辑记忆明确采纳。\",\"details\":\"{\\\"stage\\\":\\\"core_final_single\\\",\\\"reason\\\":\\\"plain_text_requires_review\\\",\\\"chars\\\":8,\\\"finishReason\\\":\\\"stop\\\",\\\"formatValidated\\\":true,\\\"sourceVerified\\\":false,\\\"factVerified\\\":false}\"}\n\nfalse !== true\n\n    at /mnt/data/eighth_round/work/MimaTAVERN-R1-R5-REWORK-20261011/tests/smoke-v1.3.9-png-memory.js:38:47\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5) {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: false,\n  expected: true,\n  operator: 'strictEqual'\n}\n"
+  },
+  {
+    "test": "smoke-v1.4.0-png-resources.js",
+    "status": "PASS",
+    "exitCode": 0,
+    "seconds": 0.048,
+    "stdout": "PASS v1.4.0 PNG read-only full metadata, V3 precedence, CSS/preset/worldbook extraction, incompatible script isolation, loss guard, tamper refusal\n",
+    "stderr": ""
+  }
+]

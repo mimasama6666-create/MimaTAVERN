@@ -379,20 +379,28 @@
       tx.oncomplete=()=>{db.close();resolve(result);};tx.onabort=()=>{db.close();reject(issue||tx.error||new Error('E_MEMORY_JOURNAL_WRITE_FAILED'));};
     });
   }
-  async function beginMemoryJob({sessionId,kind,options,sourceHash,sourceCount,configSignature}){
+  async function beginMemoryJob({sessionId,kind,options,sourceHash,sourceCount,sourceFingerprint,targetBaseline,configSignature}){
     return memoryJobTransaction(sessionId,kind,(old,kv)=>{
       const live=old?.status==='running'&&Number(old.leaseUntilEpoch||0)>Date.now();
       if(live)throw new Error('E_MEMORY_JOB_PENDING: 另一个尚有租约的 attempt 正在运行；不能竞争结算');
       if(old?.status==='running'&&Number(old.recoveryCount||0)>=3)throw new Error('E_MEMORY_RECOVERY_LIMIT: 连续恢复已达到上限，请检查后台任务错误记录并人工操作');
       const sameSource=old?.sourceHash===sourceHash&&old?.configSignature===configSignature&&JSON.stringify(old?.options)===JSON.stringify(options);
-      const resumeCandidates={};
-      if(sameSource&&['running','failed','interrupted','aborted'].includes(old?.status)){for(const candidate of old.checkpoints||[]){if(typeof candidate.output==='string'&&candidate.stage.endsWith('_received'))resumeCandidates[candidate.stage.slice(0,-9)]=candidate.output;}}
+      const resumeCandidates={},humanApprovedStages={};
+      if(sameSource&&['running','failed','interrupted','aborted','needs_review'].includes(old?.status)){
+        for(const candidate of old.checkpoints||[]){
+          if(typeof candidate.output==='string'&&candidate.stage.endsWith('_received'))resumeCandidates[candidate.stage.slice(0,-9)]=candidate.output;
+          if(typeof candidate.output==='string'&&candidate.stage.startsWith('human_')&&candidate.stage.endsWith('_accepted')){
+            const stage=candidate.stage.slice(6,-9);
+            humanApprovedStages[stage]={output:candidate.output,sourceStartIndex:candidate.sourceStartIndex,sourceEndExclusive:candidate.sourceEndExclusive,sourceCoverageHash:candidate.sourceCoverageHash};
+          }
+        }
+      }
       const now=new Date().toISOString(),recovering=old?.status==='running';
-      const job={resumeCandidates,configSignature,
+      const job={resumeCandidates,humanApprovedStages,configSignature,sourceFingerprint,targetBaseline,
         id:recovering?old.id:`mem_${Date.now()}_${Math.random().toString(36).slice(2)}`,
         attemptId:`a_${Date.now()}_${Math.random().toString(36).slice(2)}`,sessionId,kind,options,sourceHash,sourceCount,
         status:'running',stage:recovering?'recovered_pending':'prepared',startedAt:recovering?old.startedAt:now,updatedAt:now,
-        checkpoints:sameSource?(old.checkpoints||[]):[],revision:(old?.revision||0)+1,
+        checkpoints:sameSource&&['running','failed','interrupted','aborted','needs_review'].includes(old?.status)?(old.checkpoints||[]):[],revision:(old?.revision||0)+1,
         leaseUntilEpoch:Date.now()+MEMORY_LEASE_MS,recoveryCount:recovering?(Number(old.recoveryCount||0)+1):0,
         recoveredFromAttemptId:recovering?old.attemptId:null};
       kv.put(job,jobKey(sessionId,kind));return job;
@@ -415,7 +423,7 @@
   async function settleMemoryJob(job,status,code=''){
     return memoryJobTransaction(job.sessionId,job.kind,(old,kv)=>{
       if(old?.id!==job.id||old?.attemptId!==job.attemptId||old.status!=='running')throw new Error('E_MEMORY_JOB_FENCED');
-      const next={...old,status,stage:status==='aborted'?'aborted':status==='skipped'?'skipped':'failed',code:String(code).slice(0,120),updatedAt:new Date().toISOString(),revision:old.revision+1};
+      const next={...old,status,stage:status==='aborted'?'aborted':status==='skipped'?'skipped':status==='needs_review'?'awaiting_review':'failed',code:String(code).slice(0,120),updatedAt:new Date().toISOString(),revision:old.revision+1};
       kv.put(next,jobKey(job.sessionId,job.kind));return next;
     });
   }
@@ -441,8 +449,15 @@
           const index=current.sessions.findIndex(x=>x.id===job.sessionId);if(index<0){fail('E_STORY_SESSION_MISSING');return;}
           const latest=current.sessions[index];
           if(!Array.isArray(latest.messages)||JSON.stringify(latest.messages.slice(0,snapshot.messages.length))!==JSON.stringify(snapshot.messages)){fail('E_MEMORY_SOURCE_STALE');return;}
-          if(job.kind==='facts'&&JSON.stringify(latest.manualMemory?.facts||[])!==JSON.stringify(snapshot.manualMemory?.facts||[])){fail('E_MEMORY_FACTS_CONFLICT');return;}
-          if(job.kind==='core'&&(JSON.stringify(latest.manualMemory?.core||{})!==JSON.stringify(snapshot.manualMemory?.core||{})||(job.options?.source==='facts'&&JSON.stringify(latest.manualMemory?.facts||[])!==JSON.stringify(snapshot.manualMemory?.facts||[])))){fail('E_MEMORY_CORE_CONFLICT');return;}
+          // Compare the same normalized, versioned contract on BOTH sides.
+          // Presence of implicit defaults such as stale:false is not an edit;
+          // actual content, revision metadata or stale:true still fences.
+          const contract=window.MimaMemoryContracts;
+          if(!contract||typeof contract.normalizeManualMemory!=='function'){fail('E_MEMORY_CONTRACT_UNAVAILABLE');return;}
+          const currentMemory=contract.normalizeManualMemory(latest.manualMemory||{});
+          const baselineMemory=contract.normalizeManualMemory(snapshot.manualMemory||{});
+          if(job.kind==='facts'&&JSON.stringify(currentMemory.facts)!==JSON.stringify(baselineMemory.facts)){fail('E_MEMORY_FACTS_CONFLICT');return;}
+          if(job.kind==='core'&&(JSON.stringify(currentMemory.core)!==JSON.stringify(baselineMemory.core)||(job.options?.source==='facts'&&JSON.stringify(currentMemory.facts)!==JSON.stringify(baselineMemory.facts)))){fail('E_MEMORY_CORE_CONFLICT');return;}
           if(job.kind==='rolling'&&(latest.rollingSummary!==snapshot.rollingSummary||latest.lastSummarizedIndex!==snapshot.lastSummarizedIndex)){fail('E_MEMORY_ROLLING_CONFLICT');return;}
           const changed={...latest,...patch,recordRevision:(Number(latest.recordRevision)||0)+1,updatedAt:new Date().toISOString()};
           const sessions=current.sessions.slice();sessions[index]=changed;
@@ -454,5 +469,83 @@
       tx.oncomplete=()=>{db.close();resolve(committed);};tx.onabort=()=>{db.close();reject(problem||tx.error||new Error('E_MEMORY_COMMIT_ABORTED'));};
     });
   }
-  window.MimaLocalStore={loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,clearSettingsSnapshot,getMemoryJob,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob};
+  // Human approval is a single canonical DB transaction: journal stage,
+  // source prefix and memory target baseline are checked under one write lock.
+  async function reviewMemoryCandidate(sessionId,kind,jobId,decision,editedText){
+    if(!['core','facts','rolling'].includes(kind)||!['accept','reject'].includes(decision))throw new Error('E_MEMORY_REVIEW_ACTION');
+    const db=await openDb();return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE);let issue,result;
+      const fail=m=>{issue=new Error(m);tx.abort();};
+      const jr=kv.get(jobKey(sessionId,kind));jr.onerror=()=>fail('E_MEMORY_REVIEW_JOURNAL_READ');
+      jr.onsuccess=()=>{
+        const job=jr.result;
+        if(!job||job.id!==jobId||!['failed','interrupted','aborted','needs_review'].includes(job.status)){fail('E_MEMORY_REVIEW_FENCED');return;}
+        const candidate=[...(job.checkpoints||[])].reverse().find(x=>x.stage?.endsWith('_needs_review')&&typeof x.candidate==='string'&&
+          !(job.checkpoints||[]).some(y=>y.stage==='human_'+x.stage.replace(/_needs_review$/,'')+'_accepted'||y.stage==='human_'+x.stage.replace(/_needs_review$/,'')+'_rejected'));
+        if(!candidate){fail('E_MEMORY_REVIEW_NOT_FOUND');return;}
+        const reviewStage=candidate.stage.replace(/_needs_review$/,'');
+        if((job.checkpoints||[]).some(x=>x.stage==='human_'+reviewStage+'_accepted'||x.stage==='human_'+reviewStage+'_rejected')){fail('E_MEMORY_REVIEW_ALREADY_SETTLED');return;}
+        const text=String(editedText||'').trim();
+        if(decision==='accept'&&(!text||text.length>25000)){fail('E_MEMORY_REVIEW_INVALID_TEXT');return;}
+        const sr=kv.get(STATE_KEY);sr.onerror=()=>fail('E_MEMORY_REVIEW_STATE_READ');sr.onsuccess=()=>{
+          const state=sr.result,idx=state?.sessions?.findIndex(x=>x.id===sessionId);
+          if(!state||idx<0){fail('E_MEMORY_STORE_UNVERIFIED');return;}
+          const session=state.sessions[idx];
+          if(!job.sourceFingerprint||window.MimaStandalone?.memorySourceFingerprint(session.messages.slice(0,job.sourceCount),job.sourceCount)!==job.sourceFingerprint){fail('E_MEMORY_REVIEW_SOURCE_CHANGED');return;}
+          const contract=window.MimaMemoryContracts;
+          if(!contract?.normalizeManualMemory){fail('E_MEMORY_CONTRACT_UNAVAILABLE');return;}
+          const mem=contract.normalizeManualMemory(session.manualMemory||{});
+          const target=kind==='rolling'?JSON.stringify([session.rollingSummary||'',session.lastSummarizedIndex||0]):JSON.stringify(kind==='core'?mem.core:mem.facts);
+          if(target!==job.targetBaseline){fail('E_MEMORY_REVIEW_TARGET_CHANGED');return;}
+          const stamp=new Date().toISOString();
+          const sourceStartIndex=Number(candidate.sourceStartIndex),sourceEndExclusive=Number(candidate.sourceEndExclusive);
+          const fullCount=job.sourceCount;
+          if(!Number.isInteger(sourceStartIndex)||!Number.isInteger(sourceEndExclusive)||sourceStartIndex<0||sourceEndExclusive>fullCount||sourceEndExclusive<=sourceStartIndex){fail('E_MEMORY_REVIEW_RANGE_UNKNOWN');return;}
+          const slice=session.messages.slice(sourceStartIndex,sourceEndExclusive);
+          const sourceCoverageHash=window.MimaStandalone.memorySourceFingerprint(slice,slice.length);
+          if(sourceCoverageHash!==candidate.sourceCoverageHash){fail('E_MEMORY_REVIEW_RANGE_CHANGED');return;}
+          const reviewStageId='human_'+reviewStage+'_'+(decision==='accept'?'accepted':'rejected');
+          const review={stage:reviewStageId,time:stamp,sourceCount:fullCount,
+            sourceStartIndex,sourceEndExclusive,sourceCoverageHash,startRound:candidate.startRound??null,endRound:candidate.endRound??null,
+            messageIds:slice.map(x=>x.id),reason:candidate.reason,editChars:text.length,...(decision==='accept'?{output:text}:{})};
+          const isRollingFinal=kind==='rolling'&&(reviewStage==='rolling_summary'||reviewStage==='rolling_merge');
+          const plan=[...(job.checkpoints||[])].reverse().find(x=>x.stage==='rolling_source_plan');
+          let canCommitRolling=false;
+          if(isRollingFinal&&plan&&sourceStartIndex===plan.sourceStartIndex&&sourceEndExclusive===plan.sourceEndExclusive){
+            canCommitRolling=reviewStage==='rolling_summary'&&plan.partCount===1 ||
+              reviewStage==='rolling_merge'&&plan.partCount>1&&Array.from({length:plan.partCount},(_,i)=>i).every(i=>
+                (job.checkpoints||[]).some(x=>x.stage==='rolling_part_'+i+'_received'||x.stage==='human_rolling_part_'+i+'_accepted'));
+          }
+          const coreFinal=kind==='core'&&/^core_final_(single|merge)$/.test(reviewStage);
+          // A reviewed *part* is a durable stage result, not canonical memory.
+          // Resuming the same source processes all other parts and the final merge.
+          const writeCanonical=decision==='accept'&&(canCommitRolling||coreFinal);
+          const updatedJob={...job,revision:job.revision+1,updatedAt:stamp,stage:reviewStageId,
+            status:decision==='reject'?'rejected':writeCanonical?'committed':'interrupted',
+            ...(writeCanonical||decision==='reject'?{finishedAt:stamp}:{}),
+            checkpoints:[...(job.checkpoints||[]),review].slice(-300)};
+          if(writeCanonical){
+            const verification={status:'human_confirmed',stage:review.stage,citations:[],sourceType:'reviewed_story_material',reviewedAt:stamp,
+              sourceStartIndex,sourceEndExclusive,sourceCoverageHash};
+            let patch={};
+            if(kind==='core'){
+              mem.core={...mem.core,content:text,source:job.options?.source||'context',updatedAt:stamp,
+                sourceCount:job.sourceCount,sourceFingerprint:job.sourceFingerprint,verification};
+              patch={manualMemory:mem};
+            }else if(kind==='rolling'){
+              const fullEnd=plan.sourceEndExclusive;
+              patch={rollingSummary:text,summary:text,rollingVerification:verification,
+                lastSummarizedIndex:fullEnd,rollingSourceCount:fullEnd,
+                rollingSourceFingerprint:window.MimaStandalone.memorySourceFingerprint(session.messages,fullEnd)};
+            }
+            const revised={...session,...patch,recordRevision:(Number(session.recordRevision)||0)+1,updatedAt:stamp};
+            state.sessions[idx]=revised;kv.put({...state,storeRevision:(Number(state.storeRevision)||0)+1,savedAt:stamp},STATE_KEY);
+          }
+          kv.put(updatedJob,jobKey(sessionId,kind));result={status:updatedJob.status,kind,sessionId,jobId};
+        };
+      };
+      tx.oncomplete=()=>{db.close();resolve(result);};tx.onabort=()=>{db.close();reject(issue||tx.error||new Error('E_MEMORY_REVIEW_ABORTED'));};
+    });
+  }
+  window.MimaLocalStore={loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,clearSettingsSnapshot,getMemoryJob,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
 })();

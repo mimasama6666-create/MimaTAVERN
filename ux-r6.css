@@ -1,0 +1,36 @@
+/* Additive navigation and compatibility onboarding; inherit existing theme colors. */
+.nav-label{display:inline-flex;gap:4px;justify-content:center;align-items:center;min-height:44px;min-width:44px;padding:6px 10px;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:12px;white-space:nowrap;font-weight:600;font-size:.82rem}
+.topbar{padding-inline:max(8px,env(safe-area-inset-left)) max(8px,env(safe-area-inset-right));gap:6px}
+.topbar .top-avatar{min-width:44px;min-height:44px;cursor:pointer}
+.topbar .top-title-wrap{cursor:default;pointer-events:none}
+.mima-feature-menu{position:absolute;z-index:60;top:calc(70px + env(safe-area-inset-top));right:max(8px,env(safe-area-inset-right));width:min(320px,calc(100vw - 20px));max-height:min(72dvh,600px);overflow:auto;display:grid;gap:3px;padding:10px;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow)}
+.mima-feature-menu button{min-height:44px;padding:10px;text-align:left;background:transparent;border-radius:9px}.mima-feature-menu button:focus-visible,.nav-label:focus-visible{outline:2px solid var(--accent)}
+#compat-lab{padding-bottom:env(safe-area-inset-bottom)}.compat-head{padding-top:calc(12px + env(safe-area-inset-top));background:var(--panel);color:var(--text)}
+.compat-head button,.compat-main button,.compat-main select{min-height:44px}
+.compat-main{max-width:760px;padding:12px;gap:10px}.compat-main section{background:var(--panel);border-color:var(--line)}
+#compat-import-panel{order:0}#compat-chat-panel{order:1}.compat-advanced-panel{order:3}
+.compat-start-controls{display:grid;gap:8px;grid-template-columns:minmax(0,1fr)}.compat-start-controls label{font-size:.86rem;font-weight:700}.compat-start-controls select{width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--text)}
+.compat-quick-status{line-height:1.5;padding:10px;border:1px solid var(--line);border-radius:12px;margin:12px 0;overflow-wrap:anywhere}
+.compat-main-cta{width:100%;min-height:48px;background:var(--accent)!important;color:#fff!important;font-weight:700}
+.compat-advanced{margin-top:12px}.compat-advanced > summary{min-height:44px;display:list-item;padding:10px;cursor:pointer}.compat-advanced-panel{display:none}
+#compat-lab.show-advanced .compat-advanced-panel{display:block}
+#compat-lab.in-chat #compat-import-panel{display:none}#compat-lab.in-chat #compat-chat-panel{order:0}
+#compat-lab.in-chat #compat-conversation{display:block}#compat-lab.in-chat #compat-messages{max-height:min(55dvh,650px)}
+#compat-lab #compat-report pre{max-height:230px}#compat-lab .compat-gap-choice{font-size:.86rem;line-height:1.4}
+#compat-lab .compat-gap-choice input{width:18px;height:18px}#compat-lab #compat-notice{position:sticky;bottom:env(safe-area-inset-bottom);background:var(--panel);padding:8px;border-radius:8px}
+.memory-review-source{max-height:280px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid var(--line);padding:10px}
+@media(max-width:700px){.topbar .nav-desktop{display:none}.nav-label{padding:5px 7px;font-size:.8rem}.topbar .top-title-wrap{min-width:0}.topbar .top-character{font-size:.87rem}.topbar .top-title{font-size:.65rem}#compat-lab .compat-head{align-items:center}#compat-lab .compat-head small{font-size:.72rem}}
+@media(max-width:360px){.topbar{gap:3px}.topbar .top-avatar{min-width:44px;width:44px;min-height:44px}.nav-label{font-size:.75rem;padding-inline:6px}}
+
+.compat-continue-list:empty{display:none}.compat-continue-list{padding:10px;border:1px solid var(--line);border-radius:12px;margin-bottom:14px}.compat-continue-list .compat-line button{white-space:nowrap}
+
+.compat-card-cover{display:block;object-fit:cover;object-position:center;max-width:104px;max-height:144px;margin:8px 0;border-radius:12px;border:1px solid var(--line)}
+/* A legible back action on narrow phones must not wrap into stacked characters. */
+.compat-head>div{flex:1;min-width:0}
+.compat-head>button{flex:0 0 auto;white-space:nowrap;min-width:96px;padding-inline:10px;font-size:.8rem}
+@media(max-width:360px){.compat-head{gap:6px;padding-inline:8px}.compat-head>button{min-width:92px}}
+
+/* R7: guaranteed 44x44 touch target, no overlapping hit zones. */
+@media(max-width:428px){.topbar .top-avatar{min-width:44px;min-height:44px;width:44px;flex-shrink:0}.topbar .nav-label{min-width:44px;min-height:44px;padding:6px;flex-shrink:0}.topbar .top-title-wrap{min-width:0;flex:1 1 auto;overflow:hidden}.topbar .top-title,.topbar .top-character{text-overflow:ellipsis;overflow:hidden;white-space:nowrap}}
+#compat-sidecar-url{min-width:0;flex:1 1 190px;min-height:44px;padding:8px;border:1px solid var(--line);background:var(--bg);color:var(--text);border-radius:10px}
+#compat-sidecar-open{min-height:44px}

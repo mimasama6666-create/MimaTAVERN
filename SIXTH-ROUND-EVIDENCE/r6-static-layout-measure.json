@@ -1,0 +1,359 @@
+[
+  {
+    "viewport": 320,
+    "docScrollWidth": 320,
+    "innerWidth": 320,
+    "bar": 320,
+    "nav": [
+      {
+        "text": "☰\n剧情",
+        "width": 53,
+        "height": 44,
+        "left": 8,
+        "right": 61
+      },
+      {
+        "text": "🤍",
+        "width": 37,
+        "height": 44,
+        "left": 64,
+        "right": 101
+      },
+      {
+        "text": "小说",
+        "width": 0,
+        "height": 0,
+        "left": 0,
+        "right": 0
+      },
+      {
+        "text": "AI 工具",
+        "width": 0,
+        "height": 0,
+        "left": 0,
+        "right": 0
+      },
+      {
+        "text": "功能",
+        "width": 44,
+        "height": 44,
+        "left": 221,
+        "right": 265
+      },
+      {
+        "text": "设置",
+        "width": 44,
+        "height": 44,
+        "left": 268,
+        "right": 312
+      }
+    ],
+    "lab": 0
+  },
+  {
+    "viewport": 360,
+    "docScrollWidth": 360,
+    "innerWidth": 360,
+    "bar": 360,
+    "nav": [
+      {
+        "text": "☰\n剧情",
+        "width": 53,
+        "height": 44,
+        "left": 8,
+        "right": 61
+      },
+      {
+        "text": "🤍",
+        "width": 37,
+        "height": 44,
+        "left": 64,
+        "right": 101
+      },
+      {
+        "text": "小说",
+        "width": 0,
+        "height": 0,
+        "left": 0,
+        "right": 0
+      },
+      {
+        "text": "AI 工具",
+        "width": 0,
+        "height": 0,
+        "left": 0,
+        "right": 0
+      },
+      {
+        "text": "功能",
+        "width": 44,
+        "height": 44,
+        "left": 261,
+        "right": 305
+      },
+      {
+        "text": "设置",
+        "width": 44,
+        "height": 44,
+        "left": 308,
+        "right": 352
+      }
+    ],
+    "lab": 0
+  },
+  {
+    "viewport": 375,
+    "docScrollWidth": 375,
+    "innerWidth": 375,
+    "bar": 375,
+    "nav": [
+      {
+        "text": "☰\n剧情",
+        "width": 57,
+        "height": 44,
+        "left": 8,
+        "right": 65
+      },
+      {
+        "text": "🤍",
+        "width": 44,
+        "height": 44,
+        "left": 71,
+        "right": 115
+      },
+      {
+        "text": "小说",
+        "width": 0,
+        "height": 0,
+        "left": 0,
+        "right": 0
+      },
+      {
+        "text": "AI 工具",
+        "width": 0,
+        "height": 0,
+        "left": 0,
+        "right": 0
+      },
+      {
+        "text": "功能",
+        "width": 44,
+        "height": 44,
+        "left": 273,
+        "right": 317
+      },
+      {
+        "text": "设置",
+        "width": 44,
+        "height": 44,
+        "left": 323,
+        "right": 367
+      }
+    ],
+    "lab": 0
+  },
+  {
+    "viewport": 390,
+    "docScrollWidth": 390,
+    "innerWidth": 390,
+    "bar": 390,
+    "nav": [
+      {
+        "text": "☰\n剧情",
+        "width": 57,
+        "height": 44,
+        "left": 8,
+        "right": 65
+      },
+      {
+        "text": "🤍",
+        "width": 44,
+        "height": 44,
+        "left": 71,
+        "right": 115
+      },
+      {
+        "text": "小说",
+        "width": 0,
+        "height": 0,
+        "left": 0,
+        "right": 0
+      },
+      {
+        "text": "AI 工具",
+        "width": 0,
+        "height": 0,
+        "left": 0,
+        "right": 0
+      },
+      {
+        "text": "功能",
+        "width": 44,
+        "height": 44,
+        "left": 288,
+        "right": 332
+      },
+      {
+        "text": "设置",
+        "width": 44,
+        "height": 44,
+        "left": 338,
+        "right": 382
+      }
+    ],
+    "lab": 0
+  },
+  {
+    "viewport": 428,
+    "docScrollWidth": 428,
+    "innerWidth": 428,
+    "bar": 428,
+    "nav": [
+      {
+        "text": "☰\n剧情",
+        "width": 57,
+        "height": 44,
+        "left": 8,
+        "right": 65
+      },
+      {
+        "text": "🤍",
+        "width": 44,
+        "height": 44,
+        "left": 71,
+        "right": 115
+      },
+      {
+        "text": "小说",
+        "width": 0,
+        "height": 0,
+        "left": 0,
+        "right": 0
+      },
+      {
+        "text": "AI 工具",
+        "width": 0,
+        "height": 0,
+        "left": 0,
+        "right": 0
+      },
+      {
+        "text": "功能",
+        "width": 44,
+        "height": 44,
+        "left": 326,
+        "right": 370
+      },
+      {
+        "text": "设置",
+        "width": 44,
+        "height": 44,
+        "left": 376,
+        "right": 420
+      }
+    ],
+    "lab": 0
+  },
+  {
+    "viewport": 768,
+    "docScrollWidth": 768,
+    "innerWidth": 768,
+    "bar": 768,
+    "nav": [
+      {
+        "text": "☰\n剧情",
+        "width": 64,
+        "height": 44,
+        "left": 8,
+        "right": 72
+      },
+      {
+        "text": "🤍",
+        "width": 44,
+        "height": 44,
+        "left": 78,
+        "right": 122
+      },
+      {
+        "text": "小说",
+        "width": 48,
+        "height": 44,
+        "left": 532,
+        "right": 581
+      },
+      {
+        "text": "AI 工具",
+        "width": 65,
+        "height": 44,
+        "left": 587,
+        "right": 652
+      },
+      {
+        "text": "功能",
+        "width": 48,
+        "height": 44,
+        "left": 658,
+        "right": 706
+      },
+      {
+        "text": "设置",
+        "width": 48,
+        "height": 44,
+        "left": 712,
+        "right": 760
+      }
+    ],
+    "lab": 0
+  },
+  {
+    "viewport": 1024,
+    "docScrollWidth": 1024,
+    "innerWidth": 1024,
+    "bar": 704,
+    "nav": [
+      {
+        "text": "☰\n剧情",
+        "width": 64,
+        "height": 44,
+        "left": 328,
+        "right": 392
+      },
+      {
+        "text": "🤍",
+        "width": 44,
+        "height": 44,
+        "left": 398,
+        "right": 442
+      },
+      {
+        "text": "小说",
+        "width": 48,
+        "height": 44,
+        "left": 788,
+        "right": 837
+      },
+      {
+        "text": "AI 工具",
+        "width": 65,
+        "height": 44,
+        "left": 843,
+        "right": 908
+      },
+      {
+        "text": "功能",
+        "width": 48,
+        "height": 44,
+        "left": 914,
+        "right": 962
+      },
+      {
+        "text": "设置",
+        "width": 48,
+        "height": 44,
+        "left": 968,
+        "right": 1016
+      }
+    ],
+    "lab": 0
+  }
+]

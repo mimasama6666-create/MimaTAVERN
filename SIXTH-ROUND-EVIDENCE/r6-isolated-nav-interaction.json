@@ -1,0 +1,65 @@
+[
+  {
+    "width": 320,
+    "menuOpens": true,
+    "escCloses": true,
+    "noPageHorizontalOverflow": true,
+    "createButtonHeight": 44,
+    "backButtonWidth": 100,
+    "headerHeight": 83
+  },
+  {
+    "width": 360,
+    "menuOpens": true,
+    "escCloses": true,
+    "noPageHorizontalOverflow": true,
+    "createButtonHeight": 44,
+    "backButtonWidth": 100,
+    "headerHeight": 83
+  },
+  {
+    "width": 375,
+    "menuOpens": true,
+    "escCloses": true,
+    "noPageHorizontalOverflow": true,
+    "createButtonHeight": 44,
+    "backButtonWidth": 100,
+    "headerHeight": 83
+  },
+  {
+    "width": 390,
+    "menuOpens": true,
+    "escCloses": true,
+    "noPageHorizontalOverflow": true,
+    "createButtonHeight": 44,
+    "backButtonWidth": 100,
+    "headerHeight": 83
+  },
+  {
+    "width": 428,
+    "menuOpens": true,
+    "escCloses": true,
+    "noPageHorizontalOverflow": true,
+    "createButtonHeight": 44,
+    "backButtonWidth": 100,
+    "headerHeight": 71
+  },
+  {
+    "width": 768,
+    "menuOpens": true,
+    "escCloses": true,
+    "noPageHorizontalOverflow": true,
+    "createButtonHeight": 44,
+    "backButtonWidth": 100,
+    "headerHeight": 71
+  },
+  {
+    "width": 1024,
+    "menuOpens": true,
+    "escCloses": true,
+    "noPageHorizontalOverflow": true,
+    "createButtonHeight": 44,
+    "backButtonWidth": 100,
+    "headerHeight": 71
+  }
+]

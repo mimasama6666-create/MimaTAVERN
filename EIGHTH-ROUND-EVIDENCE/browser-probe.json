@@ -1,0 +1,6 @@
+{
+  "attempt": "full app chromium browser",
+  "url": "file:///mnt/data/eighth_round/work/MimaTAVERN-R1-R5-REWORK-20261011/index.html",
+  "status": "blocked_or_failed",
+  "error": "Page.goto: net::ERR_BLOCKED_BY_ADMINISTRATOR at file:///mnt/data/eighth_round/work/MimaTAVERN-R1-R5-REWORK-20261011/index.html\nCall log:\n  - navigating to \"file:///mnt/data/eighth_round/work/MimaTAVERN-R1-R5-REWORK-20261011/index.html\", waiting until \"domcontentloaded\"\n"
+}
