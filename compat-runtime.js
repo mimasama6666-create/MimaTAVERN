@@ -21,14 +21,26 @@ function hasKey(text,key,settings){if(typeof key==='string'&&key.startsWith('/')
 function worldInfo(entries,history,settings={}){
  const inserted=[],skipped=[],matched=[];
  let used=0;const budget=Number.isFinite(settings.budgetChars)?settings.budgetChars:16000;
- const scanDepth=Math.max(0,Number(settings.scanDepth??100));
- const text=history.slice(-scanDepth||0).map(m=>String(m.role)+': '+m.content).join('\n');
+ // ST 1.19.0: scan depth is a message count, with 0 disabling ordinary
+ // keyword scanning. `slice(-0 || 0)` used to scan ALL messages at depth=0.
+ // Per-entry overrides must be resolved before matching; never scan farther
+ // than requested, especially when a card deliberately disables scanning.
+ const defaultScanDepth=settings.scanDepth??100;
  const ordered=[...entries].map((e,idx)=>({e,idx})).sort((a,b)=>Number(b.e?.constant||false)-Number(a.e?.constant||false)||Number(b.e?.insertion_order??b.e?.order??100)-Number(a.e?.insertion_order??a.e?.order??100)||a.idx-b.idx);
  for(const {e,idx} of ordered){
   if(!e||typeof e!=='object'){skipped.push({entryId:String(idx),reason:'invalid object'});continue;}
   const id=hashKey(e),gaps=unsupportedWI(e);
   if(gaps.length){skipped.push({entryId:id,reason:'E_RESOURCE_SEMANTIC_GAP',gaps});continue;}
   if(e.disable===true||e.enabled===false){skipped.push({entryId:id,reason:'disabled'});continue;}
+  const depthValue=e.extensions?.scan_depth??e.scan_depth??e.scanDepth??defaultScanDepth;
+  const keywordScanDepth=Number(depthValue);
+  if(!Number.isSafeInteger(keywordScanDepth)||keywordScanDepth<0){skipped.push({entryId:id,reason:'E_RESOURCE_SEMANTIC_GAP',gaps:['invalid World Info scan depth']});continue;}
+  const scanMessages=keywordScanDepth===0?[]:history.slice(-keywordScanDepth);
+  const text=scanMessages.map(m=>{
+   if(settings.includeNames===false)return String(m.content);
+   const label=m.role==='user'?(settings.userName||'user'):m.role==='assistant'?(settings.charName||'assistant'):m.role;
+   return String(label)+': '+m.content;
+  }).join('\n');
   const primary=words(e.key??e.keys),secondary=words(e.keysecondary??e.secondary_keys);
   const opt={caseSensitive:e.extensions?.case_sensitive??e.caseSensitive??settings.caseSensitive??false,matchWholeWords:e.extensions?.match_whole_words??e.matchWholeWords??settings.matchWholeWords??false};
   const regexKey=!!e.use_regex||!!e.useRegex;
@@ -41,10 +53,13 @@ function worldInfo(entries,history,settings={}){
   }
   let hit=false;try{
     hit=!!e.constant||primary.some(hitKey);
-    if(hit&&e.selective===true&&secondary.length){const found=secondary.filter(hitKey).length,logic=Number(e.extensions?.selectiveLogic??e.selectiveLogic??0);hit=logic===0?found>0:logic===1?found===secondary.length:logic===2?found===0:found!==secondary.length;}
+    if(hit&&e.selective===true&&secondary.length){const found=secondary.filter(hitKey).length,logic=Number(e.extensions?.selectiveLogic??e.selectiveLogic??0);// Pinned SillyTavern 1.19.0 enum: 0 AND_ANY, 1 NOT_ALL,
+      // 2 NOT_ANY, 3 AND_ALL. The old implementation swapped 1 and 3.
+      if(![0,1,2,3].includes(logic))throw error('E_RESOURCE_SEMANTIC_GAP','未知世界书筛选逻辑 '+logic);
+      hit=logic===0?found>0:logic===1?found!==secondary.length:logic===2?found===0:found===secondary.length;}
   }catch(ex){skipped.push({entryId:id,reason:ex.code||'E_WORLDINFO_EVAL',gaps:[ex.message]});continue;}
   if(!hit){skipped.push({entryId:id,reason:'no matching key'});continue;}
-  const content=String(e.content||'');matched.push({entryId:id,reason:e.constant?'constant':'keyword'});
+  const content=String(e.content||'');matched.push({entryId:id,reason:e.constant?'constant':'keyword',scanDepth:keywordScanDepth});
   if(used+content.length>budget){skipped.push({entryId:id,reason:'budget',chars:content.length});continue;}
   const position=wiPosition(e),depth=position===4?Number(e.extensions?.depth??e.depth??0):0;
   if(!Number.isInteger(depth)||depth<0||depth>100){skipped.push({entryId:id,reason:'E_RESOURCE_SEMANTIC_GAP',gaps:['invalid in-chat depth']});continue;}
@@ -106,7 +121,7 @@ function mountedPresetInstructions(session,resources){
  return {instructions,gaps};
 }
 function createEnvelope(session,resources,messages,userText,{skipRegex=false}={}){const card=resources.find(r=>r.kind==='character')?.raw;if(!card)throw error('E_RESOURCE_SEMANTIC_GAP','本来源没有已选定角色');const name=card.name||'角色',u=session.userName||'玩家';const history=messages.filter(m=>m.status==='committed').map(m=>({role:m.role,content:m.canonicalContent}));
-const wi=worldInfo(entriesFromResources(resources),[...history,{role:'user',content:userText}],{budgetChars:session.worldInfoBudget??16000});const regex=readRegex(resources);const ctx={char:name,user:u};const segments=[];const mountedPreset=mountedPresetInstructions(session,resources);let gaps=[...wi.semanticGaps,...mountedPreset.gaps];function add(slot,value){if(!value)return;const expanded=macro(value,ctx);if(expanded.unsupported.length)gaps.push({slot,reason:'E_RESOURCE_SEMANTIC_GAP',macros:expanded.unsupported});segments.push({id:'segment_'+segments.length,slot,role:'system',content:expanded.value,tokenEstimate:Math.ceil(expanded.value.length/3),source:name});}
+const wi=worldInfo(entriesFromResources(resources),[...history,{role:'user',content:userText}],{budgetChars:session.worldInfoBudget??16000,scanDepth:session.worldInfoScanDepth??100,includeNames:session.worldInfoIncludeNames!==false,userName:u,charName:name});const regex=readRegex(resources);const ctx={char:name,user:u};const segments=[];const mountedPreset=mountedPresetInstructions(session,resources);let gaps=[...wi.semanticGaps,...mountedPreset.gaps];function add(slot,value){if(!value)return;const expanded=macro(value,ctx);if(expanded.unsupported.length)gaps.push({slot,reason:'E_RESOURCE_SEMANTIC_GAP',macros:expanded.unsupported});segments.push({id:'segment_'+segments.length,slot,role:'system',content:expanded.value,tokenEstimate:Math.ceil(expanded.value.length/3),source:name});}
 for(const e of wi.inserted.filter(e=>e.position===0))add('world_info_before',e.content);
 add('character_description',card.description);add('personality',card.personality);add('scenario',card.scenario);add('system_prompt',card.system_prompt);
 for(const e of wi.inserted.filter(e=>e.position===1))add('world_info_after',e.content);

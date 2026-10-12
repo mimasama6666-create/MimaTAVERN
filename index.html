@@ -203,6 +203,7 @@
   </section>
   <section id="compat-chat-panel"><h3>② 和角色聊天 <button type="button" id="compat-manage-toggle">管理卡片与功能</button></h3><div id="compat-current">咪嘛馆兼容引擎 · 未进入剧情</div><div id="compat-conversation" hidden>
    <div id="compat-messages" aria-live="polite"></div><textarea id="compat-input" placeholder="输入剧情"></textarea>
+   <div class="compat-actions"><label for="compat-wi-depth">世界书关键词扫描最近多少条消息（0 = 不扫描普通关键词）</label><input id="compat-wi-depth" type="number" min="0" max="1000" step="1" value="100" style="width:5.5em"><button type="button" id="compat-wi-save">保存扫描范围</button></div>
    <div class="compat-actions"><label class="compat-gap-choice" hidden><input id="compat-accept-gaps" type="checkbox"> 只在专家严格对照模式中确认差异</label><label class="compat-mode-label"><input type="radio" name="compat-mode" value="basic" checked>基础聊天</label><label class="compat-mode-label"><input type="radio" name="compat-mode" value="strict">严格检查高级规则</label><button id="compat-send">发送消息</button><button id="compat-preview">查看本轮发送内容</button></div>
    <div id="compat-gap"></div><details><summary>真实 Provider 消息 / 触发追踪</summary><pre id="compat-prompt"></pre></details>
    <div class="compat-actions"><label>本地音频（用户手动播放）<input type="file" id="compat-audio" accept="audio/*"></label><div id="compat-media"></div></div>
@@ -237,9 +238,9 @@
 <script src="./compat-store.js?v=r1r5-p0fix&r11=20261012-2&sourceversion=20261012-3"></script>
 <script src="./compat-import.js?v=r1r5-1&r11=20261012-2"></script>
 <script src="./compat-regex-isolation.js?v=r1r5-p0fix"></script>
-<script src="./compat-runtime.js?v=r1r5-p0fix&r11=20261012-2&replyguard=20261012-1&sourceversion=20261012-3&promptfix=r11.4"></script>
+<script src="./compat-runtime.js?v=r1r5-p0fix&r11=20261012-2&replyguard=20261012-1&sourceversion=20261012-3&promptfix=r11.4&worldinfo=r11.5"></script>
 <script src="./compat-plugins.js?v=r1r5-p0fix"></script>
-<script src="./compat-ui.js?v=r1r5-p0fix&r11=20261012-2&sourceversion=20261012-3"></script>
+<script src="./compat-ui.js?v=r1r5-p0fix&r11=20261012-2&sourceversion=20261012-3&worldinfo=r11.5"></script>
 <script src="./assistant-studio.js?v=1.1.2&hotfix=1.1.3&release=1.3.1&auditfix=1.3.2&artifactpriority0=r11.2"></script>
 <script src="./novel-studio.js?v=1.3.1&auditfix=1.3.2&release=1.3.1&auditfix=1.3.2&rework=1.3.3&reworkfix=1.3.4&themefix=1.4.0&memoryfix=1.3.9&pnginspect=1.4.0"></script>
 <script src="./ux-r6.js?v=r6-20261012"></script>
