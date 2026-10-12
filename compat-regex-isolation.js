@@ -3,7 +3,7 @@
 'use strict';
 function fail(code,message){return Object.assign(new Error(message),{code});}
 function resolveWorker(){
-  if(typeof window!=='undefined'&&typeof Worker!=='undefined')return new Worker('./compat-regex-worker.js',{name:'mima-compat-regex'});
+  if(typeof window!=='undefined'&&typeof Worker!=='undefined')return new Worker('./compat-regex-worker.js?advanced=r11.12',{name:'mima-compat-regex'});
   if(typeof require==='function'){const wt=require('node:worker_threads'),path=require('node:path');return new wt.Worker(path.join(__dirname,'compat-regex-worker.js'));}
   throw fail('E_REGEX_ISOLATION_UNAVAILABLE','此环境无可终止的 Worker，外来正则不能执行');
 }
@@ -24,7 +24,7 @@ function run(items,rules,options={}){
     if(typeof worker.addEventListener==='function'){worker.addEventListener('message',onMessage);worker.addEventListener('error',onError);}
     else{worker.on('message',onMessage);worker.on('error',onError);}
     if(options.signal?.aborted){onAbort();return;}options.signal?.addEventListener?.('abort',onAbort,{once:true});
-    worker.postMessage({batch:items.map(item=>({input:String(item.input),phase:item.phase,options:{isMarkdown:!!(item.options?.isMarkdown??options.isMarkdown),depth:item.options?.depth??options.depth??0}})),rules});
+    worker.postMessage({batch:items.map(item=>({input:String(item.input),phase:item.phase,options:{isMarkdown:!!(item.options?.isMarkdown??options.isMarkdown),depth:item.options?.depth??options.depth??0,macroContext:item.options?.macroContext??options.macroContext??{}}})),rules});
   });
 }
 return Object.freeze({apply,applyBatch});

@@ -1,5 +1,5 @@
 /* Advanced workbench: all DOM and state scoped to #compat-lab; native app remains untouched. */
-(function(root){'use strict';if(typeof document==='undefined')return;const $=id=>document.getElementById(id),s=()=>root.MimaCompatStore,i=()=>root.MimaCompatImport,r=()=>root.MimaCompatRuntime;let opened=false,scan=null,activeId='',busy=false,creating=false,player=null,assetUrls=[],cardPreviewUrl='',scanGeneration=0,sessionGeneration=0;const approvedBasicPreflights=new Map();
+(function(root){'use strict';if(typeof document==='undefined')return;const $=id=>document.getElementById(id),s=()=>root.MimaCompatStore,i=()=>root.MimaCompatImport,r=()=>root.MimaCompatRuntime;let opened=false,scan=null,activeId='',busy=false,creating=false,forking=false,player=null,assetUrls=[],cardPreviewUrl='',scanGeneration=0,sessionGeneration=0,messageRenderGeneration=0;const approvedBasicPreflights=new Map();
 function el(tag,props={},parent){const node=document.createElement(tag);for(const[k,v]of Object.entries(props)){if(k==='text')node.textContent=String(v);else if(k==='className')node.className=v;else if(k==='onclick')node.addEventListener('click',v);else if(k==='title')node.title=v;else node.setAttribute(k,v);}if(parent)parent.append(node);return node;}
 function clear(node){node.replaceChildren();}function message(text,type='info'){const output=$('compat-notice');output.textContent=text;output.dataset.kind=type;}
 function download(name,data,type='application/json'){const blob=data instanceof Blob?data:new Blob([data],{type}),url=URL.createObjectURL(blob),a=document.createElement('a');a.download=name.replace(/[\\/:*?"<>|]/g,'_');a.href=url;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),5000);}
@@ -64,7 +64,7 @@ async function create(){if(creating||!scan)return;
   await s().importSource({sha256:selectedScan.sha256,filename:selectedScan.filename,format:selectedScan.format,bytes:selectedScan.bytes,versions:selectedScan.versions,warnings:selectedScan.warnings},selectedScan.resources);
   if(scanGeneration!==scanTicket||scan!==selectedScan)throw Object.assign(new Error('选卡期间已切换文件，本次未建立旧角色剧情；请再次点击开始'),{code:'E_IMPORT_SELECTION_CHANGED'});
   const selected=Number($('compat-card-choice').value),choice=selectedScan.resources[selected];
-  const resources=await s().all('resource_ir');
+  const resources=await s().byIndex('resource_ir','sourceId',sourceId);
   if(scanGeneration!==scanTicket||scan!==selectedScan)throw Object.assign(new Error('选择的原始卡片已经变化，请重新确认角色'),{code:'E_IMPORT_SELECTION_CHANGED'});
   const saved=r().resolveCharacterSelection(sourceId,choice,resources);
   const ses=await r().createSession(sourceId,{characterResourceId:saved.id,greetingIndex:Number($('compat-greeting-choice').value||0)});
@@ -89,6 +89,15 @@ async function refreshSourceList(){
      message(mount?'挂载关系已撤销；来源包与原始资源未删除':'已建立可撤销的来源指纹挂载；未验证预设与脚本绝不标记为生效');
     }catch(e){message(`${e.code||'E_MOUNT'}: ${e.message}`,'error');}
    }},line);
+   if(mount&&['preset','prompt_presets'].includes(mount.kind))el('button',{text:mount.trustedCreativeRole===true?'撤销预设声明角色授权':'按预设声明角色发送（需确认）',onclick:async()=>{
+     try{
+       const next=mount.trustedCreativeRole!==true;
+       if(next&&!root.confirm('你正在明确授权这份外部预设作为创作指令按原角色发送（可能是 system）。这不允许执行脚本、使用工具或修改平台权限。只对当前剧情生效。确认授权？'))return;
+       await r().setPresetCreativeRole(active.id,res.id,next);
+       await refreshSourceList();await inspectPreview();
+       message(next?'当前剧情已授权该外置预设使用声明的创作消息角色。':'已撤销该预设的角色授权；原始资源没有被删除。');
+     }catch(e){message((e.code||'E_PRESET_PERMISSION')+': '+e.message,'error');}
+   }},line);
   }
  }
 }
@@ -112,25 +121,38 @@ async function handleRecovery(sessionId,turnId,action,expectedAttemptId){
 }
 async function refreshSessionList(){const ses=await s().all('compat_sessions'),box=$('compat-sessions');clear(box);
 const shortcuts=$('compat-continue-list');if(shortcuts){clear(shortcuts);if(ses.length){el('strong',{text:'继续之前的酒馆剧情'},shortcuts);for(const item of ses.slice().sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))).slice(0,4)){const row=el('div',{className:'compat-line'},shortcuts);el('span',{text:item.title||'未命名剧情'},row);el('button',{text:'继续聊天',onclick:()=>loadSession(item.id)},row);}}}
-for(const item of ses){const row=el('div',{className:'compat-line'},box);el('span',{text:item.title+' · 独立剧情'+(item.pendingTurnId?' · 存在未结算回合':'')},row);el('button',{text:'进入',onclick:()=>loadSession(item.id)},row);if(item.id===activeId)await showTurnControls(item.id,box);}}
-async function loadSession(id){$('compat-lab').classList.add('in-chat');const generation=++sessionGeneration;if(activeId!==id)root.MimaCompatPlugins?.unmountAll();activeId=id;const ses=await r().getSession(id);if(generation!==sessionGeneration)return;$('compat-wi-depth').value=String(ses.worldInfoScanDepth??100);$('compat-current').textContent=`咪嘛馆兼容引擎 · ${ses.title}`;$('compat-conversation').hidden=false;await refreshSessionList();if(generation!==sessionGeneration)return;await refreshSourceList();if(generation!==sessionGeneration)return;await refreshMessages();if(generation!==sessionGeneration)return;await refreshExtensionUI();if(generation!==sessionGeneration)return;await inspectPreview();root.MimaCompatPlugins?.publish?.(id,'session.mounted',{sessionId:id},'session.mounted:'+id+':'+generation)?.catch(e=>message('插件会话事件失败：'+e.message,'error'));}
+for(const item of ses){const row=el('div',{className:'compat-line'},box);el('span',{text:item.title+(item.parentSessionId?' · 剧情分支':' · 独立剧情')+(item.pendingTurnId?' · 存在未结算回合':'')},row);el('button',{text:'进入',onclick:()=>loadSession(item.id)},row);if(item.id===activeId)await showTurnControls(item.id,box);}}
+async function loadSession(id){$('compat-lab').classList.add('in-chat');const generation=++sessionGeneration;if(activeId!==id)root.MimaCompatPlugins?.unmountAll();activeId=id;const ses=await r().getSession(id);if(generation!==sessionGeneration)return;$('compat-wi-depth').value=String(ses.worldInfoScanDepth??100);$('compat-wi-recursive').checked=ses.worldInfoRecursiveScan!==false;$('compat-wi-recursion-steps').value=String(ses.worldInfoMaxRecursionSteps??6);$('compat-wi-local-advanced').checked=ses.worldInfoLocalAdvancedRules===true;$('compat-preset-history-slot').checked=ses.experimentalChatHistorySlot===true;$('compat-persona-description').value=String(ses.personaDescription||'');$('compat-current').textContent=`咪嘛馆兼容引擎 · ${ses.title}`;$('compat-conversation').hidden=false;await refreshSessionList();if(generation!==sessionGeneration)return;await refreshSourceList();if(generation!==sessionGeneration)return;await refreshMessages();if(generation!==sessionGeneration)return;await refreshExtensionUI();if(generation!==sessionGeneration)return;await inspectPreview();root.MimaCompatPlugins?.publish?.(id,'session.mounted',{sessionId:id},'session.mounted:'+id+':'+generation)?.catch(e=>message('插件会话事件失败：'+e.message,'error'));}
 const STYLE_BASE=`:host{display:block;min-height:90px;max-height:420px;overflow-y:auto;font-family:inherit;color:inherit}article{white-space:pre-wrap;overflow-wrap:anywhere;background:rgba(128,128,128,.1);padding:11px;border-radius:10px;margin:7px 0;line-height:1.55}article.user{margin-left:12%}article.assistant{margin-right:12%}strong{display:block;margin-bottom:7px}`;
 function cssSafe(css){if(typeof css!=='string'||css.length>65536||/@(?:import|font-face|namespace|document|property)\b|url\s*\(|expression\s*\(|\\[0-9a-f]{1,6}\s/gi.test(css))throw new Error('E_RESOURCE_SEMANTIC_GAP: 此 CSS 需要外部资源或未验证特性，拒绝自动挂载');return css;}
 async function refreshMessages(){if(!activeId)return;
- const sessionId=activeId,generation=sessionGeneration;
+ const sessionId=activeId,generation=sessionGeneration,renderTicket=++messageRenderGeneration;
  // Prepare the complete view off-DOM first: a slow regex Worker/IDB read
  // from session A must not overwrite the currently open session B.
  const items=await r().displayMessages(sessionId);
- if(activeId!==sessionId||sessionGeneration!==generation)return;
+ if(activeId!==sessionId||sessionGeneration!==generation||messageRenderGeneration!==renderTicket)return;
  const session=await r().getSession(sessionId);
  let css=STYLE_BASE;
  if(session.styleResourceId){const style=await s().get('resource_ir',session.styleResourceId);
   if(style&&style.kind==='css'){const allowed=(await r().resourcesFor(session)).some(x=>x.id===style.id);if(allowed)css+='\n'+cssSafe(style.raw);}}
- if(activeId!==sessionId||sessionGeneration!==generation)return;
+ if(activeId!==sessionId||sessionGeneration!==generation||messageRenderGeneration!==renderTicket)return;
+ const mvuNode=$('compat-mvu-state'),statusNode=$('compat-mvu-live-status');if(mvuNode){try{const state=await r().currentMvuState(sessionId);if(activeId!==sessionId||sessionGeneration!==generation||messageRenderGeneration!==renderTicket)return;
+  mvuNode.textContent=state.active?JSON.stringify(state.state,null,2):'当前卡片没有可安全解析的 MVU 初始值；复杂 YAML/Zod 仍需原版插件。';
+  if(state.gaps.length)mvuNode.textContent+='\n\n未实现/无效的初始化：'+state.gaps.map(x=>x.reason).join(', ');
+  if(statusNode){clear(statusNode);if(state.active){const table=el('dl',{className:'compat-mvu-readonly'},statusNode);const rows=root.MimaCompatMVU?.statusRows?.(state.state,{limit:40})||[];for(const row of rows){const group=el('div',{className:'compat-mvu-pair'},table);el('dt',{text:row.path},group);el('dd',{text:row.value},group);}if(rows.length===40)el('small',{text:'仅展示前 40 项；完整状态在下方，未裁剪存档。'},statusNode);}else el('small',{text:'暂无可验证的动态变量状态。'},statusNode);}
+ }catch(e){if(statusNode){clear(statusNode);el('small',{text:'状态校验失败，原存档未修改。'},statusNode);}mvuNode.textContent='MVU 状态验证失败（未清空存档）：'+(e.code||'E_MVU')+' '+e.message;}}
  const box=$('compat-messages'),shadow=box.shadowRoot||box.attachShadow({mode:'open'});
  clear(shadow);el('style',{text:css},shadow);
- for(const item of items){const article=el('article',{className:'compat-message '+item.role},shadow);el('strong',{text:item.role==='assistant'?'角色':'玩家'},article);el('div',{text:item.displayView},article);if(item.status!=='committed')el('small',{text:'本回合 '+item.status+'（未纳入已完成对话上下文）'},article);if(item.displayError)el('small',{text:'正则显示失败，已显示完整原文：'+item.displayError.code+' '+item.displayError.message},article);}
+ for(const item of items){const article=el('article',{className:'compat-message '+item.role},shadow);el('strong',{text:item.role==='assistant'?'角色':'玩家'},article);el('div',{text:item.displayView},article);if(item.status!=='committed')el('small',{text:'本回合 '+item.status+'（未纳入已完成对话上下文）'},article);if(item.displayError)el('small',{text:'正则显示失败，已显示完整原文：'+item.displayError.code+' '+item.displayError.message},article);if(item.role==='assistant'&&item.status==='committed'&&(item.turnId||item.opening))el('button',{text:'从这里另开分支',onclick:()=>forkFromTurn(sessionId,item.turnId||null)},article);}
  box.scrollTop=box.scrollHeight;
+}
+async function forkFromTurn(sessionId,turnId){
+ if(busy||creating||forking)return message('请先等待当前操作结束，再创建剧情分支。','error');
+ if(!root.confirm('从这里另开剧情分支？原剧情和已保存的变量不会改变。'))return;
+ forking=true;const startedGeneration=sessionGeneration;const requestId='fork_'+String(root.crypto?.randomUUID?.()||Math.random().toString(36).slice(2)+Date.now().toString(36)).replace(/[^a-zA-Z0-9_-]/g,'');
+ try{const result=await r().forkSession(sessionId,turnId,{requestId});if(activeId===sessionId&&sessionGeneration===startedGeneration)await loadSession(result.sessionId);message('已建立独立剧情分支，之前的剧情、变量和原存档均保留。');}
+ catch(e){message((e.code||'E_BRANCH')+': '+e.message,'error');}
+ finally{forking=false;}
 }
 async function mountStyle(resourceId){const ses=await r().getSession(activeId),res=await s().get('resource_ir',resourceId);if(!res||(res.sourceId!==ses.sourceId&&!(ses.mountGraph||[]).some(m=>m.resourceId===res.id))||res.kind!=='css')throw new Error('CSS 资源未挂载到当前剧情');cssSafe(res.raw);await s().putCAS('compat_sessions',{...ses,styleResourceId:resourceId},ses.revision);await refreshMessages();message('局部 CSS 已启用，只作用于高级剧情的 Shadow DOM；原生主题不变。');}
 async function disableStyle(){const ses=await r().getSession(activeId);await s().putCAS('compat_sessions',{...ses,styleResourceId:null},ses.revision);await refreshMessages();message('已卸载局部 CSS，剧情原文未变。');}
@@ -156,14 +178,15 @@ el('button',{text:'撤销并卸载',onclick:async()=>{try{await root.MimaCompatP
 async function saveWorldInfoScanDepth(){
  if(!activeId)return;
  const sessionId=activeId,field=$('compat-wi-depth'),button=$('compat-wi-save'),raw=field.value.trim();
- const depth=Number(raw);
- if(!raw||!Number.isSafeInteger(depth)||depth<0||depth>1000){message('世界书扫描条数必须是 0～1000 的整数；没有保存旧设置。','error');return;}
+ const depth=Number(raw),stepsRaw=$('compat-wi-recursion-steps').value.trim(),steps=Number(stepsRaw),recursive=$('compat-wi-recursive').checked,localAdvanced=$('compat-wi-local-advanced').checked,experimentalSlot=$('compat-preset-history-slot').checked;
+ const personaDescription=$('compat-persona-description').value.trim();if(personaDescription.length>12000){message('玩家 Persona 描述最长 12000 字符；没有保存旧设置。','error');return;}
+ if(!raw||!Number.isSafeInteger(depth)||depth<0||depth>1000||!stepsRaw||!Number.isSafeInteger(steps)||steps<1||steps>12){message('世界书扫描条数必须是 0～1000，递归层数必须是 1～12；没有保存旧设置。','error');return;}
  button.disabled=true;
  try{
   const session=await r().getSession(sessionId);
   if(activeId!==sessionId)return;
-  await s().putCAS('compat_sessions',{...session,worldInfoScanDepth:depth},session.revision);
-  if(activeId===sessionId){await inspectPreview();message('已保存当前剧情的世界书扫描范围：'+depth+' 条。其它剧情和原始卡片未修改。');}
+  await s().putCAS('compat_sessions',{...session,worldInfoScanDepth:depth,worldInfoRecursiveScan:recursive,worldInfoMaxRecursionSteps:steps,worldInfoLocalAdvancedRules:localAdvanced,experimentalChatHistorySlot:experimentalSlot,personaDescription},session.revision);
+  if(activeId===sessionId){await inspectPreview();message('已保存扫描范围 '+depth+' 条、递归 '+(recursive?'开启':'关闭')+'、上限 '+steps+' 层；本地近似概率/分组 '+(localAdvanced?'开启':'关闭')+'，预设动态插槽 '+(experimentalSlot?'开启':'关闭')+'。其它剧情和原始卡片未修改。');}
  }catch(e){message(`${e.code||'E_STORE_UNVERIFIED'}: 世界书设置保存失败，原值未被假装提交：${e.message}`,'error');}
  finally{button.disabled=false;}
 }

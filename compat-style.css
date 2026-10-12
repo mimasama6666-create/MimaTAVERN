@@ -19,3 +19,19 @@
 #compat-input{width:100%;min-height:90px;padding:10px;box-sizing:border-box;color:inherit;background:transparent;border:1px solid #8888;border-radius:10px}
 #compat-notice{white-space:pre-wrap}#compat-notice[data-kind=error],#compat-gap{color:#d04b4b}
 @media(max-width:640px){.compat-main{padding:8px}.compat-main section{padding:12px}.compat-head{align-items:flex-start}.compat-line{flex-wrap:wrap}}
+
+/* R11.6: read-only per-session MVU status; source templates remain isolated. */
+#compat-mvu-panel { margin:8px 0 12px; padding:7px 10px; border:1px solid var(--line, #aaa5); border-radius:9px; }
+#compat-mvu-panel summary { cursor:pointer; font-weight:600; }
+#compat-mvu-state { white-space:pre-wrap; overflow-wrap:anywhere; max-height:200px; overflow:auto; font-size:.88em; line-height:1.5; }
+
+/* R11.8: declarative, read-only live MVU status; original card templates stay sandboxed. */
+.compat-mvu-readonly{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr));gap:6px;margin:8px 0}
+.compat-mvu-pair{border:1px solid var(--line,#8885);border-radius:8px;padding:7px 9px;min-width:0;background:var(--panel,#8881)}
+.compat-mvu-pair dt{font-size:.8em;opacity:.75;overflow-wrap:anywhere}
+.compat-mvu-pair dd{margin:3px 0 0;font-weight:600;overflow-wrap:anywhere}
+
+/* R11.14: optional, per-session ST PersonaDescription slot input. */
+#compat-persona-description{width:min(100%,480px);min-height:70px;box-sizing:border-box;resize:vertical;
+  padding:8px;color:inherit;background:transparent;border:1px solid #8888;border-radius:8px;font:inherit}
+@media(max-width:640px){#compat-persona-description{width:100%}}

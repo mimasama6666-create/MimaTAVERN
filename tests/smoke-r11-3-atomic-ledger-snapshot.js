@@ -13,7 +13,7 @@ function atomicDb(){return{close(){},transaction(names,mode){
   assert.equal(mode,'readonly');atomicTransactions++;
   const captured=structuredClone(snapshot),tx={oncomplete:null,onabort:null,error:null};let pending=0,done=false;
   const finish=()=>{if(!pending&&!done){done=true;setImmediate(()=>tx.oncomplete?.())}};
-  tx.objectStore=name=>{assert(names.includes(name));return{getAll(){pending++;const q={onsuccess:null,onerror:null,result:null};setImmediate(()=>{q.result=captured[name];q.onsuccess?.();pending--;setImmediate(finish)});return q;}}};
+  tx.objectStore=name=>{assert(names.includes(name));return{get(id){pending++;const q={onsuccess:null,onerror:null,result:null};setImmediate(()=>{q.result=captured[name].find(x=>x.id===id);q.onsuccess?.();pending--;setImmediate(finish)});return q;},getAll(){pending++;const q={onsuccess:null,onerror:null,result:null};setImmediate(()=>{q.result=captured[name];q.onsuccess?.();pending--;setImmediate(finish)});return q;}}};
   return tx;
 }}}
 global.MimaCompatStore={

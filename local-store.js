@@ -547,5 +547,57 @@
       tx.oncomplete=()=>{db.close();resolve(result);};tx.onabort=()=>{db.close();reject(issue||tx.error||new Error('E_MEMORY_REVIEW_ABORTED'));};
     });
   }
-  window.MimaLocalStore={loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,clearSettingsSnapshot,getMemoryJob,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
+  // Atomic rolling-memory revocation / restoration. Neither operation touches
+  // messages, canonical History, Persona, worldbooks, or assistant memory.
+  async function updateRollingMemory(sessionId,action='revoke'){
+    if(!['revoke','restore'].includes(action))throw new Error('E_MEMORY_ROLLING_ACTION');
+    const db=await openDb();return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE);let problem,result;
+      const fail=m=>{problem=new Error(m);tx.abort();};
+      const jr=kv.get(jobKey(sessionId,'rolling'));
+      jr.onerror=()=>fail('E_MEMORY_JOURNAL_READ');
+      jr.onsuccess=()=>{
+        const job=jr.result;
+        if(job?.status==='running'&&Number(job.leaseUntilEpoch||0)>Date.now()){fail('E_MEMORY_JOB_PENDING');return;}
+        const sr=kv.get(STATE_KEY);sr.onerror=()=>fail('E_MEMORY_STORE_READ');
+        sr.onsuccess=()=>{
+          const state=sr.result,index=state?.sessions?.findIndex(s=>s.id===sessionId);
+          if(!state||index<0){fail('E_STORY_SESSION_MISSING');return;}
+          const session=state.sessions[index],archive=Array.isArray(session.rollingArchive)?session.rollingArchive.slice(-8):[];
+          const keys=['summary','rollingSummary','longSummary','lastSummarizedIndex','rollingSourceCount','rollingSourceFingerprint','rollingVerification'];
+          const patch={};
+          if(action==='revoke'){
+            if(session.rollingSummary||session.summary||session.longSummary||session.lastSummarizedIndex){
+              const saved={savedAt:new Date().toISOString()};for(const key of keys)saved[key]=session[key];archive.push(saved);
+            }
+            Object.assign(patch,{summary:'',rollingSummary:'',longSummary:'',lastSummarizedIndex:0,rollingSourceCount:0,rollingSourceFingerprint:'',rollingVerification:{status:'legacy_unverified',stage:'revoked',citations:[]},rollingArchive:archive.slice(-8)});
+          }else{
+            if(session.rollingSummary||session.summary||session.longSummary||session.lastSummarizedIndex){fail('E_MEMORY_RESTORE_TARGET_NOT_EMPTY');return;}
+            const saved=archive[archive.length-1];if(!saved){fail('E_MEMORY_RESTORE_NOT_FOUND');return;}
+            const sourceCount=Number(saved.rollingSourceCount)||0;
+            if(sourceCount>session.messages.length||sourceCount>0&&(!saved.rollingSourceFingerprint||!window.MimaStandalone?.memorySourceFingerprint||window.MimaStandalone.memorySourceFingerprint(session.messages,sourceCount)!==saved.rollingSourceFingerprint)){
+              fail('E_MEMORY_RESTORE_SOURCE_CHANGED');return;
+            }
+            for(const key of keys)patch[key]=saved[key];patch.rollingArchive=archive.slice(0,-1);
+          }
+          const sessions=state.sessions.slice();sessions[index]={...session,...patch,updatedAt:new Date().toISOString(),recordRevision:(Number(session.recordRevision)||0)+1};
+          kv.put({...state,sessions,storeRevision:(Number(state.storeRevision)||0)+1,savedAt:new Date().toISOString()},STATE_KEY);
+          if(job&&action==='revoke')kv.put({...job,status:'discarded',stage:'user_revoked_summary',updatedAt:new Date().toISOString(),revision:(Number(job.revision)||0)+1},jobKey(sessionId,'rolling'));
+          result={sessionId,action,archiveCount:patch.rollingArchive.length};
+        };
+      };
+      tx.oncomplete=()=>{db.close();resolve(result);};tx.onabort=()=>{db.close();reject(problem||tx.error||new Error('E_MEMORY_ROLLING_ABORTED'));};
+    });
+  }
+  async function dismissMemoryJob(sessionId,kind,expectedId){
+    if(!['core','facts','rolling'].includes(kind))throw new Error('E_MEMORY_JOB_KIND');
+    return memoryJobTransaction(sessionId,kind,(old,kv)=>{
+      if(!old||old.id!==expectedId)throw new Error('E_MEMORY_JOB_FENCED');
+      if(old.status==='committed'||old.status==='skipped'||old.status==='rejected'||old.status==='discarded')throw new Error('E_MEMORY_JOB_ALREADY_SETTLED');
+      if(old.status==='running'&&Number(old.leaseUntilEpoch||0)>Date.now())throw new Error('E_MEMORY_JOB_PENDING');
+      const next={...old,status:'discarded',stage:'user_discarded_candidate',updatedAt:new Date().toISOString(),revision:(Number(old.revision)||0)+1};
+      kv.put(next,jobKey(sessionId,kind));return next;
+    });
+  }
+  window.MimaLocalStore={updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,clearSettingsSnapshot,getMemoryJob,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
 })();

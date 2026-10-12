@@ -34,7 +34,7 @@
       id: msg.id || makeId('msg'), role: msg.role || 'user',
       content: text(msg.content), rawContent: text(msg.rawContent || msg.content), renderedContent: text(msg.renderedContent),
       time: msg.time || nowIso(), mode: msg.mode || 'story_mode', emotion: msg.emotion || null,
-      metadata: msg.metadata && typeof msg.metadata === 'object' ? msg.metadata : {},
+      metadata: {...(msg.metadata && typeof msg.metadata === 'object' ? msg.metadata : {}),...(!msg.time?{memoryTimeUnverified:true}:{})},
       canonLevel: msg.canonLevel || 'alternate', isEdited: !!msg.isEdited,
       parentMessageId: msg.parentMessageId || null, branchId: msg.branchId || 'main',
       tokenEstimate: Number(msg.tokenEstimate) || estimateTokens(msg.content), versions: arr(msg.versions)
@@ -100,6 +100,7 @@
       summary: text(s.summary), rollingSummary: text(s.rollingSummary || s.summary), longSummary: text(s.longSummary),
       sceneSummary: text(s.sceneSummary), characterPsychSummary: text(s.characterPsychSummary), relationshipSummary: text(s.relationshipSummary),
       unresolvedHooks: list(s.unresolvedHooks), pinnedFacts: list(s.pinnedFacts),
+      rollingArchive:arr(s.rollingArchive).slice(-8).map(a=>({savedAt:String(a.savedAt||''),summary:String(a.summary||''),rollingSummary:String(a.rollingSummary||''),longSummary:String(a.longSummary||''),lastSummarizedIndex:Math.max(0,Number(a.lastSummarizedIndex)||0),rollingSourceCount:Math.max(0,Number(a.rollingSourceCount)||0),rollingSourceFingerprint:String(a.rollingSourceFingerprint||''),rollingVerification:normalizeMemoryVerification(a.rollingVerification)})),
       lastSummarizedIndex: Number.isFinite(Number(s.lastSummarizedIndex)) ? Number(s.lastSummarizedIndex) : 0,rollingSourceCount:Math.max(0,Number(s.rollingSourceCount)||0),rollingSourceFingerprint:String(s.rollingSourceFingerprint||''),rollingVerification:normalizeMemoryVerification(s.rollingVerification),
       tags: list(s.tags), lastScene: text(s.lastScene), userNotes: text(s.userNotes), aiNotes: text(s.aiNotes),
       directorNote: text(s.directorNote), storyState: s.storyState && typeof s.storyState === 'object' ? s.storyState : {},
@@ -308,6 +309,8 @@
     add('worldbook_middle',joinWb(middle,'System Middle'));
     const ps=sortedPresets(session);if(ps.length)add('presets',`【已挂载酒馆预设 / Presets】\n${ps.map(p=>`【${p.name} · ${p.type||'style'} · priority=${p.priority??50}】\n${p.content}`).join('\n\n')}`);
     if(session.promptSettings?.pinnedFactsEnabled!==false&&session.pinnedFacts?.length)add('pinned_facts',`【Pinned Facts · 不可遗忘事实】\n${session.pinnedFacts.map(x=>`- ${x}`).join('\n')}`);
+    // Narration must not reinterpret a stored relative date using today's wall clock.
+    if((session.rollingSummary||session.summary||session.longSummary||session.manualMemory?.core?.content||arr(session.manualMemory?.facts).length))add('memory_time_basis','【记忆时间解释】摘要里的“昨天/前天/今天”仅相对当时的剧情语境，不能换算成现在的日期；现实消息时间不是剧情内日期。缺少明确剧情时间锚点时，保留事件先后而不要杜撰日期。');
     if(options.excludeRollingSummary!==true&&session.promptSettings?.summaryEnabled!==false&&(!session.rollingSourceFingerprint||memorySourceFingerprint(session.messages,session.rollingSourceCount)===session.rollingSourceFingerprint)&&(session.rollingSummary||session.summary||session.longSummary))add('story_summary',`【剧情摘要 / Rolling Summary】\n${session.rollingSummary||session.summary||session.longSummary}`);
     const memory=normalizeManualMemory(session.manualMemory||{});const memoryTrace=[];
     const coreValid=memorySourceValid(session,memory.core)&&(memory.core.source!=='facts'||!memory.core.sourceFactsHash||fingerprint(memory.facts)===memory.core.sourceFactsHash);
@@ -868,9 +871,17 @@
     }
     return{opening,rounds};
   }
+  // Wall-clock receipt is NOT story-world time. Keep the distinction explicit:
+  // a line written four days ago cannot silently become "yesterday" today.
+  function memoryTimestampLabel(m){
+    if(m?.metadata?.memoryTimeUnverified)return '';
+    const date=Date.parse(String(m?.time||''));
+    return Number.isFinite(date)?`【现实消息记录于 ${new Date(date).toISOString()}；不是剧情内日期】\n`:'';
+  }
+  const MEMORY_TIME_CONTRACT='时间校验：现实消息记录时间与剧情内日期不同。不得将旧消息无依据改写成“昨天”“今天”“前天”“刚才”；剧情人物原话中的相对时间仅相对于其说话当时。没有可信剧情日期时写“具体剧情日期未明确”，保留先后顺序。';
   function formatTimelineBlock(label,messages,session){
     const ctx=macroContext(session);
-    const body=arr(messages).map(m=>m.role==='user'?`${ctx.userName}（玩家输入语义）：\n${compileUserInputForPrompt(session,m.content,inputSemanticMode(session,m))}`:`${ctx.charName}：${resolveMacrosForSession(session,m.content)}`).join('\n');
+    const body=arr(messages).map(m=>memoryTimestampLabel(m)+(m.role==='user'?`${ctx.userName}（玩家输入语义）：\n${compileUserInputForPrompt(session,m.content,inputSemanticMode(session,m))}`:`${ctx.charName}：${resolveMacrosForSession(session,m.content)}`)).join('\n');
     return body?`${label}\n${body}`:'';
   }
   function formatRoundRange(data,startRound,endRound,{includeOpening=false,session=null}={}){
@@ -940,7 +951,7 @@
     for(let i=0;i<chunks.length;i++){
       emitProgress(progress,{phase:'memory_fact',percent:12+Math.round(((i+.25)/chunks.length)*62),detail:`${label} · 正在总结 ${i+1}/${chunks.length}`});
       const prompt=[
-        {role:'system',content:'你是“咪嘛馆”的事实记忆整理器。只记录输入剧情中明确发生过的事实，不补充、不猜测、不续写，不把推测写成事实。输出中文纯文本。'},
+        {role:'system',content:'你是“咪嘛馆”的事实记忆整理器。只记录输入剧情中明确发生过的事实，不补充、不猜测、不续写，不把推测写成事实。'+MEMORY_TIME_CONTRACT},
         {role:'user',content:`【剧情原文】\n${chunks[i]}\n\n请将上面的剧情压缩成一段高密度“事实记忆”。只记录发生了什么：谁做了什么、关键对话结论、重要地点/物品/状态变化、明确承诺或约定。不要写文学点评，不要写气氛赏析，不要按每条消息机械流水账。目标约 ${targetChars} 字；剧情信息少时可以更短，信息密度优先。`}
       ];
       const stage=rangeTag+'_part_'+i;
@@ -951,7 +962,7 @@
     emitProgress(progress,{phase:'memory_fact_merge',percent:78,detail:`${label} · 正在合并超长分片`});
     if(job)(job.stageScopes||(job.stageScopes={}))[rangeTag+'_merge']=rangeScope||{sourceStartIndex:0,sourceEndExclusive:job.sourceCount};
     return await memoryModel([
-      {role:'system',content:'你是“咪嘛馆”的事实记忆整理器。把多个同一剧情区间的分段摘要合并为一个事实摘要。不得新增事实。输出中文纯文本。'},
+      {role:'system',content:'你是“咪嘛馆”的事实记忆整理器。把多个同一剧情区间的分段摘要合并为一个事实摘要。不得新增事实。'+MEMORY_TIME_CONTRACT},
       {role:'user',content:`【分段事实摘要】\n${partials.map((x,i)=>`[${i+1}] ${x}`).join('\n\n')}\n\n合并去重，保持事件先后与主体清晰，目标约 ${targetChars} 字。`}
     ],temp,signal,job,rangeTag+'_merge');
   }
@@ -1140,7 +1151,7 @@
       const location=src.match(/在([^，。]{2,12}?)(?=击败|杀死|杀害|攻击|拒绝|偷走|放火)/);
       if(location&&!dst.includes(location[1]))return false;
       const prefix=src.slice(0,at).replace(/^(?:第[0-9一二三四五六七八九十百千]+[天日轮次])/, '').replace(/[了将把]/g,'');
-      if(prefix&&prefix.length>=2&&prefix.length<=12&&!dst.includes(prefix))return false;
+      if(prefix&&prefix.length>=2&&prefix.length<=12&&!dst.includes(prefix)&&!dst.includes(src.slice(0,at)))return false;
       return true;
     }
     for(const group of list){
@@ -1160,9 +1171,22 @@
         quantityOK=consecutive&&n>1&&(explicit||range);
       }else if(group.members.length>1){
         const n=group.members.length,exact=(normalize(summary).split(group.normalized).length-1)>=n;
-        quantityOK=exact||['次','回','遍'].some(u=>preciseNumber(n,u));
+        // Identical canonical messages carry the SAME event text, not n
+        // independently discriminable ordinal events. A literal full-source
+        // quotation may cover their repeated evidence without inventing a
+        // numeric occurrence count. Paraphrases still need an explicit count,
+        // and ordinal/actor-differentiated events use the varied branch above.
+        // Never grant this exemption to a near-match or a partially quoted event.
+        const literalDuplicate=!hasImpact(group.body)&&group.members.every(member=>normalize(member.part)===group.normalized)&&
+          normalize(summary).includes(group.normalized);
+        quantityOK=exact||literalDuplicate||['次','回','遍'].some(u=>preciseNumber(n,u));
       }
-      const supports=(group.varied?[summary]:claims).some(claim=>{
+      // A verbatim canonical utterance may contain commas that the candidate
+      // clause splitter treats as separate clauses. Test the whole summary
+      // ONLY when it literally contains the whole original event; otherwise
+      // each paraphrased claim must satisfy the existing local checks.
+      const literalInFull=normalize(summary).includes(group.normalized);
+      const supports=(group.varied?[summary]:literalInFull?[...claims,summary]:claims).some(claim=>{
         const text=normalize(claim),cbi=grams(text,2),ctri=grams(text,3);
         const direct=text.includes(group.normalized);
         const overlap=bi.size>0&&[...bi].filter(g=>cbi.has(g)).length/bi.size>=0.40&&[...tri].filter(g=>ctri.has(g)).length>=2;
@@ -1206,10 +1230,19 @@
     return {...proof,range:[start,end],stage};
   }
   function validateMemoryCandidate(messages,candidate,stage,finishReason='unknown',requiresSourceLink=false,sourceRecords=[]){
-    const raw=String(candidate||'').trim();
+    const originalRaw=String(candidate||'').trim();
+    const fenced=originalRaw.match(/^```([a-zA-Z0-9_-]*)[ \t]*\r?\n([\s\S]*?)\r?\n?```[ \t]*$/);
+    const fenceTag=fenced?.[1]?.toLowerCase()||'';
+    const raw=fenced&&['','json','text','txt','plaintext','md','markdown'].includes(fenceTag)?fenced[2].trim():originalRaw;
     // Present the extracted summary rather than requiring users to edit raw JSON.
     let memory=raw,formal=false,evidence=[];
-    const source=messages.filter(m=>m.role==='user').map(m=>String(m.content||'')).join('\n');
+    // Verify against immutable canonical source fragments when available, not
+    // the prompt wrapper: it can contain instructions, and the player-only
+    // filter misses genuine assistant-origin evidence. Never cite prompt text
+    // as proof that a story event actually occurred.
+    const source=sourceRecords.length
+      ?sourceRecords.filter(m=>m.role!=='memory_source'||m.trustedStatus).map(m=>String(m.rawContent||m.content||'')).join('\n')
+      :messages.filter(m=>m.role==='user').map(m=>String(m.content||'')).join('\n');
     const invalid=(reason,review=false)=>{const issue=new ApiError(review?'E_MEMORY_NEEDS_REVIEW':'E_MEMORY_OUTPUT_INVALID',
       review?'摘要包含无法由原文逐字验证的叙述，已作为候选保留，未写入长期记忆。':'记忆候选未通过来源与输出契约校验，旧记忆已保留。',{
       details:JSON.stringify({stage,reason,chars:raw.length,finishReason,formatValidated:true,sourceVerified:!review,factVerified:false}),
@@ -1218,14 +1251,18 @@
     if(!raw||/^(?:\.{3,}|[.…]{2,}|null|undefined|n\/?a|todo|placeholder)$/i.test(raw))invalid('placeholder');
     if(/^(?:system|developer|assistant)\s*:/i.test(raw)||/\[im_start\]|<\|im_start\|>|<!--\s*(system|developer)/i.test(raw))invalid('control_plane');
     if(['length','max_tokens','content_filter'].includes(String(finishReason).toLowerCase()))invalid('truncated_or_filtered');
-    if(/^```(?:json)?/i.test(raw)||raw.startsWith('{')){
-      let parsed;try{parsed=JSON.parse(raw.replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'').trim());}
+    if(raw.startsWith('```'))invalid('unsupported_fenced_output');
+    if(fenceTag==='json'&&!raw.startsWith('{'))invalid('malformed_structured_output');
+    if(raw.startsWith('{')){
+      let parsed;try{parsed=JSON.parse(raw);}
       catch{invalid('malformed_structured_output');}
       if(!parsed||typeof parsed!=='object'||Array.isArray(parsed)||typeof parsed.memory!=='string')invalid('structured_schema');
       memory=parsed.memory.trim();formal=true;evidence=Array.isArray(parsed.evidence)?parsed.evidence:[];
       if(!evidence.length||!evidence.every(e=>typeof e?.quote==='string'&&e.quote.trim().length>=3&&source.includes(e.quote.trim())))invalid('evidence_not_in_source');
     }
     if(!memory||/^(?:\.{3,}|null|n\/?a|todo|placeholder)$/i.test(memory))invalid('empty_memory');
+    // Time words in an unanchored paraphrase must not become canonical facts.
+    if(sourceRecords.length&&!['rolling_part_'].some(x=>stage.startsWith(x))&&/(?:昨天|前天|大前天|今天|明天|刚才|昨晚|昨日|今日)/.test(memory)&&!/(?:昨天|前天|大前天|今天|明天|刚才|昨晚|昨日|今日)/.test(source))invalid('relative_time_not_in_source',true);
     const standaloneRefusal=/^(?:i(?:'| a)?m sorry[,!. ]*(?:but )?(?:i (?:can(?:not|'t)|am unable)|as an ai)|i can(?:not|'t) (?:assist|help|comply)|as an ai (?:language )?model|对不起[，, ]*(?:我无法|我不能|作为)|抱歉[，, ]*(?:我无法|我不能|作为)|很抱歉[，, ]*(?:我无法|我不能|作为))/i;
     if(standaloneRefusal.test(memory)&&!(/(?:说道|回答|告诉|表示|原话|台词|说[:：]|said|replied|quoted|“|「)/i.test(memory)&&source.includes(memory)))invalid('provider_refusal');
     if(standaloneRefusal.test(memory)&&!source.includes(memory))invalid('provider_refusal');
@@ -1303,6 +1340,18 @@
       }
     }
     if(sourceRecords.length&&!provenance.length)invalid('no_message_provenance',true);
+    // A single quotation from the opening cannot certify a "whole story"
+    // core/fact archive with many distinct later turns. Selective core
+    // summaries remain permitted; obvious first-round-only outputs require
+    // explicit review instead of being stamped as comprehensive.
+    if((stage.startsWith('core_final_')||stage.startsWith('fact_'))&&sourceRecords.length>=12){
+      const unique=sourceRecords.filter(m=>['user','assistant'].includes(m.role));
+      const distinct=new Set(unique.map(m=>String(m.rawContent||m.content||'').trim())).size;
+      const citedIds=new Set(provenance.map(x=>x.messageId));
+      const earlyIds=new Set(unique.slice(0,Math.max(2,Math.floor(unique.length/5))).map(m=>m.id));
+      if(distinct>=6&&citedIds.size>0&&citedIds.size<=2&&[...citedIds].every(id=>earlyIds.has(id)))
+        invalid('suspicious_first_round_only',true);
+    }
     // Provenance proves that words appeared, not that a rumored, denied or
     // hypothetical event happened. Only a complete source utterance can pass
     // automatic extractive mode. Partial quotations and rephrasings require
@@ -1458,7 +1507,7 @@
       assertMemoryTaskActive(signal);
       emitProgress(progress,{phase:'memory_core',percent:10+Math.round(((i+.2)/chunks.length)*58),detail:`核心记忆 · 整理材料 ${i+1}/${chunks.length}`});
       partials.push(await memoryModel([
-        {role:'system',content:'你是“咪嘛馆”的核心记忆整理器。你的任务是提炼长期剧情记忆，不续写、不新增事实、不杜撰角色心理。输出中文纯文本。'},
+        {role:'system',content:'你是“咪嘛馆”的核心记忆整理器。你的任务是提炼长期剧情记忆，不续写、不新增事实、不杜撰角色心理。'+MEMORY_TIME_CONTRACT},
         {role:'user',content:`【材料来源：${sourceType==='facts'?'事实记忆':'剧情原文'}】\n${chunks[i]}\n\n请提炼这部分材料中的长期核心信息。重点保留：决定后续关系与行为的重要事件；角色关系变化与关系阶段；明确承诺、约定、誓言、边界与背叛/和解；持续性的心理/身体/身份状态改变；关键人物、地点、物品与未解决问题。不要按轮次流水账，不要写空泛感想。`}
       ],temp,signal,job,'core_part_'+i));
     }
@@ -1466,11 +1515,11 @@
     emitProgress(progress,{phase:'memory_core_merge',percent:76,detail:'核心记忆 · 正在做最终去重与关系提炼…'});
     const final=chunks.length===1
       ? await memoryModel([
-          {role:'system',content:'你是“咪嘛馆”的长期核心记忆编辑器。只根据材料输出最终核心记忆，不续写、不虚构、不杜撰角色心理，不加入推测。输出中文纯文本。'},
+          {role:'system',content:'你是“咪嘛馆”的长期核心记忆编辑器。只根据材料输出最终核心记忆，不续写、不虚构、不杜撰角色心理，不加入推测。'+MEMORY_TIME_CONTRACT},
           {role:'user',content:`【完整来源：${sourceType==='facts'?'事实记忆':'剧情原文'}】\n${source}\n\n写成约 ${targetChars} 字的长期核心记忆。按主题与关系组织，优先记录：关系转变、重要承诺/约定、关键选择及其后果、持续状态变化、身份和世界观重要事实、未解决事项。保留主体和因果，不写流水账，不凑字数。`}
         ],temp,signal,job,'core_final_single')
       : await memoryModel([
-          {role:'system',content:'你是“咪嘛馆”的长期核心记忆编辑器。根据材料输出最终核心记忆。不得新增任何事实；如果材料之间信息重复，要合并而不是复述。输出中文纯文本。'},
+          {role:'system',content:'你是“咪嘛馆”的长期核心记忆编辑器。根据材料输出最终核心记忆。不得新增任何事实；如果材料之间信息重复，要合并而不是复述。'+MEMORY_TIME_CONTRACT},
           {role:'user',content:`【候选核心材料】\n${partials.map((x,i)=>`[${i+1}] ${x}`).join('\n\n')}\n\n请写成约 ${targetChars} 字的最终“核心记忆”。绝对不要写成“第1轮……第2轮……”的流水账。按主题与关系组织，优先记录：关系转变、重要承诺/约定、关键选择及其后果、长期状态变化、身份与世界观关键事实、重要未解决事项。保留必要的因果关系与主体，不要为了凑字数重复内容。`}
         ],temp,signal,job,'core_final_merge');
     assertMemoryTaskActive(signal);
@@ -1505,7 +1554,7 @@
       // other messages. Full cursor settlement still requires final merge.
       const pieceLimit=Math.max(100,maxChars-actor.length-8);
       for(let offset=0;offset<body.length;offset+=pieceLimit){
-        const segment=actor+'\n'+body.slice(offset,offset+pieceLimit);
+        const segment=memoryTimestampLabel(m)+actor+'\n'+body.slice(offset,offset+pieceLimit);
         if(current&&current.length+segment.length+1>maxChars)flush();
         if(from<0)from=index;to=index+1;
         current+=(current?'\n':'')+segment;
@@ -1534,7 +1583,7 @@
     const chunk=sourceParts.map(p=>p.text).join('\n');
     if(!chunk.trim()){if(job)await window.MimaLocalStore.settleMemoryJob(job,'skipped','E_MEMORY_SOURCE_EMPTY');return session;}
     emitProgress(progress,{phase:'summary',percent:20,detail:'正在整理较早剧情摘要…'});
-    const p=[{role:'system',content:'你是独立剧情档案助手。只总结实际发生过的剧情，不添加新事实，不混入其他世界。输出中文纯文本。'},{role:'user',content:`【已有长期摘要】\n${session.rollingSummary||'(无)'}\n\n【本次新增旧剧情】\n${chunk}\n\n请输出更新后的剧情摘要，保留：已发生事件、人物关系变化、身体/心理状态、重要物品与地点、未解决伏笔。控制在 1000 字以内。`}];
+    const p=[{role:'system',content:'你是独立剧情档案助手。只总结实际发生过的剧情，不添加新事实，不混入其他世界。'+MEMORY_TIME_CONTRACT},{role:'user',content:`【已有长期摘要】\n${session.rollingSummary||'(无)'}\n\n【本次新增旧剧情】\n${chunk}\n\n请输出更新后的剧情摘要，保留：已发生事件、人物关系变化、身体/心理状态、重要物品与地点、未解决伏笔。控制在 1000 字以内。`}];
     try{
       const sourceChunks=sourceParts.map(p=>p.text);
       if(job){
@@ -1552,10 +1601,10 @@
         const pieces=[];
         for(let i=0;i<sourceChunks.length;i++){
           assertMemoryTaskActive(signal);
-          pieces.push(await memoryModel([{role:'system',content:'你是独立剧情档案助手，只总结下列单个原文分片，不新增事实。'},
+          pieces.push(await memoryModel([{role:'system',content:'你是独立剧情档案助手，只总结下列单个原文分片，不新增事实。'+MEMORY_TIME_CONTRACT},
             {role:'user',content:`【旧剧情原文分片 ${i+1}/${sourceChunks.length}】\n${sourceChunks[i]}\n请给出本分片中发生的事件和对应人物关系。`}],Math.min(clampTemp(temp),0.6),signal,job,'rolling_part_'+i));
         }
-        summary=await memoryModel([{role:'system',content:'你是独立剧情档案助手。根据旧摘要和已逐段确认的来源摘要合并，严格保持事实来源，不续写。'},
+        summary=await memoryModel([{role:'system',content:'你是独立剧情档案助手。根据旧摘要和已逐段确认的来源摘要合并，严格保持事实来源，不续写。'+MEMORY_TIME_CONTRACT},
           {role:'user',content:`【已有长期摘要】\n${session.rollingSummary||'(无)'}\n\n【已校验的分片摘要】\n${pieces.map((x,i)=>`【${i+1}】${x}`).join('\n\n')}\n\n合并事件、关系与未解伏笔，控制在 1000 字以内。`}],Math.min(clampTemp(temp),0.6),signal,job,'rolling_merge');
       }
       // Stage success and valid quotations do not prove that a final merged
@@ -1570,7 +1619,7 @@
         // Allow one bounded, separately validated repair pass, never a blind
         // retry or an unbounded re-send of the full History. Leave the cursor
         // intact if a large omission or exhausted budget requires user review.
-        if(!coverage.complete&&coverage.missing.length<=12){
+        if(!coverage.complete&&coverage.missing.length<=12&&coverage.missing.length*4<=coverage.expected){
           const excerpts=coverage.missing.map(x=>{
             const msg=msgs[x.index],raw=String(msg?.rawContent||msg?.content||'');
             return `【${x.messageId} · 原文索引 ${x.index}】${raw}`;
@@ -1790,6 +1839,7 @@
       m=path.match(/^\/sessions\/([^/]+)\/memory$/);if(m&&method==='PATCH')return ok(await updateManualMemory(m[1],body||{}));
       m=path.match(/^\/sessions\/([^/]+)\/memory\/core$/);if(m&&method==='POST')return ok(await runRecordedMemory('core',m[1],body||{},signal,progress));
       if(m&&method==='DELETE')return ok(await deleteCoreMemory(m[1]));
+      m=path.match(/^\/sessions\/([^/]+)\/memory\/rolling$/);if(m&&method==='POST'){const result=await window.MimaLocalStore.updateRollingMemory(m[1],body?.action||'revoke');await init();return ok(getSession(m[1])||result);}
       m=path.match(/^\/sessions\/([^/]+)\/memory\/facts$/);if(m&&method==='POST')return ok(await runRecordedMemory('facts',m[1],body||{},signal,progress));
       if(m&&method==='DELETE')return ok(await deleteFactMemory(m[1]));
       m=path.match(/^\/sessions\/([^/]+)\/memory\/facts\/([^/]+)$/);if(m&&method==='DELETE')return ok(await deleteFactMemory(m[1],m[2]));

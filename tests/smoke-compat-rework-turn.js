@@ -3,7 +3,7 @@
 const assert=require('node:assert/strict');global.window=global;
 const records={compat_sessions:new Map(),messages:new Map(),events_jobs:new Map(),resource_ir:new Map(),source_capsules:new Map()};
 const copy=o=>o==null?o:structuredClone(o);let unique=0;
-const store={uid:p=>p+'-'+(++unique),get:async(n,id)=>copy(records[n].get(id)||null),all:async n=>[...records[n].values()].map(copy),open:async()=>({close(){},transaction(names){
+const store={uid:p=>p+'-'+(++unique),get:async(n,id)=>copy(records[n].get(id)||null),all:async n=>[...records[n].values()].map(copy),byIndex:async(n,field,key)=>[...records[n].values()].filter(x=>x[field]===key).map(copy),open:async()=>({close(){},transaction(names){
   let pending=0,ended=false,aborted=false;const tx={error:null,oncomplete:null,onabort:null};const complete=()=>{if(!pending&&!ended){ended=true;setImmediate(()=>{if(aborted)tx.onabort?.();else tx.oncomplete?.();});}};
   tx.objectStore=n=>({get(id){pending++;const req={result:null,error:null,transaction:tx};setImmediate(()=>{if(!aborted){req.result=copy(records[n].get(id));req.onsuccess?.();}pending--;setImmediate(complete);});return req;},getAll(){pending++;const req={result:null,transaction:tx};setImmediate(()=>{if(!aborted){req.result=[...records[n].values()].map(copy);req.onsuccess?.();}pending--;setImmediate(complete);});return req;},add(val){if(records[n].has(val.id))throw new Error('duplicate id');records[n].set(val.id,copy(val));},put(val){records[n].set(val.id,copy(val));}});
   tx.abort=()=>{aborted=true;ended=true;setImmediate(()=>tx.onabort?.());};return tx;
