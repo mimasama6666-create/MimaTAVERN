@@ -4,7 +4,9 @@
 const DB='mimamao_tavern_compat_v1',VERSION=1;
 const STORES=['source_capsules','assets','resource_ir','resource_projections','compat_sessions','messages','variables','grants','events_jobs','import_journal','sidecar_links'];
 const error=(code,message)=>Object.assign(new Error(message),{code});
-async function hashBytes(bytes){if(!(bytes instanceof Uint8Array)||!globalThis.crypto?.subtle)throw error('E_STORE_UNVERIFIED','原始文件字节或 SHA256 能力不可用');return Array.from(new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256',bytes))).map(x=>x.toString(16).padStart(2,'0')).join('');}
+async function hashBytes(bytes){if(!(bytes instanceof Uint8Array))throw error('E_STORE_UNVERIFIED','原始文件字节不可用');
+ if(!globalThis.crypto?.subtle){if(globalThis.MimaSHA256?.digest)return globalThis.MimaSHA256.digest(bytes);throw error('E_STORE_UNVERIFIED','SHA256 校验组件不可用');}
+ return Array.from(new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256',bytes))).map(x=>x.toString(16).padStart(2,'0')).join('');}
 async function verifySources(records){const all=records.source_capsules;if(!Array.isArray(all))throw error('E_STORE_UNVERIFIED','来源记录缺失');const ids=new Set();for(const item of all){if(!item||typeof item.sha256!=='string'||!(/^[a-f0-9]{64}$/).test(item.sha256)||item.id!=='sha256:'+item.sha256||!(item.bytes instanceof Uint8Array)||item.bytes.length>32*1024*1024||ids.has(item.id))throw error('E_SOURCE_CORRUPT','备份中来源包对象/索引异常');ids.add(item.id);if(await hashBytes(item.bytes)!==item.sha256)throw error('E_SOURCE_CORRUPT','原始来源包 SHA256 不符：'+item.id);}for(const item of records.resource_ir||[])if(!ids.has(item.sourceId))throw error('E_SOURCE_CORRUPT','资源引用不存在的来源包');return true;}
 function verifyRelationships(records){
  const map=name=>new Map((records[name]||[]).map(x=>[x.id,x]));

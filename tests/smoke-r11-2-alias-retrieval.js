@@ -1,0 +1,26 @@
+'use strict';
+const assert=require('node:assert/strict');
+global.window=global;const clone=structuredClone;
+let stored={schemaVersion:4,sessions:[],masks:[],presets:[],worldbooks:[],cssPresets:[],regexPacks:[]};
+global.MimaLocalStore={loadState:async()=>clone(stored),saveState:async x=>(stored=clone(x),clone(x))};
+const kv=new Map();global.localStorage={getItem:k=>kv.get(k)??null,setItem:(k,v)=>kv.set(k,String(v)),removeItem:k=>kv.delete(k)};
+require('../history-search.js');require('../standalone-core.js');
+(async()=>{
+  await MimaStandalone.init();
+  const get=async(p,method='GET',body)=>{const r=await MimaStandalone.handle(p,method,body);assert(r.success,JSON.stringify(r).slice(0,600));return r.data;};
+  const mask=await get('/masks','POST',{name:'艾琳',aliases:['伊芙','Eileen'],type:'character',content:'一名旅行者'});
+  const messages=Array.from({length:180},(_,i)=>({id:`alias-${i}`,role:i%2?'assistant':'user',content:i===2?'艾琳在钟楼地下室留下一张无字纸条。':`第${i}回，城郊巡游者经过小径。`+'橘子树摇晃着静止的风。'.repeat(32)}));
+  const session=await get('/sessions','POST',{title:'离线别名回忆'});
+  await get(`/sessions/${session.id}`,'PATCH',{loadedCharMaskId:mask.id,messages});
+  const original=messages.map(m=>m.content);
+  MimaStandalone.saveApiConfig({apiBase:'https://mock.invalid/v1',model:'8k-mock',contextWindowTokens:8192,maxTokens:1024});
+  const p=await get(`/sessions/${session.id}/prompt-preview`,'POST',{draft:'伊芙'});
+  assert(p.contextTrace.temporarilyOmittedTurnIds.length>0,'missing low-window projection');
+  assert(p.contextTrace.retrievedIds.includes('alias-2'),'user-supplied alias should retrieve canonical-name old source');
+  assert(p.messagePreview.some(m=>m.content.includes(messages[2].content)),'retrieved original message must enter provider projection');
+  const persisted=await get(`/sessions/${session.id}`);
+  assert.deepEqual(persisted.messages.map(m=>m.content),original,'offline recall mutated the canonical history');
+  assert.equal((await get('/masks')).find(x=>x.id===mask.id).aliases[0],'伊芙');
+  assert.equal(MimaHistorySearch.rank('一位陌生者',[{text:'艾琳在钟楼里'}],{aliases:{艾琳:['伊芙']}}).length,0,'unmatched alias must not force a false hit');
+  console.log('PASS explicit mask aliases: low-window offline BM25 retrieves original named event without modifying the 180-message canonical archive');
+})().catch(e=>{console.error(e);process.exitCode=1;});

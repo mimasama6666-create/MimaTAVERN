@@ -65,10 +65,10 @@
 
   function apply(input,packs=[],phase='display',diagnostics=null) {
     let out = text(input);
-    const sortedPacks = arr(packs).filter(p=>p&&p.enabled!==false).slice().sort((a,b)=>Number(a.priority||50)-Number(b.priority||50));
+    const sortedPacks = arr(packs).filter(p=>p&&p.enabled!==false).slice().sort((a,b)=>Number(a.priority??50)-Number(b.priority??50));
     for (const rawPack of sortedPacks) {
       const pack = normalizePack(rawPack);
-      const rules = pack.rules.filter(r=>r.enabled!==false && r.phase===phase).slice().sort((a,b)=>Number(a.priority||50)-Number(b.priority||50));
+      const rules = pack.rules.filter(r=>r.enabled!==false && r.phase===phase).slice().sort((a,b)=>Number(a.priority??50)-Number(b.priority??50));
       for (const rule of rules) {
         const compiled = compileRule(rule);
         if (!compiled.ok) {

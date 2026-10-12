@@ -58,7 +58,7 @@
     if(body.length>MAX_TEXT_BYTES)throw outOfSpec('角色卡元数据过大。');
     return {keyword,text:decoder.decode(body)};
   }
-  function decodeBase64Json(input){
+  async function decodeBase64Json(input){
     const clean=input.trim();
     if(!clean||clean.length>MAX_TEXT_BYTES||clean.length%4!==0||!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(clean))throw outOfSpec('角色卡的 Base64 编码无效。');
     let binary;
@@ -67,9 +67,33 @@
     const bytes=new Uint8Array(binary.length);
     for(let i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i);
     let raw;
-    try{raw=JSON.parse(decoder.decode(bytes))}catch(_){throw outOfSpec('角色卡 UTF-8 JSON 数据无效。');}
+    try{raw=JSON.parse(decoder.decode(bytes))}catch(_){
+      // Some older card exporters embed base64(zlib(JSON)). Do not treat an
+      // arbitrary malformed base64 card as compressed data: require a valid
+      // zlib header and keep the same decompression ceiling as PNG zTXt.
+      const zlibHeader=bytes.length>2&&bytes[0]===0x78&&(((bytes[0]<<8)|bytes[1])%31===0);
+      if(!zlibHeader)throw outOfSpec('角色卡 UTF-8 JSON 数据无效。');
+      try{raw=JSON.parse(decoder.decode(await inflated(bytes)));}
+      catch(e){if(e.message?.startsWith('PNG 角色卡解析失败'))throw e;throw outOfSpec('角色卡压缩 JSON 数据无效。');}
+    }
     if(!raw||typeof raw!=='object'||Array.isArray(raw))throw outOfSpec('角色卡 JSON 必须是对象。');
     return raw;
+  }
+  // Legacy V1 PNGs may store fields in individual tEXt chunks, rather than
+  // chara/ccv3. Accept only an explicit name + a substantive character field;
+  // ordinary photo titles, EXIF descriptions and arbitrary PNGs are not cards.
+  const V1_FIELDS=new Set(['name','description','personality','scenario','first_mes','mes_example','creator_notes','system_prompt','post_history_instructions']);
+  function legacyFlat(pairs){
+    const raw=Object.create(null);
+    for(const [key,text] of pairs){
+      if(!V1_FIELDS.has(key))continue;
+      if(Object.prototype.hasOwnProperty.call(raw,key))throw outOfSpec('旧版 V1 PNG 角色字段重复：'+key);
+      raw[key]=text;
+    }
+    if(typeof raw.name!=='string'||!raw.name.trim()||!
+       ['description','personality','scenario','first_mes','mes_example'].some(k=>typeof raw[k]==='string'&&raw[k].trim()))return null;
+    validateCard(raw,'v1flat');
+    return{raw,card:raw,version:'V1',sourceKeyword:'v1flat',extras:[]};
   }
   function validateCard(raw,keyword){
     if(raw.spec!==undefined&&raw.spec!=='chara_card_v2'&&raw.spec!=='chara_card_v3')throw outOfSpec('不认识的角色卡 spec。');
@@ -89,7 +113,7 @@
     if(file.size>MAX_PNG_BYTES)throw outOfSpec('PNG 超过 20MB 安全上限。');
     const bytes=new Uint8Array(await file.arrayBuffer());
     if(bytes.length>MAX_PNG_BYTES||bytes.length<45||PNG_SIGNATURE.some((n,i)=>bytes[i]!==n))throw outOfSpec('不是合法 PNG 文件。');
-    const found=new Map(), imageParts=[bytes.subarray(0,8)];let offset=8,ended=false,seenIHDR=false,chunkCount=0;
+    const found=new Map(),flatPairs=[],imageParts=[bytes.subarray(0,8)];let offset=8,ended=false,seenIHDR=false,chunkCount=0;
     while(offset<bytes.length){
       if(++chunkCount>MAX_CHUNKS)throw outOfSpec('PNG 区块数量异常。');
       if(offset+12>bytes.length)throw outOfSpec('PNG 区块头部不完整。');
@@ -102,6 +126,16 @@
         const payload=bytes.subarray(offset+8,offset+8+length);
         const entry=await candidate(type,payload);
         if(entry){if(found.has(entry.keyword))throw outOfSpec('检测到重复的角色卡数据块，已拒绝不明确的版本。');found.set(entry.keyword,entry.text);}
+        if(type==='tEXt'){
+          const payloadKeywordEnd=nul(payload,0,payload.length);
+          if(payloadKeywordEnd>0&&payloadKeywordEnd<=79){
+            const k=ascii(payload,0,payloadKeywordEnd);
+            if(V1_FIELDS.has(k)){
+              if(payload.length-payloadKeywordEnd-1>MAX_TEXT_BYTES)throw outOfSpec('旧版 V1 PNG 字段过大。');
+              flatPairs.push([k,decoder.decode(payload.subarray(payloadKeywordEnd+1))]);
+            }
+          }
+        }
       }else imageParts.push(bytes.subarray(start,stop));
       offset=stop;
       if(type==='IEND'){if(length!==0||offset!==bytes.length)throw outOfSpec('PNG 结束区块不正确。');ended=true;break;}
@@ -109,10 +143,14 @@
     if(!ended)throw outOfSpec('PNG 缺少结束区块。');
     // If V3 is present, NEVER silently fall back to V2 when the V3 data is corrupt.
     const keyword=found.has('ccv3')?'ccv3':found.has('chara')?'chara':null;
-    if(!keyword)throw new Error('这是一张普通 PNG 图片，没有找到 chara / ccv3 角色卡数据。请导入原始角色卡文件，而不是截图或压缩后的图片。');
-    const raw=decodeBase64Json(found.get(keyword));const card=validateCard(raw,keyword);
+    if(!keyword){
+      const legacy=legacyFlat(flatPairs);
+      if(!legacy)throw new Error('这是一张普通 PNG 图片，没有找到有效角色卡元数据。请导入原始角色卡 PNG，而不是截图。');
+      return{...legacy,imageBytes:new Blob(imageParts,{type:'image/png'})};
+    }
+    const raw=await decodeBase64Json(found.get(keyword));const card=validateCard(raw,keyword);
     const extras=['system_prompt','post_history_instructions','alternate_greetings','group_only_greetings','character_book','extensions','creator_notes_multilingual','assets'].filter(k=>card[k]!==undefined&&card[k]!==null&&(typeof card[k]!=='string'||card[k].trim()));
-    return {raw,card,version:keyword==='ccv3'?'V3':(raw.spec==='chara_card_v2'?'V2':'V1/V2'),extras,imageBytes:new Blob(imageParts,{type:'image/png'})};
+    return {raw,card,sourceKeyword:keyword,version:keyword==='ccv3'?'V3':(raw.spec==='chara_card_v2'?'V2':'V1/V2'),extras,imageBytes:new Blob(imageParts,{type:'image/png'})};
   }
   function toMask(parsed,type,filename,avatar){
     const d=parsed.card;
@@ -188,12 +226,18 @@
     }
     if(!ended)throw outOfSpec('PNG 缺少结束区块。');
     let card=null,cardError='',rawCard=null;
+    if(!hasCard){
+      // Full validation remains in parse(), including CRC/IEND. Merely seeing
+      // a 'name' metadata field is insufficient to activate this branch.
+      const flat=legacyFlat(metadata.map(m=>[m.keyword,m.text]));
+      if(flat){try{card=await parse(file);rawCard=card.raw;}catch(e){cardError=e.message;}}
+    }
     if(hasCard){
       const candidateKeyword=metadata.some(x=>x.keyword==='ccv3')?'ccv3':'chara';
       const matches=metadata.filter(x=>x.keyword===candidateKeyword);
       // A valid JSON payload can still be a non-importable character. Keep it
       // inspectable so an embedded worldbook isn't mistaken for absent data.
-      if(matches.length===1){try{rawCard=decodeBase64Json(matches[0].text)}catch(e){cardError=e.message;}}
+      if(matches.length===1){try{rawCard=await decodeBase64Json(matches[0].text)}catch(e){cardError=e.message;}}
       else cardError='PNG 存在重复的首选角色卡文本块，无法确定权威数据。';
       if(!cardError){try{card=await parse(file)}catch(e){cardError=e.message;}}
     }

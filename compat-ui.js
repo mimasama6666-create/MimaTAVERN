@@ -3,6 +3,27 @@
 function el(tag,props={},parent){const node=document.createElement(tag);for(const[k,v]of Object.entries(props)){if(k==='text')node.textContent=String(v);else if(k==='className')node.className=v;else if(k==='onclick')node.addEventListener('click',v);else if(k==='title')node.title=v;else node.setAttribute(k,v);}if(parent)parent.append(node);return node;}
 function clear(node){node.replaceChildren();}function message(text,type='info'){const output=$('compat-notice');output.textContent=text;output.dataset.kind=type;}
 function download(name,data,type='application/json'){const blob=data instanceof Blob?data:new Blob([data],{type}),url=URL.createObjectURL(blob),a=document.createElement('a');a.download=name.replace(/[\\/:*?"<>|]/g,'_');a.href=url;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),5000);}
+function reportImportFailure(e,file){
+ // Only metadata about the failure is copyable; character text and binary
+ // chunks are deliberately excluded from the diagnostic report.
+ const errorCode=String(e?.code||'E_IMPORT');
+ const diagnostic={stage:/PNG|CARD|SOURCE/i.test(errorCode)?'png_metadata_or_source_validation':'file_decode_or_import',code:errorCode,
+  message:String(e?.message||e),fileType:String(file?.type||'unknown'),bytes:Number(file?.size)||0,
+  browserSecureContext:root.isSecureContext===true,sha256Available:!!root.crypto?.subtle};
+ const hint=errorCode==='E_PNG_NOT_CHARACTER_CARD'?'这不是原始角色卡，请重新导出带角色资料的 PNG。':
+  errorCode==='E_STORE_UNVERIFIED'?'当前页面不能安全校验文件哈希。建议从 HTTPS 或本机 localhost 打开咪嘛馆，不要关闭来源校验。':
+  errorCode==='E_PNG_CARD_INVALID'?'图片里有角色数据，但版本或内容损坏；请使用原始文件重新导出，不会改动旧存档。':
+  '导入中断，未建立角色剧情；可重选原始文件或展开下方诊断查看失败阶段。';
+ message(hint+'\n'+diagnostic.message,'error');
+ const container=$('compat-report');clear(container);
+ const detail=el('details',{},container);el('summary',{text:'查看导卡技术诊断（不包含角色设定）'},detail);
+ el('pre',{text:JSON.stringify(diagnostic,null,2)},detail);
+ el('button',{text:'复制精简诊断',onclick:async()=>{
+  try{if(!root.navigator?.clipboard?.writeText)throw new Error('当前浏览器不可用');
+    await root.navigator.clipboard.writeText(JSON.stringify(diagnostic,null,2));message('已复制精简诊断（不含角色资料）。');
+  }catch(ex){message('复制不可用，请手动选择上方诊断文字。','error');}
+ }},detail);
+}
 function readableResource(item){const labels={character:'人物设定',world_info:'世界设定',regex:'文字效果',script_source:'互动脚本',css:'外观效果',prompt_presets:'提示词设置',variable_schema:'变量状态',media:'媒体文件',raw_unknown:'原始内容'};return `${labels[item.kind]||item.kind} · ${item.name} · ${item.kind==='script_source'?'需授权/部分脚本仅完整酒馆可用':item.kind==='raw_unknown'?'可查看原始资料':'已识别（不代表所有规则已运行）'}`;}
 function diagnostics(){
  const output=$('compat-report');clear(output);if(!scan)return;
@@ -26,12 +47,12 @@ function diagnostics(){
    }
  }
  const select=$('compat-card-choice');clear(select);
- for(const x of characters)el('option',{value:String(x.index),text:x.item.name+' · '+(/ccv3/.test(x.item.path)?'新版卡片':/chara/.test(x.item.path)?'旧版卡片':'角色版本')},select);
- const recommended=characters.find(x=>/ccv3/.test(x.item.path))||characters[0];if(recommended)select.value=String(recommended.index);
+ for(const x of characters)el('option',{value:String(x.index),text:x.name+' · '+(/ccv3/.test(x.path)?'新版卡片':/chara/.test(x.path)?'旧版卡片':'角色版本')},select);
+ const recommended=characters.find(x=>/ccv3/.test(x.path))||characters[0];if(recommended)select.value=String(recommended.index);
  $('compat-create').disabled=!characters.length;refreshGreetingChoice();
 }
 function refreshGreetingChoice(){const idx=Number($('compat-card-choice').value),item=scan?.resources?.[idx],select=$('compat-greeting-choice');clear(select);if(item?.kind!=='character')return;const d=item.raw||{};el('option',{value:'0',text:'默认开场白 · '+String(d.first_mes||'（无）').slice(0,56)},select);for(const [i,opening] of (Array.isArray(d.alternate_greetings)?d.alternate_greetings:[]).entries())el('option',{value:String(i+1),text:'备用开场 '+(i+1)+' · '+String(opening).slice(0,56)},select);}
-async function doImport(fileOverride=null){const generation=++scanGeneration,file=fileOverride&&typeof fileOverride.arrayBuffer==='function'?fileOverride:$('compat-file').files[0];if(!file)return message('请先选择 PNG、JSON、CHARX 或 ZIP','error');scan=null;$('compat-create').disabled=true;message('正在读取角色卡…');try{const next=await i().inspect(file);if(generation!==scanGeneration)return;scan=next;diagnostics();message(`已读取 ${scan.resources.length} 项资料，选择开场后即可开始聊天；外部代码仍不会自动运行。`);}catch(e){if(generation===scanGeneration)message(`${e.code||'E_IMPORT'}: ${e.message}`,'error');}}
+async function doImport(fileOverride=null){const generation=++scanGeneration,file=fileOverride&&typeof fileOverride.arrayBuffer==='function'?fileOverride:$('compat-file').files[0];if(!file)return message('请先选择 PNG、JSON、CHARX 或 ZIP','error');scan=null;$('compat-create').disabled=true;$('compat-save').disabled=true;clear($('compat-quick-status'));clear($('compat-card-choice'));clear($('compat-greeting-choice'));message('正在读取角色卡…');try{const next=await i().inspect(file);if(generation!==scanGeneration)return;scan=next;diagnostics();$('compat-save').disabled=false;message(`已读取 ${scan.resources.length} 项资料，选择开场后即可开始聊天；外部代码仍不会自动运行。`);}catch(e){if(generation===scanGeneration)reportImportFailure(e,file);}}
 async function commit(){if(!scan)return;try{const result=await s().importSource({sha256:scan.sha256,filename:scan.filename,format:scan.format,bytes:scan.bytes,versions:scan.versions,warnings:scan.warnings},scan.resources);message(result.reused?'相同来源包已存在，未重复写入。':`已原子保存来源包与 ${result.resources} 项资源，不写旧版剧情资料。`);await refreshSourceList();}catch(e){message(`${e.code||'E_IMPORT'}: ${e.message}`,'error');}}
 async function create(){if(!scan)return;try{const sourceId='sha256:'+scan.sha256;const found=await s().get('source_capsules',sourceId);if(!found){
   // One deliberate user gesture: lossless save followed by new session.

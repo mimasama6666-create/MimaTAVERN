@@ -79,7 +79,7 @@
     while((m=re.exec(String(text||''))))out.push(m[1]);
     return out;
   }
-  function artifactNumber(v,fallback=50){const n=Number(String(v??'').trim());return Number.isFinite(n)?n:fallback;}
+  function artifactNumber(v,fallback=50){const raw=String(v??'').trim();if(!raw)return fallback;const n=Number(raw);return Number.isFinite(n)?n:fallback;}
   function artifactBool(v,fallback=true){const x=String(v??'').trim().toLowerCase();if(x==='true'||x==='1'||x==='yes')return true;if(x==='false'||x==='0'||x==='no')return false;return fallback;}
   function parseV2Preset(block){
     return {name:firstTaggedBlock(block,'NAME',{required:true}),type:firstTaggedBlock(block,'TYPE')||'style',description:firstTaggedBlock(block,'DESCRIPTION'),priority:artifactNumber(firstTaggedBlock(block,'PRIORITY'),50),content:firstTaggedBlock(block,'CONTENT',{required:true,trim:false})};

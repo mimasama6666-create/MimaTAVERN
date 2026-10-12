@@ -12,7 +12,8 @@ global.MimaCompatStore=store;
 const rt=require('../compat-runtime.js');const iso=require('../compat-regex-isolation.js');global.MimaCompatRegexIsolation=iso;
 const session='session1',source='source1',char='char1';records.compat_sessions.set(session,{id:session,sourceId:source,characterResourceId:char,revision:1,turnIndex:0,pendingTurnId:null,userName:'Tester'});records.resource_ir.set(char,{id:char,sourceId:source,kind:'character',path:'json.data',raw:{name:'A',description:'description'}});
 let calls=[],count=0;
-global.MimaStandalone={getApiConfig:()=>({mock:true}),callModelWithConfig:async payload=>{calls.push(copy(payload));if(++count===1)throw Object.assign(new Error('provider down'),{code:'E_PROVIDER_FAIL'});return 'reply-'+count;}};
+require('../standalone-core.js');const productionReplyGuard=global.MimaStandalone.validateStoryReply;
+global.MimaStandalone={validateStoryReply:productionReplyGuard,getApiConfig:()=>({mock:true}),callModelWithConfig:async payload=>{calls.push(copy(payload));if(++count===1)throw Object.assign(new Error('provider down'),{code:'E_PROVIDER_FAIL'});return 'reply-'+count;}};
 (async()=>{
   await assert.rejects(()=>rt.send(session,'first'),/provider down/);
   let m=await rt.sessionMessages(session);assert.equal(m.length,1);assert.equal(m[0].status,'failed');

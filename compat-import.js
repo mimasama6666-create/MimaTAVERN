@@ -5,7 +5,11 @@ let crcTable;function crc32(b){crcTable??=Array.from({length:256},(_,i)=>{let c=
 const fail=(code,msg)=>{throw Object.assign(new Error(msg),{code});};
 const decoder=new TextDecoder('utf-8',{fatal:true}),utf8=b=>decoder.decode(b);
 function read32(b,i){return(b[i]|b[i+1]<<8|b[i+2]<<16|b[i+3]<<24)>>>0}function read16(b,i){return b[i]|b[i+1]<<8;}
-async function digest(b){if(!root.crypto?.subtle)fail('E_STORE_UNVERIFIED','此浏览器不支持 SHA256 校验');return Array.from(new Uint8Array(await root.crypto.subtle.digest('SHA-256',b))).map(v=>v.toString(16).padStart(2,'0')).join('');}
+async function digest(b){
+ if(root.crypto?.subtle)return Array.from(new Uint8Array(await root.crypto.subtle.digest('SHA-256',b))).map(v=>v.toString(16).padStart(2,'0')).join('');
+ if(root.MimaSHA256?.digest)return root.MimaSHA256.digest(b);
+ fail('E_STORE_UNVERIFIED','此浏览器无法安全计算 SHA256，来源校验未执行');
+}
 function decodeB64(s){if(typeof s!=='string'||s.length>8*1024*1024)fail('E_SOURCE_CORRUPT','角色数据过大');try{const str=atob(s.trim());let b=Uint8Array.from(str,c=>c.charCodeAt(0));return JSON.parse(utf8(b));}catch(e){fail('E_SOURCE_CORRUPT','卡块 base64/UTF8/JSON 格式错误：'+e.message)}}
 function sniffJson(raw){if(Array.isArray(raw))return raw.length&&raw.every(x=>x&&typeof x==='object'&&typeof x.findRegex==='string')?'st_regex':'json_unknown';if(!raw||typeof raw!=='object')return'json_unknown';const d=raw.data&&typeof raw.data==='object'?raw.data:raw;
 if(raw.spec==='chara_card_v3')return'ccv3';if(raw.spec==='chara_card_v2')return'ccv2';if(raw.entries&&typeof raw.entries==='object')return'world_info';if(typeof d.name==='string'&&(typeof d.description==='string'||typeof d.first_mes==='string'||typeof d.personality==='string'))return'ccv1_variant';if(Array.isArray(raw.regexScripts)||Array.isArray(raw.regex_scripts)||Array.isArray(raw)&&raw.every(x=>'findRegex'in x))return'st_regex';if(raw.prompts||raw.prompt_order||raw.chat_completion_source||raw.openai_max_context)return'st_preset';if(raw.manifest_version||raw.display_name&&raw.js)return'extension_manifest';return'json_unknown';}
@@ -39,8 +43,34 @@ for(const f of files){if(f.name.endsWith('/'))continue;let payload=bytes.subarra
 if(payload.length!==f.plain||crc32(payload)!==f.expectedCRC)fail('E_SOURCE_CORRUPT','ZIP 文件长度/CRC 校验失败 '+f.name);outputs.push({name:f.name,bytes:payload});}
 return outputs;}
 async function inspectBytes(bytes,filename='file'){if(!(bytes instanceof Uint8Array)||bytes.length>MAX_SOURCE||!bytes.length)fail('E_DECOMPRESS_BUDGET','文件格式或体积不符合安全上限');const sha256=await digest(bytes),resources=[],warnings=[];let format='unknown',versions=[];
-if(bytes[0]===137&&bytes[1]===80&&bytes[2]===78&&bytes[3]===71){format='png';if(!root.MimaPngCardImport?.inspect)fail('E_UNKNOWN_SCHEMA','PNG 检查器未加载');const file=new Blob([bytes],{type:'image/png'});file.name=filename;const report=await root.MimaPngCardImport.inspect(file);const cards=[];for(const [i,m]of report.metadata.entries()){if(m.keyword==='ccv3'||m.keyword==='chara'){let decoded=null,err=null;try{decoded=decodeB64(m.text)}catch(e){err=e.message;warnings.push(m.keyword+' #'+i+': '+err);}cards.push({keyword:m.keyword,index:i,value:decoded,error:err});if(decoded)versions.push(m.keyword);}else resources.push(R('raw_unknown',m.keyword,`png.metadata[${i}]`,m.text,{sourceEnabled:false}));}
-if(cards.some(c=>c.error)&&cards.every(c=>!c.value))warnings.push('所有角色块损坏，禁止开局');if(cards.length>1)warnings.push('发现多个角色块：全部保留，启动前需选择一个版本');for(const c of cards){if(c.value){resources.push(...walkCard(c.value,`png.${c.keyword}[${c.index}]`));resources.push(R('raw_unknown',`完整 ${c.keyword} JSON`,`png.${c.keyword}[${c.index}].raw`,c.value,{sourceEnabled:false}));}else resources.push(R('raw_unknown',`损坏块 ${c.keyword}`,`png.${c.keyword}[${c.index}]`,{error:c.error},{sourceEnabled:false}));}
+if(bytes[0]===137&&bytes[1]===80&&bytes[2]===78&&bytes[3]===71){
+format='png';
+if(!root.MimaPngCardImport?.inspect)fail('E_UNKNOWN_SCHEMA','PNG 角色卡读取组件未加载');
+// The PNG parser is the sole authority for CRC, decompression, card validity,
+// and ccv3-vs-chara precedence. Never create resource IR from an unvalidated
+// parallel base64 decoder. A malformed ccv3 must not fall back to chara.
+const file=new Blob([bytes],{type:'image/png'});file.name=filename;
+let report;
+try{report=await root.MimaPngCardImport.inspect(file);}catch(e){fail('E_PNG_SCAN',e.message);}
+const primary=report.card;
+if(!primary){
+ const reason=report.cardError||'这张图片没有角色卡元数据（chara / ccv3）；请选原始角色卡 PNG，而非截图或重新压缩的图片';
+ fail(report.cardError?'E_PNG_CARD_INVALID':'E_PNG_NOT_CHARACTER_CARD',reason);
+}
+const selectedKey=primary.sourceKeyword||(primary.version==='V3'?'ccv3':'chara');
+const matching=report.metadata.map((entry,index)=>({entry,index})).filter(x=>x.entry.keyword===selectedKey);
+if(selectedKey!=='v1flat'&&matching.length!==1)fail('E_PNG_CARD_INVALID','同一角色版本存在多个元数据块，无法安全选择');
+const selectedIndex=selectedKey==='v1flat'?-1:matching[0].index;
+versions=[sniffJson(primary.raw)];
+resources.push(...walkCard(primary.raw,selectedKey==='v1flat'?'png.v1flat':`png.${selectedKey}[${selectedIndex}]`));
+for(const [index,m] of report.metadata.entries()){
+ const chosen=index===selectedIndex;
+ resources.push(R('raw_unknown',chosen?`原始 ${selectedKey} 角色卡 JSON`:`PNG 元数据 ${m.keyword}`,
+   `png.metadata[${index}]`,chosen?primary.raw:{keyword:m.keyword,type:m.type,text:m.text},
+   {sourceEnabled:false}));
+}
+if(report.metadata.some(m=>m.keyword==='chara')&&report.metadata.some(m=>m.keyword==='ccv3'))
+ warnings.push('此 PNG 同时包含 V2/V3；按 CCv3 规范使用新版角色卡，旧版元数据在原始文件中完整保留。');
 } else if(bytes[0]===80&&bytes[1]===75&&bytes[2]===3&&bytes[3]===4){format='zip';const entries=await readZip(bytes);const card=entries.find(e=>e.name==='card.json');if(card){format='charx';const raw=JSON.parse(utf8(card.bytes));const t=sniffJson(raw);if(!t.startsWith('ccv'))warnings.push('CHARX card.json 未被识别为角色卡');else{versions.push(t);resources.push(...walkCard(raw,'charx.card'));}resources.push(R('raw_unknown','完整 card.json','charx.card.json',raw,{sourceEnabled:false}));}
 let manifest=entries.find(e=>e.name==='manifest.json');if(manifest){let m=JSON.parse(utf8(manifest.bytes));resources.push(R('plugin_bundle',m.display_name||m.name||'扩展 manifest','zip.manifest',m,{sourceEnabled:false,unmetDependencies:['需要验证扩展 API / 授权后在官方宿主运行']}));}
 for(const e of entries)if(!['card.json','manifest.json'].includes(e.name)){let mime=/\.(png)$/i.test(e.name)?'image/png':/\.(jpe?g)$/i.test(e.name)?'image/jpeg':/\.(webp)$/i.test(e.name)?'image/webp':/\.(mp3)$/i.test(e.name)?'audio/mpeg':/\.(ogg)$/i.test(e.name)?'audio/ogg':/\.(wav)$/i.test(e.name)?'audio/wav':'';

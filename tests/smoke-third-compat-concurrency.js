@@ -7,7 +7,8 @@ global.MimaCompatStore={uid:p=>`${p}-${++seq}`,get:async(t,id)=>copy(records[t].
 global.MimaCompatRegexIsolation=require('../compat-regex-isolation.js');const rt=require('../compat-runtime.js');
 const sid='test-session';records.compat_sessions.set(sid,{id:sid,sourceId:'card',characterResourceId:'char',revision:1,turnIndex:0,pendingTurnId:null,userName:'Player'});records.resource_ir.set('char',{id:'char',sourceId:'card',kind:'character',path:'json.data',raw:{name:'Char'}});
 const gate=()=>{let resolve;const promise=new Promise(r=>resolve=r);return{promise,resolve}};let current=gate(),events=[];
-global.MimaCompatPlugins={publish:async(_s,event,payload)=>events.push({event,...payload})};global.MimaStandalone={getApiConfig:()=>({model:'fake'}),callModelWithConfig:async()=>current.promise};
+global.MimaCompatPlugins={publish:async(_s,event,payload)=>events.push({event,...payload})};require('../standalone-core.js');const productionReplyGuard=global.MimaStandalone.validateStoryReply;
+global.MimaStandalone={validateStoryReply:productionReplyGuard,getApiConfig:()=>({model:'fake'}),callModelWithConfig:async()=>current.promise};
 const tick=()=>new Promise(r=>setTimeout(r,1));
 (async()=>{
  const pending=rt.send(sid,'message in flight');for(let i=0;i<80&&!(await rt.getSession(sid)).pendingTurnId;i++)await tick();

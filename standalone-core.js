@@ -252,7 +252,7 @@
     if(!window.MimaPersonaMacroResolver?.resolve)return raw;
     return window.MimaPersonaMacroResolver.resolve(raw,macroContext(sessionOrId));
   }
-  function activeRegexPacks(session){return arr(session?.regexPackIds).map(getRegexPack).filter(p=>p&&p.enabled!==false).sort((a,b)=>Number(a.priority||50)-Number(b.priority||50));}
+  function activeRegexPacks(session){return arr(session?.regexPackIds).map(getRegexPack).filter(p=>p&&p.enabled!==false).sort((a,b)=>Number(a.priority??50)-Number(b.priority??50));}
   function applyRegexForSession(sessionOrId,input,phase='display',diagnostics=null){const session=typeof sessionOrId==='string'?getSession(sessionOrId):sessionOrId;if(!session)return String(input??'');const transformed=window.MimaRegexEngine?.apply?window.MimaRegexEngine.apply(String(input??''),activeRegexPacks(session),phase,diagnostics):String(input??'');return phase==='display'||phase==='prompt'?resolveMacrosForSession(session,transformed):transformed;}
   function messagePromptContent(m,session){return applyRegexForSession(session,m?.content||'', 'prompt');}
   function inputSemanticMode(session,message=null){
@@ -292,8 +292,8 @@
     return {active:true,reason:'keyword',hits};
   }
   function mountedWorldbooks(session){return arr(session.worldbookIds).map(getWorldbook).filter(w=>w&&w.enabled!==false);}
-  function sortedPresets(session){return arr(session.presetIds).map(getPreset).filter(p=>p&&p.enabled!==false).sort((a,b)=>Number(a.priority||50)-Number(b.priority||50));}
-  function collectWorldbookEntries(session){const matched=[],skipped=[];for(const book of mountedWorldbooks(session)){for(const entry of arr(book.entries)){const activation=entryActivation(entry,session),item={book,entry,activation};(activation.active?matched:skipped).push(item);}}matched.sort((a,b)=>Number(a.entry.depth||0)-Number(b.entry.depth||0)||Number(a.entry.priority||50)-Number(b.entry.priority||50));return {matched,skipped};}
+  function sortedPresets(session){return arr(session.presetIds).map(getPreset).filter(p=>p&&p.enabled!==false).sort((a,b)=>Number(a.priority??50)-Number(b.priority??50));}
+  function collectWorldbookEntries(session){const matched=[],skipped=[];for(const book of mountedWorldbooks(session)){for(const entry of arr(book.entries)){const activation=entryActivation(entry,session),item={book,entry,activation};(activation.active?matched:skipped).push(item);}}matched.sort((a,b)=>Number(a.entry.depth||0)-Number(b.entry.depth||0)||Number(a.entry.priority??50)-Number(b.entry.priority??50));return {matched,skipped};}
   function formatMask(mask,kind){if(!mask)return'';const blocks=[`【${kind==='user'?'当前玩家 Persona':'当前角色 Persona'}：${mask.name}】`];if(mask.description)blocks.push(`简介：${mask.description}`);if(mask.content)blocks.push(mask.content);if(mask.scenario&&kind==='character')blocks.push(`【角色卡 Scenario】\n${mask.scenario}`);if(mask.exampleDialogue&&kind==='character')blocks.push(`【Example Dialogue】\n${mask.exampleDialogue}`);return blocks.join('\n');}
   function joinWb(items,label){if(!items.length)return'';return `【Worldbook · ${label}】\n`+items.map(({book,entry})=>`【${book.name} / ${entry.name}】\n${clip(entry.content,entry.maxChars)}`).join('\n\n');}
   function buildSystemPrompt(session,options={},matched=[]){
@@ -306,9 +306,9 @@
     if(session.loadedCharMaskId)add('character_persona',formatMask(getMask(session.loadedCharMaskId),'character'));
     if(session.loadedUserMaskId)add('user_persona',formatMask(getMask(session.loadedUserMaskId),'user'));
     add('worldbook_middle',joinWb(middle,'System Middle'));
-    const ps=sortedPresets(session);if(ps.length)add('presets',`【已挂载酒馆预设 / Presets】\n${ps.map(p=>`【${p.name} · ${p.type||'style'} · priority=${p.priority||50}】\n${p.content}`).join('\n\n')}`);
+    const ps=sortedPresets(session);if(ps.length)add('presets',`【已挂载酒馆预设 / Presets】\n${ps.map(p=>`【${p.name} · ${p.type||'style'} · priority=${p.priority??50}】\n${p.content}`).join('\n\n')}`);
     if(session.promptSettings?.pinnedFactsEnabled!==false&&session.pinnedFacts?.length)add('pinned_facts',`【Pinned Facts · 不可遗忘事实】\n${session.pinnedFacts.map(x=>`- ${x}`).join('\n')}`);
-    if(session.promptSettings?.summaryEnabled!==false&&(!session.rollingSourceFingerprint||memorySourceFingerprint(session.messages,session.rollingSourceCount)===session.rollingSourceFingerprint)&&(session.rollingSummary||session.summary||session.longSummary))add('story_summary',`【剧情摘要 / Rolling Summary】\n${session.rollingSummary||session.summary||session.longSummary}`);
+    if(options.excludeRollingSummary!==true&&session.promptSettings?.summaryEnabled!==false&&(!session.rollingSourceFingerprint||memorySourceFingerprint(session.messages,session.rollingSourceCount)===session.rollingSourceFingerprint)&&(session.rollingSummary||session.summary||session.longSummary))add('story_summary',`【剧情摘要 / Rolling Summary】\n${session.rollingSummary||session.summary||session.longSummary}`);
     const memory=normalizeManualMemory(session.manualMemory||{});const memoryTrace=[];
     const coreValid=memorySourceValid(session,memory.core)&&(memory.core.source!=='facts'||!memory.core.sourceFactsHash||fingerprint(memory.facts)===memory.core.sourceFactsHash);
     memoryTrace.push({kind:'core',verification:memory.core.verification.status,sourceCount:memory.core.sourceCount,source:memory.core.source,chars:memory.core.content.length,injected:!!(memory.settings.injectCore&&memory.core.content&&coreValid),reason:!coreValid?'stale_source':!memory.settings.injectCore?'disabled':memory.core.content?'included':'empty'});
@@ -349,8 +349,8 @@
     return {prompt:chunks.join('\n\n'),sections,memoryTrace};
   }
   function toHistoryMessage(m,session){if(!m?.content)return null;const content=m.role==='user'?userMessagePromptContent(m,session):messagePromptContent(m,session);if(m.role==='assistant')return{role:'assistant',content};if(m.role==='user')return{role:'user',content};return{role:'user',content:`【${m.role}】${content}`};}
-  function applyDepth(history,items,session){const result=history.slice(),debug=[];const sorted=items.slice().sort((a,b)=>Number(b.entry.depth||0)-Number(a.entry.depth||0)||Number(a.entry.priority||50)-Number(b.entry.priority||50));for(const item of sorted){const {book,entry}=item;const depth=Math.max(1,Number(entry.depth||1));const anchor=Math.max(0,result.length-depth);let index=anchor;if(entry.position==='front')index=Math.max(0,anchor-1);else if(entry.position==='back')index=Math.min(result.length,anchor+1);const content=resolveMacrosForSession(session,`【Worldbook Context · ${book.name} / ${entry.name} · depth=${depth}】\n${clip(entry.content,entry.maxChars)}`);result.splice(index,0,{role:'user',content});debug.push({bookId:book.id,bookName:book.name,entryId:entry.id,entryName:entry.name,depth,position:entry.position,insertedAt:index,chars:content.length});}return{messages:result,debug};}
-  function enforceBudget(matched,budget){let used=0;const kept=[],dropped=[];const sorted=matched.slice().sort((a,b)=>Number(a.entry.priority||50)-Number(b.entry.priority||50)||Number(a.entry.depth||0)-Number(b.entry.depth||0));for(const item of sorted){const cost=clip(item.entry.content,item.entry.maxChars).length;if(used+cost<=budget||!kept.length){kept.push(item);used+=cost}else dropped.push({...item,activation:{...item.activation,reason:'budget'}});}return{kept,dropped,used};}
+  function applyDepth(history,items,session){const result=history.slice(),debug=[];const sorted=items.slice().sort((a,b)=>Number(b.entry.depth||0)-Number(a.entry.depth||0)||Number(a.entry.priority??50)-Number(b.entry.priority??50));for(const item of sorted){const {book,entry}=item;const depth=Math.max(1,Number(entry.depth||1));const anchor=Math.max(0,result.length-depth);let index=anchor;if(entry.position==='front')index=Math.max(0,anchor-1);else if(entry.position==='back')index=Math.min(result.length,anchor+1);const content=resolveMacrosForSession(session,`【Worldbook Context · ${book.name} / ${entry.name} · depth=${depth}】\n${clip(entry.content,entry.maxChars)}`);result.splice(index,0,{role:'user',content});debug.push({bookId:book.id,bookName:book.name,entryId:entry.id,entryName:entry.name,depth,position:entry.position,insertedAt:index,chars:content.length});}return{messages:result,debug};}
+  function enforceBudget(matched,budget){let used=0;const kept=[],dropped=[];const sorted=matched.slice().sort((a,b)=>Number(a.entry.priority??50)-Number(b.entry.priority??50)||Number(a.entry.depth||0)-Number(b.entry.depth||0));for(const item of sorted){const cost=clip(item.entry.content,item.entry.maxChars).length;if(used+cost<=budget||!kept.length){kept.push(item);used+=cost}else dropped.push({...item,activation:{...item.activation,reason:'budget'}});}return{kept,dropped,used};}
   // The complete source chronology remains in the canonical session. Projection
   // is a traceable retrieval operation, NEVER a mutation of History. An
   // unknown provider context is NOT a verified 32k provider limit. The 32k
@@ -384,59 +384,116 @@
   function retrieveRawGap(session,history,coreCount,anchor,available){
     const older=history.slice(0,Math.max(0,history.length-coreCount));
     if(!older.length||available<=0)return {chosen:[],omitted:older,usedTokens:0,terms:[]};
-    const terms=retrievalTerms(anchor),items=older.map((m,index)=>{
-      const projected=toHistoryMessage(m,session),content=projected?.content||'';
-      const plain=(m.rawContent||m.content||'').toLowerCase();
-      const matches=terms.reduce((n,t)=>n+(plain.includes(t)?1:0),0);
-      const importance=(m.metadata?.pinned===true?100:0)+(/承诺|约定|关键|线索|秘密|身份|名字|物品|位置|誓言|决定|失踪|结局/.test(plain)?2:0);
-      return {m,index,projected,cost:estimateTokens(content)+10,score:matches*5+importance};
-    });
-    // Generic continuation has no lexical anchor. Keep direct evidence from
-    // earlier consequential scene changes instead of always returning zero;
-    // this is a bounded evidence selection, not a replacement for History.
-    const generic=!terms.length;
-    if(generic){
-      for(const item of items){
-        const body=String(item.m.rawContent||item.m.content||'');
-        const event=/藏在|藏入|埋在|送给|交给|交付|约定|承诺|誓言|答应|秘密|线索|发现|失踪|得知|决定|钥匙|项链|戒指|地图|地址|位置|身份|十年前|回忆|记得|遗忘|失去|夺走|留下|带走|交代|保管|never|promise|hid|gave|revealed|remember/iu.test(body);
-        // user-authored annotations and narrative event statements take
-        // priority; pure movement filler does not manufacture an event.
-        item.score=(item.m.metadata?.pinned?100:0)+(event?12:0)+(item.index===0?2:0);
+    const terms=retrievalTerms(anchor),generic=!terms.length,atoms=[];
+    // Whole player/assistant turns are the minimum retrieval unit; do not
+    // manufacture an isolated assistant answer without its triggering turn.
+    for(let i=0;i<older.length;){
+      const pair=older[i]?.role==='user'&&older[i+1]?.role==='assistant';
+      const group=older.slice(i,i+(pair?2:1));i+=group.length;
+      const rows=group.map(m=>({m,projected:toHistoryMessage(m,session)}));
+      const content=group.map(m=>String(m.rawContent||m.content||'')).join('\n');
+      const cost=rows.reduce((n,r)=>n+(r.projected?estimateTokens(r.projected.content)+10:0),0);
+      atoms.push({rows,index:i-group.length,content,cost,createdAt:group[0]?.createdAt||'',
+        pinned:group.some(m=>m.metadata?.pinned===true)});
+    }
+    const engine=globalThis.MimaHistorySearch;
+    // Explicit aliases belong to the mounted local masks. They are query
+    // synonyms only, not additional character knowledge or canonical facts.
+    const aliases={};
+    for(const id of [session.loadedCharMaskId,session.loadedUserMaskId]){
+      const mask=id?getMask(id):null;
+      if(mask?.name&&Array.isArray(mask.aliases)&&mask.aliases.length){
+        aliases[mask.name]=mask.aliases;
       }
     }
-    // Prefer diverse, significant evidence, with deterministic chronological
-    // tie-breaking for a continuation. Do not consume the entire context on
-    // generic motion/filler even when a large output budget is available.
-    items.sort((a,b)=>b.score-a.score||(generic?a.index-b.index:b.index-a.index));
-    let usedTokens=0;const chosen=[];
+    const rankings=engine?.rank?.(anchor,atoms.map((a,i)=>({id:i,text:a.content,createdAt:a.createdAt})),{aliases})||[];
+    const byRank=new Map(rankings.map(x=>[x.id,x.score]));
+    const event=/藏在|藏入|埋在|送给|交给|交付|约定|承诺|誓言|答应|秘密|线索|发现|失踪|得知|决定|钥匙|项链|戒指|地图|地址|位置|身份|十年前|回忆|记得|遗忘|失去|夺走|留下|带走|交代|保管|never|promise|hid|gave|revealed|remember/iu;
+    for(const [idx,item] of atoms.entries()){
+      const lexical=byRank.get(idx)??terms.reduce((n,t)=>n+(item.content.toLowerCase().includes(t)?1:0),0);
+      item.score=(item.pinned?100:0)+(generic?(event.test(item.content)?12:0)+(item.index===0?2:0):lexical*5);
+    }
+    atoms.sort((a,b)=>b.score-a.score||(generic?a.index-b.index:b.index-a.index));
     const cap=generic?Math.min(available,Math.max(350,Math.floor(available*.35))):available;
-    for(const item of items){if(item.score<=0)continue;if(usedTokens+item.cost>cap)continue;chosen.push(item);usedTokens+=item.cost;}
-    chosen.sort((a,b)=>a.index-b.index);
+    let usedTokens=0;const chosenAtoms=[];
+    for(const atom of atoms){if(atom.score<=0||usedTokens+atom.cost>cap)continue;chosenAtoms.push(atom);usedTokens+=atom.cost;}
+    chosenAtoms.sort((a,b)=>a.index-b.index);
+    const chosen=chosenAtoms.flatMap(a=>a.rows.map((row,j)=>({...row,index:a.index+j})));
     const chosenIds=new Set(chosen.map(x=>x.m.id));
     return {chosen,omitted:older.filter(m=>!chosenIds.has(m.id)),usedTokens,terms};
   }
   function assemble(sessionInput,options={}){
     const session=normalizeSession(sessionInput),activation=collectWorldbookEntries(session);
     const budget=Math.max(1000,Number(session.promptSettings?.worldbookBudgetChars||16000)),budgeted=enforceBudget(activation.matched,budget),matched=budgeted.kept;
-    const sys=buildSystemPrompt(session,options,matched),limit=Math.max(6,Number(session.promptSettings?.recentMessageLimit||34));
-    const visibleHistory=session.messages.filter(m=>m.role!=='director'),recentRaw=visibleHistory.slice(-limit);
+    // R11: Project the entire canonical History when the configured model can
+    // carry it. A fixed recentMessageLimit governs background summarization,
+    // never truncates a sufficiently large model's input.
+    const promptCap=promptBudget(),visibleHistory=session.messages.filter(m=>m.role!=='director');
+    const limit=Math.max(6,Number(session.promptSettings?.recentMessageLimit||34));
+    const depthOnly=matched.filter(x=>Number(x.entry.depth||0)>0);
+    let sys=buildSystemPrompt(session,{...options,excludeRollingSummary:true},matched);
+    let recentRaw=visibleHistory.slice(),projectedAway=[],estimatedBase=null;
+    // Reserve a margin for JSON encoding, message roles, and protocol overhead.
+    // Context estimates are intentionally marked as estimates in the Inspector.
+    const baseTokens=(raw,system)=>{
+      const current=raw.map(m=>toHistoryMessage(m,session)).filter(Boolean);
+      const inserted=applyDepth(current,depthOnly,session);
+      return estimateTokens(system.prompt)+inserted.messages.reduce((n,m)=>n+estimateTokens(m.content)+8,0)+Math.max(160,Math.ceil(system.prompt.length*.08));
+    };
+    function discardOldestCompleteTurn(){
+      if(recentRaw.length<=2)return false;
+      // Player+reply are an indivisible turn; an initial assistant greeting is
+      // its own atom. No source messages or store records are ever deleted.
+      let count=recentRaw[0]?.role==='user'&&recentRaw[1]?.role==='assistant'?2:1;
+      if(recentRaw.length-count<2)return false;
+      const removed=recentRaw.slice(0,count);
+      projectedAway.push(...removed);recentRaw=recentRaw.slice(count);
+      if(estimatedBase!==null)estimatedBase-=removed.reduce((n,m)=>n+estimateTokens(toHistoryMessage(m,session)?.content||'')+8,0);
+      return true;
+    }
+    if(promptCap.verified){
+      estimatedBase=baseTokens(recentRaw,sys);
+      while(estimatedBase>promptCap.usable){if(!discardOldestCompleteTurn()){
+        throw new ApiError('E_CONTEXT_BUDGET_BASE','当前人物设定、世界书和最新剧情已经超过模型已配置的输入窗口，无法在不破坏必需内容的情况下发送。',{
+          details:JSON.stringify({stage:'r11_full_history',windowTokens:promptCap.windowTokens,usableTokens:promptCap.usable,estimatedTokens:estimatedBase,temporarilyOmittedCount:projectedAway.length}),
+          hint:'请核实模型上下文窗口或由玩家主动调整设置。原始 History、Persona、世界书均未修改。'});
+      }}
+      if(projectedAway.length){
+        // Confirm actual depth-inserted projection at the boundary, without
+        // rescanning all 3000 turns on every discard.
+        estimatedBase=baseTokens(recentRaw,sys);
+        while(estimatedBase>promptCap.usable){if(!discardOldestCompleteTurn())throw new ApiError('E_CONTEXT_BUDGET_BASE','最新原始剧情超过已配置窗口，已保留本地 History。');}
+        // Use a trusted-source rolling summary only when original history has
+        // actually been left out of this particular provider request.
+        sys=buildSystemPrompt(session,options,matched);
+        estimatedBase=baseTokens(recentRaw,sys);
+        while(estimatedBase>promptCap.usable){if(!discardOldestCompleteTurn()){
+          throw new ApiError('E_CONTEXT_BUDGET_BASE','旧剧情摘要及当前必需材料超过已配置窗口。已保留完整原始存档，未发送。',{
+            details:JSON.stringify({stage:'r11_summary_projection',usableTokens:promptCap.usable,estimatedTokens:estimatedBase}),
+            hint:'请确认窗口或自行调整摘要/提示词设置；不会删除原始数据。'});
+        }}
+      }
+      if(projectedAway.length){
+        // A compact prompt must have room to retrieve relevant original source
+        // events; otherwise even a perfect index cannot return old memories.
+        const retrievalHeadroom=Math.min(1800,Math.floor(promptCap.usable*.18));
+        estimatedBase=baseTokens(recentRaw,sys);
+        while(estimatedBase>promptCap.usable-retrievalHeadroom&&recentRaw.length>2){
+          if(!discardOldestCompleteTurn())break;
+        }
+      }
+    }
+    const canonicalHistoryCount=visibleHistory.filter(m=>m.metadata?.source!=='prompt_preview_draft').length;
+    const recent=recentRaw.map(m=>toHistoryMessage(m,session)).filter(Boolean);
+    const baseline=applyDepth(recent,depthOnly,session),baselineTokens=baseTokens(recentRaw,sys);
     const summaryValid=!session.rollingSourceFingerprint||memorySourceFingerprint(session.messages,session.rollingSourceCount)===session.rollingSourceFingerprint;
     const coverageStart=summaryValid?Math.max(0,session.lastSummarizedIndex||0):0;
-    const needsRawGap=session.promptSettings?.summaryEnabled!==false&&(summaryNeeded(session)||rollingInFlight.has(session.id));
-    const pendingRaw=needsRawGap?session.messages.slice(coverageStart).filter(m=>m.role!=='director'):[];
+    const needsRawGap=projectedAway.length>0;
+    const pendingRaw=needsRawGap?visibleHistory.slice():[];
     const recentIds=new Set(recentRaw.map(m=>m.id));
-    const uncoveredOlder=pendingRaw.filter(m=>!recentIds.has(m.id));
-    const promptCap=promptBudget(),recent=recentRaw.map(m=>toHistoryMessage(m,session)).filter(Boolean);
-    const depthOnly=matched.filter(x=>Number(x.entry.depth||0)>0);
-    const baseline=applyDepth(recent,depthOnly,session);
-    const baselineTokens=estimateTokens(sys.prompt)+baseline.messages.reduce((n,m)=>n+estimateTokens(m.content),0);
-    // Hard guard protects Persona/Worldbook/Recent configured context: these
-    // sections must never be silently shortened to make space for memory.
-    if(promptCap.verified&&baselineTokens>promptCap.usable){
-      throw new ApiError('E_CONTEXT_BUDGET_BASE','本轮必需的角色/世界书/最近剧情超过已配置的模型上下文预算；已保留原文，未请求模型。',{
-        details:JSON.stringify({stage:'assemble',estimatedTokens:baselineTokens,usableTokens:promptCap.usable,configuredWindow:true,recentMessageLimit:limit,sections:sys.sections.map(x=>({name:x.name,chars:x.chars}))}),
-        hint:'请核对当前模型的真实 Context Window 并在 API 设置中填写；或调整用户指定的提示词预算。不会删除原始剧情或自动压缩 Persona。'});
-    }
+    // Search the entire canonical history, including the part already covered
+    // by a rolling summary; coverage is not deletion or a retrieval exclusion.
+    const uncoveredOlder=visibleHistory.filter(m=>!recentIds.has(m.id));
     const anchor=options.draft||recentRaw.filter(m=>m.role==='user').slice(-1).map(m=>m.rawContent||m.content).join(' ')||recentRaw.slice(-1).map(m=>m.rawContent||m.content).join(' ');
     // In unverified mode this is a SOFT optional retrieval budget, not a
     // fabricated upper bound on the model or on mandatory prompt materials.
@@ -445,6 +502,7 @@
     const candidateHistory=uncoveredOlder;
     const retrieved=retrieveRawGap(session,candidateHistory,0,anchor,retrievalBudget);
     const trace={pendingRawCount:pendingRaw.length,uncoveredRawCount:uncoveredOlder.length,retrievedCount:retrieved.chosen.length,
+      fullHistoryPreferred:true,allHistoryIncluded:uncoveredOlder.length===0,temporarilyOmittedTurnIds:projectedAway.map(m=>m.id),canonicalHistoryCount,
       omittedCount:retrieved.omitted.length,retrievedIds:retrieved.chosen.map(x=>x.m.id),omittedIds:retrieved.omitted.slice(0,60).map(x=>x.id),
       sourceFingerprint:memorySourceFingerprint(session.messages.filter(m=>m.metadata?.source!=='prompt_preview_draft'),session.messages.filter(m=>m.metadata?.source!=='prompt_preview_draft').length),sourceCount:session.messages.filter(m=>m.metadata?.source!=='prompt_preview_draft').length,
       sourceWindow:promptCap.windowTokens,budgetVerified:promptCap.verified,budgetPolicy:promptCap.verified?'configured_hard_limit':'unverified_provider_authoritative',baselineEstimateTokens:baselineTokens,retrievalEstimateTokens:retrieved.usedTokens,
@@ -468,7 +526,7 @@
     const messages=[{role:'system',content:header},...ordered];
     const estimatedInputTokens=messages.reduce((sum,m)=>sum+estimateTokens(m?.content||''),0);
     if(promptCap.verified&&estimatedInputTokens>promptCap.usable)throw new ApiError('E_CONTEXT_BUDGET','上下文检索结果超过已配置的模型预算，已中止发送但保留全部资料。',{details:JSON.stringify({estimatedInputTokens,promptCap,trace})});
-    return{messages,inspector:{systemChars:header.length,estimatedInputTokens,recentMessageCount:recent.length,unsummarizedGapCount:uncoveredOlder.length,recentMessageLimit:limit,finalMessageCount:messages.length,
+    return{messages,inspector:{systemChars:header.length,estimatedInputTokens,recentMessageCount:recent.length,unsummarizedGapCount:uncoveredOlder.length,recentMessageLimit:limit,fullHistoryPreferred:true,canonicalHistoryCount,temporarilyOmittedCount:projectedAway.length,allHistoryIncluded:uncoveredOlder.length===0,finalMessageCount:messages.length,
       contextTrace:trace,worldbookBudgetChars:budget,worldbookUsedChars:budgeted.used,upstreamUsage:lastUsage?clone(lastUsage):null,
       sections:sys.sections.map(({name,chars})=>({name,chars})),memoryTrace:sys.memoryTrace,
       rollingTrace:{sourceCount:session.rollingSourceCount||0,valid:summaryValid,coverage:trace},
@@ -1579,6 +1637,31 @@
     }catch(e){if(e.code!=='E_MEMORY_JOB_PENDING')console.warn('Rolling summary background debt', {sessionId:id,code:e.code||'E_MEMORY_BACKGROUND',stage:'rolling',settlementError:e.settlementError||''});}
     finally{rollingInFlight.delete(id);}},0);
   }
+  // R11.1: The provider can return a refusal inside ordinary message.content
+  // with HTTP 200 and finish_reason=stop. Only clear provider-voice refusals are
+  // rejected; character dialogue, quotations and mentions mid-story must survive.
+  function classifyStoryReply(raw,meta={}){
+    const finish=String(meta.finishReason||'').toLowerCase().trim();
+    if(['content_filter','safety'].includes(finish))return {blocked:true,reason:'provider_finish_reason'};
+    const value=String(raw??'').trim();
+    if(!value)return {blocked:false,reason:''}; // Existing E_API_EMPTY_REPLY owns empty bodies.
+    const start=value.slice(0,340),evidence=value.slice(0,2000);
+    // Preserve quoted AI refusals and fictional characters discussing policies.
+    if(/^(?:[\"'“‘「『`>]|(?:\*|_){1,2}[\"'“‘「『])/.test(start))return {blocked:false,reason:''};
+    const english=/^(?:i (?:cannot|can't|can not|am unable to) (?:fulfill|fulfil|comply with|assist with|help with|continue|generate|provide|participate in)|i(?:'m| am) (?:sorry|programmed to follow|an ai)|as an ai(?: language model)?)[\s,.:!—-]/i.test(start);
+    const englishStrong=/^i (?:cannot|can't|can not) (?:fulfill|fulfil) this request[.!\s]/i.test(start);
+    const englishPolicy=/(?:safety (?:polic(?:y|ies)|guidelines)|content polic(?:y|ies)|i (?:must|have to) decline|i (?:cannot|can't) (?:generate|continue|assist|participate)|i am programmed|as an ai(?: language model)?|explicit (?:sexual|adult) content|your (?:prompt|request) (?:involves|asks))/i.test(evidence);
+    const chinese=/^(?:很?抱歉|对不起|我(?:不能|无法|不可以|没办法)|作为(?:一个|一名)?(?:ai|人工智能|语言模型))[^\n]{0,100}(?:无法|不能|不可以|生成|协助|帮助|继续|提供|回应|参与|处理)/i.test(start);
+    const chineseStrong=/^(?:我(?:无法|不能)(?:继续)?(?:生成|提供|协助|参与|处理)|很?抱歉[，,\s]*我(?:无法|不能))(?:[^\n]{0,50})(?:内容|请求|角色扮演|描写|场景|故事|情节)/.test(start);
+    const chinesePolicy=/(?:安全(?:政策|准则|规则|限制|标准)|内容政策|平台(?:政策|规定)|(?:作为|身为)(?:一个|一名)?(?:ai|人工智能|语言模型)|无法(?:继续|生成|参与)|不能(?:继续|生成|参与)|我(?:必须|只能)拒绝|涉及(?:露骨|色情|性描写)|不(?:能|可以)协助)/i.test(evidence);
+    if((english&&(englishPolicy||englishStrong))||(chinese&&(chinesePolicy||chineseStrong)))return {blocked:true,reason:'provider_plaintext_refusal'};
+    return {blocked:false,reason:''};
+  }
+  function validateStoryReply(reply,meta={}){
+    const result=classifyStoryReply(reply,meta);
+    if(result.blocked)throw new ApiError('E_API_REFUSAL_CONTENT','模型返回了拒绝声明，已阻止将其作为角色回复保存或归档。',{hint:'这是模型或网关返回的内容限制，不代表你请求了绘图。可以手动重试或检查模型服务；不会自动重复付费请求。',details:JSON.stringify({stage:'story_reply_admission',reason:result.reason,finishReason:String(meta.finishReason||'unknown'),receivedChars:String(reply||'').length})});
+    return reply;
+  }
   async function processStoryTurn(id,userText,action='send',signal,temp=.85,options={},progress=null){
     let session=getSession(id);
     if(!session)throw new ApiError('E_STORY_SESSION_MISSING','剧本档案丢失猫！',{hint:'本地剧情 Session（剧情会话）不存在或已被删除，请重新打开剧情。'});
@@ -1608,7 +1691,9 @@
     const opts=actionOptions(promptAction,userText,options),built=assemble(session,opts),messages=built.messages.slice();
     actionTail(messages,promptAction,opts);
     emitProgress(progress,{phase:'prompt_ready',percent:34,detail:`Prompt（提示词）已组装 · ${messages.length} 条消息`});
-    const replyRaw=await callModel(messages,temp,signal,{onProgress:progress});
+    const storyResultMeta={};
+    const replyRaw=await callModel(messages,temp,signal,{onProgress:progress,resultMeta:storyResultMeta});
+    validateStoryReply(replyRaw,storyResultMeta);
     // Hard invariant: never persist a blank assistant message.
     if(!text(replyRaw))throw new ApiError('E_API_EMPTY_REPLY','模型返回空白正文，已阻止写入剧情。');
     const reply=applyRegexForSession(session,replyRaw,'output');
@@ -1766,5 +1851,5 @@
   }
 
   window.MimaMemoryContracts=Object.freeze({normalizeManualMemory});
-  window.MimaStandalone={init,handle,runRecordedMemory,memorySourceFingerprint,getApiConfig,saveApiConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,applyRegexForSession,resolveMacrosForSession,compileUserInputForPrompt,exportLibrary,importLibrary,validateLibrary,assemble,getLastUsage,getState:()=>clone(state)};
+  window.MimaStandalone={init,handle,runRecordedMemory,memorySourceFingerprint,getApiConfig,saveApiConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,validateStoryReply,classifyStoryReply,applyRegexForSession,resolveMacrosForSession,compileUserInputForPrompt,exportLibrary,importLibrary,validateLibrary,assemble,getLastUsage,getState:()=>clone(state)};
 })();
