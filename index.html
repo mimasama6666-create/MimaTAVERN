@@ -8,7 +8,7 @@
     <title>咪嘛馆 · MIMAMAO Tavern（酒馆） · Standalone（独立版）</title>
     <link rel="stylesheet" href="./style.css?v=1.1.2&hotfix=1.1.3&release=1.3.1&auditfix=1.3.2&themefix=1.4.0&memoryfix=1.3.9&uihotfix=20261013-1&ctxsave=20261013-2&diagnostics=r8">
     <link rel="stylesheet" href="./theme-skin.css?v=1.4.0">
-    <link rel="stylesheet" href="./compat-style.css?v=r1r5-1&mvustatus=r11.8&dynamic=r11.14">
+    <link rel="stylesheet" href="./compat-style.css?v=r10-mvu-template-r1r5-1&mvustatus=r11.8&dynamic=r11.14">
 <!-- v1.1.5 compatibility regression marker: release=1.1.5 -->
 <!-- v1.1.6 compatibility regression marker: release=1.1.6 -->
 <!-- v1.1.7 compatibility regression marker: release=1.1.7 -->
@@ -203,7 +203,7 @@
    <details class="compat-advanced"><summary>查看卡片包含的功能与原始信息</summary><div id="compat-report" aria-live="polite"></div></details>
   </section>
   <section id="compat-chat-panel"><h3>② 和角色聊天 <button type="button" id="compat-manage-toggle">管理卡片与功能</button></h3><div id="compat-current">咪嘛馆兼容引擎 · 未进入剧情</div><div id="compat-conversation" hidden>
-   <details id="compat-mvu-panel"><summary>剧情状态与变量（MVU，部分兼容）</summary><div id="compat-mvu-live-status" role="status" aria-live="polite"></div><details><summary>查看完整原始变量（只读）</summary><pre id="compat-mvu-state">当前角色卡没有可验证的 MVU 状态。</pre></details></details><div id="compat-messages" aria-live="polite"></div><textarea id="compat-input" placeholder="输入剧情"></textarea>
+   <details id="compat-mvu-panel"><summary>剧情状态与变量（MVU，部分兼容）</summary><div id="compat-mvu-live-status" role="status" aria-live="polite"></div><details><summary>查看完整原始变量（只读）</summary><pre id="compat-mvu-state">当前角色卡没有可验证的 MVU 状态。</pre></details><details><summary>MVU 状态栏模板（手动、只读）</summary><p>仅 {{mvu:/变量路径}} 会读取当前已提交 MVU 状态，例如 {{mvu:/stat_data/好感度}}。卡片原有宏和 JavaScript 不会执行；来源世界书中禁用的状态栏不会自动启用。</p><div id="compat-mvu-template-output"></div><label for="compat-mvu-template-custom">自定义 HTML 状态栏（当前网页临时预览，不保存或提交）</label><textarea id="compat-mvu-template-custom" placeholder="&lt;div&gt;当前好感度：{{mvu:/stat_data/好感度}}&lt;/div&gt;" maxlength="100000"></textarea><div class="compat-actions"><button id="compat-mvu-template-custom-run" type="button">手动预览当前模板</button><button id="compat-mvu-template-clear" type="button">关闭模板预览</button></div></details></details><div id="compat-messages" aria-live="polite"></div><textarea id="compat-input" placeholder="输入剧情"></textarea>
    <div class="compat-actions"><label for="compat-wi-budget">当前兼容剧情的世界书预算（字符，不等于模型窗口）</label><input id="compat-wi-budget" type="number" min="1000" max="1000000" step="1" value="16000" style="width:9em"><label for="compat-wi-depth">世界书关键词扫描最近多少条消息（0 = 不扫描普通关键词）</label><input id="compat-wi-depth" type="number" min="0" max="1000" step="1" value="100" style="width:5.5em"><label for="compat-wi-recursive"><input id="compat-wi-recursive" type="checkbox" checked> 允许世界书递归匹配</label><label for="compat-wi-recursion-steps">最多扫描层数</label><input id="compat-wi-recursion-steps" type="number" min="1" max="12" step="1" value="6" style="width:4em"><label for="compat-wi-local-advanced"><input id="compat-wi-local-advanced" type="checkbox"> 启用本地可重放概率/分组（与官方算法不完全等价）</label><label for="compat-preset-history-slot"><input id="compat-preset-history-slot" type="checkbox"> 试运行酒馆预设排序及常见动态插槽（角色、世界书、聊天历史；非官方完全等价）</label><label for="compat-persona-description">玩家 Persona 描述（兼容预设 PersonaDescription 插槽；按剧情独立保存）</label><textarea id="compat-persona-description" maxlength="12000" rows="2" placeholder="可选，留空则不注入"></textarea><button type="button" id="compat-wi-save">保存世界书规则</button></div>
    <div class="compat-actions"><label class="compat-gap-choice" hidden><input id="compat-accept-gaps" type="checkbox"> 只在专家严格对照模式中确认差异</label><label class="compat-mode-label"><input type="radio" name="compat-mode" value="basic" checked>基础聊天</label><label class="compat-mode-label"><input type="radio" name="compat-mode" value="strict">严格检查高级规则</label><button id="compat-send">发送消息</button><button id="compat-continue">续写最近的角色回复</button><button id="compat-preview">查看本轮发送内容</button></div>
    <div id="compat-gap"></div><details><summary>真实 Provider 消息 / 触发追踪</summary><pre id="compat-prompt"></pre></details>
@@ -247,11 +247,13 @@
 <script src="./compat-import.js?v=r1r5-1&r11=20261012-2"></script>
 <script src="./compat-regex-isolation.js?advanced=r11.12&v=r1r5-p0fix"></script>
 <script src="./compat-mvu.js?v=r6-mvu-continuation-20261013"></script>
+<script src="./compat-mvu-template.js?v=r10-readonly-mvu-template-20261014"></script>
 <script src="./compat-worldinfo-isolation.js?v=20261013-r2"></script>
-<script src="./compat-runtime.js?v=r7-mvu-event-state-20261013"></script>
+<script src="./compat-live-sync.js?v=r9-cross-tab-20261014"></script>
+<script src="./compat-runtime.js?v=r9-cross-tab-20261014"></script>
 <script src="./compat-stscript.js?v=20261013-r4"></script>
 <script src="./compat-plugins.js?v=r7-mvu-event-state-20261013"></script>
-<script src="./compat-ui.js?advanced=r11.12&r111draft=1&v=r1r5-p0fix&r11=20261012-2&sourceversion=20261012-3&worldinfo=r11.5&mvu=r11.6&branches=r11.7&mvustatus=r11.8&idbindex=r11.13&dynamic=r11.14&roleconsent=r11.9&budgetui=r11.26"></script>
+<script src="./compat-ui.js?v=r10-session-ui-owner-fix-20261014&sourceversion=r8"></script>
 <script src="./assistant-studio.js?v=1.1.2&hotfix=1.1.3&release=1.3.1&auditfix=1.3.2&artifactpriority0=r11.2"></script>
 <script src="./novel-studio.js?v=1.3.1&auditfix=1.3.2&release=1.3.1&auditfix=1.3.2&rework=1.3.3&reworkfix=1.3.4&themefix=1.4.0&memoryfix=1.3.9&pnginspect=1.4.0"></script>
 <script src="./ux-r6.js?v=r6-20261012"></script>

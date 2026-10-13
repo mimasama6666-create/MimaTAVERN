@@ -743,6 +743,12 @@ async function recoverTurn(sessionId,turnId,action,expectedAttemptId){
     return receipt;
   });
 }
+// A BroadcastChannel message is a refresh hint only. The receiving tab must
+// verify this job and settlement in canonical IndexedDB before using it.
+function announceSettlement(sessionId,job,kind){
+ if(!job?.id||!job?.attemptId||!['committed','failed','aborted'].includes(job.settlement))return;
+ root.MimaCompatLiveSync?.announce?.({sessionId,jobId:job.id,attemptId:job.attemptId,kind,settlement:job.settlement});
+}
 function notifyPlugins(sessionId,name,payload,eventId){
  const plugins=root.MimaCompatPlugins;if(!plugins?.publish)return;
  Promise.resolve().then(()=>plugins.publish(sessionId,name,payload,eventId)).catch(e=>{
@@ -765,13 +771,14 @@ async function dispatch(sessionId,t,options={}){
     const settled=await store().get('events_jobs',t.turnId);
     if(result.settlement!=='committed'||!settled||settled.attemptId!==t.attemptId||settled.settlement!=='committed')throw error('E_CANONICAL_CONFLICT','回合已由更新的 attempt 处理，旧回复拒绝投递');
     notifyPlugins(sessionId,'turn.committed',{turnId:t.turnId,attemptId:t.attemptId},'turn.committed:'+t.turnId);
+    announceSettlement(sessionId,settled,'turn');
     // Notify only after the same atomic canonical settlement accepted both
     // assistant text and MVU state. Failed/aborted turns never emit changes.
     if(mvuResult?.active&&(mvuResult.operations?.length||0)>0)
       notifyPlugins(sessionId,'mvu.changed',{turnId:t.turnId,operationCount:mvuResult.operations.length},'mvu.changed:'+t.turnId);
     return{reply:String(reply),turnId:t.turnId,envelope,result};
   }catch(e){
-    try{const transitionReceipt=await finishTurn(sessionId,t,null,e.code||'E_STORY_RUNTIME');const final=await store().get('events_jobs',t.turnId);if(transitionReceipt.settlement==='failed'&&final?.attemptId===t.attemptId&&final.settlement==='failed')notifyPlugins(sessionId,'turn.failed',{turnId:t.turnId,attemptId:t.attemptId,code:final.code},'turn.failed:'+t.turnId+':'+t.attemptId);}catch(settle){e.settlementError=settle.message;}
+    try{const transitionReceipt=await finishTurn(sessionId,t,null,e.code||'E_STORY_RUNTIME');const final=await store().get('events_jobs',t.turnId);if(transitionReceipt.settlement==='failed'&&final?.attemptId===t.attemptId&&final.settlement==='failed'){notifyPlugins(sessionId,'turn.failed',{turnId:t.turnId,attemptId:t.attemptId,code:final.code},'turn.failed:'+t.turnId+':'+t.attemptId);announceSettlement(sessionId,final,'turn');}}catch(settle){e.settlementError=settle.message;}
     throw e;
   }
 }
@@ -885,15 +892,28 @@ async function continueAssistant(sessionId,options={}){
   const settled=await settleContinuation(sessionId,ticket,String(reply),'',mvuResult);
   if(settled.settlement!=='committed')throw error('E_CANONICAL_CONFLICT','旧续写尝试已失去提交权限');
   notifyPlugins(sessionId,'assistant.continued',{turnId:ticket.parentTurnId,continuationId:ticket.id},'assistant.continued:'+ticket.id);
+  const continuationJob=await store().get('events_jobs',ticket.id);
+  if(continuationJob?.attemptId===ticket.attemptId&&continuationJob.settlement==='committed')announceSettlement(sessionId,continuationJob,'continuation');
   if(mvuResult?.active&&(mvuResult.operations?.length||0)>0)
     notifyPlugins(sessionId,'mvu.changed',{turnId:ticket.parentTurnId,continuationId:ticket.id,operationCount:mvuResult.operations.length},'mvu.changed:'+ticket.id);
   return{reply:String(reply),turnId:ticket.parentTurnId,continuationId:ticket.id,envelope,result:settled};
- }catch(e){try{await settleContinuation(sessionId,ticket,null,e.code||'E_STORY_RUNTIME');}catch(settle){e.settlementError=settle.message;}throw e;}
+ }catch(e){try{
+   const receipt=await settleContinuation(sessionId,ticket,null,e.code||'E_STORY_RUNTIME');
+   if(receipt.settlement==='failed'){
+     const job=await store().get('events_jobs',ticket.id);
+     if(job?.attemptId===ticket.attemptId&&job.settlement==='failed')announceSettlement(sessionId,job,'continuation');
+   }
+  }catch(settle){e.settlementError=settle.message;}throw e;}
 }
 async function abortContinuation(sessionId,id,attemptId){
  const job=await store().get('events_jobs',id);
  if(!job||job.kind!=='assistant_continuation'||job.sessionId!==sessionId||job.attemptId!==attemptId||job.settlement!=='pending')throw error('E_CANONICAL_CONFLICT','续写已经变化或完成');
- const ticket={id,attemptId};return settleContinuation(sessionId,ticket,null,'E_TURN_ABORTED');
+ const ticket={id,attemptId};const receipt=await settleContinuation(sessionId,ticket,null,'E_TURN_ABORTED');
+ if(receipt.settlement==='aborted'){
+  const final=await store().get('events_jobs',id);
+  if(final?.attemptId===attemptId&&final.settlement==='aborted')announceSettlement(sessionId,final,'continuation');
+ }
+ return receipt;
 }
 async function displayMessages(sessionId){
   const s=await getSession(sessionId),resources=await resourcesFor(s),regex=readRegex(resources),items=await sessionMessages(sessionId);

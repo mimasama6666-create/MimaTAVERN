@@ -1,5 +1,41 @@
 /* Advanced workbench: all DOM and state scoped to #compat-lab; native app remains untouched. */
-(function(root){'use strict';if(typeof document==='undefined')return;const $=id=>document.getElementById(id),s=()=>root.MimaCompatStore,i=()=>root.MimaCompatImport,r=()=>root.MimaCompatRuntime;let opened=false,scan=null,activeId='',busy=false,creating=false,forking=false,player=null,assetUrls=[],cardPreviewUrl='',scanGeneration=0,sessionGeneration=0,messageRenderGeneration=0;const approvedBasicPreflights=new Map();const busySessions=new Set();function refreshSendAvailability(){const send=$('compat-send');if(send)send.disabled=!activeId||busySessions.has(activeId);}
+(function(root){'use strict';if(typeof document==='undefined')return;const $=id=>document.getElementById(id),s=()=>root.MimaCompatStore,i=()=>root.MimaCompatImport,r=()=>root.MimaCompatRuntime;let opened=false,scan=null,activeId='',busy=false,creating=false,forking=false,player=null,assetUrls=[],cardPreviewUrl='',scanGeneration=0,sessionGeneration=0,messageRenderGeneration=0;const approvedBasicPreflights=new Map();const busySessions=new Set();let selectedMvuTemplate=null; // ephemeral manual preview; never stored in the chat or card
+
+// Cross-tab signals never carry character text or state. Resolve against the
+// canonical turn ledger, then re-read the currently visible session.
+let unsubscribeLiveSync=null;
+const remoteDeliveries=new Set();
+async function onExternalSettlement(hint){
+ if(!opened||!activeId||activeId!==hint.sessionId)return;
+ const owner=activeId,generation=sessionGeneration;
+ const job=await s().get('events_jobs',hint.jobId);
+ if(!job||job.sessionId!==owner||job.id!==hint.jobId||job.attemptId!==hint.attemptId||job.settlement!==hint.settlement||
+    (hint.kind==='continuation')!==(job.kind==='assistant_continuation'))return;
+ if(!opened||activeId!==owner||sessionGeneration!==generation)return;
+ const stableKey=owner+':'+job.id+':'+job.attemptId+':'+job.settlement;
+ if(remoteDeliveries.has(stableKey))return;
+ remoteDeliveries.add(stableKey);if(remoteDeliveries.size>300)remoteDeliveries.delete(remoteDeliveries.values().next().value);
+ await refreshMessages();
+ if(!opened||activeId!==owner||sessionGeneration!==generation)return;
+ await refreshSessionList();
+ // An already-mounted plugin in the other tab also needs post-commit events.
+ // Do not trust the cross-tab hint as authority: derive all signals from IDB.
+ const plugins=root.MimaCompatPlugins;
+ if(!plugins?.publish||job.settlement!=='committed')return;
+ if(hint.kind==='turn'){
+   await plugins.publish(owner,'turn.committed',{turnId:job.id,attemptId:job.attemptId},'turn.committed:'+job.id);
+   const assistant=await s().get('messages','a_'+job.id);
+   if(assistant?.sessionId===owner&&assistant.status==='committed'&&assistant.turnId===job.id&&assistant.mvuOperationCount>0)
+     await plugins.publish(owner,'mvu.changed',{turnId:job.id,operationCount:assistant.mvuOperationCount},'mvu.changed:'+job.id);
+ }else{
+   await plugins.publish(owner,'assistant.continued',{turnId:job.parentTurnId,continuationId:job.id},'assistant.continued:'+job.id);
+   const backup=await s().get('sidecar_links','continuation_backup_'+job.id);
+   if(backup?.sessionId===owner&&backup.parentTurnId===job.parentTurnId&&root.MimaCompatMVU?.extract?.(backup.addedText)?.length)
+     await plugins.publish(owner,'mvu.changed',{turnId:job.parentTurnId,continuationId:job.id},'mvu.changed:'+job.id);
+ }
+}
+function listenLiveSync(){if(!unsubscribeLiveSync&&root.MimaCompatLiveSync?.subscribe)unsubscribeLiveSync=root.MimaCompatLiveSync.subscribe(onExternalSettlement);}
+function refreshSendAvailability(){const send=$('compat-send');if(send)send.disabled=!activeId||busySessions.has(activeId);}
 function messageFor(sessionId,generation,text,kind='info'){if(activeId===sessionId&&sessionGeneration===generation)message(text,kind);}
 function beginSessionAction(id){if(busySessions.has(id))return false;busySessions.add(id);refreshSendAvailability();return true;}function endSessionAction(id){busySessions.delete(id);refreshSendAvailability();}
 function el(tag,props={},parent){const node=document.createElement(tag);for(const[k,v]of Object.entries(props)){if(k==='text')node.textContent=String(v);else if(k==='className')node.className=v;else if(k==='onclick')node.addEventListener('click',v);else if(k==='title')node.title=v;else node.setAttribute(k,v);}if(parent)parent.append(node);return node;}
@@ -74,8 +110,13 @@ async function create(){if(creating||!scan)return;
  }catch(e){message(`${e.code||'E_COMPAT'}: ${e.message}`,'error');}
  finally{creating=false;button.disabled=!scan||!scan.resources?.some(item=>item.kind==='character');}}
 async function refreshSourceList(){
+ const owner=activeId,generation=sessionGeneration;
  const [sources,allResources]=await Promise.all([s().all('source_capsules'),s().all('resource_ir')]);
- const box=$('compat-sources');clear(box);const active=activeId?await r().getSession(activeId):null;
+ if(activeId!==owner||sessionGeneration!==generation)return;
+ const active=owner?await r().getSession(owner):null;
+ // Late reads from session A have no authority over B's resource controls.
+ if(activeId!==owner||sessionGeneration!==generation)return;
+ const box=$('compat-sources');clear(box);
  for(const item of sources){
   const row=el('details',{},box);el('summary',{text:`${item.filename} · SHA256 ${item.sha256.slice(0,16)}`},row);
   el('button',{text:'原样导出',onclick:()=>download(item.filename,new Blob([item.bytes],{type:'application/octet-stream'}),'application/octet-stream')},row);
@@ -104,7 +145,9 @@ async function refreshSourceList(){
  }
 }
 async function showTurnControls(sessionId,container){
+  const owner=activeId,generation=sessionGeneration;
   const jobs=await r().turnJournal(sessionId);
+  if(owner!==sessionId||activeId!==owner||sessionGeneration!==generation)return;
   for(const j of jobs.filter(j=>['failed','pending'].includes(j.settlement))){
     const row=el('div',{className:'compat-line'},container);
     el('span',{text:`待处理原回合 ${j.id.slice(0,18)} · ${j.settlement} · 第 ${j.attempt||1} 次请求${j.settlement==='pending'?'（刷新后结果未知，不会自动重复发送）':''}`},row);
@@ -128,10 +171,33 @@ async function handleRecovery(sessionId,turnId,action,expectedAttemptId){
  finally{endSessionAction(sessionId);await refreshSessionList();if(activeId===sessionId&&sessionGeneration===generation)await refreshMessages();}
 }
 
-async function refreshSessionList(){const ses=await s().all('compat_sessions'),box=$('compat-sessions');clear(box);
+async function refreshSessionList(){const generation=sessionGeneration,ses=await s().all('compat_sessions');if(generation!==sessionGeneration)return;const box=$('compat-sessions');clear(box);
 const shortcuts=$('compat-continue-list');if(shortcuts){clear(shortcuts);if(ses.length){el('strong',{text:'继续之前的酒馆剧情'},shortcuts);for(const item of ses.slice().sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))).slice(0,4)){const row=el('div',{className:'compat-line'},shortcuts);el('span',{text:item.title||'未命名剧情'},row);el('button',{text:'继续聊天',onclick:()=>loadSession(item.id)},row);}}}
-for(const item of ses){const row=el('div',{className:'compat-line'},box);el('span',{text:item.title+(item.parentSessionId?' · 剧情分支':' · 独立剧情')+(item.pendingTurnId?' · 存在未结算回合':'')},row);el('button',{text:'进入',onclick:()=>loadSession(item.id)},row);if(item.id===activeId)await showTurnControls(item.id,box);}}
-async function loadSession(id){$('compat-lab').classList.add('in-chat');const generation=++sessionGeneration;if(activeId!==id){root.MimaCompatPlugins?.unmountAll();if($('compat-stscript-input'))$('compat-stscript-input').value='';if($('compat-stscript-result'))$('compat-stscript-result').textContent='已切换剧情：请手动填写并检查本剧情的脚本。';}activeId=id;refreshSendAvailability();const ses=await r().getSession(id);if(generation!==sessionGeneration)return;$('compat-wi-budget').value=String(ses.worldInfoBudget??16000);$('compat-wi-depth').value=String(ses.worldInfoScanDepth??100);$('compat-wi-recursive').checked=ses.worldInfoRecursiveScan!==false;$('compat-wi-recursion-steps').value=String(ses.worldInfoMaxRecursionSteps??6);$('compat-wi-local-advanced').checked=ses.worldInfoLocalAdvancedRules===true;$('compat-preset-history-slot').checked=ses.experimentalChatHistorySlot===true;$('compat-persona-description').value=String(ses.personaDescription||'');$('compat-current').textContent=`咪嘛馆兼容引擎 · ${ses.title}`;$('compat-conversation').hidden=false;await refreshSessionList();if(generation!==sessionGeneration)return;await refreshSourceList();if(generation!==sessionGeneration)return;await refreshMessages();if(generation!==sessionGeneration)return;await refreshExtensionUI();if(generation!==sessionGeneration)return;await inspectPreview();root.MimaCompatPlugins?.publish?.(id,'session.mounted',{sessionId:id},'session.mounted:'+id+':'+generation)?.catch(e=>messageFor(id,generation,'插件会话事件失败：'+e.message,'error'));}
+for(const item of ses){const row=el('div',{className:'compat-line'},box);el('span',{text:item.title+(item.parentSessionId?' · 剧情分支':' · 独立剧情')+(item.pendingTurnId?' · 存在未结算回合':'')},row);el('button',{text:'进入',onclick:()=>loadSession(item.id)},row);if(item.id===activeId){await showTurnControls(item.id,box);if(generation!==sessionGeneration)return;}}}
+async function loadSession(id){$('compat-lab').classList.add('in-chat');const generation=++sessionGeneration;if(activeId!==id){selectedMvuTemplate=null;const preview=$('compat-mvu-template-output');if(preview)preview.replaceChildren();root.MimaCompatPlugins?.unmountAll();if($('compat-stscript-input'))$('compat-stscript-input').value='';if($('compat-stscript-result'))$('compat-stscript-result').textContent='已切换剧情：请手动填写并检查本剧情的脚本。';}activeId=id;refreshSendAvailability();const ses=await r().getSession(id);if(generation!==sessionGeneration)return;$('compat-wi-budget').value=String(ses.worldInfoBudget??16000);$('compat-wi-depth').value=String(ses.worldInfoScanDepth??100);$('compat-wi-recursive').checked=ses.worldInfoRecursiveScan!==false;$('compat-wi-recursion-steps').value=String(ses.worldInfoMaxRecursionSteps??6);$('compat-wi-local-advanced').checked=ses.worldInfoLocalAdvancedRules===true;$('compat-preset-history-slot').checked=ses.experimentalChatHistorySlot===true;$('compat-persona-description').value=String(ses.personaDescription||'');$('compat-current').textContent=`咪嘛馆兼容引擎 · ${ses.title}`;$('compat-conversation').hidden=false;await refreshSessionList();if(generation!==sessionGeneration)return;await refreshSourceList();if(generation!==sessionGeneration)return;await refreshMessages();if(generation!==sessionGeneration)return;await refreshExtensionUI();if(generation!==sessionGeneration)return;await inspectPreview();root.MimaCompatPlugins?.publish?.(id,'session.mounted',{sessionId:id},'session.mounted:'+id+':'+generation)?.catch(e=>messageFor(id,generation,'插件会话事件失败：'+e.message,'error'));}
+// Read-only dynamic status preview from the *committed* MVU ledger only.
+// An iframe never receives an API token, plugin MessagePort or parent origin.
+function paintMvuTemplate(sessionId,verified){
+ const box=$('compat-mvu-template-output');if(!box)return;
+ clear(box);const selected=selectedMvuTemplate;
+ if(!selected||selected.sessionId!==sessionId)return;
+ const label=el('div',{className:'compat-mvu-template-note',text:'手动预览 · '+selected.label+' · 不执行脚本、不写入剧情'},box);
+ try{
+  if(!verified?.active)throw Object.assign(new Error('没有经过原始消息重放确认的 MVU 状态'),{code:'E_MVU_TEMPLATE_STATE'});
+  const compiled=root.MimaCompatMvuTemplate.render(selected.html,verified.state);
+  const iframe=el('iframe',{sandbox:'',referrerpolicy:'no-referrer',title:'只读 MVU 状态栏模板',className:'compat-mvu-template-frame'},box);
+  iframe.srcdoc=root.MimaCompatMvuTemplate.documentFor(compiled);
+  el('small',{text:`已绑定 ${compiled.bindings} 项变量；${compiled.unsupportedCount} 项原酒馆宏未适配。`+(compiled.unsupportedCount?' 不支持的宏仅作为静态文本保留：'+compiled.unsupported.join('、'):'')},box);
+  if(!compiled.bindings)el('small',{text:'此模板没有 {{mvu:/变量路径}} 插槽，仅提供静态隔离预览。'},box);
+ }catch(e){el('small',{text:(e.code||'E_MVU_TEMPLATE')+': '+e.message+'。未改动原模板或剧情。'},box);}
+}
+async function selectMvuTemplate(label,html){
+ const owner=activeId,generation=sessionGeneration;if(!owner)return;
+ selectedMvuTemplate={sessionId:owner,label:String(label).slice(0,120),html:String(html)};
+ try{const verified=await r().currentMvuState(owner);if(activeId===owner&&sessionGeneration===generation)paintMvuTemplate(owner,verified);}
+ catch(e){if(activeId===owner&&sessionGeneration===generation)paintMvuTemplate(owner,{active:false});}
+}
+function clearMvuTemplate(){selectedMvuTemplate=null;const box=$('compat-mvu-template-output');if(box)clear(box);}
 const STYLE_BASE=`:host{display:block;min-height:90px;max-height:420px;overflow-y:auto;font-family:inherit;color:inherit}article{white-space:pre-wrap;overflow-wrap:anywhere;background:rgba(128,128,128,.1);padding:11px;border-radius:10px;margin:7px 0;line-height:1.55}article.user{margin-left:12%}article.assistant{margin-right:12%}strong{display:block;margin-bottom:7px}`;
 function cssSafe(css){if(typeof css!=='string'||css.length>65536||/@(?:import|font-face|namespace|document|property)\b|url\s*\(|expression\s*\(|\\[0-9a-f]{1,6}\s/gi.test(css))throw new Error('E_RESOURCE_SEMANTIC_GAP: 此 CSS 需要外部资源或未验证特性，拒绝自动挂载');return css;}
 async function refreshMessages(){if(!activeId)return;
@@ -148,8 +214,9 @@ async function refreshMessages(){if(!activeId)return;
  const mvuNode=$('compat-mvu-state'),statusNode=$('compat-mvu-live-status');if(mvuNode){try{const state=await r().currentMvuState(sessionId);if(activeId!==sessionId||sessionGeneration!==generation||messageRenderGeneration!==renderTicket)return;
   mvuNode.textContent=state.active?JSON.stringify(state.state,null,2):'当前卡片没有可安全解析的 MVU 初始值；复杂 YAML/Zod 仍需原版插件。';
   if(state.gaps.length)mvuNode.textContent+='\n\n未实现/无效的初始化：'+state.gaps.map(x=>x.reason).join(', ');
+  paintMvuTemplate(sessionId,state);
   if(statusNode){clear(statusNode);if(state.active){const table=el('dl',{className:'compat-mvu-readonly'},statusNode);const rows=root.MimaCompatMVU?.statusRows?.(state.state,{limit:40})||[];for(const row of rows){const group=el('div',{className:'compat-mvu-pair'},table);el('dt',{text:row.path},group);el('dd',{text:row.value},group);}if(rows.length===40)el('small',{text:'仅展示前 40 项；完整状态在下方，未裁剪存档。'},statusNode);}else el('small',{text:'暂无可验证的动态变量状态。'},statusNode);}
- }catch(e){if(statusNode){clear(statusNode);el('small',{text:'状态校验失败，原存档未修改。'},statusNode);}mvuNode.textContent='MVU 状态验证失败（未清空存档）：'+(e.code||'E_MVU')+' '+e.message;}}
+ }catch(e){if(activeId!==sessionId||sessionGeneration!==generation||messageRenderGeneration!==renderTicket)return;if(statusNode){clear(statusNode);el('small',{text:'状态校验失败，原存档未修改。'},statusNode);}mvuNode.textContent='MVU 状态验证失败（未清空存档）：'+(e.code||'E_MVU')+' '+e.message;paintMvuTemplate(sessionId,{active:false});}}
  const box=$('compat-messages'),shadow=box.shadowRoot||box.attachShadow({mode:'open'});
  clear(shadow);el('style',{text:css},shadow);
  for(const item of items){const article=el('article',{className:'compat-message '+item.role},shadow);el('strong',{text:item.role==='assistant'?'角色':'玩家'},article);el('div',{text:item.displayView},article);if(item.status!=='committed')el('small',{text:'本回合 '+item.status+'（未纳入已完成对话上下文）'},article);if(item.displayError)el('small',{text:'正则显示失败，已显示完整原文：'+item.displayError.code+' '+item.displayError.message},article);if(item.role==='assistant'&&item.status==='committed'&&(item.turnId||item.opening)){
@@ -210,9 +277,28 @@ async function continueReply(){
 async function mountStyle(resourceId){const ses=await r().getSession(activeId),res=await s().get('resource_ir',resourceId);if(!res||(res.sourceId!==ses.sourceId&&!(ses.mountGraph||[]).some(m=>m.resourceId===res.id))||res.kind!=='css')throw new Error('CSS 资源未挂载到当前剧情');cssSafe(res.raw);await s().putCAS('compat_sessions',{...ses,styleResourceId:resourceId},ses.revision);await refreshMessages();message('局部 CSS 已启用，只作用于高级剧情的 Shadow DOM；原生主题不变。');}
 async function disableStyle(){const ses=await r().getSession(activeId);await s().putCAS('compat_sessions',{...ses,styleResourceId:null},ses.revision);await refreshMessages();message('已卸载局部 CSS，剧情原文未变。');}
 function standalonePluginSource(resource){const v=resource.raw;const sources=Array.isArray(v)?v:[v];return sources.map((x,index)=>({label:String(x?.name||x?.scriptName||('脚本 '+(index+1))),code:typeof x==='string'?x:(x?.script||x?.code||x?.content||'')})).filter(x=>typeof x.code==='string'&&x.code.length>0);}
-async function refreshExtensionUI(){const target=$('compat-plugins'),cssList=$('compat-css-list'),preview=$('compat-html-preview');clear(target);clear(cssList);clear(preview);if(!activeId)return;
-const ses=await r().getSession(activeId),assets=await r().resourcesFor(ses);for(const res of assets.filter(x=>x.kind==='css')){const row=el('div',{className:'compat-line'},cssList);el('span',{text:res.name+' · 未验证第三方 CSS'},row);el('button',{text:ses.styleResourceId===res.id?'已挂载':'手动启用局部 CSS',onclick:()=>mountStyle(res.id).catch(e=>message(e.message,'error'))},row);}if(ses.styleResourceId)el('button',{text:'卸载当前 CSS',onclick:()=>disableStyle().catch(e=>message(e.message,'error'))},cssList);
-for(const asset of assets.filter(x=>x.kind==='html_template')){const row=el('div',{className:'compat-line'},preview);el('span',{text:asset.name+' · HTML 模板仅隔离预览'},row);el('button',{text:'预览（无 JS/外链）',onclick:()=>{clear($('compat-html-preview'));const iframe=el('iframe',{sandbox:'',title:'只读 HTML 预览'},$('compat-html-preview'));iframe.srcdoc=`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; form-action 'none'"><meta charset="utf-8">${String(asset.raw).slice(0,100000)}`;}},row);}
+async function refreshExtensionUI(){const owner=activeId,generation=sessionGeneration;if(!owner)return;
+const ses=await r().getSession(owner);if(activeId!==owner||sessionGeneration!==generation)return;
+const assets=await r().resourcesFor(ses);if(activeId!==owner||sessionGeneration!==generation)return;
+const target=$('compat-plugins'),cssList=$('compat-css-list'),preview=$('compat-html-preview');clear(target);clear(cssList);clear(preview);for(const res of assets.filter(x=>x.kind==='css')){const row=el('div',{className:'compat-line'},cssList);el('span',{text:res.name+' · 未验证第三方 CSS'},row);el('button',{text:ses.styleResourceId===res.id?'已挂载':'手动启用局部 CSS',onclick:()=>mountStyle(res.id).catch(e=>message(e.message,'error'))},row);}if(ses.styleResourceId)el('button',{text:'卸载当前 CSS',onclick:()=>disableStyle().catch(e=>message(e.message,'error'))},cssList);
+// The source's enabled/disabled flags are never changed. Even disabled
+// worldbook HTML can be chosen manually for a harmless read-only preview.
+for(const wb of assets.filter(x=>x.kind==='world_info')){
+ const raw=wb.raw?.entries,entries=Array.isArray(raw)?raw:raw&&typeof raw==='object'?Object.values(raw):[];
+ for(const entry of entries.slice(0,200)){
+  const content=String(entry?.content||'');
+  const htmlLike=/(?:<\/?(?:div|table|section|style|article|dl|header|main)\b|\{\{\s*mvu:\/)/i.test(content);
+  const declaredStatus=/状态栏|status.?bar|status.?panel/i.test(String(entry?.comment||entry?.name||''));
+  if(!(htmlLike||declaredStatus)||content.length>100000)continue;
+  const sourceDisabled=entry?.enabled===false||entry?.disable===true;
+  const label=wb.name+' / '+String(entry?.comment||entry?.name||'状态栏模板').slice(0,64)+(sourceDisabled?'（原卡禁用）':'');
+  const row=el('div',{className:'compat-line'},preview);
+  el('span',{text:label+' · 仅手动隔离预览，原世界书启用状态不变'},row);
+  if(htmlLike)el('button',{text:'手动隔离预览状态栏模板',onclick:()=>selectMvuTemplate(label,content)},row);
+  else el('button',{text:'查看原始状态栏指令（不会执行）',onclick:()=>selectMvuTemplate(label,'<pre>'+content.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))+'</pre>')},row);
+ }
+}
+for(const asset of assets.filter(x=>x.kind==='html_template')){const row=el('div',{className:'compat-line'},preview);el('button',{text:'绑定 MVU 状态安全预览',onclick:()=>selectMvuTemplate(asset.name,asset.raw)},row);el('span',{text:asset.name+' · HTML 模板仅隔离预览'},row);el('button',{text:'预览（无 JS/外链）',onclick:()=>{clear($('compat-html-preview'));const iframe=el('iframe',{sandbox:'',title:'只读 HTML 预览'},$('compat-html-preview'));iframe.srcdoc=`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; form-action 'none'"><meta charset="utf-8">${String(asset.raw).slice(0,100000)}`;}},row);}
 for(const asset of assets.filter(x=>x.kind==='media')){
  const row=el('div',{className:'compat-line'},preview);
  el('span',{text:'媒体素材：'+asset.name+' · '+(asset.raw?.embeddedPath||asset.raw?.uri||'未关联路径')},row);
@@ -223,7 +309,8 @@ for(const asset of assets.filter(x=>x.kind==='media')){
   }catch(e){message(`${e.code||'E_MEDIA'}: ${e.message}`,'error');}
  }},row);
 }
-for(const res of assets.filter(x=>x.kind==='script_source'))for(const script of standalonePluginSource(res)){const code=script.code;const binary=new TextEncoder().encode(code),hash=await i().digest(binary);const key=ses.id+':'+hash;const row=el('details',{},target);el('summary',{text:script.label+' · 默认不执行 · '+hash.slice(0,12)},row);el('pre',{text:code},row);const caps=el('div',{className:'compat-actions'},row);const checks={};for(const cap of root.MimaCompatPlugins.capabilities){const label=el('label',{},caps),ch=el('input',{type:'checkbox'},label);checks[cap]=ch;label.append(' '+cap);}
+for(const res of assets.filter(x=>x.kind==='script_source'))for(const script of standalonePluginSource(res)){const code=script.code;const binary=new TextEncoder().encode(code),hash=await i().digest(binary);if(activeId!==owner||sessionGeneration!==generation)return;const key=ses.id+':'+hash;const row=el('details',{},target);el('summary',{text:script.label+' · 默认不执行 · '+hash.slice(0,12)},row);el('pre',{text:code},row);const caps=el('div',{className:'compat-actions'},row);const checks={};for(const cap of root.MimaCompatPlugins.capabilities){const label=el('label',{},caps),ch=el('input',{type:'checkbox'},label);checks[cap]=ch;label.append(' '+cap);}
+if(activeId!==owner||sessionGeneration!==generation)return;
 const slot=el('div',{className:'compat-plugin-slot'},row);const frame=el('iframe',{title:script.label,style:'width:100%;min-height:100px;border:1px solid #8885'},row);frame.hidden=true;
 el('button',{text:'明确授权并运行此脚本',onclick:async()=>{try{const selected=Object.entries(checks).filter(([,v])=>v.checked).map(([k])=>k);if(!selected.length)throw new Error('请至少选择一项具体权限');const existing=await s().get('grants',key);if(existing&&!existing.revokedAt){if(selected.some(cap=>!existing.capabilities.includes(cap)))throw new Error('已有授权不包含新增权限：先撤销，再明确重新授权');}else await root.MimaCompatPlugins.grant(ses.id,hash,selected);frame.hidden=false;await root.MimaCompatPlugins.mount(ses.id,hash,frame,slot,code);message('脚本已在 opaque-origin iframe 启动；只能调用勾选权限内的受控 API，不能代表 Tavern Helper 全面兼容。');}catch(e){message((e.code||'E_PLUGIN')+': '+e.message,'error');}}},row);
 el('button',{text:'撤销并卸载',onclick:async()=>{try{await root.MimaCompatPlugins.revoke(ses.id,hash);frame.hidden=true;slot.replaceChildren();message('已撤销当前脚本授权和 iframe。');}catch(e){message(e.message,'error');}}},row);
@@ -247,7 +334,7 @@ async function saveWorldInfoScanDepth(){
  }catch(e){message(`${e.code||'E_STORE_UNVERIFIED'}: 世界书设置保存失败，原值未被假装提交：${e.message}`,'error');}
  finally{button.disabled=false;}
 }
-async function inspectPreview(){if(!activeId)return;try{const preview=await r().preview(activeId,$('compat-input').value||'（未输入）');$('compat-prompt').textContent=JSON.stringify(preview,null,2);$('compat-gap').textContent=preview.gaps.length?'提醒：这张卡有 '+preview.gaps.length+' 项高级效果尚未完整适配。可以直接进行基础剧情；未适配的手机、插件或复杂演出不会自动运行。具体影响请展开本轮追踪。':'人物设定可以用于基础剧情；本引擎尚未与原版酒馆逐项对照。';$('compat-accept-gaps').closest('label').hidden=true;}catch(e){$('compat-prompt').textContent=`${e.code||'E_PREVIEW'}: ${e.message}`;}}
+async function inspectPreview(){const owner=activeId,generation=sessionGeneration;if(!owner)return;try{const preview=await r().preview(owner,$('compat-input').value||'（未输入）');if(activeId!==owner||sessionGeneration!==generation)return;$('compat-prompt').textContent=JSON.stringify(preview,null,2);$('compat-gap').textContent=preview.gaps.length?'提醒：这张卡有 '+preview.gaps.length+' 项高级效果尚未完整适配。可以直接进行基础剧情；未适配的手机、插件或复杂演出不会自动运行。具体影响请展开本轮追踪。':'人物设定可以用于基础剧情；本引擎尚未与原版酒馆逐项对照。';$('compat-accept-gaps').closest('label').hidden=true;}catch(e){if(activeId===owner&&sessionGeneration===generation)$('compat-prompt').textContent=`${e.code||'E_PREVIEW'}: ${e.message}`;}}
 async function send(){
  if(!activeId)return;
  const sessionId=activeId,input=$('compat-input').value.trim();if(!input)return;
@@ -330,10 +417,12 @@ async function restoreCompat(apply=false){
 
 async function nativeAudio(file){try{if(player){player.pause();player.remove();player=null;}for(const uri of assetUrls)URL.revokeObjectURL(uri);assetUrls=[];const uri=URL.createObjectURL(file);assetUrls.push(uri);player=el('audio',{controls:'',preload:'none'},$('compat-media'));player.src=uri;await player.play();message('已由用户手势启动当前剧情的本地音频。');}catch(e){message('媒体播放需要用户手势或此格式不受浏览器支持：'+e.message,'error');}}
 function stopMedia(){if(player){player.pause();player.remove();player=null;}for(const uri of assetUrls)URL.revokeObjectURL(uri);assetUrls=[];}
-function close(){++sessionGeneration;opened=false;if(cardPreviewUrl){URL.revokeObjectURL(cardPreviewUrl);cardPreviewUrl='';}$('compat-lab').classList.add('hidden');$('compat-lab').classList.remove('in-chat');stopMedia();root.MimaCompatPlugins?.unmountAll();}
-function open(){opened=true;$('compat-lab').classList.remove('hidden');root.closeDrawer?.();Promise.all([refreshSourceList(),refreshSessionList()]).catch(e=>message('兼容库读取失败，禁止假装无数据：'+e.message,'error'));}
+function close(){if(unsubscribeLiveSync){unsubscribeLiveSync();unsubscribeLiveSync=null;}++sessionGeneration;opened=false;clearMvuTemplate();if(cardPreviewUrl){URL.revokeObjectURL(cardPreviewUrl);cardPreviewUrl='';}$('compat-lab').classList.add('hidden');$('compat-lab').classList.remove('in-chat');stopMedia();root.MimaCompatPlugins?.unmountAll();}
+function open(){opened=true;listenLiveSync();$('compat-lab').classList.remove('hidden');root.closeDrawer?.();Promise.all([refreshSourceList(),refreshSessionList()]).catch(e=>message('兼容库读取失败，禁止假装无数据：'+e.message,'error'));}
 async function openWithFile(file){if(!file||typeof file.arrayBuffer!=='function')throw new Error('选中的原始角色卡已不可用，请重新选择');open();$('compat-lab').classList.remove('in-chat');await doImport(file);}
 function toggleManage(){const lab=$('compat-lab');lab.classList.toggle('show-advanced');lab.classList.toggle('in-chat',!lab.classList.contains('show-advanced'));}
-function bootstrap(){const actions={'compat-open':open,'compat-close':close,'compat-scan':doImport,'compat-save':commit,'compat-create':create,'compat-send':send,'compat-continue':continueReply,'compat-preview':inspectPreview,'compat-wi-save':saveWorldInfoScanDepth,'compat-export':exportCompat,'compat-export-both':exportBoth,'compat-restore-check':()=>restoreCompat(false),'compat-restore-apply':()=>restoreCompat(true),'compat-stscript-check':()=>manualSTscript(true),'compat-stscript-run':()=>manualSTscript(false)};for(const [id,fn]of Object.entries(actions))$(id)?.addEventListener('click',fn);$('compat-restore-file')?.addEventListener('change',()=>{inspectedBackup=null;});$('compat-file')?.addEventListener('change',doImport);$('compat-card-choice')?.addEventListener('change',refreshGreetingChoice);$('compat-input')?.addEventListener('input',()=>{});$('compat-manage-toggle')?.addEventListener('click',toggleManage);$('compat-audio')?.addEventListener('change',ev=>{const f=ev.target.files[0];if(f)nativeAudio(f);});$('compat-quick-status').textContent='选择 PNG、JSON 或 CHARX，即可查看人物并开始聊天。';}
+function bootstrap(){
+ document.addEventListener('visibilitychange',()=>{if(!document.hidden&&opened&&activeId){refreshMessages().catch(e=>messageFor(activeId,sessionGeneration,'恢复显示后状态刷新失败：'+e.message,'error'));}});
+ const actions={'compat-open':open,'compat-close':close,'compat-scan':doImport,'compat-save':commit,'compat-create':create,'compat-send':send,'compat-continue':continueReply,'compat-preview':inspectPreview,'compat-wi-save':saveWorldInfoScanDepth,'compat-export':exportCompat,'compat-export-both':exportBoth,'compat-restore-check':()=>restoreCompat(false),'compat-restore-apply':()=>restoreCompat(true),'compat-stscript-check':()=>manualSTscript(true),'compat-stscript-run':()=>manualSTscript(false),'compat-mvu-template-clear':clearMvuTemplate,'compat-mvu-template-custom-run':()=>selectMvuTemplate('当前剧情临时自定义模板',$('compat-mvu-template-custom').value)};for(const [id,fn]of Object.entries(actions))$(id)?.addEventListener('click',fn);$('compat-restore-file')?.addEventListener('change',()=>{inspectedBackup=null;});$('compat-file')?.addEventListener('change',doImport);$('compat-card-choice')?.addEventListener('change',refreshGreetingChoice);$('compat-input')?.addEventListener('input',()=>{});$('compat-manage-toggle')?.addEventListener('click',toggleManage);$('compat-audio')?.addEventListener('change',ev=>{const f=ev.target.files[0];if(f)nativeAudio(f);});$('compat-quick-status').textContent='选择 PNG、JSON 或 CHARX，即可查看人物并开始聊天。';}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',bootstrap,{once:true});else bootstrap();root.MimaCompatUI=Object.freeze({open,openWithFile,close});
 })(typeof window!=='undefined'?window:globalThis);
