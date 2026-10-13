@@ -206,6 +206,12 @@
    <div class="compat-actions"><label for="compat-wi-budget">当前兼容剧情的世界书预算（字符，不等于模型窗口）</label><input id="compat-wi-budget" type="number" min="1000" max="1000000" step="1" value="16000" style="width:9em"><label for="compat-wi-depth">世界书关键词扫描最近多少条消息（0 = 不扫描普通关键词）</label><input id="compat-wi-depth" type="number" min="0" max="1000" step="1" value="100" style="width:5.5em"><label for="compat-wi-recursive"><input id="compat-wi-recursive" type="checkbox" checked> 允许世界书递归匹配</label><label for="compat-wi-recursion-steps">最多扫描层数</label><input id="compat-wi-recursion-steps" type="number" min="1" max="12" step="1" value="6" style="width:4em"><label for="compat-wi-local-advanced"><input id="compat-wi-local-advanced" type="checkbox"> 启用本地可重放概率/分组（与官方算法不完全等价）</label><label for="compat-preset-history-slot"><input id="compat-preset-history-slot" type="checkbox"> 试运行酒馆预设排序及常见动态插槽（角色、世界书、聊天历史；非官方完全等价）</label><label for="compat-persona-description">玩家 Persona 描述（兼容预设 PersonaDescription 插槽；按剧情独立保存）</label><textarea id="compat-persona-description" maxlength="12000" rows="2" placeholder="可选，留空则不注入"></textarea><button type="button" id="compat-wi-save">保存世界书规则</button></div>
    <div class="compat-actions"><label class="compat-gap-choice" hidden><input id="compat-accept-gaps" type="checkbox"> 只在专家严格对照模式中确认差异</label><label class="compat-mode-label"><input type="radio" name="compat-mode" value="basic" checked>基础聊天</label><label class="compat-mode-label"><input type="radio" name="compat-mode" value="strict">严格检查高级规则</label><button id="compat-send">发送消息</button><button id="compat-continue">续写最近的角色回复</button><button id="compat-preview">查看本轮发送内容</button></div>
    <div id="compat-gap"></div><details><summary>真实 Provider 消息 / 触发追踪</summary><pre id="compat-prompt"></pre></details>
+   <details id="compat-stscript-panel"><summary>高级 · STscript 手动脚本实验台（安全子集）</summary>
+    <p>仅手动执行下列命令：/pass、/echo、/return、/abort、/getvar、/setvar、/addvar、/incvar、/decvar、/flushvar、/len。支持管道与 {{pipe}}、{{getvar::名称}}、{{char}}、{{user}}；未知命令直接拒绝，无法执行模型、外部 JS 或自动钩子。变量独立保存到本剧情，可随兼容库备份导出。</p>
+    <label for="compat-stscript-input">手动脚本（不会从角色卡自动载入）</label><textarea id="compat-stscript-input" rows="3" maxlength="16384" placeholder="/setvar key=visits 1 | /getvar visits | /echo 当前次数：{{pipe}}"></textarea>
+    <div class="compat-actions"><button type="button" id="compat-stscript-check">检查支持情况</button><button type="button" id="compat-stscript-run">手动执行并保存本剧情变量</button></div>
+    <pre id="compat-stscript-result" role="status" aria-live="polite">尚未执行；导入卡片不触发脚本。</pre>
+   </details>
    <div class="compat-actions"><label>本地音频（用户手动播放）<input type="file" id="compat-audio" accept="audio/*"></label><div id="compat-media"></div></div>
   </div></section>
   <section class="compat-advanced-panel"><h3>互动功能（手动授权）</h3><p>不自动运行来源中的 JavaScript。只有隔离 iframe 的特定 SDK 可受控调用；原版 Tavern Helper 的其它 API 不保证运行。</p><div id="compat-plugins"></div><div id="compat-css-list"></div><div id="compat-plugin-slot"></div><div id="compat-html-preview"></div></section>
@@ -229,11 +235,11 @@
 <script src="./novel-engine.js?v=1.3.1&auditfix=1.3.2&rework=1.3.3"></script>
 <script src="./novel-prompt-assembler.js?v=1.3.1&auditfix=1.3.2&rework=1.3.3&ctxsave=20261013-2&priority0=r11.2"></script>
 <script src="./history-search.js?v=r11-20261012-2"></script>
-<script src="./standalone-core.js?v=1.1.0&release=1.3.1&auditfix=1.3.2&rework=1.3.3&reworkfix=1.3.4&legacycontract=1.3.6&memoryfix=1.3.9&pnginspect=1.4.0&fifth=20261012&seventh=20261012&r11=20261012-2&replyguard=20261012-1&promptfix=r11.4&provenance=r11.9&memoryevent=r11.10&memorylifecycle=r11.15&factlineage=r11.16&rollingcumulative=r11.17&ledgerproof=r11.18&semanticproof=r11.19&factscoverage=r11.20&memorybatch=r11.21&ctxsave=20261013-2&prompttrace=r11.24&nativeowner=20261013-1&priority0=r11.2"></script>
+<script src="./standalone-core.js?v=1.1.0&release=1.3.1&auditfix=1.3.2&rework=1.3.3&reworkfix=1.3.4&legacycontract=1.3.6&memoryfix=1.3.9&pnginspect=1.4.0&fifth=20261012&seventh=20261012&r11=20261012-2&replyguard=20261012-1&promptfix=r11.4&provenance=r11.9&memoryevent=r11.10&memorylifecycle=r11.15&factlineage=r11.16&rollingcumulative=r11.17&ledgerproof=r11.18&semanticproof=r11.19&factscoverage=r11.20&memorybatch=r11.21&ctxsave=20261013-2&prompttrace=r11.24&nativeowner=20261013-1&priority0=r11.2&nativepreset=20261013-r5"></script>
 <script src="./font-manager.js?v=1.1.0&fontsplit=20261013-1&txguard=20261013-2"></script>
 <script src="./png-card-import.js?v=1.4.0&r11=20261012-2"></script>
 <script src="./png-resource-inspector.js?v=1.4.0"></script>
-<script src="./app.js?v=1.1.2&release=1.3.1&auditfix=1.3.2&themefix=1.4.0&pngcard=1.3.8&memoryfix=1.3.9&pnginspect=1.4.0&fifth=20261012&seventh=20261012&replyguard=20261012-1&memorylifecycle=r11.15&uihotfix=20261013-1&ctxsave=20261013-2&ctxsave=20261013-2&prompttrace=r11.24&nativeowner=20261013-1&priority0=r11.2"></script>
+<script src="./app.js?v=1.1.2&release=1.3.1&auditfix=1.3.2&themefix=1.4.0&pngcard=1.3.8&memoryfix=1.3.9&pnginspect=1.4.0&fifth=20261012&seventh=20261012&replyguard=20261012-1&memorylifecycle=r11.15&uihotfix=20261013-1&ctxsave=20261013-2&ctxsave=20261013-2&prompttrace=r11.24&nativeowner=20261013-1&priority0=r11.2&nativepreset=20261013-r5"></script>
 <script src="./sha256-browser.js?v=r11-20261012-2"></script>
 <script src="./compat-store.js?v=r1r5-p0fix&r11=20261012-2&sourceversion=20261012-3&idbindex=r11.13&roleconsent=r11.9&grantfence=20261013-r2"></script>
 <script src="./compat-import.js?v=r1r5-1&r11=20261012-2"></script>
@@ -241,6 +247,7 @@
 <script src="./compat-mvu.js?v=r11.8"></script>
 <script src="./compat-worldinfo-isolation.js?v=20261013-r2"></script>
 <script src="./compat-runtime.js?advanced=r11.12&r111draft=1&v=r1r5-p0fix&r11=20261012-2&replyguard=20261012-1&sourceversion=20261012-3&promptfix=r11.4&worldinfo=r11.5&mvu=r11.6&branches=r11.7&initvar=r11.8&idbindex=r11.13&dynamic=r11.14&roleconsent=r11.9&stworldinfo=20261013-r2"></script>
+<script src="./compat-stscript.js?v=20261013-r4"></script>
 <script src="./compat-plugins.js?v=r1r5-p0fix&grantfence=20261013-r2"></script>
 <script src="./compat-ui.js?advanced=r11.12&r111draft=1&v=r1r5-p0fix&r11=20261012-2&sourceversion=20261012-3&worldinfo=r11.5&mvu=r11.6&branches=r11.7&mvustatus=r11.8&idbindex=r11.13&dynamic=r11.14&roleconsent=r11.9&budgetui=r11.26"></script>
 <script src="./assistant-studio.js?v=1.1.2&hotfix=1.1.3&release=1.3.1&auditfix=1.3.2&artifactpriority0=r11.2"></script>
