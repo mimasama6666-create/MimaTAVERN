@@ -1,0 +1,77 @@
+/* MimaTAVERN native generation diagnostics: isolated from every canonical store.
+   This database is never read by Prompt assembly, Memory, or story settlement.
+   Failed writes are reported, never used to classify a model reply as successful. */
+(()=>{'use strict';
+ const DB='MimaTAVERN_Native_Diagnostics_V1',STORE='entries';
+ const LIMIT_COUNT=30,LIMIT_DAYS=14,LIMIT_BYTES=24*1024*1024,MAX_REQUEST_CHARS=4*1024*1024,MAX_BAD_REPLY_CHARS=128*1024;
+ let dbPromise=null,queue=Promise.resolve(),lastError='';
+ const pickString=(s,max)=>String(s??'').slice(0,max);
+ function notice(e){lastError=`${e?.name||'StorageError'}：${e?.message||String(e)}`;console.error('咪嘛馆诊断日志无法持久化（未改写剧情数据库）',e);}
+ function open(){
+   if(!('indexedDB' in window))return Promise.reject(new Error('当前浏览器不支持 IndexedDB，无法保留诊断日志'));
+   if(!dbPromise)dbPromise=new Promise((resolve,reject)=>{
+     const r=indexedDB.open(DB,1);
+     r.onupgradeneeded=()=>{const db=r.result;if(!db.objectStoreNames.contains(STORE)){const store=db.createObjectStore(STORE,{keyPath:'id'});store.createIndex('sessionId','sessionId',{unique:false});}};
+     r.onerror=()=>reject(r.error||new Error('诊断数据库打开失败'));
+     r.onsuccess=()=>{const db=r.result;db.onversionchange=()=>{db.close();dbPromise=null};resolve(db);};
+     r.onblocked=()=>reject(new Error('其他标签正在升级诊断日志数据库'));
+   }).catch(e=>{dbPromise=null;throw e});
+   return dbPromise;
+ }
+ function waitRequest(req){return new Promise((resolve,reject)=>{req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error||new Error('诊断存储请求失败'))})}
+ async function readAll(){const db=await open();const tx=db.transaction(STORE,'readonly');return waitRequest(tx.objectStore(STORE).getAll());}
+ function transact(job){const next=queue.then(job).then(value=>{lastError='';return value});queue=next.catch(notice);return next;}
+ function finished(tx){return new Promise((resolve,reject)=>{tx.oncomplete=()=>resolve();tx.onabort=()=>reject(tx.error||new Error('诊断日志事务已中止'));tx.onerror=()=>reject(tx.error||new Error('诊断日志事务失败'))})}
+ function roughSize(row){try{return JSON.stringify(row).length*2}catch(_){return 0}}
+ async function prune(){
+   const db=await open(),rows=await readAll(),now=Date.now();
+   rows.sort((a,b)=>Number(b.createdAtMs||0)-Number(a.createdAtMs||0));
+   const deletes=[],cutoff=now-LIMIT_DAYS*86400000;let kept=0,bytes=0;
+   for(const row of rows){const size=roughSize(row);if(Number(row.createdAtMs||0)<cutoff||kept>=LIMIT_COUNT||bytes+size>LIMIT_BYTES)deletes.push(row.id);else{kept++;bytes+=size;}}
+   if(deletes.length){const tx=db.transaction(STORE,'readwrite'),st=tx.objectStore(STORE);deletes.forEach(id=>st.delete(id));await finished(tx);}
+ }
+ function issueId(){return 'd_'+Date.now().toString(36)+'_'+(window.crypto?.randomUUID?.()||Math.random().toString(36).slice(2));}
+ function begin({sessionId,action,turnId}={}){
+   if(!sessionId)return null;
+   const id=issueId(),row={id,sessionId:String(sessionId),turnId:pickString(turnId,100),action:pickString(action,40),createdAt:new Date().toISOString(),createdAtMs:Date.now(),status:'preparing',model:'',requestId:'',messageCount:0,request:null,requestTruncated:false,rawRejectedReply:'',rejectedReplyTruncated:false,error:null,finishKind:'',finishReason:'',settledAt:null};
+   void transact(async()=>{const db=await open(),tx=db.transaction(STORE,'readwrite');tx.objectStore(STORE).put(row);await finished(tx);await prune();});
+   return id;
+ }
+ function event(id,data={}){
+   if(!id||!data||!['request','provider_result','settlement'].includes(data.type))return Promise.resolve();
+   return transact(async()=>{
+     const db=await open();const tx=db.transaction(STORE,'readwrite'),st=tx.objectStore(STORE),row=await waitRequest(st.get(id));
+     // Deleting a record is final, even if a request still runs.
+     if(row){
+       if(data.type==='request'){
+         const req=data.request||{},safe={model:pickString(req.model,300),stream:req.stream===true,temperature:req.temperature,max_tokens:req.max_tokens, messages:Array.isArray(req.messages)?req.messages.map(m=>({role:pickString(m.role,50),content:String(m.content??'')})):[]};
+         const all=JSON.stringify(safe);
+         row.request=all.length<=MAX_REQUEST_CHARS?safe:null;
+         row.requestTruncated=all.length>MAX_REQUEST_CHARS;
+         row.requestChars=all.length;row.messageCount=safe.messages.length;row.model=safe.model;row.requestId=pickString(data.requestId,120);row.endpointOrigin=pickString(data.endpointOrigin,260);row.status='requesting';
+       }else if(data.type==='provider_result'){
+         row.finishKind=pickString(data.finishKind,50);row.finishReason=pickString(data.finishReason,120);row.responseChars=Number(data.responseChars)||0;row.status='provider_returned';
+       }else if(data.type==='settlement'){
+         row.status=['committed','rejected','aborted','conflict'].includes(data.status)?data.status:'rejected';
+         row.settledAt=new Date().toISOString();row.finishKind=pickString(data.finishKind||row.finishKind,50);row.finishReason=pickString(data.finishReason||row.finishReason,120);
+         if(row.status!=='committed'){
+           const raw=String(data.rawRejectedReply??'');row.rawRejectedReply=raw.slice(0,MAX_BAD_REPLY_CHARS);row.rejectedReplyTruncated=raw.length>MAX_BAD_REPLY_CHARS||data.rawLimited===true;
+           row.error={code:pickString(data.code,120),message:pickString(data.message,3000),details:pickString(data.details,6000),status:Number(data.httpStatus)||0};
+         }
+       }
+       st.put(row);
+     }
+     await finished(tx);
+     await prune();
+   });
+ }
+ async function list({sessionId=null,errorsOnly=false}={}){
+   await transact(prune);await queue;const rows=await readAll();
+   return rows.filter(x=>(!sessionId||x.sessionId===sessionId)&&(!errorsOnly||['rejected','aborted','conflict'].includes(x.status))).sort((a,b)=>b.createdAtMs-a.createdAtMs);
+ }
+ function remove(id){return transact(async()=>{const db=await open(),tx=db.transaction(STORE,'readwrite');tx.objectStore(STORE).delete(id);await finished(tx)});}
+ function clearSession(sessionId){return transact(async()=>{const rows=await readAll(),db=await open(),tx=db.transaction(STORE,'readwrite'),st=tx.objectStore(STORE);rows.filter(x=>x.sessionId===sessionId).forEach(x=>st.delete(x.id));await finished(tx)});}
+ function clearAll(){return transact(async()=>{const db=await open(),tx=db.transaction(STORE,'readwrite');tx.objectStore(STORE).clear();await finished(tx)});}
+ function status(){return {error:lastError,limitCount:LIMIT_COUNT,limitDays:LIMIT_DAYS,limitBytes:LIMIT_BYTES,database:DB};}
+ window.MimaDiagnosticJournal=Object.freeze({begin,event,list,remove,clearSession,clearAll,status});
+})();

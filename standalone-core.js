@@ -770,6 +770,7 @@
     if(!reply&&finalPayload){try{reply=extractReply(finalPayload)}catch(e){if(e instanceof ApiError&&e.code==='E_API_UPSTREAM')throw e;}}
     if(!reply&&finishKind!=='unknown')assertFinishState({finishKind,finishReason},0);
     if(!reply)throw new ApiError(badEvents?'E_STREAM_PARSE':'E_API_EMPTY_REPLY',badEvents?'模型流包含无法解析的数据，未获得正文。':'流式请求结束，但模型没有返回可见正文。',{status:res.status,details:`stream events: ${eventCount}; malformed events: ${badEvents}`});
+    if(onProgress?.resultMeta){onProgress.resultMeta.finishReason=finishReason||'unknown';onProgress.resultMeta.finishKind=finishKind;onProgress.resultMeta.receivedDone=receivedDone;}
     if(!receivedDone&&finishKind==='unknown')throw new ApiError('E_STREAM_INTERRUPTED','流式响应已结束，但缺少完成标记，未提交部分正文。',{status:res.status,details:`stage: stream_eof; receivedChars: ${reply.length}; events: ${eventCount}`});
     // [DONE] only terminates transport. It does not turn length/safety/missing into success.
     if(!(allowIncompleteDraft&&finishKind==='truncated'))try{assertFinishState({finishKind,finishReason},reply.length)}catch(e){e.partialDraft=reply.slice(0,24000);throw e;}
@@ -794,6 +795,10 @@
     const body={model:cfg.model,messages};if(streamEnabled)body.stream=true;if(cfg.sendTemperature!==false)body.temperature=clampTemp(temperature);if(Number(cfg.maxTokens)>0)body.max_tokens=Math.floor(Number(cfg.maxTokens));
     const requestId=makeId('req'),diag={requestId,jobId:options.memoryContext?.jobId||null,attemptId:options.memoryContext?.attemptId||null,stage:options.memoryContext?.stage||'story',model:cfg.model,endpointOrigin:(()=>{try{return new URL(chat).origin}catch{return 'unknown'}})(),requestFields:Object.keys(body).sort(),messageCount:messages.length,temperaturePresent:Object.hasOwn(body,'temperature'),maxTokens:body.max_tokens||null,stream:streamEnabled};
     const diagnostic=extra=>JSON.stringify({...diag,...extra});
+    // Exact body.messages at the fetch boundary. Credentials, auth headers and
+    // extraHeaders never enter the independent diagnostics database.
+    try{options.onDiagnostic?.({type:'request',request:body,requestId,endpointOrigin:diag.endpointOrigin});}
+    catch(e){console.error('诊断事件回调失败；真实模型请求继续执行',e);}
     emitProgress(options.onProgress,{phase:'requesting',percent:42,detail:`正在请求 ${cfg.model}`});
     let res;try{res=await fetch(chat,{method:'POST',headers:apiHeaders(cfg),body:JSON.stringify(body),signal,mode:'cors',credentials:'omit',cache:'no-store'});}catch(e){
       const err=asApiError(e);
@@ -808,15 +813,23 @@
     const contentType=String(res.headers?.get?.('content-type')||'').toLowerCase();
     if(streamEnabled&&!/application\/json/i.test(contentType)){
       emitProgress(options.onProgress,{phase:'streaming',percent:55,detail:'连接成功，正在接收流式正文…'});
-      const streamProgress=ev=>options.onProgress?.(ev);streamProgress.resultMeta=options.resultMeta;try{return await readStreamingReply(res,streamProgress,cfg.model,options.allowIncompleteDraft===true);}catch(e){if(e instanceof ApiError)e.details=diagnostic({errorSource:'stream',httpStatus:res.status,errorCode:e.code,streamDetails:String(e.details||'').slice(0,500)});throw e;}
+      const streamProgress=ev=>options.onProgress?.(ev);streamProgress.resultMeta=options.resultMeta;try{
+        const streamed=await readStreamingReply(res,streamProgress,cfg.model,options.allowIncompleteDraft===true);
+        try{options.onDiagnostic?.({type:'provider_result',finishKind:options.resultMeta?.finishKind||'unknown',finishReason:options.resultMeta?.finishReason||'unknown',responseChars:streamed.length});}catch(e){console.error('诊断事件回调失败',e);}
+        return streamed;
+      }catch(e){
+        if(options.resultMeta?.finishReason)try{options.onDiagnostic?.({type:'provider_result',finishKind:options.resultMeta.finishKind,finishReason:options.resultMeta.finishReason,responseChars:e?.partialDraft?.length||0});}catch(diagErr){console.error('诊断事件回调失败',diagErr);}
+        if(e instanceof ApiError)e.details=diagnostic({errorSource:'stream',httpStatus:res.status,errorCode:e.code,streamDetails:String(e.details||'').slice(0,500)});throw e;}
     }
     emitProgress(options.onProgress,{phase:'receiving',percent:68,detail:'模型已响应，正在解析正文…'});
     const data=await parseJsonResponse(res,'API');
     captureUsageMetrics(data,cfg.model,options.onProgress);
     const ending=finishState(data);
+    try{options.onDiagnostic?.({type:'provider_result',finishKind:ending.kind,finishReason:ending.reason,responseChars:0});}catch(e){console.error('诊断事件回调失败',e);}
     if(ending.kind==='blocked'||ending.kind==='abnormal')assertFinishState({finishKind:ending.kind,finishReason:ending.reason},0);
     let reply;try{reply=extractReply(data)}catch(e){const cause=asApiError(e,'E_API_UNRECOGNIZED_RESPONSE');if(cause instanceof ApiError)cause.details=diagnostic({errorSource:'response_shape',errorCode:cause.code,httpStatus:res.status,responseShape:Object.keys(data||{}).slice(0,20),messageShape:Object.keys(data?.choices?.[0]?.message||{}).slice(0,20)});throw cause;}
     reply=text(reply);
+    try{options.onDiagnostic?.({type:'provider_result',finishKind:ending.kind,finishReason:ending.reason,responseChars:reply.length});}catch(e){console.error('诊断事件回调失败',e);}
     if(options.resultMeta){options.resultMeta.finishReason=ending.reason;options.resultMeta.finishKind=ending.kind;options.resultMeta.refused=!!data?.choices?.[0]?.message?.refusal;options.resultMeta.usage=data?.usage||null;options.resultMeta.requestId=requestId;}
     if(!(options.allowIncompleteDraft===true&&ending.kind==='truncated'))try{assertFinishState({finishKind:ending.kind,finishReason:ending.reason},reply.length)}catch(e){e.partialDraft=reply.slice(0,24000);throw e;}
     if(!reply)throw new ApiError('E_API_EMPTY_REPLY','API 请求成功，但模型返回了空白正文。',{status:res.status,details:diagnostic({errorSource:'response_body',httpStatus:res.status,contentType,finishReason:data?.choices?.[0]?.finish_reason||'unknown',responseShape:Object.keys(data||{}).slice(0,20),messageShape:Object.keys(data?.choices?.[0]?.message||{}).slice(0,20),visibleChars:0})});
@@ -2087,11 +2100,20 @@
     actionTail(messages,promptAction,opts);
     emitProgress(progress,{phase:'prompt_ready',percent:34,detail:`Prompt（提示词）已组装 · ${messages.length} 条消息`});
     const storyResultMeta={};
-    const replyRaw=await callModel(messages,temp,signal,{onProgress:progress,resultMeta:storyResultMeta});
+    // Diagnostics intentionally live outside state, local-store, History,
+    // versions, rolling/core/fact memory and the backup/export contract.
+    const journal=window.MimaDiagnosticJournal;
+    const diagnosticId=journal?.begin?.({sessionId:id,turnId:options.diagnosticTurnId||'',action});
+    let diagnosticCandidate='';
+    try{
+    const replyRaw=await callModel(messages,temp,signal,{onProgress:progress,resultMeta:storyResultMeta,
+      onDiagnostic:event=>{if(diagnosticId)void journal.event(diagnosticId,event);}});
+    diagnosticCandidate=replyRaw;
     validateStoryReply(replyRaw,storyResultMeta);
     // Hard invariant: never persist a blank assistant message.
     if(!text(replyRaw))throw new ApiError('E_API_EMPTY_REPLY','模型返回空白正文，已阻止写入剧情。');
     const reply=applyRegexForSession(session,replyRaw,'output');
+    diagnosticCandidate=reply;
     // Output regex is a second admission boundary: it must not turn an
     // accepted provider response into an empty or provider-voice refusal.
     validateStoryReply(reply,storyResultMeta);
@@ -2123,7 +2145,17 @@
     // Auto summary is a lower-priority independent job; never block Direct Reply.
     queueRollingSummary(id,temp);
     emitProgress(progress,{phase:'done',percent:100,detail:'剧情生成完成。'});
+    if(diagnosticId)void journal.event(diagnosticId,{type:'settlement',status:'committed',finishKind:storyResultMeta.finishKind,finishReason:storyResultMeta.finishReason});
     return saved;
+    }catch(e){
+      if(diagnosticId){
+        const code=e?.code||'E_STORY_RUNTIME';
+        void journal.event(diagnosticId,{type:'settlement',status:e?.name==='AbortError'?'aborted':code==='E_CANONICAL_CONFLICT'?'conflict':'rejected',
+          code,message:e?.message||String(e),details:e?.details||'',httpStatus:e?.status||0,
+          rawRejectedReply:e?.partialDraft||diagnosticCandidate||'',rawLimited:typeof e?.partialDraft==='string'&&e.partialDraft.length>=24000,finishKind:storyResultMeta.finishKind||'',finishReason:storyResultMeta.finishReason||''});
+      }
+      throw e;
+    }
   }
   async function editMessage(id,msgId,content,opts={}){const s=getSession(id);if(!s)throw new Error('未找到剧本');const i=s.messages.findIndex(m=>m.id===msgId);if(i<0)throw new Error('未找到消息');const msg=s.messages[i];archiveVersion(msg,'manual_edit');msg.content=String(content||'');msg.rawContent=msg.content;msg.renderedContent=msg.role==='assistant'?applyRegexForSession(s,msg.content,'display'):msg.content;if(msg.role==='user')msg.metadata={...(msg.metadata||{}),inputSemanticMode:inputSemanticMode(s),inputSemanticParserVersion:'1.1.7'};msg.isEdited=true;msg.editedAt=nowIso();msg.tokenEstimate=estimateTokens(msg.content);s.legacyMemoryQuarantined=true;if(opts.truncateAfter){const removed=s.messages.slice(i+1);if(removed.length){s.archivedBranches=arr(s.archivedBranches);s.archivedBranches.push({id:makeId('branch'),fromMessageId:msg.id,reason:'edit_truncate_after',archivedAt:nowIso(),messages:removed});s.messages=s.messages.slice(0,i+1);}}return saveSession(s);}
   async function deleteMessage(id,msgId){
@@ -2181,7 +2213,7 @@
       let m=path.match(/^\/sessions\/([^/]+)$/);if(m&&method==='GET'){const s=getSession(m[1]);return s?ok(s):fail('未找到剧本');}
       if(m&&method==='PATCH'){const s=getSession(m[1]);return s?ok(await saveSession({...s,...body,id:s.id,createdAt:s.createdAt})):fail('未找到剧本');}
       if(m&&method==='DELETE'){const before=state.sessions.length;state.sessions=state.sessions.filter(x=>x.id!==m[1]);await persist();return ok({deleted:state.sessions.length<before});}
-      m=path.match(/^\/sessions\/([^/]+)\/chat$/);if(m&&method==='POST')return ok(await processStoryTurn(m[1],body?.text,body?.action||'send',signal,body?.temperature,{directorNote:body?.directorNote||'',targetMessageId:body?.targetMessageId||null},progress));
+      m=path.match(/^\/sessions\/([^/]+)\/chat$/);if(m&&method==='POST')return ok(await processStoryTurn(m[1],body?.text,body?.action||'send',signal,body?.temperature,{directorNote:body?.directorNote||'',targetMessageId:body?.targetMessageId||null,diagnosticTurnId:body?.diagnosticTurnId||''},progress));
       m=path.match(/^\/sessions\/([^/]+)\/prompt-preview$/);if(m&&method==='POST')return ok(previewPrompt(m[1],body||{}));
       m=path.match(/^\/sessions\/([^/]+)\/opening$/);if(m&&method==='POST')return ok(await addOpening(m[1],body?.content||''));
       m=path.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)$/);if(m&&method==='PATCH')return ok(await editMessage(m[1],m[2],body?.content,{truncateAfter:!!body?.truncateAfter}));

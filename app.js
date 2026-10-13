@@ -330,7 +330,7 @@ function renderSettings(){
     syncAppearancePreviewMode(settingsTab==='appearance');
     const box=qs('settings-content');
     if(settingsTab==='png-resources'){renderPngResourcesTab(box);return;}
-    if(!currentSessionData&&!['appearance','api','data'].includes(settingsTab)){box.innerHTML='<div class="empty-state"><p>选择一种方式开始。</p><div class="toolbar"><button class="primary-btn" onclick="openNewSessionModal()">开始新剧情</button><button class="ghost-btn" onclick="MimaCompatUI.open()">🎴 玩酒馆角色卡</button></div></div>';return}
+    if(!currentSessionData&&!['appearance','api','data','diagnostics'].includes(settingsTab)){box.innerHTML='<div class="empty-state"><p>选择一种方式开始。</p><div class="toolbar"><button class="primary-btn" onclick="openNewSessionModal()">开始新剧情</button><button class="ghost-btn" onclick="MimaCompatUI.open()">🎴 玩酒馆角色卡</button></div></div>';return}
     if(settingsTab==='roles')renderRolesTab(box);
     else if(settingsTab==='worldbook')renderWorldbookTab(box);
     else if(settingsTab==='presets')renderPresetsTab(box);
@@ -340,6 +340,7 @@ function renderSettings(){
     else if(settingsTab==='appearance')renderAppearanceTab(box,renderEpoch);
     else if(settingsTab==='api')renderApiTab(box);
     else if(settingsTab==='prompt')renderPromptTab(box);
+    else if(settingsTab==='diagnostics')renderDiagnosticsTab(box);
     else if(settingsTab==='data')renderDataTab(box,renderEpoch);
 }
 
@@ -1247,7 +1248,7 @@ function friendlyApiError(e){const i=describeApiError(e);return `${i.code}${i.st
 function chooseApiImport(){qs('api-config-file-input').value='';qs('api-config-file-input').click()}
 async function importApiConfigFile(file){if(!file)return;try{const raw=JSON.parse(await file.text()),src=raw.data||raw;const temperature=Number(src.temperature??localStorage.getItem(TEMP_KEY)??.85);MimaStandalone.saveApiConfig({apiBase:src.apiBase||src.baseUrl||src.base_url||'',apiKey:src.apiKey||src.api_key||src.key||'',model:src.model||'',chatEndpoint:src.chatEndpoint||'',modelsEndpoint:src.modelsEndpoint||'',extraHeaders:typeof src.extraHeaders==='string'?src.extraHeaders:src.extraHeaders?JSON.stringify(src.extraHeaders):'',sendTemperature:src.sendTemperature!==false,temperature,stream:!!(src.stream??src.streaming),maxTokens:Number(src.maxTokens||0),contextWindowTokens:Number(src.contextWindowTokens??src.context_window??0)});localStorage.setItem(TEMP_KEY,String(temperature));renderApiTab(qs('settings-content'));toast('API（接口）配置已导入到当前浏览器')}catch(e){toast(`API（接口）配置导入失败：${e.message}`)}}
 
-function renderPromptTab(box){box.innerHTML=`<section class="settings-section"><h3>🔬 Prompt Inspector（提示词检查器）</h3><p class="helper">只预览、不调用 LLM。咪嘛馆在模型上下文容量允许时优先提供完整原始剧情；每轮各注入一份已启用 Persona / Preset 与预算内命中的 Worldbook。只有已核实的模型窗口不足时，才从本次 Prompt 暂时省略最早剧情，绝不删除本地 History。v1.1.4 还会显示上游返回的缓存命中统计；没有统计不等于没有缓存。</p><div class="toolbar"><button class="primary-btn" onclick="refreshPromptInspector()">扫描本轮 Prompt（提示词）</button></div><div id="prompt-inspector"><div class="row-sub">点击上方按钮生成预览。</div></div></section>`}
+function renderPromptTab(box){box.innerHTML=`<section class="settings-section"><h3>🔬 Prompt Inspector（提示词检查器）</h3><p class="helper">只预览、不调用 LLM。咪嘛馆在模型上下文容量允许时优先提供完整原始剧情；每轮各注入一份已启用 Persona / Preset 与预算内命中的 Worldbook。只有已核实的模型窗口不足时，才从本次 Prompt 暂时省略最早剧情，绝不删除本地 History。v1.1.4 还会显示上游返回的缓存命中统计；没有统计不等于没有缓存。</p><div class="toolbar"><button class="primary-btn" onclick="refreshPromptInspector()">扫描本轮 Prompt（提示词）</button><button class="ghost-btn" onclick="switchSettingsTab('diagnostics')">查看真实请求和异常日志</button></div><div id="prompt-inspector"><div class="row-sub">点击上方按钮生成预览。</div></div></section>`}
 async function refreshPromptInspector(){
     const targetSessionId=currentSessionId,root=qs('prompt-inspector'),epoch=settingsRenderEpoch;
     if(!targetSessionId||!root)return;
@@ -1260,6 +1261,78 @@ async function refreshPromptInspector(){
     const cacheText=Number.isFinite(Number(cached))?Number(cached).toLocaleString():'—';
     const cacheNote=u?`最近一次上游 usage${u.model?` · ${escapeHtml(u.model)}`:''}${Number.isFinite(Number(cached))?`：缓存命中 ${Number(cached).toLocaleString()} tokens`:'：未提供 cached tokens 字段'}。`:'当前中转/模型尚未返回可识别的 usage 统计。';
     root.innerHTML=`<div class="prompt-stats"><div class="stat-card"><div class="stat-num">${Number(d.estimatedInputTokens||0).toLocaleString()}</div><div class="stat-label">估算输入 Tokens</div></div><div class="stat-card"><div class="stat-num">${d.recentMessageCount}/${d.recentMessageLimit||'—'}</div><div class="stat-label">最近消息窗口</div></div><div class="stat-card"><div class="stat-num">${d.matchedWorldbookEntries.length}</div><div class="stat-label">世界书命中</div></div><div class="stat-card"><div class="stat-num">${cacheText}</div><div class="stat-label">最近缓存命中 Tokens</div></div><div class="stat-card"><div class="stat-num">${d.systemChars}</div><div class="stat-label">System 字符</div></div><div class="stat-card"><div class="stat-num">${d.finalMessageCount}</div><div class="stat-label">最终 Messages</div></div></div><div class="cache-insight-card"><strong>🧊 Cache Insight（缓存观察）</strong><div class="row-sub">${cacheNote} 缓存是否真正命中由上游 Provider 决定；咪嘛馆不会伪造“已缓存”。</div></div><div class="row-sub">${d.contextTrace?.uncoveredRawCount?`本轮有 ${d.contextTrace.uncoveredRawCount} 条待总结旧原文处于最近窗口外；相关检索 ${d.contextTrace.retrievedCount} 条，未覆盖 ${d.contextTrace.omittedCount} 条（原文仍在本地）。`:'旧原文覆盖无额外缺口。'} ${d.contextTrace?.budgetVerified?'上下文预算：使用已配置模型窗口。':'模型上下文窗口未核实：不会以假定的 32K 上限阻断角色回复；检索旧原文仍受软预算约束。建议在 API 设置填写真实窗口以获得准确校验。'}</div><h4>本轮 Prompt 构成（字符数，非精确 Tokens）</h4><div class="hit-list">${(d.sections||[]).slice().sort((a,b)=>b.chars-a.chars).map(x=>`<div class="hit-item">${escapeHtml(x.name)}：${Number(x.chars||0).toLocaleString()} 字符</div>`).join('')||'<div class="hit-item">暂无项目</div>'}</div><h4>本轮世界书</h4><div class="row-sub">本轮预算：${Number(d.worldbookBudgetChars??0).toLocaleString()} 字符，实际占用：${Number(d.worldbookUsedChars??0).toLocaleString()} 字符。未注入条目请核对触发条件与跳过原因。</div><div class="hit-list">${d.matchedWorldbookEntries.length?d.matchedWorldbookEntries.map(x=>`<div class="hit-item">✅ ${escapeHtml(x.bookName)} / ${escapeHtml(x.entryName)} · Depth（深度） ${x.depth} · ${escapeHtml(x.position)} · ${escapeHtml(x.reason)}${x.hits?.length?` · 命中：${escapeHtml(x.hits.join(', '))}`:''}</div>`).join(''):'<div class="hit-item">本轮没有触发世界书条目；未触发条目不会进入本轮 Prompt。</div>'}</div><h4 style="margin-top:16px">实际 System 消息（预设与引擎规则）</h4><pre class="prompt-pre">${escapeHtml(d.actualSystemPreview||'')}</pre><h4>剧情来源资料（实际以 User 消息发送，不是 System）</h4><pre class="prompt-pre">${escapeHtml(d.userMaterialPreview||'（本轮无资料块）')}</pre><h4>面具加载与注入状态</h4><div class="hit-list">${(d.maskTrace||[]).map(x=>`<div class="hit-item">${escapeHtml(x.kind)} / ${escapeHtml(x.name||x.id||'未挂载')}：${escapeHtml(x.reason)} · ${x.injected?'已注入 user 资料':'未注入'}</div>`).join('')}</div><h4>原生预设挂载与实际出站（0 为最高创作优先级）</h4><div class="row-sub">未挂载、已禁用和空内容均不会发送。实际顺序请查看下方完整消息队列的第一条 System。</div><div class="hit-list">${(d.presetTrace||[]).map(x=>`<div class="hit-item">${escapeHtml(x.name||x.id)}：${escapeHtml(x.reason)} · priority=${x.priority??'—'} · ${x.injected?'已进入 System':'未注入'}</div>`).join('')||'本轮未挂载预设'}</div><h4>世界书未注入原因</h4><div class="hit-list">${(d.worldbookMountTrace||[]).filter(x=>x.reason!=='enabled').map(x=>`<div class="hit-item">${escapeHtml(x.bookName||x.bookId)}：${escapeHtml(x.reason)}</div>`).join('')}${(d.skippedWorldbookEntries||[]).map(x=>`<div class="hit-item">${escapeHtml(x.bookName)} / ${escapeHtml(x.entryName)}：${escapeHtml(x.reason)}${x.reason==='budget'?`（需要 ${x.neededChars} 字符，剩余 ${x.remainingChars}）`:''}</div>`).join('')||'无额外跳过条目'}</div><h4>世界书深度注入（实际为 User 消息）</h4><div class="hit-list">${(d.depthInjections||[]).map(x=>`<div class="hit-item">${escapeHtml(x.bookName)} / ${escapeHtml(x.entryName)} · depth=${x.depth} · ${x.chars} 字符</div>`).join('')||'本轮无深度注入'}</div><details style="margin-top:12px"><summary>查看完整 Message（消息）队列</summary><pre class="prompt-pre">${escapeHtml(d.messagePreview.map(x=>`#${x.index} ${x.role}\n${x.content}`).join('\n\n'))}</pre></details>`;
+}
+
+// Independent diagnostics viewer. No route into canonical History or Memory.
+const diagnosticViewState={scope:'session',kind:'all',selectedId:null};
+function renderDiagnosticsTab(box){
+    box.innerHTML=`<section class="settings-section"><h3>🧾 生成诊断日志（独立保存）</h3>
+    <p class="helper">这里只记录原生正常剧情的真实模型请求、结果和失败证据；不是剧情历史，也不会被模型、预设、记忆或酒馆插件读取。日志保留在当前浏览器的独立 IndexedDB，不随剧情备份导出。Prompt 包含私人剧情，请勿随意分享。</p>
+    <div class="toolbar"><label class="form-label">查看范围 <select id="diag-scope" class="field"><option value="session">当前剧情</option><option value="all">全部剧情</option></select></label>
+    <label class="form-label">记录类型 <select id="diag-kind" class="field"><option value="all">全部请求</option><option value="errors">只看异常</option></select></label>
+    <button class="ghost-btn" id="diag-refresh">刷新日志</button></div>
+    <div class="toolbar"><button class="ghost-btn" id="diag-clear-session">清空当前剧情日志</button><button class="ghost-btn danger" id="diag-clear-all">一键清空全部日志</button></div>
+    <div id="diag-status" class="row-sub" role="status">正在读取独立日志……</div><div id="diag-list" class="hit-list"></div><div id="diag-detail"></div>
+    </section>`;
+    const scope=qs('diag-scope'),kind=qs('diag-kind');
+    if(!currentSessionId){diagnosticViewState.scope='all';scope.querySelector('option[value="session"]').disabled=true;}
+    scope.value=diagnosticViewState.scope;kind.value=diagnosticViewState.kind;
+    scope.onchange=()=>{diagnosticViewState.scope=scope.value;diagnosticViewState.selectedId=null;void refreshDiagnosticsView();};
+    kind.onchange=()=>{diagnosticViewState.kind=kind.value;diagnosticViewState.selectedId=null;void refreshDiagnosticsView();};
+    qs('diag-refresh').onclick=()=>void refreshDiagnosticsView();
+    qs('diag-clear-session').disabled=!currentSessionId;
+    qs('diag-clear-session').onclick=async()=>{
+        const id=currentSessionId;if(!id||!confirm('确定只清除当前剧情的诊断日志？不会删除任何剧情、预设或记忆。'))return;
+        try{await MimaDiagnosticJournal.clearSession(id);diagnosticViewState.selectedId=null;await refreshDiagnosticsView();}catch(e){toast(`清理日志失败：${e.message}`)}
+    };
+    qs('diag-clear-all').onclick=async()=>{
+        if(!confirm('确定一键清空本浏览器里所有剧情的诊断日志？此操作不可撤销，但不会删除剧情与记忆。'))return;
+        try{await MimaDiagnosticJournal.clearAll();diagnosticViewState.selectedId=null;await refreshDiagnosticsView();}catch(e){toast(`清理日志失败：${e.message}`)}
+    };
+    void refreshDiagnosticsView();
+}
+async function refreshDiagnosticsView(){
+    const epoch=settingsRenderEpoch,sessionId=diagnosticViewState.scope==='session'?currentSessionId:null;
+    const root=qs('diag-list'),status=qs('diag-status'),detail=qs('diag-detail');
+    if(!root||!status||!detail)return;
+    let records;
+    try{records=await MimaDiagnosticJournal.list({sessionId,errorsOnly:diagnosticViewState.kind==='errors'});}
+    catch(e){if(settingsTab==='diagnostics'&&epoch===settingsRenderEpoch){status.textContent=`独立日志读取失败：${e.message}。原生剧情数据未修改。`;root.textContent='';detail.textContent='';}console.error('诊断日志读取失败',e);return;}
+    if(settingsTab!=='diagnostics'||epoch!==settingsRenderEpoch||root!==qs('diag-list'))return;
+    const policy=MimaDiagnosticJournal.status(),error=policy.error;
+    status.textContent=`${records.length} 条记录 · 自动保留最近 ${policy.limitCount} 条、最长 ${policy.limitDays} 天、约 ${Math.round(policy.limitBytes/1048576)} MB。${error?'最近存储故障：'+error:'日志写入与清理不会修改剧情数据。'}`;
+    root.innerHTML='';
+    for(const record of records){
+        const b=document.createElement('button');b.type='button';b.className='ghost-btn diag-list-item';
+        b.setAttribute('aria-pressed',String(diagnosticViewState.selectedId===record.id));
+        const label={committed:'✅ 已提交',rejected:'⛔ 已拒绝',aborted:'⏹ 已取消',conflict:'⚠️ 提交冲突',requesting:'⏳ 请求中或异常退出',provider_returned:'⏳ 已返回，待结算',preparing:'⏳ 准备中'}[record.status]||record.status;
+        b.textContent=`${label} · ${new Date(record.createdAt).toLocaleString()} · ${record.action||'send'} · ${record.model||'模型未请求'} · ${record.error?.code||record.finishReason||''}`;
+        b.onclick=()=>{diagnosticViewState.selectedId=record.id;void refreshDiagnosticsView();};
+        root.appendChild(b);
+    }
+    if(!records.length)root.textContent='当前范围没有诊断记录。正常剧情可继续使用；只有真实生成操作才会产生记录。';
+    const record=records.find(x=>x.id===diagnosticViewState.selectedId);
+    detail.innerHTML='';if(!record)return;
+    const wrap=document.createElement('div');wrap.className='diag-detail entry-card';
+    const request=record.request;
+    const fmt=request?.messages?.map((m,i)=>`#${i} ${m.role}\n${m.content}`).join('\n\n')||'';
+    wrap.innerHTML=`<h4>诊断详情 · ${escapeHtml(record.action)}</h4>
+      <div class="row-sub">会话：${escapeHtml(record.sessionId)} · Turn：${escapeHtml(record.turnId)} · Request：${escapeHtml(record.requestId||'请求前失败')}<br>
+      结果：${escapeHtml(record.status)} · Model：${escapeHtml(record.model||'未请求')} · 结束：${escapeHtml(record.finishKind||'—')} / ${escapeHtml(record.finishReason||'—')} · HTTP：${Number(record.error?.status||0)||'—'}</div>
+      <div class="toolbar"><button class="ghost-btn" id="diag-delete-one">删除这条</button><button class="ghost-btn" id="diag-copy-one">复制此条 JSON</button></div>
+      <h4>真实请求内容（不包含 API Key 和请求头）</h4>
+      ${record.requestTruncated?'<div class="row-sub">本轮请求超过日志单条上限，未保留完整正文。实际发送不受影响；本条不能作为完整 Prompt 证据。</div>':''}
+      ${request?`<div class="row-sub">${request.messages.length} 条消息 · 模型 ${escapeHtml(request.model)} · stream=${request.stream} · max_tokens=${escapeHtml(request.max_tokens??'未设置')}</div><details><summary>展开实际 messages</summary><pre class="prompt-pre">${escapeHtml(fmt)}</pre></details>`:'<div class="row-sub">没有保存完整请求：可能在发送前失败，或超出日志容量上限。</div>'}
+      ${record.error?`<h4>错误与拒绝/截断诊断</h4><pre class="prompt-pre">${escapeHtml(JSON.stringify(record.error,null,2))}</pre><h4>未采纳的模型文本（仅诊断）</h4><pre class="prompt-pre">${escapeHtml(record.rawRejectedReply||'没有可保存的失败正文。')}${record.rejectedReplyTruncated?'\n[诊断副本超过上限，后半段未保存]':''}</pre>`:'<div class="row-sub">本条没有失败正文；成功回复仅存于原有剧情，不在此复制第二份。</div>'}`;
+    detail.appendChild(wrap);
+    qs('diag-delete-one').onclick=async()=>{
+        if(!confirm('删除这条诊断记录？不会删除剧情消息。'))return;
+        try{await MimaDiagnosticJournal.remove(record.id);diagnosticViewState.selectedId=null;await refreshDiagnosticsView();}catch(e){toast(`删除日志失败：${e.message}`)}
+    };
+    qs('diag-copy-one').onclick=async()=>{
+        if(!confirm('本记录可能含完整私人 Prompt。确定复制到剪贴板？'))return;
+        try{await navigator.clipboard.writeText(JSON.stringify(record,null,2));toast('诊断记录已复制。')}catch(e){toast(`复制失败：${e.message}`)}
+    };
 }
 
 function setupEditorButtons(deleteFn,saveFn){qs('editor-save').textContent='保存';const del=qs('editor-delete');if(deleteFn){del.classList.remove('hidden');del.onclick=deleteFn}else{del.classList.add('hidden');del.onclick=null}qs('editor-save').onclick=saveFn}
@@ -1408,7 +1481,7 @@ async function triggerChat(text,actionType='send'){
     try{
         // Distinct sessions must never abort each other's Direct Reply.
         const res=await fetchStory(`/sessions/${targetSessionId}/chat`,'POST',
-            {text,action:actionType,temperature:getTemp(),directorNote,targetMessageId},false,
+            {text,action:actionType,temperature:getTemp(),directorNote,targetMessageId,diagnosticTurnId:String(owner.turnId)},false,
             payload=>handleGenerationProgress(payload,owner),owner.controller.signal);
         if(!res.success&&!res.aborted&&generationOwners.get(targetSessionId)===owner){
             generationFailures.set(targetSessionId,{...describeApiError(res),action:actionType});

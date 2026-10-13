@@ -689,3 +689,11 @@ html[data-mima-theme="eink"] .novel-text-unit[open]>summary,html[data-mima-theme
 .png-resource-raw {max-height:min(54vh,540px);white-space:pre-wrap;overflow-wrap:anywhere;overflow:auto;user-select:text}
 .png-resource-card .check-row {min-width:0;max-width:100%}
 }
+
+/* Diagnostic viewer: scoped to the independent settings tab. */
+.diag-list-item{display:block;width:100%;text-align:left;white-space:normal;overflow-wrap:anywhere;padding:9px 12px;font-size:.78rem;line-height:1.55}
+.diag-list-item[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft)}
+.diag-detail{margin-top:15px;padding:12px;overflow-wrap:anywhere}
+.diag-detail details{margin-top:8px}
+.diag-detail .prompt-pre{max-height:390px;user-select:text}
+#diag-status{margin:9px 0;overflow-wrap:anywhere}
