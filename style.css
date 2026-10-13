@@ -250,7 +250,8 @@ body::before{
   overflow-wrap:anywhere;
 }
 .assistant-msg .msg-content.safe-html-content{
-  font-family:inherit;
+  /* This is the story text container, not the surrounding UI chrome. */
+  font-family:var(--font-story);
   font-size:var(--story-font-size);
   line-height:var(--story-line-height);
   letter-spacing:var(--story-letter-spacing);

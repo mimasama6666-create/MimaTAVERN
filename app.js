@@ -13,8 +13,9 @@ let regexPacks = [];
 let activeRequest = null;
 let isGenerating = false;
 let settingsTab = 'roles';
-let settingsNavigationTouched = false;
 let settingsRenderEpoch = 0;
+let sessionNavigationEpoch = 0; // Only the most recent user-selected session may own the visible UI.
+let settingsNavigationTouched = false;
 let editorState = null;
 let pendingPersonaType = 'character';
 let pngResourceInspection = null;
@@ -109,13 +110,12 @@ function openSettings(tab='roles'){settingsNavigationTouched=true;settingsTab=ta
 function closeSettings(){settingsNavigationTouched=true;++settingsRenderEpoch;qs('settings-modal').classList.add('hidden');if(deferredGenerationProgress){setGenerationProgress(deferredGenerationProgress);deferredGenerationProgress=null}if(liveStreamState)liveStreamState.visualPaused=false}
 function switchSettingsTab(tab){settingsNavigationTouched=true;settingsTab=tab;renderSettings()}
 function maybeOpenInitialApiSettings(){
-    // First-run invitation cannot override a tab the user has already opened.
+    // This delayed first-run invitation must never override a user's tab selection.
     if(settingsNavigationTouched||isSettingsOpen()||!currentSessionData||MimaStandalone.getApiConfig().apiBase)return false;
     openSettings('api');return true;
 }
-function settingsRenderIsCurrent(tab,epoch,box){
-    return isSettingsOpen()&&settingsTab===tab&&settingsRenderEpoch===epoch&&qs('settings-content')===box;
-}
+function settingsRenderIsCurrent(tab,epoch,box){return settingsTab===tab&&epoch===settingsRenderEpoch&&isSettingsOpen()&&box===qs('settings-content')}
+
 function syncAppearancePreviewMode(on){
     const panel=qs('settings-modal')?.querySelector('.settings-panel');
     if(!panel)return;
@@ -158,17 +158,28 @@ function closeNewSessionModal(){qs('new-session-modal').classList.add('hidden')}
 function toggleDirector(){qs('director-wrap').classList.toggle('collapsed')}
 
 async function loadAll() {
-    const [s,m,p,w,c,r] = await Promise.all([fetchStory('/sessions'),fetchStory('/masks'),fetchStory('/presets'),fetchStory('/worldbooks'),fetchStory('/css-presets'),fetchStory('/regex-packs')]);
-    sessions=s.data||[]; masks=m.data||[]; presets=p.data||[]; worldbooks=w.data||[]; cssPresets=c.data||[]; regexPacks=r.data||[];
-    renderSessions();
-    if (currentSessionId) {
-        const exists=sessions.some(x=>x.id===currentSessionId);
-        if (exists) await openSession(currentSessionId,false);
-        else { currentSessionId=null; currentSessionData=null; refreshHeader(); refreshChatBox(); }
+    const selectedAtStart=currentSessionId, navigationAtStart=sessionNavigationEpoch;
+    const results=await Promise.all([fetchStory('/sessions'),fetchStory('/masks'),fetchStory('/presets'),fetchStory('/worldbooks'),fetchStory('/css-presets'),fetchStory('/regex-packs')]);
+    const names=['sessions','masks','presets','worldbooks','css-presets','regex-packs'];
+    // A failed read is NOT a verified empty collection. Keep the previous UI
+    // references untouched; callers must see the failure, not an empty library.
+    for(let i=0;i<results.length;i++){
+        const result=results[i];
+        if(!result?.success||!Array.isArray(result.data))
+            throw new Error(`E_LIBRARY_READ_UNVERIFIED: ${names[i]} · ${result?.msg||'返回值无法验证'}`);
     }
-    if (!currentSessionId && sessions.length) await openSession(sessions[0].id,false);
+    [sessions,masks,presets,worldbooks,cssPresets,regexPacks]=results.map(result=>result.data);
+    renderSessions();
+    // If the player switched sessions while these independent reads ran, no
+    // stale loadAll continuation is allowed to navigate back to the old one.
+    if(sessionNavigationEpoch!==navigationAtStart)return;
+    if(selectedAtStart){
+        if(sessions.some(x=>x.id===selectedAtStart)) await openSession(selectedAtStart,false);
+        else {currentSessionId=null;currentSessionData=null;sessionNavigationEpoch++;refreshHeader();refreshChatBox();}
+    }
+    if(!currentSessionId&&sessions.length)await openSession(sessions[0].id,false);
     applyCustomCss();
-    if (!qs('settings-modal').classList.contains('hidden')) renderSettings();
+    if(isSettingsOpen())renderSettings();
 }
 
 function renderSessions() {
@@ -188,17 +199,40 @@ async function createSession(){
     closeNewSessionModal(); qs('new-session-title').value=''; await loadAll(); await openSession(res.data.id,true); openSettings('roles');
 }
 async function openSession(id, close=true){
-    const res=await fetchStory(`/sessions/${id}`); if(!res.success)return toast(res.msg||'打开失败');
-    currentSessionId=id; currentSessionData=res.data; if(close)closeDrawer(); refreshHeader(); refreshChatBox(); applyCustomCss(); renderSessions(); if(!qs('settings-modal').classList.contains('hidden'))renderSettings();
+    const epoch=++sessionNavigationEpoch;
+    const res=await fetchStory(`/sessions/${id}`);
+    if(epoch!==sessionNavigationEpoch)return null; // Later navigation owns the page.
+    if(!res.success||res.data?.id!==id){toast(res.msg||'打开剧情失败：返回了不同的会话');return null;}
+    currentSessionId=id;currentSessionData=res.data;
+    if(close)closeDrawer();refreshHeader();refreshChatBox();applyCustomCss();renderSessions();if(isSettingsOpen())renderSettings();
+    return res.data;
 }
 async function patchCurrent(patch, quiet=false){
-    if(!currentSessionId)return null;
-    const res=await fetchStory(`/sessions/${currentSessionId}`,'PATCH',patch);
-    if(res.success){currentSessionData=res.data;await refreshSessionSummaryList();refreshHeader();applyCustomCss();if(!quiet)renderSettings();return res.data}
-    toast(res.msg||'保存失败');return null;
+    const targetSessionId=currentSessionId;
+    if(!targetSessionId)return null;
+    const res=await fetchStory(`/sessions/${targetSessionId}`,'PATCH',patch);
+    if(!res.success||res.data?.id!==targetSessionId){toast(res.msg||'保存失败：会话数据不一致');return null;}
+    if(targetSessionId===currentSessionId){
+        currentSessionData=res.data;
+        try{await refreshSessionSummaryList()}
+        catch(e){console.error('会话变更已保存，但列表读取失败',{targetSessionId,error:e});toast('设置已保存，但会话列表刷新失败；未覆盖存档');}
+        if(targetSessionId===currentSessionId){refreshHeader();applyCustomCss();if(!quiet&&isSettingsOpen())renderSettings();}
+    }
+    return res.data;
 }
-async function refreshSessionSummaryList(){const s=await fetchStory('/sessions');sessions=s.data||sessions;renderSessions()}
-async function deleteCurrentSession(){if(!currentSessionId||!confirm('确定删除这个剧情 Session（剧情会话）？此操作不可撤销。'))return;await fetchStory(`/sessions/${currentSessionId}`,'DELETE');currentSessionId=null;currentSessionData=null;closeSettings();await loadAll();}
+async function refreshSessionSummaryList(){
+    const result=await fetchStory('/sessions');
+    if(!result.success||!Array.isArray(result.data))throw new Error('E_SESSION_LIST_UNVERIFIED: '+(result.msg||'会话列表读取失败'));
+    sessions=result.data;renderSessions();
+}
+async function deleteCurrentSession(){
+    const targetSessionId=currentSessionId;
+    if(!targetSessionId||!confirm('确定删除这个剧情 Session（剧情会话）？此操作不可撤销。'))return;
+    const result=await fetchStory(`/sessions/${targetSessionId}`,'DELETE');
+    if(!result.success)return toast(result.msg||'删除失败，原剧情仍保留');
+    if(currentSessionId===targetSessionId){currentSessionId=null;currentSessionData=null;sessionNavigationEpoch++;closeSettings();}
+    await loadAll();
+}
 function openSessionHistoryEditor(id){const old=sessions.find(x=>x.id===id);if(!old)return;editorState={type:'session-history',id,old};qs('editor-title').textContent='编辑历史剧情';qs('editor-eyebrow').textContent='STORY HISTORY（历史剧情）';qs('editor-body').innerHTML=`<label class="form-label">剧情标题</label><input id="session-history-title" class="field" value="${escapeHtml(old.title||'')}"><p class="helper">这里只修改剧情标题，不会改动剧情消息、角色、世界书、预设、正则或其他存档内容。</p>`;setupEditorButtons(()=>deleteSessionFromHistory(id),saveSessionHistoryEditor);qs('editor-modal').classList.remove('hidden')}
 async function saveSessionHistoryEditor(){const id=editorState?.id;if(!id)return;const old=sessions.find(x=>x.id===id);const title=qs('session-history-title').value.trim()||old?.title||'未命名咪嘛宇宙';const res=await fetchStory(`/sessions/${id}`,'PATCH',{title});if(!res.success)return toast(res.msg||'剧情标题保存失败');closeEditor();await loadAll();toast('历史剧情标题已保存')}
 async function deleteSessionFromHistory(id){const old=sessions.find(x=>x.id===id);if(!old)return;if(!confirm(`确定删除「${old.title||'未命名咪嘛宇宙'}」？\n\n这会删除该剧情会话与其中的消息，操作不可撤销；角色卡、世界书、预设、正则和 CSS 库不会一起删除。`))return;const res=await fetchStory(`/sessions/${id}`,'DELETE');if(!res.success)return toast(res.msg||'删除剧情失败');if(currentSessionId===id){currentSessionId=null;currentSessionData=null;}if(editorState?.type==='session-history'&&editorState.id===id)closeEditor();await loadAll();toast('历史剧情已删除')}
@@ -215,7 +249,7 @@ function refreshHeader(){
     const mountedBooks=(currentSessionData?.worldbookIds||[]).map(id=>worldbooks.find(w=>w.id===id)).filter(Boolean);
     const ribbon=qs('context-ribbon');
     if(currentSessionData&&(char||mountedBooks.length)){ribbon.classList.remove('hidden');ribbon.textContent=`独立宇宙 · ${char?`🤍 ${char.name}`:'未挂角色'}${mountedBooks.length?` · 📚 ${mountedBooks.map(w=>w.name).join(' / ')}`:''}`}
-    else ribbon.classList.add('hidden');
+    else {ribbon.textContent='';ribbon.classList.add('hidden');}
     // Durable memory jobs are separate from Direct Reply. Never block chat
     // while reading review debt, and never treat a failed IDB read as empty.
     refreshMemoryDebtRibbon(currentSessionId).catch(e=>console.warn('Memory debt UI failed',{sessionId:currentSessionId,error:e.message}));
@@ -472,12 +506,33 @@ function defaultEntry(){return {name:'新条目',content:'',keywords:[],secondar
 function openWorldbookEditor(id=null){const old=id?worldbooks.find(x=>x.id===id):null;editorState={type:'worldbook',id,draft:clone(old||{name:'新世界书',description:'',tags:[],enabled:true,entries:[]})};qs('editor-title').textContent=id?`编辑世界书 · ${old.name}`:'新建世界书';qs('editor-eyebrow').textContent='WORLDBOOK（世界书）';renderWorldbookEditorBody();setupEditorButtons(id?()=>deleteWorldbook(id):null,saveWorldbookEditor);qs('editor-modal').classList.remove('hidden')}
 function renderWorldbookEditorBody(){const w=editorState.draft;qs('editor-body').innerHTML=`<div class="form-grid"><div><label class="form-label">世界书名称</label><input id="wb-name" class="field" value="${escapeHtml(w.name||'')}"></div><div><label class="form-label">Tags（标签）</label><input id="wb-tags" class="field" value="${escapeHtml(arr(w.tags).join(', '))}"></div><div class="form-full"><label class="form-label">说明</label><textarea id="wb-desc" class="field textarea">${escapeHtml(w.description||'')}</textarea></div></div><div class="toolbar" style="margin-top:14px"><button class="ghost-btn" onclick="addWorldbookEntry()">＋ 新增条目</button></div><div id="wb-entry-list" class="entry-list"></div>`;const root=qs('wb-entry-list');(w.entries||[]).forEach((e,i)=>{const d=document.createElement('details');d.className='entry-card';d.open=(w.entries.length<=3);d.dataset.entryIndex=i;d.innerHTML=`<summary><strong>${escapeHtml(e.name||`条目 ${i+1}`)}</strong><div class="entry-meta">Depth（深度） ${e.depth??0} · ${escapeHtml(positionLabel(e.position||'middle'))} · priority（优先级） ${e.priority??50}${e.alwaysActive?' · Always（常驻）':''}</div></summary><div class="form-grid" style="margin-top:10px">
 <div><label class="form-label">条目名称</label><input data-f="name" class="field" value="${escapeHtml(e.name||'')}"></div><div><label class="form-label">主关键词（逗号分隔）</label><input data-f="keywords" class="field" value="${escapeHtml(arr(e.keywords).join(', '))}"></div><div><label class="form-label">次关键词（可选）</label><input data-f="secondaryKeywords" class="field" value="${escapeHtml(arr(e.secondaryKeywords).join(', '))}"></div><div><label class="form-label">匹配</label><select data-f="matchMode" class="field"><option value="any" ${e.matchMode!=='all'?'selected':''}>任一关键词</option><option value="all" ${e.matchMode==='all'?'selected':''}>全部关键词</option></select></div>
-<div><label class="form-label">Depth（深度，0=系统提示区段；世界书仍属于剧情资料，不获得系统权限）</label><input data-f="depth" class="field" type="number" min="0" max="100" value="${Number(e.depth||0)}"></div><div><label class="form-label">注入位置</label><select data-f="position" class="field"><option value="front" ${e.position==='front'?'selected':''}>前</option><option value="middle" ${e.position==='middle'?'selected':''}>中</option><option value="back" ${e.position==='back'?'selected':''}>后</option></select></div><div><label class="form-label">Priority（优先级，小值优先）</label><input data-f="priority" class="field" type="number" value="${Number(e.priority??50)}"></div><div><label class="form-label">扫描最近消息数</label><input data-f="scanDepth" class="field" type="number" min="1" max="100" value="${Number(e.scanDepth||12)}"></div><div><label class="form-label">条目最大字符（0=不限）</label><input data-f="maxChars" class="field" type="number" min="0" value="${Number(e.maxChars||0)}"></div>
+<div><label class="form-label">Depth（深度，0=系统提示区段；世界书仍属于剧情资料，不获得系统权限）</label><input data-f="depth" class="field" type="number" min="0" max="200" step="1" value="${Number(e.depth??0)}"></div><div><label class="form-label">注入位置</label><select data-f="position" class="field"><option value="front" ${e.position==='front'?'selected':''}>前</option><option value="middle" ${e.position==='middle'?'selected':''}>中</option><option value="back" ${e.position==='back'?'selected':''}>后</option></select></div><div><label class="form-label">Priority（优先级，小值优先）</label><input data-f="priority" class="field" type="number" value="${Number(e.priority??50)}"></div><div><label class="form-label">扫描最近消息数</label><input data-f="scanDepth" class="field" type="number" min="1" max="200" step="1" value="${Number(e.scanDepth||12)}"></div><div><label class="form-label">条目最大字符（0=不限）</label><input data-f="maxChars" class="field" type="number" min="0" max="100000" step="1" value="${Number(e.maxChars||0)}"></div>
 <div class="form-full"><label class="check-row"><input data-f="enabled" type="checkbox" ${e.enabled!==false?'checked':''}> 启用</label><label class="check-row"><input data-f="alwaysActive" type="checkbox" ${e.alwaysActive?'checked':''}> Always Active（始终激活）</label><label class="check-row"><input data-f="caseSensitive" type="checkbox" ${e.caseSensitive?'checked':''}> 大小写敏感</label><label class="check-row"><input data-f="useRegex" type="checkbox" ${e.useRegex?'checked':''}> Regex（正则）关键词</label></div><div class="form-full"><label class="form-label">注入内容</label><textarea data-f="content" class="field textarea tall">${escapeHtml(e.content||'')}</textarea></div><div class="form-full"><button class="danger-btn" onclick="removeWorldbookEntry(${i})">删除此条目</button></div></div>`;root.appendChild(d)})}
 function captureWorldbookDraft(){if(!editorState||editorState.type!=='worldbook')return;const w=editorState.draft;w.name=qs('wb-name')?.value||w.name;w.description=qs('wb-desc')?.value||'';w.tags=csv(qs('wb-tags')?.value||'');w.entries=qsa('[data-entry-index]',qs('wb-entry-list')).map(block=>{const get=f=>block.querySelector(`[data-f="${f}"]`);return {id:w.entries[Number(block.dataset.entryIndex)]?.id,name:get('name').value,keywords:csv(get('keywords').value),secondaryKeywords:csv(get('secondaryKeywords').value),matchMode:get('matchMode').value,depth:Number(get('depth').value||0),position:get('position').value,priority:Number(get('priority').value === '' ? 50 : get('priority').value),scanDepth:Number(get('scanDepth').value||12),maxChars:Number(get('maxChars').value||0),enabled:get('enabled').checked,alwaysActive:get('alwaysActive').checked,caseSensitive:get('caseSensitive').checked,useRegex:get('useRegex').checked,content:get('content').value}})}
 function addWorldbookEntry(){captureWorldbookDraft();editorState.draft.entries.push(defaultEntry());renderWorldbookEditorBody()}
 function removeWorldbookEntry(i){captureWorldbookDraft();editorState.draft.entries.splice(i,1);renderWorldbookEditorBody()}
-async function saveWorldbookEditor(){captureWorldbookDraft();const res=await fetchStory(editorState.id?`/worldbooks/${editorState.id}`:'/worldbooks',editorState.id?'PATCH':'POST',editorState.draft);if(res.success){closeEditor();await loadAll();openSettings('worldbook')}else toast(res.msg||'保存失败')}
+async function saveWorldbookEditor(){
+    captureWorldbookDraft();
+    // UI and normalizeWorldbookEntry must agree. Reject lossy normalization
+    // rather than claiming to save a value the runtime actually clamps.
+    for(const [i,e] of arr(editorState.draft.entries).entries()){
+        for(const [key,min,max] of [['depth',0,200],['scanDepth',1,200],['maxChars',0,100000]]){
+            if(!Number.isInteger(e[key])||e[key]<min||e[key]>max){
+                toast(`世界书条目 ${i+1} 的 ${key} 必须是 ${min}～${max} 的整数，未保存`);return null;
+            }
+        }
+        if(!Number.isFinite(e.priority)){
+            toast(`世界书条目 ${i+1} 的优先级不是合法数字，未保存`);return null;
+        }
+    }
+    const res=await fetchStory(editorState.id?`/worldbooks/${editorState.id}`:'/worldbooks',editorState.id?'PATCH':'POST',editorState.draft);
+    if(!res.success){toast(res.msg||'保存失败');return null;}
+    if(arr(res.data?.entries).length!==arr(editorState.draft.entries).length||
+       arr(editorState.draft.entries).some((e,i)=>['depth','scanDepth','maxChars','priority'].some(k=>res.data.entries[i]?.[k]!==e[k]))){
+        toast('世界书存档返回的条目设置与输入不一致，请检查设置范围');return null;
+    }
+    closeEditor();await loadAll();openSettings('worldbook');return res.data;
+}
 async function deleteWorldbook(id){if(!confirm('删除整个世界书？'))return;await fetchStory(`/worldbooks/${id}`,'DELETE');closeEditor();await loadAll();openSettings('worldbook')}
 function chooseWorldbookImport(){qs('worldbook-file-input').value='';qs('worldbook-file-input').click()}
 function normalizeImportedWorldbook(raw,name){const src=raw.data||raw;let rawEntries=src.entries||[];if(!Array.isArray(rawEntries)&&rawEntries&&typeof rawEntries==='object')rawEntries=Object.values(rawEntries);const entries=arr(rawEntries).map((e,i)=>({name:e.name||e.comment||`条目 ${i+1}`,content:e.content||'',keywords:e.keywords||e.key||e.keys||[],secondaryKeywords:e.secondaryKeywords||e.keysecondary||[],enabled:e.enabled!==false&&e.disable!==true,alwaysActive:!!(e.alwaysActive||e.constant),matchMode:e.matchMode||'any',caseSensitive:!!e.caseSensitive,useRegex:!!e.useRegex,priority:Number(e.priority??e.order??50),scanDepth:Number(e.scanDepth??12),depth:Number(e.depth??0),position:['front','middle','back'].includes(e.position)?e.position:'middle',maxChars:Number(e.maxChars||0)}));return {name:src.name||name||'导入世界书',description:src.description||'',tags:src.tags||[],entries}}
@@ -513,10 +568,57 @@ async function importRegexFile(file){if(!file)return;try{const raw=JSON.parse(aw
 function exportRegexPack(id){const p=regexPacks.find(x=>x.id===id);if(p)downloadJson(`${p.name}.mimamao-regex.json`,{format:'mimamao-tavern-regex-pack',version:1,data:p})}
 
 function renderContextTab(box){const ps=currentSessionData.promptSettings||{};box.innerHTML=`<section class="settings-section"><h3>🪐 Session（剧情会话）</h3><div class="form-grid"><div class="form-full"><label class="form-label">标题</label><input id="ctx-title" class="field" value="${escapeHtml(currentSessionData.title||'')}"></div><div><label class="form-label">Canon Level（设定层级）</label><select id="ctx-canon" class="field">${['temporary','alternate','soft','core'].map(x=>`<option value="${x}" ${currentSessionData.canonLevel===x?'selected':''}>${canonLabel(x)}</option>`).join('')}</select></div><div><label class="form-label">Temperature（温度）</label><input id="ctx-temp" class="field" type="number" min="0.1" max="2" step="0.05" value="${getTemp()}"></div></div><p class="helper">Standalone（独立版）中所有 Session（剧情会话）都是浏览器本地独立宇宙，不会写入任何 MIMAMAO / Telegram 世界。</p></section>
-<section class="settings-section"><h3>🧠 长剧情 Context（上下文）</h3><div class="form-grid"><div><label class="form-label">最近原文消息数</label><input id="ctx-recent" class="field" type="number" min="6" max="200" value="${Number(ps.recentMessageLimit||34)}"></div><div><label class="form-label">累计多少条旧剧情后自动整理记忆</label><input id="ctx-summary-trigger" class="field" type="number" min="12" max="200" value="${Number(ps.summaryTriggerMessages||28)}"><div class="row-sub">默认 28 条；不删减原始剧情，也不影响手动整理。</div></div><div><label class="form-label">世界书总预算（字符）</label><input id="ctx-wbbudget" class="field" type="number" min="1000" max="160000" value="${Number(ps.worldbookBudgetChars||16000)}"></div><div class="form-full"><label class="form-label">🎭 AIRP 输入语义</label><select id="ctx-airp-mode" class="field"><option value="auto" ${(ps.inputSemanticMode||'auto')==='auto'?'selected':''}>智能自动（推荐）</option><option value="dialogue_first" ${ps.inputSemanticMode==='dialogue_first'?'selected':''}>对话优先：普通文本=台词，括号=动作/心理</option><option value="quote_dialogue" ${ps.inputSemanticMode==='quote_dialogue'?'selected':''}>引号台词：引号=台词，其余普通文本=动作</option><option value="raw" ${ps.inputSemanticMode==='raw'?'selected':''}>旧版原样：关闭语义解析</option></select><div class="row-sub">智能自动会兼容两种常见 AIRP：有明确引号时把引号当台词、周围当动作；没有引号时普通文本默认台词，括号永远不是台词。括号中的明确“心想/内心/OS”等会标记为私密想法。</div></div><div class="form-full"><label class="check-row"><input id="ctx-summary" type="checkbox" ${ps.summaryEnabled!==false?'checked':''}> 自动 Rolling Summary（滚动摘要）</label><label class="check-row"><input id="ctx-pinned-on" type="checkbox" ${ps.pinnedFactsEnabled!==false?'checked':''}> 注入 Pinned Facts（固定事实）</label></div><div class="form-full"><label class="form-label">📌 Pinned Facts（固定事实，一行一条）</label><textarea id="ctx-pinned" class="field textarea">${escapeHtml(arr(currentSessionData.pinnedFacts).join('\n'))}</textarea></div><div class="form-full"><label class="form-label">玩家备注</label><textarea id="ctx-usernotes" class="field textarea">${escapeHtml(currentSessionData.userNotes||'')}</textarea></div><div class="form-full"><label class="form-label">AI（人工智能）备注</label><textarea id="ctx-ainotes" class="field textarea">${escapeHtml(currentSessionData.aiNotes||'')}</textarea></div></div></section>
+<section class="settings-section"><h3>🧠 长剧情 Context（上下文）</h3><div class="form-grid"><div><label class="form-label">最近原文消息数（条，不是回合；最多 200）</label><input id="ctx-recent" class="field" type="number" min="6" max="200" step="1" value="${Number(ps.recentMessageLimit??34)}"><div class="row-sub">这是自动整理时保留的近期消息窗口；模型容量允许时仍优先提供完整原始 History。修改后请点击下方保存。</div></div><div><label class="form-label">累计多少条旧剧情后自动整理记忆</label><input id="ctx-summary-trigger" class="field" type="number" min="12" max="200" value="${Number(ps.summaryTriggerMessages||28)}"><div class="row-sub">默认 28 条；不删减原始剧情，也不影响手动整理。</div></div><div><label class="form-label">世界书总预算（字符，最多 1,000,000）</label><input id="ctx-wbbudget" class="field" type="number" min="1000" max="1000000" step="1" value="${Number(ps.worldbookBudgetChars??16000)}"><div class="row-sub">这是本轮命中条目允许占用的字符上限，不保证所有条目都触发；实际仍受模型上下文窗口限制。超过窗口会报错，不会暗中删除原始剧情。</div></div><div class="form-full"><label class="form-label">🎭 AIRP 输入语义</label><select id="ctx-airp-mode" class="field"><option value="auto" ${(ps.inputSemanticMode||'auto')==='auto'?'selected':''}>智能自动（推荐）</option><option value="dialogue_first" ${ps.inputSemanticMode==='dialogue_first'?'selected':''}>对话优先：普通文本=台词，括号=动作/心理</option><option value="quote_dialogue" ${ps.inputSemanticMode==='quote_dialogue'?'selected':''}>引号台词：引号=台词，其余普通文本=动作</option><option value="raw" ${ps.inputSemanticMode==='raw'?'selected':''}>旧版原样：关闭语义解析</option></select><div class="row-sub">智能自动会兼容两种常见 AIRP：有明确引号时把引号当台词、周围当动作；没有引号时普通文本默认台词，括号永远不是台词。括号中的明确“心想/内心/OS”等会标记为私密想法。</div></div><div class="form-full"><label class="check-row"><input id="ctx-summary" type="checkbox" ${ps.summaryEnabled!==false?'checked':''}> 自动 Rolling Summary（滚动摘要）</label><label class="check-row"><input id="ctx-pinned-on" type="checkbox" ${ps.pinnedFactsEnabled!==false?'checked':''}> 注入 Pinned Facts（固定事实）</label></div><div class="form-full"><label class="form-label">📌 Pinned Facts（固定事实，一行一条）</label><textarea id="ctx-pinned" class="field textarea">${escapeHtml(arr(currentSessionData.pinnedFacts).join('\n'))}</textarea></div><div class="form-full"><label class="form-label">玩家备注</label><textarea id="ctx-usernotes" class="field textarea">${escapeHtml(currentSessionData.userNotes||'')}</textarea></div><div class="form-full"><label class="form-label">AI（人工智能）备注</label><textarea id="ctx-ainotes" class="field textarea">${escapeHtml(currentSessionData.aiNotes||'')}</textarea></div></div></section>
+<div class="toolbar"><button id="ctx-save" class="primary-btn" type="button" onclick="saveContextSettings()">保存长剧情与会话设置</button><span class="row-sub">保存成功后，重新打开此页面仍会显示你设定的数值。</span></div>
 <section class="settings-section"><h3>💾 本地档案</h3><p class="helper">剧情、角色卡、世界书、预设、正则包保存在当前浏览器 IndexedDB（本地数据库）。建议偶尔导出剧情资料备份；字体与 API Key（接口密钥）不会被打进这份“剧情资料备份”。</p><div class="toolbar"><button class="ghost-btn" onclick="exportCurrentSession()">⇩ 导出当前剧情</button><button class="ghost-btn" onclick="exportWholeLibrary()">⇩ 完整剧情资料备份</button><button class="ghost-btn" onclick="chooseLibraryImport()">⇧ 导入剧情资料备份</button><button class="danger-btn" onclick="deleteCurrentSession()">删除当前剧情</button></div></section>`}
-async function saveContextSettings(){const temp=Math.max(.1,Math.min(2,Number(qs('ctx-temp').value||.85)));localStorage.setItem(TEMP_KEY,String(temp));MimaStandalone.saveApiConfig({...MimaStandalone.getApiConfig(),temperature:temp});await patchCurrent({title:qs('ctx-title').value||'未命名咪嘛宇宙',canonLevel:qs('ctx-canon').value,pinnedFacts:lines(qs('ctx-pinned').value),userNotes:qs('ctx-usernotes').value,aiNotes:qs('ctx-ainotes').value,enabledPersonaSources:{sandalphonPersona:false,userPersona:false,telegramContext:false,longTermMemory:false,sandalphonState:false},promptSettings:{...(currentSessionData.promptSettings||{}),recentMessageLimit:Number(qs('ctx-recent').value||34),summaryTriggerMessages:Math.max(12,Math.min(200,Number(qs('ctx-summary-trigger')?.value||28))),worldbookBudgetChars:Number(qs('ctx-wbbudget').value||16000),inputSemanticMode:qs('ctx-airp-mode')?.value||'auto',summaryEnabled:qs('ctx-summary').checked,pinnedFactsEnabled:qs('ctx-pinned-on').checked}});toast('Context（上下文）已保存')}
-
+async function saveContextSettings(){
+    if(!currentSessionId)return toast('请先选择剧情会话');
+    // Treat the input as authoritative only after validating it. Backend
+    // normalization must never silently turn 500,000 into 160,000.
+    const numeric=(id,label,min,max,{integer=true}={})=>{
+        const field=qs(id),raw=String(field?.value??'').trim(),n=Number(raw);
+        if(!raw||!Number.isFinite(n)||(integer&&!Number.isInteger(n))||n<min||n>max){
+            toast(`${label}必须是 ${min}～${max} 的${integer?'整数':'数值'}，未保存`);
+            field?.focus?.();return null;
+        }
+        return n;
+    };
+    const recent=numeric('ctx-recent','近期原文消息数',6,200);
+    if(recent===null)return null;
+    const trigger=numeric('ctx-summary-trigger','自动整理间隔',12,200);
+    if(trigger===null)return null;
+    const worldBudget=numeric('ctx-wbbudget','世界书字符预算',1000,1000000);
+    if(worldBudget===null)return null;
+    const temp=numeric('ctx-temp','温度',0.1,2,{integer:false});
+    if(temp===null)return null;
+    const mode=qs('ctx-airp-mode')?.value||'auto';
+    if(!['auto','dialogue_first','quote_dialogue','raw'].includes(mode)){
+        toast('无效的 AIRP 输入模式，未保存');return null;
+    }
+    const expected={...(currentSessionData.promptSettings||{}),recentMessageLimit:recent,
+        summaryTriggerMessages:trigger,worldbookBudgetChars:worldBudget,
+        inputSemanticMode:mode,summaryEnabled:qs('ctx-summary').checked,
+        pinnedFactsEnabled:qs('ctx-pinned-on').checked};
+    // Do not overwrite unrelated Persona/source switches while saving context.
+    const saved=await patchCurrent({
+        title:qs('ctx-title').value||'未命名咪嘛宇宙',
+        canonLevel:qs('ctx-canon').value,
+        pinnedFacts:lines(qs('ctx-pinned').value),userNotes:qs('ctx-usernotes').value,
+        aiNotes:qs('ctx-ainotes').value,promptSettings:expected
+    },true);
+    if(!saved)return null;
+    // Detect unexpected server normalization instead of reporting fake success.
+    const actual=saved.promptSettings||{};
+    if(Object.keys(expected).some(k=>actual[k]!==expected[k])){
+        toast('保存返回值与设定不一致，请检查存档及设置范围');
+        renderSettings();return null;
+    }
+    localStorage.setItem(TEMP_KEY,String(temp));
+    MimaStandalone.saveApiConfig({...MimaStandalone.getApiConfig(),temperature:temp});
+    renderSettings();
+    toast(`长剧情设置已保存：近期 ${recent} 条，世界书 ${worldBudget.toLocaleString('en-US')} 字符`);
+    return saved;
+}
 
 function memoryStore(){
     const m=currentSessionData?.manualMemory||{};
@@ -705,8 +807,44 @@ function stopMemorySummary(){
     memoryTask.progress={...memoryTask.progress,detail:'已请求停止；不提交尚未完成的结果。'};
     paintMemoryProgress();
 }
-async function saveMemorySettings(){const res=await fetchStory(`/sessions/${currentSessionId}/memory`,'PATCH',{settings:{injectCore:!!qs('memory-inject-core')?.checked,injectFacts:!!qs('memory-inject-facts')?.checked,factInjectionLimit:Number(qs('memory-inject-limit')?.value||12),summaryTemperature:getMemoryTemperature()}});if(res.success){currentSessionData=res.data;toast('记忆设置已保存');renderMemoryTab(qs('settings-content'))}else toast(res.msg||'保存失败')}
-async function saveCoreMemoryEdit(){const content=qs('core-memory-content')?.value||'',targetChars=Number(qs('core-memory-target')?.value||1000),temperature=getMemoryTemperature();const res=await fetchStory(`/sessions/${currentSessionId}/memory`,'PATCH',{core:{content,source:'manual',targetChars,temperature},settings:{summaryTemperature:temperature}});if(res.success){currentSessionData=res.data;toast('核心记忆手工修改已保存');renderMemoryTab(qs('settings-content'))}else toast(res.msg||'保存失败')}
+function validatedSettingNumber(id,label,min,max,integer=true,allowBlank=false){
+    const input=qs(id),raw=String(input?.value??'').trim(),value=raw===""&&allowBlank?0:Number(raw);
+    if((!raw&&!allowBlank)||!Number.isFinite(value)||(integer&&!Number.isInteger(value))||value<min||value>max){
+        toast(`${label}必须在 ${min}～${max} 范围内，未保存`);input?.focus?.();return null;
+    }
+    return value;
+}
+async function saveMemorySettings(){
+    const limit=validatedSettingNumber('memory-inject-limit','事实记忆注入条数',1,100);
+    if(limit===null)return null;
+    const temperature=validatedSettingNumber('memory-temp','记忆总结温度',0.1,2,false);
+    if(temperature===null)return null;
+    const requested={injectCore:!!qs('memory-inject-core')?.checked,injectFacts:!!qs('memory-inject-facts')?.checked,factInjectionLimit:limit,summaryTemperature:temperature};
+    const targetSessionId=currentSessionId;
+    const res=await fetchStory(`/sessions/${targetSessionId}/memory`,'PATCH',{settings:requested});
+    if(!res.success){toast(res.msg||'保存失败');return null;}
+    const returned=res.data?.manualMemory?.settings||{};
+    if(Object.keys(requested).some(k=>returned[k]!==requested[k])){
+        toast('记忆设置保存后的数值与输入不一致，请检查存档');return null;
+    }
+    if(currentSessionId===targetSessionId){currentSessionData=res.data;if(isSettingsOpen()&&settingsTab==='memory')renderMemoryTab(qs('settings-content'));}
+    toast('记忆设置已保存');return res.data;
+}
+async function saveCoreMemoryEdit(){
+    const targetChars=validatedSettingNumber('core-memory-target','核心记忆目标字数',100,12000);
+    if(targetChars===null)return null;
+    const temperature=validatedSettingNumber('memory-temp','记忆总结温度',0.1,2,false);
+    if(temperature===null)return null;
+    const content=qs('core-memory-content')?.value||'';
+    const targetSessionId=currentSessionId;
+    const res=await fetchStory(`/sessions/${targetSessionId}/memory`,'PATCH',{core:{content,source:'manual',targetChars,temperature},settings:{summaryTemperature:temperature}});
+    if(!res.success){toast(res.msg||'保存失败');return null;}
+    if(res.data?.manualMemory?.core?.targetChars!==targetChars||res.data?.manualMemory?.settings?.summaryTemperature!==temperature){
+        toast('核心记忆保存后的数值与输入不一致，请检查存档');return null;
+    }
+    if(currentSessionId===targetSessionId){currentSessionData=res.data;if(isSettingsOpen()&&settingsTab==='memory')renderMemoryTab(qs('settings-content'));}
+    toast('核心记忆手工修改已保存');return res.data;
+}
 async function runMemorySummary(kind,sessionId,options){
     const task={kind,sessionId,sessionTitle:currentSessionData?.title||'当前剧情',controller:new AbortController(),progress:{phase:'preparing',percent:4,detail:'正在准备记忆材料…'}};
     memoryGenerating=true;memoryTask=task;
@@ -729,7 +867,8 @@ async function runMemorySummary(kind,sessionId,options){
             currentSessionData=res.data;
             refreshHeader();
         }
-        await refreshSessionSummaryList();
+        try{await refreshSessionSummaryList()}
+        catch(e){console.error('记忆已提交但会话列表刷新失败',{sessionId,kind,error:e});toast('记忆已保存；列表读取失败，请检查本地存储');return;}
         toast(`${task.sessionTitle} · ${kind==='core'?'核心':'事实'}记忆已保存到本地。`);
     }catch(e){console.error('记忆总结结算失败',{sessionId,kind,error:e});toast(`记忆总结未能完成：${e?.message||e}`)}
     finally{
@@ -867,22 +1006,22 @@ async function restoreSavedSettingsSnapshot(){
     }catch(e){toast(`恢复快照失败：${e.message}`)}
 }
 async function renderDataTab(box,renderEpoch=++settingsRenderEpoch){
-    let snap=null,readError=null;try{snap=await MimaLocalStore.loadSettingsSnapshot()}catch(e){readError=e;console.error('本机设置快照读取失败',e)}
+    let snap=null;try{snap=await MimaLocalStore.loadSettingsSnapshot()}catch(_){ }
     if(!settingsRenderIsCurrent('data',renderEpoch,box))return;
     const cfg=MimaStandalone.getApiConfig();
     box.innerHTML=`<section class="settings-section"><h3>💾 Data Backup（数据备份）</h3><p class="helper">这里备份的不只是剧情，还包括角色卡、世界书、预设、正则包、CSS Preset（CSS 预设）、API（接口）参数、温度/流式设置、字体选择；可选把本地字体文件也一起装进备份。普通“刷新 / 强制刷新”不会删除这些数据，但 Safari 的“清除历史记录与网站数据”或删除网站数据会清掉 IndexedDB（本地数据库）和 localStorage（本地存储），所以真正保险的是导出 JSON（数据文件）到“文件”App。</p>
     <div class="data-backup-card"><div class="row-title">本机设置快照</div><div class="row-sub">${snap?`最近保存：${escapeHtml(snap.savedAt||snap.exportedAt||'已保存')}`:'尚未保存本机快照'}</div><div class="toolbar"><button class="primary-btn" onclick="saveFullSettingsSnapshot()">保存咪嘛馆设置数据</button><button class="ghost-btn" onclick="restoreSavedSettingsSnapshot()">恢复本机快照</button></div></div>
     <div class="data-backup-card"><div class="row-title">可迁移完整备份</div><div class="row-sub">导出的文件可以在清缓存、换浏览器、换设备或重新部署后再导入。</div><label class="check-row"><input id="backup-fonts" type="checkbox" checked> 把本地字体文件也加入备份（文件可能变大）</label><label class="check-row"><input id="backup-api-key" type="checkbox"> 把 API Key（接口密钥）加入导出/快照 <strong>（敏感）</strong></label><div class="toolbar"><button class="primary-btn" onclick="exportFullSettingsBackup()">⇩ 导出完整设置</button><button class="ghost-btn" onclick="chooseFullSettingsImport()">⇧ 导入完整设置</button></div><div class="row-sub">当前 API（接口）：${cfg.apiBase?escapeHtml(cfg.apiBase):'未配置'} · Model（模型）：${cfg.model?escapeHtml(cfg.model):'未选择'}</div></div>
-    <div id="data-backup-status" class="api-status">${readError?'本机设置快照读取失败，请检查存储后重试；未创建空白快照。':snap?'✅ 当前浏览器已有本机快照。':'建议先保存一次本机快照，再导出一份文件备份。'}</div></section>
+    <div id="data-backup-status" class="api-status">${snap?'✅ 当前浏览器已有本机快照。':'建议先保存一次本机快照，再导出一份文件备份。'}</div></section>
     <section class="settings-section"><h3>🧹 Cache（缓存）说明</h3><p class="helper"><strong>只想让 GitHub Pages 加载新代码时，不需要先清除网站数据。</strong>本版已经给 CSS / JS 资源加入版本号 <code>?v=1.1.0</code>，部署后浏览器会把它们当成新资源重新拉取。若仍显示旧页面，先关闭该标签页再重新打开，或做一次强制刷新；不要直接使用会删除网站数据的清理方式，除非你已经导出了完整设置备份。</p></section>`;
 }
 
 async function renderAppearanceTab(box,renderEpoch=++settingsRenderEpoch){
-    let records,readError=null;
-    try{records=await MimaFontManager.all()}catch(e){readError=e;console.error('本地字体库读取失败，未改变已保存字体或偏好',e)}
+    let fontReadError=null,records;
+    try{records=await MimaFontManager.all()}catch(error){fontReadError=error;records=[];console.error('外观字体库读取失败，未更改字体存储或偏好',error)}
     if(!settingsRenderIsCurrent('appearance',renderEpoch,box))return;
-    if(!readError)fontRecords=records;
-    const ui=MimaFontManager.getSelected('ui'),story=MimaFontManager.getSelected('story'),typo=getStoryTypography();const opts=`<option value="">系统默认字体</option>`+fontRecords.map(f=>`<option value="${escapeHtml(f.family)}">${escapeHtml(f.family)} · ${formatBytes(f.size)}</option>`).join('');const themeState=MimaStandalone.getState?.().themeSettings||{theme:'default'},themeCards=(MimaThemeEngine?.getBuiltins?.()||[]).map(t=>`<button class="novel-theme-card ${themeState.theme===t.id?'active':''}" data-theme-choice="${t.id}" onclick="setBuiltInTheme('${t.id}')"><strong>${escapeHtml(t.name)}</strong><span>${escapeHtml(t.description)}</span></button>`).join('');box.innerHTML=`<section class="settings-section"><h3>🌓 Built-in Theme（内置主题）</h3><p class="helper">Default 保留原始外观；深色、电子墨水、暖纸与韩系柔色主题覆盖聊天、设置、小说及助手的常用组件。全局自定义 CSS 仍优先；如果已挂载全局 CSS，实际颜色可能不同。</p><div class="novel-theme-grid">${themeCards}</div></section><section class="settings-section"><h3>🎨 本地字体库</h3><p class="helper">直接导入 TTF / OTF / WOFF / WOFF2（字体文件格式）。文件保存在当前浏览器 IndexedDB，不需要转 URL（链接），也不会上传到服务器。剧情正文字体会作用于普通小说正文；开启 Safe HTML（安全 HTML）后，未自行指定字体的 HTML 正文也会继承它。状态栏若有自己的 CSS 字体设置，仍以状态栏自己的设置为准。</p><div class="toolbar"><button class="primary-btn" onclick="chooseFontImport()">＋ 导入字体文件</button></div><div class="form-grid"><div><label class="form-label">UI（界面）字体</label><select id="font-ui-select" class="field" onchange="changeFont('ui',this.value)">${opts}</select></div><div><label class="form-label">剧情正文字体</label><select id="font-story-select" class="field" onchange="changeFont('story',this.value)">${opts}</select></div></div><div id="font-list" style="margin-top:14px"></div></section>
+    if(!fontReadError)fontRecords=records;
+    const ui=MimaFontManager.getSelected('ui'),story=MimaFontManager.getSelected('story'),typo=getStoryTypography();const opts=`<option value="">系统默认字体</option>`+(fontReadError?[]:fontRecords).map(f=>`<option value="${escapeHtml(f.family)}">${escapeHtml(f.family)} · ${formatBytes(f.size)}</option>`).join('');const themeState=MimaStandalone.getState?.().themeSettings||{theme:'default'},themeCards=(MimaThemeEngine?.getBuiltins?.()||[]).map(t=>`<button class="novel-theme-card ${themeState.theme===t.id?'active':''}" data-theme-choice="${t.id}" onclick="setBuiltInTheme('${t.id}')"><strong>${escapeHtml(t.name)}</strong><span>${escapeHtml(t.description)}</span></button>`).join('');box.innerHTML=`<section class="settings-section"><h3>🌓 Built-in Theme（内置主题）</h3><p class="helper">Default 保留原始外观；深色、电子墨水、暖纸与韩系柔色主题覆盖聊天、设置、小说及助手的常用组件。全局自定义 CSS 仍优先；如果已挂载全局 CSS，实际颜色可能不同。</p><div class="novel-theme-grid">${themeCards}</div></section><section class="settings-section"><h3>🎨 本地字体库</h3><p class="helper">直接导入 TTF / OTF / WOFF / WOFF2（字体文件格式）。文件保存在当前浏览器 IndexedDB，不需要转 URL（链接），也不会上传到服务器。剧情正文字体会作用于普通小说正文；开启 Safe HTML（安全 HTML）后，未自行指定字体的 HTML 正文也会继承它。状态栏若有自己的 CSS 字体设置，仍以状态栏自己的设置为准。</p><div class="toolbar"><button class="primary-btn" onclick="chooseFontImport()">＋ 导入字体文件</button></div><div class="form-grid"><div><label class="form-label">UI（界面）字体</label><select id="font-ui-select" class="field" onchange="changeFont('ui',this.value)">${opts}</select></div><div><label class="form-label">剧情正文字体</label><select id="font-story-select" class="field" onchange="changeFont('story',this.value)">${opts}</select></div></div><div id="font-list" style="margin-top:14px"></div></section>
 <section class="settings-section"><h3>📖 Novel Typography（小说正文排版）</h3><p class="helper">进入本页会自动打开上方实时预览。字号、正文字体、行高与字间距也会作为 Safe HTML 的基础继承值；段间距与首行缩进仍只作用于咪嘛馆识别出的普通小说段落，不会强行挤压 &lt;system&gt; / &lt;details&gt; / 表格等状态栏结构。</p>
 <div class="typography-grid">
 ${typographyControlHtml('字号','fontSize',12,26,.5,typo.fontSize,'px')}
@@ -893,7 +1032,7 @@ ${typographyControlHtml('首行缩进','firstLineIndent',0,4,.25,typo.firstLineI
 </div><div class="typography-indent-hint"><span>中文小说推荐：<strong>2em</strong>（约两个汉字宽）</span><div class="typography-quick-buttons"><button class="tool-mini" onclick="updateStoryTypography('firstLineIndent',0)">0</button><button class="tool-mini" onclick="updateStoryTypography('firstLineIndent',1)">1em</button><button class="tool-mini" onclick="updateStoryTypography('firstLineIndent',2)">2em</button><button class="tool-mini" onclick="updateStoryTypography('firstLineIndent',3)">3em</button></div></div><div class="toolbar typography-actions"><button class="ghost-btn" onclick="resetStoryTypography()">恢复默认排版</button></div></section>
 <section class="settings-section"><h3>兼容旧版 URL（链接）字体</h3><p class="helper">旧功能保留。如果某个字体只能用网页链接，也仍然可以加载。</p><div class="form-grid"><div><label class="form-label">字体 URL（链接）</label><input id="legacy-font-url" class="field" value="${escapeHtml(localStorage.getItem(LEGACY_FONT_URL_KEY)||'')}"></div><div><label class="form-label">Font Family（字体族名）</label><input id="legacy-font-family" class="field" value="${escapeHtml(localStorage.getItem(LEGACY_FONT_FAMILY_KEY)||'')}"></div><div class="form-full"><button class="ghost-btn" onclick="applyLegacyUrlFont()">应用 URL（链接）字体</button></div></div></section>
 <section class="settings-section"><h3>🪄 CSS Preset Library（CSS 预设库）</h3><p class="helper">支持直接粘贴或导入<strong>纯 CSS</strong>，不需要手动包 &lt;style&gt;。CSS 可以只美化模型输出的自定义 HTML，也可以覆盖剧情区域，或选择“咪嘛馆全局”直接二改整个 UI（界面）。模型输出本身仍经过 Safe HTML sanitizer（安全 HTML 清洗器），不会执行 &lt;script&gt; / &lt;style&gt;。</p><div class="toolbar css-default-tools"><button class="primary-btn" onclick="openCssPresetEditor()">＋ 新建 CSS（样式）</button><button class="ghost-btn" onclick="chooseCssImport()">⇧ 导入 .css（样式文件）</button><button class="ghost-btn" onclick="copyDefaultCss()">⧉ 一键复制默认 CSS（样式）</button><button class="ghost-btn" onclick="exportDefaultCss()">⇩ 导出默认 CSS（样式）</button><button class="ghost-btn" onclick="forkDefaultCss()">✦ 默认 CSS 二改</button><button class="ghost-btn" onclick="MimaAssistantStudio.open('css')">✦ CSS 美化助手</button><button class="danger-btn" onclick="emergencyDisableCss()">🚑 临时禁用自定义 CSS（样式）</button></div><div class="row-sub css-scope-note">Scope（作用域）：自定义 HTML / Chat / Novel / Assistant / 咪嘛馆全局。Novel 与 Assistant 使用稳定公开 selector；全局 CSS 仍拥有最高覆盖能力。</div><div class="row-sub" style="margin:8px 0 12px">当前聊天：${currentCssPreset()?escapeHtml(currentCssPreset().name):'未挂载'} · ${currentSessionData.customCssEnabled===false?'已禁用':'已启用'}</div><div class="toolbar">${currentSessionData.customCssId?'<button class="ghost-btn" onclick="unapplyCss()">取消应用</button>':''}${currentSessionData.customCssId&&currentSessionData.customCssEnabled===false?'<button class="ghost-btn" onclick="reenableCss()">重新启用</button>':''}</div><button class="ghost-btn" onclick="unapplyGlobalCssPreset()">取消全局 CSS</button><div id="css-preset-list" class="card-grid css-preset-grid" style="margin-top:12px"></div></section>
-<section class="settings-section"><h3>显示</h3><label class="check-row"><input id="render-html-setting" type="checkbox" ${currentSessionData?.renderMode==='safe_html'?'checked':''} onchange="toggleSafeHtml(this.checked)"> 允许 Safe HTML（安全 HTML）状态栏渲染</label><p class="helper">开启后会保留正文原有换行与空格，并支持 &lt;system&gt;、&lt;details&gt;、&lt;summary&gt;、区块、表格等安全结构，方便 CSS 状态栏直接生效。</p></section>`;qs('font-ui-select').value=ui;qs('font-story-select').value=story;const root=qs('font-list');if(readError){root.textContent='字体库读取失败（已保存字体未被清空）：'+(readError.message||String(readError));}else if(!fontRecords.length)root.innerHTML='<div class="row-sub">还没有本地字体。</div>';if(!readError)fontRecords.forEach(f=>{const r=document.createElement('div');r.className='font-row';r.innerHTML=`<div class="row-main"><div class="row-title" style="font-family:'${escapeHtml(f.family)}'">Aa　${escapeHtml(f.family)}</div><div class="row-sub">${escapeHtml(f.name)} · ${formatBytes(f.size)}</div></div><button class="danger-btn" onclick="deleteLocalFont('${f.id}')">删除</button>`;root.appendChild(r)});renderCssPresetLibrary(qs('css-preset-list'));syncStoryTypographyControls(typo)}
+<section class="settings-section"><h3>显示</h3><label class="check-row"><input id="render-html-setting" type="checkbox" ${currentSessionData?.renderMode==='safe_html'?'checked':''} onchange="toggleSafeHtml(this.checked)"> 允许 Safe HTML（安全 HTML）状态栏渲染</label><p class="helper">开启后会保留正文原有换行与空格，并支持 &lt;system&gt;、&lt;details&gt;、&lt;summary&gt;、区块、表格等安全结构，方便 CSS 状态栏直接生效。</p></section>`;qs('font-ui-select').value=ui;qs('font-story-select').value=story;const root=qs('font-list');if(fontReadError){root.textContent='字体库读取失败，原字体和选择均未更改：'+(fontReadError.message||String(fontReadError));}else if(!fontRecords.length)root.innerHTML='<div class="row-sub">还没有本地字体。</div>';if(!fontReadError)fontRecords.forEach(f=>{const r=document.createElement('div');r.className='font-row';r.innerHTML=`<div class="row-main"><div class="row-title" style="font-family:'${escapeHtml(f.family)}'">Aa　${escapeHtml(f.family)}</div><div class="row-sub">${escapeHtml(f.name)} · ${formatBytes(f.size)}</div></div><button class="danger-btn" onclick="deleteLocalFont('${f.id}')">删除</button>`;root.appendChild(r)});renderCssPresetLibrary(qs('css-preset-list'));syncStoryTypographyControls(typo)}
 function typographyControlHtml(label,key,min,max,step,value,unit){return `<div class="typography-control"><div class="typography-control-head"><label class="form-label" for="typo-${key}-range">${label}</label><span id="typo-${key}-value" class="value-pill">${storyTypoDisplay(key,value)}</span></div><div class="typography-control-row"><input id="typo-${key}-range" class="typography-range" type="range" min="${min}" max="${max}" step="${step}" value="${value}" oninput="updateStoryTypography('${key}',this.value)"><input id="typo-${key}-number" class="field typography-number" type="number" inputmode="decimal" min="${min}" max="${max}" step="${step}" value="${value}" onchange="updateStoryTypography('${key}',this.value)"><span class="typography-unit">${unit}</span></div></div>`}
 async function setBuiltInTheme(theme){const res=await fetchStory('/theme','PATCH',{theme});if(!res.success)return toast(res.msg||'主题切换失败');MimaThemeEngine?.apply?.(res.data);if(settingsTab==='appearance')renderAppearanceTab(qs('settings-content'));toast(`主题已切换为 ${theme}`)}
 function currentCssPreset(){return cssPresets.find(x=>x.id===currentSessionData?.customCssId)||null}
@@ -904,14 +1043,14 @@ function scopeCssBlock(css,scope){let out='',cursor=0;const src=String(css||'');
 function cssScopeSelector(selector,scope){
     const clean=selector.trim();if(!clean)return'';
     if(clean===scope||clean.startsWith(scope+' ')||clean.startsWith(scope+':'))return clean;
-    const normalized=clean.replace(/^(?:html|body|:root)(?=\s|[.#:[>+~]|$)\s*/i,'').trim();
-    if(scope==='.tavern-story-content'){
-        // The chat node is *itself* .msg-content.tavern-story-content.
-        // Writing ".tavern-story-content .msg-content" would never match it.
-        const fixed=normalized.replace(/\.msg-content(?=\b)/g,scope);
-        if(fixed!==normalized)return fixed;
+    // .msg-content IS the scoped story root; nesting it below itself makes user font CSS dead.
+    const withoutDocumentRoot=clean.replace(/^(?:html|body|:root)(?=\s|[.#:[>+~]|$)\s*/i,'').trim();
+    const match=withoutDocumentRoot.match(/^(?:\.msg-content|\.tavern-story-content)(?=\s|[.#:[>+~]|$)/);
+    if(match){
+        const rest=withoutDocumentRoot.slice(match[0].length);
+        return rest ? ( /^\s/.test(rest)?`${scope} ${rest.trim()}`:`${scope}${rest}`) : scope;
     }
-    return normalized?`${scope} ${normalized}`:scope;
+    return withoutDocumentRoot?`${scope} ${withoutDocumentRoot}`:scope;
 }
 function splitCssSelectorList(input){
     const out=[];let part='',depth=0,quote='',escaped=false;
@@ -953,10 +1092,10 @@ function cssScopeLabel(scope){return scope==='app'?'咪嘛馆全局 Scope（作�
 function renderCssPresetLibrary(root){if(!root)return;const active=currentSessionData?.customCssId,globalId=MimaStandalone.getState?.().themeSettings?.globalCssPresetId;root.innerHTML='';if(!cssPresets.length){root.innerHTML='<div class="row-sub">还没有 CSS Preset。可以新建或导入。</div>';return}cssPresets.forEach(p=>{const global=p.scope==='app',mounted=global?p.id===globalId:p.id===active;const row=document.createElement('div');row.className=`library-card ${mounted?'mounted':''}`;row.innerHTML=`<div class="card-title"><span>${escapeHtml(p.name)}</span>${mounted?`<span class="tag">${global?'全局挂载':'当前 Session'}</span>`:''}</div><div class="card-desc">${cssScopeLabel(p.scope)} · ${String(p.css||'').length} 字符</div><div class="card-actions"><button class="${mounted?'primary-btn':'ghost-btn'}" onclick="${global?'applyGlobalCssPreset':'applyCssPreset'}('${p.id}')">${global?'应用到全局':mounted?'重新启用':'应用到聊天'}</button><button class="ghost-btn" onclick="openCssPresetEditor('${p.id}')">编辑</button><button class="ghost-btn" onclick="duplicateCssPreset('${p.id}')">复制</button><button class="ghost-btn" onclick="exportCssPreset('${p.id}')">导出</button></div>`;root.appendChild(row)})}
 function openCssPresetEditor(id=null){const p=id?cssPresets.find(x=>x.id===id):{name:'',css:'',scope:'story'};editorState={type:'css-preset',id};qs('editor-title').textContent=id?`编辑 CSS · ${p?.name||''}`:'新建 CSS Preset（CSS 预设）';qs('editor-eyebrow').textContent='CSS PRESET（CSS 预设）';qs('editor-body').innerHTML=`<div class="form-grid"><div class="form-full"><label class="form-label">名称</label><input id="css-pre-name" class="field" value="${escapeHtml(p?.name||'')}"></div><div class="form-full"><label class="form-label">Scope（作用域）</label><select id="css-pre-scope" class="field"><option value="story" ${p?.scope==='story'||!p?.scope?'selected':''}>自定义 HTML / 剧情内容（最安全）</option><option value="global" ${p?.scope==='global'?'selected':''}>剧情聊天区域</option><option value="app" ${p?.scope==='app'?'selected':''}>咪嘛馆全局 UI + HTML（全局二改）</option><option value="novel" ${p?.scope==='novel'?'selected':''}>Novel Studio（小说）</option><option value="assistant" ${p?.scope==='assistant'?'selected':''}>Assistant Studio（助手）</option></select><div class="row-sub">“咪嘛馆全局”会按原样应用 CSS，可修改顶栏、设置中心、输入框和剧情 HTML；若样式把 UI 隐藏，请重新打开页面后在外观里点“🚑 临时禁用”；极端情况下可在网址末尾加 <code>?noCss=1</code> 进入 CSS 安全模式。</div></div><div class="form-full"><label class="form-label">CSS（样式）</label><textarea id="css-pre-code" class="field textarea tall css-code-editor" spellcheck="false" placeholder="/* 直接写 CSS，不用 <style> */&#10;system, .status-card { padding: 12px; border-radius: 16px; }">${escapeHtml(p?.css||'')}</textarea></div></div>`;setupEditorButtons(id?()=>deleteCssPreset(id):null,saveCssPresetEditor);qs('editor-modal').classList.remove('hidden')}
 async function saveCssPresetEditor(){const wantedScope=qs('css-pre-scope').value;const body={name:qs('css-pre-name').value.trim()||'未命名 CSS（样式）',scope:['story','global','app','novel','assistant'].includes(wantedScope)?wantedScope:'story',surface:wantedScope==='novel'?'novel':wantedScope==='assistant'?'assistant':wantedScope==='app'?'global':'chat',css:stripEmbeddedStyleTags(qs('css-pre-code').value)};const res=await fetchStory(editorState.id?`/css-presets/${editorState.id}`:'/css-presets',editorState.id?'PATCH':'POST',body);if(!res.success)return toast(res.msg||'保存 CSS 失败');const saved=res.data;closeEditor();await loadAll();applyCustomCss();openSettings('appearance');toast(`CSS Preset（CSS 预设）「${saved.name}」已保存`)}
-async function applyCssPreset(id){if(!cssPresets.some(x=>x.id===id))return;await patchCurrent({customCssId:id,customCssEnabled:true},true);applyCustomCss();if(settingsTab==='appearance')renderAppearanceTab(qs('settings-content'));toast('CSS（样式）已应用到当前 Session（剧情会话）')}
-async function unapplyCss(){await patchCurrent({customCssId:null,customCssEnabled:false},true);applyCustomCss();if(settingsTab==='appearance')renderAppearanceTab(qs('settings-content'));toast('当前 Session（剧情会话）已取消 CSS（样式）')}
+async function applyCssPreset(id){if(!cssPresets.some(x=>x.id===id))return;if(!await patchCurrent({customCssId:id,customCssEnabled:true},true))return;applyCustomCss();if(settingsTab==='appearance')renderAppearanceTab(qs('settings-content'));toast('CSS（样式）已应用到当前 Session（剧情会话）')}
+async function unapplyCss(){if(!await patchCurrent({customCssId:null,customCssEnabled:false},true))return;applyCustomCss();if(settingsTab==='appearance')renderAppearanceTab(qs('settings-content'));toast('当前 Session（剧情会话）已取消 CSS（样式）')}
 async function emergencyDisableCss(){await patchCurrent({customCssEnabled:false},true);ensureCustomCssStyle().textContent='';ensureGlobalCssStyle().textContent='';fetchStory('/theme','PATCH',{globalCssEnabled:false}).then(()=>applyCustomCss());if(settingsTab==='appearance')renderAppearanceTab(qs('settings-content'));toast('🚑 自定义 CSS（样式）已临时禁用')}
-async function reenableCss(){if(!currentSessionData?.customCssId)return toast('当前 Session（剧情会话）没有挂载 CSS（样式）');await patchCurrent({customCssEnabled:true},true);applyCustomCss();if(settingsTab==='appearance')renderAppearanceTab(qs('settings-content'))}
+async function reenableCss(){if(!currentSessionData?.customCssId)return toast('当前 Session（剧情会话）没有挂载 CSS（样式）');if(!await patchCurrent({customCssEnabled:true},true))return;applyCustomCss();if(settingsTab==='appearance')renderAppearanceTab(qs('settings-content'))}
 async function duplicateCssPreset(id){const p=cssPresets.find(x=>x.id===id);if(!p)return;const res=await fetchStory('/css-presets','POST',{name:`${p.name} · 副本`,css:p.css,scope:p.scope,surface:p.surface});if(res.success){await loadAll();openSettings('appearance');toast('CSS Preset（CSS 预设）已复制')}else toast(res.msg||'复制失败')}
 async function deleteCssPreset(id){if(!confirm('删除这个 CSS Preset（CSS 预设）？挂载它的 Session（剧情会话）会自动取消应用。'))return;const res=await fetchStory(`/css-presets/${id}`,'DELETE');if(!res.success)return toast(res.msg||'删除失败');closeEditor();await loadAll();applyCustomCss();openSettings('appearance')}
 function chooseCssImport(){qs('css-file-input').value='';qs('css-file-input').click()}
@@ -1002,7 +1141,14 @@ async function deleteLocalFont(id){if(!confirm('从这个浏览器删除字体�
 async function toggleSafeHtml(on){await patchCurrent({renderMode:on?'safe_html':'text'},true);refreshChatBox();renderAppearancePreview()}
 function formatBytes(n){if(!Number.isFinite(Number(n)))return'';if(n<1024)return`${n} B`;if(n<1024*1024)return`${(n/1024).toFixed(1)} KB`;return`${(n/1024/1024).toFixed(1)} MB`}
 function fontFormat(url){const c=String(url).split('?')[0].toLowerCase();if(c.endsWith('.woff2'))return'woff2';if(c.endsWith('.woff'))return'woff';if(c.endsWith('.ttf'))return'truetype';if(c.endsWith('.otf'))return'opentype';return''}
-function applyLegacyUrlFont(){const url=qs('legacy-font-url').value.trim().replace(/[\n\r\t'"()\\]/g,'');const family=(qs('legacy-font-family').value.trim()||'MimaUrlFont').replace(/['"\\;\n\r{}]/g,'');let tag=qs('legacy-url-font-style');if(!tag){tag=document.createElement('style');tag.id='legacy-url-font-style';document.head.appendChild(tag)}if(!url){tag.textContent='';localStorage.removeItem(LEGACY_FONT_URL_KEY);return}const fmt=fontFormat(url);const apply=`.assistant-msg .story-prose,.assistant-msg .msg-content.safe-html-content{font-family:'${family}',var(--font-ui)!important}`;tag.textContent=url.includes('fonts.googleapis.com')||url.endsWith('.css')?`@import url('${url}'); ${apply}`: `@font-face{font-family:'${family}';src:url('${url}')${fmt?` format('${fmt}')`:''};font-display:swap;} ${apply}`;localStorage.setItem(LEGACY_FONT_URL_KEY,url);localStorage.setItem(LEGACY_FONT_FAMILY_KEY,family);toast('URL 字体已应用')}
+function applyLegacyUrlFont(){
+    const url=qs('legacy-font-url').value.trim().replace(/[\n\r\t'"()\\]/g,'');
+    const family=(qs('legacy-font-family').value.trim()||'MimaUrlFont').replace(/['"\\;\n\r{}]/g,'');
+    if(url){localStorage.setItem(LEGACY_FONT_URL_KEY,url);localStorage.setItem(LEGACY_FONT_FAMILY_KEY,family)}
+    else{localStorage.removeItem(LEGACY_FONT_URL_KEY);localStorage.removeItem(LEGACY_FONT_FAMILY_KEY)}
+    restoreLegacyFont();
+    toast(url?(MimaFontManager.getSelected('story')?'URL 字体已加载；当前独立正文字体优先':'URL 正文字体已应用'):'旧 URL 字体已停用');
+}
 
 function renderApiTab(box){
     const c=MimaStandalone.getApiConfig();
@@ -1022,7 +1168,27 @@ function syncApiModelSelect(){const sel=qs('api-model-select'),input=qs('api-mod
 function syncTemperature(source){const range=qs('api-temp-range'),num=qs('api-temperature'),pill=qs('api-temp-value');let v=Number(source==='range'?range?.value:num?.value);if(!Number.isFinite(v))v=.85;v=Math.max(.1,Math.min(2,v));if(range&&source!=='range')range.value=v;if(num&&source!=='number')num.value=v.toFixed(2);if(pill)pill.textContent=v.toFixed(2)}
 function populateApiModelSelect(models){const sel=qs('api-model-select');if(!sel)return;const current=qs('api-model')?.value.trim()||'';sel.innerHTML='<option value="">请选择 Model（模型）</option>'+models.map(x=>`<option value="${escapeHtml(x)}" ${x===current?'selected':''}>${escapeHtml(x)}</option>`).join('');if(current&&!models.includes(current)){const opt=document.createElement('option');opt.value=current;opt.textContent=`${current} · 手动`;opt.selected=true;sel.appendChild(opt)}}
 function collectApiForm(){const temp=Math.max(.1,Math.min(2,Number(qs('api-temperature')?.value||.85)));return{apiBase:qs('api-base').value.trim(),apiKey:qs('api-key').value.trim(),model:qs('api-model').value.trim(),chatEndpoint:qs('api-chat-endpoint').value.trim(),modelsEndpoint:qs('api-models-endpoint').value.trim(),extraHeaders:qs('api-extra-headers').value.trim(),sendTemperature:qs('api-send-temp').checked,temperature:temp,stream:qs('api-stream').checked,maxTokens:Number(qs('api-max-tokens').value||0),contextWindowTokens:Number(qs('api-context-window')?.value||0)}}
-function saveApiSettings(){try{const c=collectApiForm();if(c.extraHeaders)JSON.parse(c.extraHeaders);MimaStandalone.saveApiConfig(c);localStorage.setItem(TEMP_KEY,String(c.temperature));toast('API（接口）配置只保存到了这个浏览器');const el=qs('api-status');if(el)el.textContent='✅ 已保存。';return true}catch(e){const info=describeApiError(e);toast(`API（接口）配置错误：${info.message}`);const el=qs('api-status');if(el)el.textContent=`❌ ${info.code} · ${info.message}\n可能原因：${info.hint}`;return false}}
+function saveApiSettings(){
+    try{
+        // Invalid numbers must not be silently clamped or saved as defaults.
+        const temp=validatedSettingNumber('api-temperature','API 温度',0.1,2,false);
+        const windowSize=validatedSettingNumber('api-context-window','模型上下文窗口',0,100000000,true,true);
+        const maxTokens=validatedSettingNumber('api-max-tokens','最大输出 Tokens',0,100000000,true,true);
+        if(temp===null||windowSize===null||maxTokens===null)return false;
+        const c=collectApiForm();
+        if(c.extraHeaders)JSON.parse(c.extraHeaders);
+        MimaStandalone.saveApiConfig(c);
+        const actual=MimaStandalone.getApiConfig();
+        if(actual.temperature!==temp||actual.maxTokens!==maxTokens||actual.contextWindowTokens!==windowSize)
+            throw new Error('保存后的 API 数值与输入不一致');
+        localStorage.setItem(TEMP_KEY,String(c.temperature));
+        toast('API（接口）配置只保存到了这个浏览器');
+        const el=qs('api-status');if(el)el.textContent='✅ 已保存。';return true;
+    }catch(e){
+        const info=describeApiError(e);toast(`API（接口）配置错误：${info.message}`);
+        const el=qs('api-status');if(el)el.textContent=`❌ ${info.code} · ${info.message}\n可能原因：${info.hint}`;return false;
+    }
+}
 async function loadApiModels(){if(!saveApiSettings())return;const status=qs('api-status');status.textContent='正在拉取模型……';try{const models=await MimaStandalone.listModels();populateApiModelSelect(models);status.textContent=`✅ 拉到 ${models.length} 个 Model（模型）。现在可以点击上方下拉框展开选择，也可以继续手填。`;if(models.length&&!qs('api-model').value){qs('api-model').value=models[0];populateApiModelSelect(models);MimaStandalone.saveApiConfig({...collectApiForm(),model:models[0]})}}catch(e){const info=describeApiError(e);status.textContent=`❌ ${info.code}${info.status?` · HTTP（状态码） ${info.status}`:''}\n${info.message}\n可能原因：${info.hint}`}}
 async function testApiConnection(){if(!saveApiSettings())return;const status=qs('api-status');status.textContent='正在测试 API（接口）……';try{const r=await MimaStandalone.testApi();status.textContent=`✅ API（接口）可访问，模型列表 ${r.count} 个。`;populateApiModelSelect(r.models)}catch(e){const info=describeApiError(e);status.textContent=`❌ ${info.code}${info.status?` · HTTP（状态码） ${info.status}`:''}\n${info.message}\n可能原因：${info.hint}`}}
 function describeApiError(e){const message=e?.message||e?.msg||(typeof e==='string'?e:'未知 API 错误');const code=e?.code||(/Failed to fetch|NetworkError|Load failed|CORS/i.test(message)?'E_API_NETWORK_CORS':'E_API_UNKNOWN');const status=Number(e?.status)||0;let hint=e?.hint||'';if(!hint&&code==='E_API_NETWORK_CORS')hint='浏览器 Fetch 在拿不到响应时无法可靠区分 CORS、网络断线、证书错误或“网关错误响应缺少 CORS 头”。如果同一配置一会成功一会失败，更像中转/CDN 节点抖动，而不是你的剧情数据坏了。';if(!hint&&code==='E_STREAM_INTERRUPTED')hint='流式连接已建立后中断。不要自动重复计费；可点击“仅重试本轮”手动重试，玩家消息不会重复写入。';if(!hint&&code==='E_API_REFUSAL_CONTENT')hint='模型把拒绝文本当普通回复返回；正文已拦截且不会进入角色历史或旧版本。可手动重试，不会自动重复计费。';if(!hint)hint='请检查 API（接口）地址、密钥、模型名、参数兼容性以及中转站状态。';return{message,code,status,hint,details:e?.details||''}}
@@ -1030,16 +1196,19 @@ function friendlyApiError(e){const i=describeApiError(e);return `${i.code}${i.st
 function chooseApiImport(){qs('api-config-file-input').value='';qs('api-config-file-input').click()}
 async function importApiConfigFile(file){if(!file)return;try{const raw=JSON.parse(await file.text()),src=raw.data||raw;const temperature=Number(src.temperature??localStorage.getItem(TEMP_KEY)??.85);MimaStandalone.saveApiConfig({apiBase:src.apiBase||src.baseUrl||src.base_url||'',apiKey:src.apiKey||src.api_key||src.key||'',model:src.model||'',chatEndpoint:src.chatEndpoint||'',modelsEndpoint:src.modelsEndpoint||'',extraHeaders:typeof src.extraHeaders==='string'?src.extraHeaders:src.extraHeaders?JSON.stringify(src.extraHeaders):'',sendTemperature:src.sendTemperature!==false,temperature,stream:!!(src.stream??src.streaming),maxTokens:Number(src.maxTokens||0),contextWindowTokens:Number(src.contextWindowTokens??src.context_window??0)});localStorage.setItem(TEMP_KEY,String(temperature));renderApiTab(qs('settings-content'));toast('API（接口）配置已导入到当前浏览器')}catch(e){toast(`API（接口）配置导入失败：${e.message}`)}}
 
-function renderPromptTab(box){box.innerHTML=`<section class="settings-section"><h3>🔬 Prompt Inspector（提示词检查器）</h3><p class="helper">只预览、不调用 LLM。咪嘛馆不会把整个剧情档案每轮全塞给模型：只注入已挂载 Persona / Preset、当轮命中的预算内 Worldbook、摘要/记忆，以及最近消息窗口。v1.1.4 还会显示上游返回的缓存命中统计；没有统计不等于没有缓存。</p><div class="toolbar"><button class="primary-btn" onclick="refreshPromptInspector()">扫描本轮 Prompt（提示词）</button></div><div id="prompt-inspector"><div class="row-sub">点击上方按钮生成预览。</div></div></section>`}
+function renderPromptTab(box){box.innerHTML=`<section class="settings-section"><h3>🔬 Prompt Inspector（提示词检查器）</h3><p class="helper">只预览、不调用 LLM。咪嘛馆在模型上下文容量允许时优先提供完整原始剧情；每轮各注入一份已启用 Persona / Preset 与预算内命中的 Worldbook。只有已核实的模型窗口不足时，才从本次 Prompt 暂时省略最早剧情，绝不删除本地 History。v1.1.4 还会显示上游返回的缓存命中统计；没有统计不等于没有缓存。</p><div class="toolbar"><button class="primary-btn" onclick="refreshPromptInspector()">扫描本轮 Prompt（提示词）</button></div><div id="prompt-inspector"><div class="row-sub">点击上方按钮生成预览。</div></div></section>`}
 async function refreshPromptInspector(){
-    const root=qs('prompt-inspector');root.innerHTML='<div class="row-sub">正在组装……</div>';
-    const res=await fetchStory(`/sessions/${currentSessionId}/prompt-preview`,'POST',{draft:qs('story-input').value,directorNote:qs('director-note').value});
+    const targetSessionId=currentSessionId,root=qs('prompt-inspector'),epoch=settingsRenderEpoch;
+    if(!targetSessionId||!root)return;
+    root.innerHTML='<div class="row-sub">正在组装……</div>';
+    const res=await fetchStory(`/sessions/${targetSessionId}/prompt-preview`,'POST',{draft:qs('story-input').value,directorNote:qs('director-note').value});
+    if(targetSessionId!==currentSessionId||epoch!==settingsRenderEpoch||root!==qs('prompt-inspector')||settingsTab!=='prompt'||!isSettingsOpen())return;
     if(!res.success){root.textContent=res.msg||'预览失败';return}
     const d=res.data,u=d.upstreamUsage||MimaStandalone.getLastUsage?.()||null;
     const cached=u?.cachedTokens;
     const cacheText=Number.isFinite(Number(cached))?Number(cached).toLocaleString():'—';
     const cacheNote=u?`最近一次上游 usage${u.model?` · ${escapeHtml(u.model)}`:''}${Number.isFinite(Number(cached))?`：缓存命中 ${Number(cached).toLocaleString()} tokens`:'：未提供 cached tokens 字段'}。`:'当前中转/模型尚未返回可识别的 usage 统计。';
-    root.innerHTML=`<div class="prompt-stats"><div class="stat-card"><div class="stat-num">${Number(d.estimatedInputTokens||0).toLocaleString()}</div><div class="stat-label">估算输入 Tokens</div></div><div class="stat-card"><div class="stat-num">${d.recentMessageCount}/${d.recentMessageLimit||'—'}</div><div class="stat-label">最近消息窗口</div></div><div class="stat-card"><div class="stat-num">${d.matchedWorldbookEntries.length}</div><div class="stat-label">世界书命中</div></div><div class="stat-card"><div class="stat-num">${cacheText}</div><div class="stat-label">最近缓存命中 Tokens</div></div><div class="stat-card"><div class="stat-num">${d.systemChars}</div><div class="stat-label">System 字符</div></div><div class="stat-card"><div class="stat-num">${d.finalMessageCount}</div><div class="stat-label">最终 Messages</div></div></div><div class="cache-insight-card"><strong>🧊 Cache Insight（缓存观察）</strong><div class="row-sub">${cacheNote} 缓存是否真正命中由上游 Provider 决定；咪嘛馆不会伪造“已缓存”。</div></div><div class="row-sub">${d.contextTrace?.uncoveredRawCount?`本轮有 ${d.contextTrace.uncoveredRawCount} 条待总结旧原文处于最近窗口外；相关检索 ${d.contextTrace.retrievedCount} 条，未覆盖 ${d.contextTrace.omittedCount} 条（原文仍在本地）。`:'旧原文覆盖无额外缺口。'} ${d.contextTrace?.budgetVerified?'上下文预算：使用已配置模型窗口。':'模型上下文窗口未核实：不会以假定的 32K 上限阻断角色回复；检索旧原文仍受软预算约束。建议在 API 设置填写真实窗口以获得准确校验。'}</div><h4>本轮 Prompt 构成（字符数，非精确 Tokens）</h4><div class="hit-list">${(d.sections||[]).slice().sort((a,b)=>b.chars-a.chars).map(x=>`<div class="hit-item">${escapeHtml(x.name)}：${Number(x.chars||0).toLocaleString()} 字符</div>`).join('')||'<div class="hit-item">暂无项目</div>'}</div><h4>本轮世界书</h4><div class="hit-list">${d.matchedWorldbookEntries.length?d.matchedWorldbookEntries.map(x=>`<div class="hit-item">✅ ${escapeHtml(x.bookName)} / ${escapeHtml(x.entryName)} · Depth（深度） ${x.depth} · ${escapeHtml(x.position)} · ${escapeHtml(x.reason)}${x.hits?.length?` · 命中：${escapeHtml(x.hits.join(', '))}`:''}</div>`).join(''):'<div class="hit-item">本轮没有触发世界书条目；未触发条目不会进入本轮 Prompt。</div>'}</div><h4 style="margin-top:16px">System Prompt（系统提示词）</h4><pre class="prompt-pre">${escapeHtml(d.systemPreview)}</pre><details style="margin-top:12px"><summary>查看完整 Message（消息）队列</summary><pre class="prompt-pre">${escapeHtml(d.messagePreview.map(x=>`#${x.index} ${x.role}\n${x.content}`).join('\n\n'))}</pre></details>`;
+    root.innerHTML=`<div class="prompt-stats"><div class="stat-card"><div class="stat-num">${Number(d.estimatedInputTokens||0).toLocaleString()}</div><div class="stat-label">估算输入 Tokens</div></div><div class="stat-card"><div class="stat-num">${d.recentMessageCount}/${d.recentMessageLimit||'—'}</div><div class="stat-label">最近消息窗口</div></div><div class="stat-card"><div class="stat-num">${d.matchedWorldbookEntries.length}</div><div class="stat-label">世界书命中</div></div><div class="stat-card"><div class="stat-num">${cacheText}</div><div class="stat-label">最近缓存命中 Tokens</div></div><div class="stat-card"><div class="stat-num">${d.systemChars}</div><div class="stat-label">System 字符</div></div><div class="stat-card"><div class="stat-num">${d.finalMessageCount}</div><div class="stat-label">最终 Messages</div></div></div><div class="cache-insight-card"><strong>🧊 Cache Insight（缓存观察）</strong><div class="row-sub">${cacheNote} 缓存是否真正命中由上游 Provider 决定；咪嘛馆不会伪造“已缓存”。</div></div><div class="row-sub">${d.contextTrace?.uncoveredRawCount?`本轮有 ${d.contextTrace.uncoveredRawCount} 条待总结旧原文处于最近窗口外；相关检索 ${d.contextTrace.retrievedCount} 条，未覆盖 ${d.contextTrace.omittedCount} 条（原文仍在本地）。`:'旧原文覆盖无额外缺口。'} ${d.contextTrace?.budgetVerified?'上下文预算：使用已配置模型窗口。':'模型上下文窗口未核实：不会以假定的 32K 上限阻断角色回复；检索旧原文仍受软预算约束。建议在 API 设置填写真实窗口以获得准确校验。'}</div><h4>本轮 Prompt 构成（字符数，非精确 Tokens）</h4><div class="hit-list">${(d.sections||[]).slice().sort((a,b)=>b.chars-a.chars).map(x=>`<div class="hit-item">${escapeHtml(x.name)}：${Number(x.chars||0).toLocaleString()} 字符</div>`).join('')||'<div class="hit-item">暂无项目</div>'}</div><h4>本轮世界书</h4><div class="row-sub">本轮预算：${Number(d.worldbookBudgetChars??0).toLocaleString()} 字符，实际占用：${Number(d.worldbookUsedChars??0).toLocaleString()} 字符。未注入条目请核对触发条件与跳过原因。</div><div class="hit-list">${d.matchedWorldbookEntries.length?d.matchedWorldbookEntries.map(x=>`<div class="hit-item">✅ ${escapeHtml(x.bookName)} / ${escapeHtml(x.entryName)} · Depth（深度） ${x.depth} · ${escapeHtml(x.position)} · ${escapeHtml(x.reason)}${x.hits?.length?` · 命中：${escapeHtml(x.hits.join(', '))}`:''}</div>`).join(''):'<div class="hit-item">本轮没有触发世界书条目；未触发条目不会进入本轮 Prompt。</div>'}</div><h4 style="margin-top:16px">实际 System 消息（预设与引擎规则）</h4><pre class="prompt-pre">${escapeHtml(d.actualSystemPreview||'')}</pre><h4>剧情来源资料（实际以 User 消息发送，不是 System）</h4><pre class="prompt-pre">${escapeHtml(d.userMaterialPreview||'（本轮无资料块）')}</pre><h4>面具加载与注入状态</h4><div class="hit-list">${(d.maskTrace||[]).map(x=>`<div class="hit-item">${escapeHtml(x.kind)} / ${escapeHtml(x.name||x.id||'未挂载')}：${escapeHtml(x.reason)} · ${x.injected?'已注入 user 资料':'未注入'}</div>`).join('')}</div><h4>预设挂载及实际角色等级</h4><div class="hit-list">${(d.presetTrace||[]).map(x=>`<div class="hit-item">${escapeHtml(x.name||x.id)}：${escapeHtml(x.reason)} · ${x.injected?'system':'未注入'}</div>`).join('')||'本轮未挂载预设'}</div><h4>世界书未注入原因</h4><div class="hit-list">${(d.worldbookMountTrace||[]).filter(x=>x.reason!=='enabled').map(x=>`<div class="hit-item">${escapeHtml(x.bookName||x.bookId)}：${escapeHtml(x.reason)}</div>`).join('')}${(d.skippedWorldbookEntries||[]).map(x=>`<div class="hit-item">${escapeHtml(x.bookName)} / ${escapeHtml(x.entryName)}：${escapeHtml(x.reason)}${x.reason==='budget'?`（需要 ${x.neededChars} 字符，剩余 ${x.remainingChars}）`:''}</div>`).join('')||'无额外跳过条目'}</div><h4>世界书深度注入（实际为 User 消息）</h4><div class="hit-list">${(d.depthInjections||[]).map(x=>`<div class="hit-item">${escapeHtml(x.bookName)} / ${escapeHtml(x.entryName)} · depth=${x.depth} · ${x.chars} 字符</div>`).join('')||'本轮无深度注入'}</div><details style="margin-top:12px"><summary>查看完整 Message（消息）队列</summary><pre class="prompt-pre">${escapeHtml(d.messagePreview.map(x=>`#${x.index} ${x.role}\n${x.content}`).join('\n\n'))}</pre></details>`;
 }
 
 function setupEditorButtons(deleteFn,saveFn){qs('editor-save').textContent='保存';const del=qs('editor-delete');if(deleteFn){del.classList.remove('hidden');del.onclick=deleteFn}else{del.classList.add('hidden');del.onclick=null}qs('editor-save').onclick=saveFn}
@@ -1080,7 +1249,9 @@ function showGenerationError(err){deferredGenerationProgress=null;const info=des
 function retryFailedGeneration(){if(isGenerating)return toast('当前已经在生成中。');if(!lastGenerationFailure)return toast('当前没有可重试的失败请求。');const previousAction=lastGenerationFailure.action||'send';const retry=qs('generation-retry');if(retry)retry.classList.add('hidden');if(previousAction==='send')return triggerChat('','regenerate');return triggerChat('',previousAction)}
 function dismissGenerationPanel(){qs('generation-panel')?.classList.add('hidden')}
 async function triggerChat(text,actionType='send'){
-    if(!currentSessionId)return toast('请先创建一个剧情。');
+    if(isGenerating)return toast('当前正在生成剧情，请先停止或等待本轮完成。');
+    const targetSessionId=currentSessionId;
+    if(!targetSessionId)return toast('请先创建一个剧情。');
     const directorNote=qs('director-note').value.trim();
     // 在 UI 当前可见状态下锁定“重说”的确切 assistant 消息。只锁定最后一轮的回复；
     // 如果当前最后一条是 user，则不提供 targetMessageId，Core 会生成新回复而不是误覆盖上一轮。
@@ -1095,17 +1266,25 @@ async function triggerChat(text,actionType='send'){
     if(actionType==='send'&&String(text||'').trim()){renderPendingUserMessage(String(text))}
     toggleUIState(true);beginGenerationProgress(actionType);
     try{
-        const res=await fetchStory(`/sessions/${currentSessionId}/chat`,'POST',{text,action:actionType,temperature:getTemp(),directorNote,targetMessageId},true,handleGenerationProgress);
+        const res=await fetchStory(`/sessions/${targetSessionId}/chat`,'POST',{text,action:actionType,temperature:getTemp(),directorNote,targetMessageId},true,handleGenerationProgress);
         toggleUIState(false);
+        // The request belongs to its original session, not whichever session
+        // the player selected while waiting for the Provider.
+        if(targetSessionId!==currentSessionId){clearLiveStream();dismissGenerationPanel();try{await refreshSessionSummaryList()}catch(e){console.error('已离开的剧情列表刷新失败',{targetSessionId,error:e});}return;}
         const storyBox=qs('story-chat-box');
         const preserveReading=liveStreamState?.followTail===false;
         const preservedScrollTop=preserveReading&&storyBox?storyBox.scrollTop:null;
         if(res.aborted){toast('生成已停止，主人消息已保留。');setGenerationProgress({percent:100,label:'已停止生成',detail:'主人消息仍然保存在剧情里，可以直接重试。'});setTimeout(()=>dismissGenerationPanel(),900);clearLiveStream();await openSession(currentSessionId,false);if(preserveReading&&storyBox&&preservedScrollTop!==null)requestAnimationFrame(()=>storyBox.scrollTop=preservedScrollTop);return}
-        if(res.success){clearLiveStream();currentSessionData=res.data;qs('story-input').value='';autoResizeInput();refreshChatBox(preserveReading?{scrollTop:preservedScrollTop}:{scrollToBottom:true});await refreshSessionSummaryList();refreshHeader();finishGenerationProgress()}
+        if(res.success){clearLiveStream();currentSessionData=res.data;qs('story-input').value='';autoResizeInput();refreshChatBox(preserveReading?{scrollTop:preservedScrollTop}:{scrollToBottom:true});try{await refreshSessionSummaryList()}catch(e){console.error('剧情回复已持久化但列表读取失败',{targetSessionId,error:e});toast('回复已保存；会话列表暂时无法刷新')}refreshHeader();finishGenerationProgress()}
         else{clearLiveStream();showGenerationError(res);toast(`生成失败 · ${res.code||'E_UNKNOWN'}`);await openSession(currentSessionId,false)}
-    }catch(e){clearLiveStream();toggleUIState(false);showGenerationError(e);toast(`生成失败 · ${e?.code||'E_UNKNOWN'}`)}
+    }catch(e){clearLiveStream();toggleUIState(false);if(targetSessionId===currentSessionId){showGenerationError(e);toast(`生成失败 · ${e?.code||'E_UNKNOWN'}`)}else console.error('非当前会话的剧情提交异常',{targetSessionId,error:e});}
 }
-function stopGeneration(){if(activeRequest){activeRequest.abort();activeRequest=null}clearLiveStream();toggleUIState(false)}
+function stopGeneration(){
+    // An abort request is not a completed settlement. The owning request
+    // unlocks the editor only after it actually resolves/rejects.
+    if(activeRequest)activeRequest.abort();
+    clearLiveStream();
+}
 function sendMsg(){const txt=qs('story-input').value.trim();if(txt)triggerChat(txt,'send')}
 function regenerateMsg(){triggerChat('','regenerate')}
 function continueMsg(){triggerChat('','continue')}
@@ -1239,7 +1418,19 @@ function sanitizeAllowedHtml(html){
     return template.innerHTML;
 }
 
-function restoreLegacyFont(){const url=localStorage.getItem(LEGACY_FONT_URL_KEY);if(!url)return;let tag=document.createElement('style');tag.id='legacy-url-font-style';document.head.appendChild(tag);const fam=localStorage.getItem(LEGACY_FONT_FAMILY_KEY)||'MimaUrlFont';const fmt=fontFormat(url);const apply=`.assistant-msg .story-prose,.assistant-msg .msg-content.safe-html-content,.user-msg .story-prose{font-family:'${fam}',-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif!important}`;tag.textContent=url.includes('fonts.googleapis.com')||url.endsWith('.css')?`@import url('${url}'); ${apply}`:`@font-face{font-family:'${fam}';src:url('${url}')${fmt?` format('${fmt}')`:''};font-display:swap;} ${apply}`}
+function restoreLegacyFont(){
+    const url=localStorage.getItem(LEGACY_FONT_URL_KEY);
+    const tag=qs('legacy-url-font-style')||document.createElement('style');
+    tag.id='legacy-url-font-style';if(!tag.isConnected)document.head.appendChild(tag);
+    if(!url){tag.textContent='';MimaFontManager?.applySelected?.();return;}
+    const family=(localStorage.getItem(LEGACY_FONT_FAMILY_KEY)||'MimaUrlFont').replace(/['"\\;\n\r{}]/g,'');
+    const fmt=fontFormat(url);
+    // Register the font resource only. FontManager owns both independent
+    // variables and chooses an explicit story-library font over this fallback.
+    const safeUrl=String(url).replace(/[\n\r"'\\]/g,'');
+    tag.textContent=safeUrl.includes('fonts.googleapis.com')||safeUrl.endsWith('.css')?`@import url('${safeUrl}');`:`@font-face{font-family:'${family}';src:url('${safeUrl}')${fmt?` format('${fmt}')`:''};font-display:swap;}`;
+    MimaFontManager?.applySelected?.();
+}
 
 // Expose inline handlers
 Object.assign(window,{goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,choosePngResourceInspection,playInspectedPngInCompat,savePngSelectedResources,exportPngInspection,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,clearCoreMemory,deleteFactMemory,clearAllFactMemories,revokeRollingMemory,restoreRollingMemory,discardMemoryCandidate,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,syncTemperature,updateStoryTypography,resetStoryTypography,setAppearancePreviewSurface,setBuiltInTheme,dismissGenerationPanel,retryFailedGeneration,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,continueMsg,autoAdvance,stopGeneration});
@@ -1278,6 +1469,6 @@ window.addEventListener('load',async()=>{
     qs('api-config-file-input').addEventListener('change',e=>importApiConfigFile(e.target.files?.[0]));
     qs('library-file-input').addEventListener('change',e=>importWholeLibrary(e.target.files?.[0]));
     qs('full-settings-file-input').addEventListener('change',e=>importFullSettingsFile(e.target.files?.[0]));
-    await loadAll();
+    try{await loadAll()}catch(e){console.error('咪嘛馆资料库读取失败，未将其当作空库',e);alert('咪嘛馆资料读取失败：'+e.message+'\n原数据未清空，请不要创建新存档覆盖。');return;}
     if(!MimaStandalone.getApiConfig().apiBase) setTimeout(maybeOpenInitialApiSettings,250);
 });

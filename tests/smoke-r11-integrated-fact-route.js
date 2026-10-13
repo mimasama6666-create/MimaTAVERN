@@ -1,0 +1,41 @@
+'use strict';
+// Real public memory route, fake model transport and transaction simulator.
+// Validates that the large-output contract reaches the Provider request.
+const assert=require('node:assert/strict');
+const deep=x=>x===undefined?undefined:structuredClone(x),data=new Map();
+function db(){return{close(){},transaction(){let pending=0,done=false,aborted=false;
+ const work=new Map([...data].map(([k,v])=>[k,deep(v)]));
+ const tx={oncomplete:null,onabort:null,error:null,abort(){aborted=true;setImmediate(()=>tx.onabort?.());}};
+ const finish=()=>{if(done||pending||aborted)return;done=true;setImmediate(()=>{data.clear();for(const[k,v]of work)data.set(k,deep(v));tx.oncomplete?.();});};
+ tx.objectStore=()=>({get(k){pending++;const r={onsuccess:null,result:null};setImmediate(()=>{r.result=deep(work.get(k));r.onsuccess?.();pending--;setImmediate(finish);});return r;},put(v,k){work.set(k,deep(v));return{};},delete(k){work.delete(k);return{};}});return tx;}};}
+global.window=global;global.indexedDB={open(){const r={result:db()};setImmediate(()=>r.onsuccess?.());return r;}};
+const prefs=new Map();global.localStorage={getItem:k=>prefs.get(k)||null,setItem:(k,v)=>prefs.set(k,String(v))};
+global.MimaThemeEngine={apply(){},normalizeSettings:x=>x};
+require('../local-store.js');require('../standalone-core.js');
+const msg=Array.from({length:24},(_,i)=>({id:'fact-'+i,role:i%2?'assistant':'user',content:`第${i+1}天，艾琳把地图碎片${i+1}放进第${i+1}号档案盒。`,versions:[]}));
+const memory=msg.map(m=>m.content).join('\n');let requests=0,targetSeen=0,omitFirst=false;
+global.fetch=async(url,opts)=>{requests++;const payload=JSON.parse(opts.body);
+ const prompt=payload.messages.at(-1).content;
+ const found=prompt.match(/建议容量最多约 (\d+) 字/);assert(found,'missing fact output planner target');targetSeen=Number(found[1]);
+ assert(targetSeen>360,'must not enforce impossible 360-character summary');
+ const selected=omitFirst?msg.slice(1):msg;const output=JSON.stringify({memory:selected.map(m=>m.content).join('\n'),evidence:selected.map(m=>({quote:m.content}))});
+ return{ok:true,status:200,headers:{get:()=> 'application/json'},json:async()=>({choices:[{message:{content:output},finish_reason:'stop'}]}),text:async()=>JSON.stringify({choices:[{message:{content:output},finish_reason:'stop'}]})};
+};
+(async()=>{await MimaStandalone.init();MimaStandalone.saveApiConfig({apiBase:'http://localhost:5401/v1',model:'mock',stream:false,contextWindowTokens:100000});
+ const session=(await MimaStandalone.handle('/sessions','POST',{title:'fact-planning-24'})).data;
+ const prep=await MimaStandalone.handle('/sessions/'+session.id,'PATCH',{messages:msg});assert(prep.success,JSON.stringify(prep));
+ const result=await MimaStandalone.handle('/sessions/'+session.id+'/memory/facts','POST',{scope:'all',chunkRounds:24,targetChars:360});
+ assert(result.success,JSON.stringify(result));assert.equal(result.data.messages.length,24);assert.equal(result.data.manualMemory.facts.length,1);
+ for(const m of msg)assert(result.data.manualMemory.facts[0].content.includes(m.content));
+ const j=await MimaLocalStore.getMemoryJob(session.id,'facts');assert.equal(j.status,'committed');
+ assert.equal(requests,1);console.log('PASS 24 real-route source clauses retained, planned chars='+targetSeen+', mock Provider requests='+requests+', transaction committed');
+ omitFirst=true;
+ const bad=(await MimaStandalone.handle('/sessions','POST',{title:'fact-omits-first'})).data;
+ const prep2=await MimaStandalone.handle('/sessions/'+bad.id,'PATCH',{messages:msg});assert(prep2.success);
+ const rejected=await MimaStandalone.handle('/sessions/'+bad.id+'/memory/facts','POST',{scope:'all',chunkRounds:24,targetChars:360});
+ assert.equal(rejected.success,false);assert.equal(rejected.code,'E_MEMORY_NEEDS_REVIEW');
+ const after=(await MimaStandalone.handle('/sessions/'+bad.id,'GET')).data;
+ assert.equal(after.manualMemory.facts.length,0);assert.equal(after.messages.length,24);
+ const pending=await MimaLocalStore.getMemoryJob(bad.id,'facts');assert.equal(pending.status,'needs_review');
+ console.log('PASS 24-event omission negative: no canonical fact commit, old History retained, review pending');
+})().catch(e=>{console.error(e.code||'',e.details||e.message);process.exitCode=1;});

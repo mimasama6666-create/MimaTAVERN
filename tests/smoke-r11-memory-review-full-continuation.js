@@ -1,0 +1,50 @@
+'use strict';
+// Real public memory route, fake model transport and transaction simulator.
+// Validates that the large-output contract reaches the Provider request.
+const assert=require('node:assert/strict');
+const deep=x=>x===undefined?undefined:structuredClone(x),data=new Map();
+function db(){return{close(){},transaction(){let pending=0,done=false,aborted=false;
+ const work=new Map([...data].map(([k,v])=>[k,deep(v)]));
+ const tx={oncomplete:null,onabort:null,error:null,abort(){aborted=true;setImmediate(()=>tx.onabort?.());}};
+ const finish=()=>{if(done||pending||aborted)return;done=true;setImmediate(()=>{data.clear();for(const[k,v]of work)data.set(k,deep(v));tx.oncomplete?.();});};
+ tx.objectStore=()=>({get(k){pending++;const r={onsuccess:null,result:null};setImmediate(()=>{r.result=deep(work.get(k));r.onsuccess?.();pending--;setImmediate(finish);});return r;},put(v,k){work.set(k,deep(v));return{};},delete(k){work.delete(k);return{};}});return tx;}};}
+global.window=global;global.indexedDB={open(){const r={result:db()};setImmediate(()=>r.onsuccess?.());return r;}};
+const prefs=new Map();global.localStorage={getItem:k=>prefs.get(k)||null,setItem:(k,v)=>prefs.set(k,String(v))};
+global.MimaThemeEngine={apply(){},normalizeSettings:x=>x};
+require('../local-store.js');require('../standalone-core.js');
+const msg=Array.from({length:24},(_,i)=>({id:'story-'+i,role:i%2?'assistant':'user',content:`第${i+1}天，艾琳把地图碎片${i+1}放进第${i+1}号档案盒。`,versions:[]}));
+const full=msg.map(m=>m.content).join('\n');let requests=0;
+const success=content=>({ok:true,status:200,headers:{get:()=> 'application/json'},json:async()=>({choices:[{message:{content},finish_reason:'stop'}]}),text:async()=>JSON.stringify({choices:[{message:{content},finish_reason:'stop'}]})});
+global.fetch=async()=>{requests++;return success(msg[0].content);};
+(async()=>{
+ await MimaStandalone.init();MimaStandalone.saveApiConfig({apiBase:'http://localhost:5555/v1',model:'fixture',stream:false,contextWindowTokens:100000});
+ const opts={scope:'all',chunkRounds:24,targetChars:360};
+ const created=(await MimaStandalone.handle('/sessions','POST',{title:'human fact continuation'})).data;
+ assert((await MimaStandalone.handle('/sessions/'+created.id,'PATCH',{messages:msg})).success);
+ const result=await MimaStandalone.handle('/sessions/'+created.id+'/memory/facts','POST',opts);
+ assert.equal(result.code,'E_MEMORY_NEEDS_REVIEW',JSON.stringify(result));
+ const pending=await MimaLocalStore.getMemoryJob(created.id,'facts');
+ assert.equal(pending.status,'needs_review');
+ assert.equal((await MimaStandalone.handle('/sessions/'+created.id,'GET')).data.manualMemory.facts.length,0);
+ const approved=await MimaLocalStore.reviewMemoryCandidate(created.id,'facts',pending.id,'accept',full);
+ assert.equal(approved.status,'interrupted','part review must not pretend to have committed final facts');
+ await MimaStandalone.init();
+ const completed=await MimaStandalone.runRecordedMemory('facts',created.id,opts);
+ assert.equal((await MimaLocalStore.getMemoryJob(created.id,'facts')).status,'committed');
+ assert.equal(completed.manualMemory.facts.length,1);
+ assert.equal(completed.manualMemory.facts[0].content,full);
+ assert.equal(completed.manualMemory.facts[0].verification.status,'human_confirmed');
+ assert.equal(completed.messages.length,24);
+ assert.equal(requests,1,'resume of approved stage must not ask Provider to regenerate it');
+ console.log('PASS review->resumption->canonical fact commit, one Provider request, 24 original messages intact');
+ const stale=(await MimaStandalone.handle('/sessions','POST',{title:'source-change approval fenced'})).data;
+ assert((await MimaStandalone.handle('/sessions/'+stale.id,'PATCH',{messages:msg})).success);
+ const first=await MimaStandalone.handle('/sessions/'+stale.id+'/memory/facts','POST',opts);
+ assert.equal(first.code,'E_MEMORY_NEEDS_REVIEW');
+ const debt=await MimaLocalStore.getMemoryJob(stale.id,'facts');
+ const changed=msg.map(m=>({...m}));changed[0]={...changed[0],content:'原事件已被修改',rawContent:'原事件已被修改'};
+ assert((await MimaStandalone.handle('/sessions/'+stale.id,'PATCH',{messages:changed})).success);
+ await assert.rejects(()=>MimaLocalStore.reviewMemoryCandidate(stale.id,'facts',debt.id,'accept',full),/E_MEMORY_REVIEW_SOURCE_CHANGED/);
+ assert.equal((await MimaStandalone.handle('/sessions/'+stale.id,'GET')).data.manualMemory.facts.length,0);
+ console.log('PASS stale source cannot be adopted by late human review; canonical facts preserved');
+})().catch(e=>{console.error(e.code||'',e.details||e.stack||e.message);process.exitCode=1;});

@@ -10,6 +10,36 @@
   const SETTINGS_SNAPSHOT_KEY = 'settings_snapshot_v1';
   const EMPTY_THEME = { theme: 'default', updatedAt: '' };
 
+  // All canonical state writers, including memory-specific IDB transactions,
+  // must agree on the same minimum verified-record contract. An existing
+  // malformed document is never a valid baseline for partial memory updates.
+  function isCanonicalStateRecord(value) {
+    return !!value && typeof value === 'object' && !Array.isArray(value) &&
+      [2, 3, 4].includes(value.schemaVersion) &&
+      ['sessions', 'masks', 'presets', 'worldbooks'].every(key => Array.isArray(value[key])) &&
+      // Older v2/v3 / early v4 snapshots may lack these collections. However,
+      // a PRESENT but malformed collection is corruption, never "empty".
+      ['cssPresets', 'regexPacks', 'novelProjects'].every(key =>
+        value[key] === undefined || Array.isArray(value[key])) &&
+      (value.themeSettings === undefined ||
+        (value.themeSettings !== null && typeof value.themeSettings === 'object' &&
+         !Array.isArray(value.themeSettings))) &&
+      (value.storeRevision === undefined ||
+        (Number.isInteger(value.storeRevision) && value.storeRevision >= 0));
+  }
+  // Unlike a migration reader, a canonical writer must receive a COMPLETE
+  // snapshot. saveState previously filled missing secondary collections with
+  // [], so a partial caller payload could silently erase CSS, regex or novels.
+  // Keep legacy v2/v3 READ compatibility; writes always target schema v4.
+  function assertWritableState(candidate) {
+    if (!isCanonicalStateRecord(candidate) || candidate.schemaVersion !== 4 ||
+        !['sessions','masks','presets','worldbooks','cssPresets','regexPacks','novelProjects']
+          .every(key => Array.isArray(candidate[key])) ||
+        !candidate.themeSettings || typeof candidate.themeSettings !== 'object' ||
+        Array.isArray(candidate.themeSettings)) {
+      throw new Error('E_CANONICAL_CANDIDATE_UNVERIFIED: 写入资料库必须提供完整的七类资源和外观设置，拒绝覆盖');
+    }
+  }
   function openDb() {
     return new Promise((resolve, reject) => {
       const req = indexedDB.open(DB_NAME, DB_VERSION);
@@ -24,25 +54,34 @@
   async function get(key) {
     const db = await openDb();
     return new Promise((resolve, reject) => {
+      let value, issue;
       const tx = db.transaction(STORE, 'readonly');
       const req = tx.objectStore(STORE).get(key);
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
-      tx.oncomplete = () => db.close();
+      // A request's onsuccess is not evidence that its containing IndexedDB
+      // transaction committed. A later abort must never turn into a verified
+      // "missing" state or an empty memory journal.
+      req.onsuccess = () => { value = req.result; };
+      req.onerror = () => { issue = req.error || new Error('E_CANONICAL_READ_FAILED'); try { tx.abort(); } catch { /* IndexedDB may already be aborting; tx.onabort settles. */ } };
+      tx.oncomplete = () => { db.close(); resolve(value); };
+      tx.onabort = () => { db.close(); reject(issue || tx.error || new Error('E_CANONICAL_READ_ABORTED')); };
+      tx.onerror = () => { issue = issue || tx.error || new Error('E_CANONICAL_READ_FAILED'); };
     });
   }
   async function set(key, value) {
     const db = await openDb();
     return new Promise((resolve, reject) => {
+      let issue;
       const tx = db.transaction(STORE, 'readwrite');
       tx.objectStore(STORE).put(value, key);
       tx.oncomplete = () => { db.close(); resolve(value); };
-      tx.onerror = () => { db.close(); reject(tx.error); };
+      tx.onerror = () => { issue = issue || tx.error || new Error('E_CANONICAL_WRITE_FAILED'); };
+      tx.onabort = () => { db.close(); reject(issue || tx.error || new Error('E_CANONICAL_WRITE_ABORTED')); };
     });
   }
   // Serialize compare-and-swap inside a single IndexedDB readwrite transaction.
   // Never treat a failed read as an empty library, and never silently overwrite a newer tab.
   async function commitState(candidate, expectedRevision) {
+    assertWritableState(candidate);
     const db = await openDb();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE, 'readwrite');
@@ -52,8 +91,8 @@
       req.onerror = () => { problem = req.error || new Error('资料库读取失败'); tx.abort(); };
       req.onsuccess = () => {
         const current = req.result;
-        if (current !== undefined && (!current || typeof current !== 'object' || Array.isArray(current))) {
-          problem = new Error('资料库内容损坏，拒绝写入'); tx.abort(); return;
+        if (current !== undefined && !isCanonicalStateRecord(current)) {
+          problem = new Error('E_CANONICAL_STATE_UNVERIFIED: 资料库内容损坏，拒绝写入'); tx.abort(); return;
         }
         const revision = Number(current?.storeRevision) || 0;
         if (revision !== expectedRevision) {
@@ -70,11 +109,20 @@
   }
   async function loadState() {
     const existing = await get(STATE_KEY);
-    if (existing && typeof existing === 'object') return existing;
+    // Only an actually absent record authorizes first-run initialization.
+    // Null, arrays and partially damaged canonical snapshots are NOT absence.
+    if (existing !== undefined) {
+      if (!isCanonicalStateRecord(existing))
+        throw new Error('E_CANONICAL_STATE_UNVERIFIED: 已存在的本地资料库结构无法核实，停止初始化与写入');
+      return existing;
+    }
     const blank = {schemaVersion:4,sessions:[],masks:[],presets:[],worldbooks:[],cssPresets:[],regexPacks:[],novelProjects:[],themeSettings:{...EMPTY_THEME}};
-    return blank; // uninitialized is distinct from a failed read; first write uses CAS
+    return blank; // verified nonexistent; first write still uses CAS
   }
   async function saveState(state, expectedRevision) {
+    // Never turn a missing caller field into an empty persisted collection.
+    // Only the explicit first-run loadState() may create a new blank library.
+    assertWritableState(state);
     return commitState({
       ...state,
       schemaVersion:4,
@@ -445,7 +493,7 @@
       jr.onsuccess=()=>{
         const active=jr.result;if(!active||active.id!==job.id||active.attemptId!==job.attemptId||active.status!=='running'){fail('E_MEMORY_JOB_FENCED');return;}
         const sr=kv.get(STATE_KEY);sr.onerror=()=>fail('E_MEMORY_STORE_READ');sr.onsuccess=()=>{
-          const current=sr.result;if(!current||!Array.isArray(current.sessions)){fail('E_MEMORY_STORE_UNVERIFIED');return;}
+          const current=sr.result;if(!isCanonicalStateRecord(current)){fail('E_MEMORY_STORE_UNVERIFIED');return;}
           const index=current.sessions.findIndex(x=>x.id===job.sessionId);if(index<0){fail('E_STORY_SESSION_MISSING');return;}
           const latest=current.sessions[index];
           if(!Array.isArray(latest.messages)||JSON.stringify(latest.messages.slice(0,snapshot.messages.length))!==JSON.stringify(snapshot.messages)){fail('E_MEMORY_SOURCE_STALE');return;}
@@ -488,8 +536,10 @@
         const text=String(editedText||'').trim();
         if(decision==='accept'&&(!text||text.length>25000)){fail('E_MEMORY_REVIEW_INVALID_TEXT');return;}
         const sr=kv.get(STATE_KEY);sr.onerror=()=>fail('E_MEMORY_REVIEW_STATE_READ');sr.onsuccess=()=>{
-          const state=sr.result,idx=state?.sessions?.findIndex(x=>x.id===sessionId);
-          if(!state||idx<0){fail('E_MEMORY_STORE_UNVERIFIED');return;}
+          const state=sr.result;
+          if(!isCanonicalStateRecord(state)){fail('E_MEMORY_STORE_UNVERIFIED');return;}
+          const idx=state.sessions.findIndex(x=>x?.id===sessionId);
+          if(idx<0){fail('E_STORY_SESSION_MISSING');return;}
           const session=state.sessions[idx];
           if(!job.sourceFingerprint||window.MimaStandalone?.memorySourceFingerprint(session.messages.slice(0,job.sourceCount),job.sourceCount)!==job.sourceFingerprint){fail('E_MEMORY_REVIEW_SOURCE_CHANGED');return;}
           const contract=window.MimaMemoryContracts;
@@ -561,8 +611,10 @@
         if(job?.status==='running'&&Number(job.leaseUntilEpoch||0)>Date.now()){fail('E_MEMORY_JOB_PENDING');return;}
         const sr=kv.get(STATE_KEY);sr.onerror=()=>fail('E_MEMORY_STORE_READ');
         sr.onsuccess=()=>{
-          const state=sr.result,index=state?.sessions?.findIndex(s=>s.id===sessionId);
-          if(!state||index<0){fail('E_STORY_SESSION_MISSING');return;}
+          const state=sr.result;
+          if(!isCanonicalStateRecord(state)){fail('E_MEMORY_STORE_UNVERIFIED');return;}
+          const index=state.sessions.findIndex(s=>s?.id===sessionId);
+          if(index<0){fail('E_STORY_SESSION_MISSING');return;}
           const session=state.sessions[index],archive=Array.isArray(session.rollingArchive)?session.rollingArchive.slice(-8):[];
           const keys=['summary','rollingSummary','longSummary','lastSummarizedIndex','rollingSourceCount','rollingSourceFingerprint','rollingVerification'];
           const patch={};

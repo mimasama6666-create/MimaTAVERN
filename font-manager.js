@@ -17,31 +17,69 @@ window.MimaFontManager = (() => {
             req.onerror = () => reject(req.error);
         });
     }
+    // A successful IDB request does not guarantee the containing transaction
+    // committed. Wait for oncomplete, and never report a failed read as "no fonts".
     async function all() {
         const db = await openDb();
         return new Promise((resolve, reject) => {
-            const tx = db.transaction(STORE, 'readonly');
-            const req = tx.objectStore(STORE).getAll();
-            req.onsuccess = () => resolve(req.result || []);
-            req.onerror = () => reject(req.error);
+            let records;
+            let settled = false;
+            const finish = (error, value) => {
+                if (settled) return;
+                settled = true;
+                db.close();
+                if (error) reject(error);
+                else resolve(value);
+            };
+            try {
+                const tx = db.transaction(STORE, 'readonly');
+                const req = tx.objectStore(STORE).getAll();
+                req.onsuccess = () => { records = req.result; };
+                // The request's success is only provisional until tx.oncomplete.
+                tx.oncomplete = () => Array.isArray(records) ? finish(null, records) : finish(new Error('E_FONT_READ_UNVERIFIED'));
+                tx.onabort = () => finish(tx.error || new Error('E_FONT_READ_ABORTED'));
+                tx.onerror = () => finish(tx.error || req.error || new Error('E_FONT_READ_FAILED'));
+            } catch (e) { finish(e); }
         });
     }
     async function put(record) {
         const db = await openDb();
         return new Promise((resolve, reject) => {
-            const tx = db.transaction(STORE, 'readwrite');
-            tx.objectStore(STORE).put(record);
-            tx.oncomplete = resolve;
-            tx.onerror = () => reject(tx.error);
+            let settled = false;
+            const finish = error => {
+                if (settled) return;
+                settled = true;
+                db.close();
+                if (error) reject(error);
+                else resolve();
+            };
+            try {
+                const tx = db.transaction(STORE, 'readwrite');
+                tx.objectStore(STORE).put(record);
+                tx.oncomplete = () => finish(null);
+                tx.onabort = () => finish(tx.error || new Error('E_FONT_WRITE_ABORTED'));
+                tx.onerror = () => finish(tx.error || new Error('E_FONT_WRITE_FAILED'));
+            } catch (e) { finish(e); }
         });
     }
     async function remove(id) {
         const db = await openDb();
         return new Promise((resolve, reject) => {
-            const tx = db.transaction(STORE, 'readwrite');
-            tx.objectStore(STORE).delete(id);
-            tx.oncomplete = resolve;
-            tx.onerror = () => reject(tx.error);
+            let settled = false;
+            const finish = error => {
+                if (settled) return;
+                settled = true;
+                db.close();
+                if (error) reject(error);
+                else resolve();
+            };
+            try {
+                const tx = db.transaction(STORE, 'readwrite');
+                tx.objectStore(STORE).delete(id);
+                tx.oncomplete = () => finish(null);
+                tx.onabort = () => finish(tx.error || new Error('E_FONT_DELETE_ABORTED'));
+                tx.onerror = () => finish(tx.error || new Error('E_FONT_DELETE_FAILED'));
+            } catch (e) { finish(e); }
         });
     }
     function extension(name='') { return String(name).split('.').pop().toLowerCase(); }
@@ -85,8 +123,12 @@ window.MimaFontManager = (() => {
         const root = document.documentElement;
         const ui = getSelected('ui');
         const story = getSelected('story');
+        // The legacy URL font is a fallback for STORY only, never a global
+        // UI font and never an !important override of a selected local font.
+        const legacyStory = localStorage.getItem('storyFontUrl') ? localStorage.getItem('storyFontFamily') || 'MimaUrlFont' : '';
+        const storyFamily = story || legacyStory;
         root.style.setProperty('--font-ui', ui ? `'${String(ui).replace(/'/g,'')}', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif` : '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif');
-        root.style.setProperty('--font-story', story ? `'${String(story).replace(/'/g,'')}', var(--font-ui)` : 'var(--font-ui)');
+        root.style.setProperty('--font-story', storyFamily ? `'${String(storyFamily).replace(/'/g,'')}', var(--font-ui)` : 'var(--font-ui)');
     }
     function bufferToBase64(buffer) {
         const bytes = new Uint8Array(buffer || new ArrayBuffer(0));
