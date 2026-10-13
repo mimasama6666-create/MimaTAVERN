@@ -1,5 +1,5 @@
 /* Advanced workbench: all DOM and state scoped to #compat-lab; native app remains untouched. */
-(function(root){'use strict';if(typeof document==='undefined')return;const $=id=>document.getElementById(id),s=()=>root.MimaCompatStore,i=()=>root.MimaCompatImport,r=()=>root.MimaCompatRuntime;let opened=false,scan=null,activeId='',busy=false,creating=false,forking=false,player=null,assetUrls=[],cardPreviewUrl='',scanGeneration=0,sessionGeneration=0,messageRenderGeneration=0;const approvedBasicPreflights=new Map();const busySessions=new Set();let selectedMvuTemplate=null; // ephemeral manual preview; never stored in the chat or card
+(function(root){'use strict';if(typeof document==='undefined')return;const $=id=>document.getElementById(id),s=()=>root.MimaCompatStore,i=()=>root.MimaCompatImport,r=()=>root.MimaCompatRuntime,onboard=()=>root.MimaCompatOnboarding;let opened=false,scan=null,activeId='',busy=false,creating=false,forking=false,player=null,assetUrls=[],cardPreviewUrl='',scanGeneration=0,sessionGeneration=0,messageRenderGeneration=0;const approvedBasicPreflights=new Map();const busySessions=new Set();let selectedMvuTemplate=null; // ephemeral manual preview; never stored in the chat or card
 
 // Cross-tab signals never carry character text or state. Resolve against the
 // canonical turn ledger, then re-read the currently visible session.
@@ -89,26 +89,48 @@ function diagnostics(){
  const recommended=characters.find(x=>/ccv3/.test(x.path))||characters[0];if(recommended)select.value=String(recommended.index);
  $('compat-create').disabled=!characters.length;refreshGreetingChoice();
 }
-function refreshGreetingChoice(){const idx=Number($('compat-card-choice').value),item=scan?.resources?.[idx],select=$('compat-greeting-choice');clear(select);if(item?.kind!=='character')return;const d=item.raw||{};el('option',{value:'0',text:'默认开场白 · '+String(d.first_mes||'（无）').slice(0,56)},select);for(const [i,opening] of (Array.isArray(d.alternate_greetings)?d.alternate_greetings:[]).entries())el('option',{value:String(i+1),text:'备用开场 '+(i+1)+' · '+String(opening).slice(0,56)},select);}
-async function doImport(fileOverride=null){const generation=++scanGeneration,file=fileOverride&&typeof fileOverride.arrayBuffer==='function'?fileOverride:$('compat-file').files[0];if(!file)return message('请先选择 PNG、JSON、CHARX 或 ZIP','error');scan=null;$('compat-create').disabled=true;$('compat-save').disabled=true;clear($('compat-quick-status'));clear($('compat-card-choice'));clear($('compat-greeting-choice'));message('正在读取角色卡…');try{const next=await i().inspect(file);if(generation!==scanGeneration)return;scan=next;diagnostics();$('compat-save').disabled=false;message(`已读取 ${scan.resources.length} 项资料，选择开场后即可开始聊天；外部代码仍不会自动运行。`);}catch(e){if(generation===scanGeneration)reportImportFailure(e,file);}}
-async function commit(){if(!scan)return;try{const result=await s().importSource({sha256:scan.sha256,filename:scan.filename,format:scan.format,bytes:scan.bytes,versions:scan.versions,warnings:scan.warnings},scan.resources);message(result.reused?'相同来源包已存在，未重复写入。':`已原子保存来源包与 ${result.resources} 项资源，不写旧版剧情资料。`);await refreshSourceList();}catch(e){message(`${e.code||'E_IMPORT'}: ${e.message}`,'error');}}
+function refreshGreetingChoice(){const idx=Number($('compat-card-choice').value),item=scan?.resources?.[idx],select=$('compat-greeting-choice');clear(select);if(item?.kind!=='character')return;const d=item.raw||{};el('option',{value:'0',text:'默认开场白 · '+String(d.first_mes||'（无）').slice(0,56)},select);for(const [i,opening] of (Array.isArray(d.alternate_greetings)?d.alternate_greetings:[]).entries())el('option',{value:String(i+1),text:'备用开场 '+(i+1)+' · '+String(opening).slice(0,56)},select);showLaunchPlan();}
+function showLaunchPlan(){
+ const output=$('compat-mount-readiness');if(!output)return;clear(output);
+ const choice=scan?.resources?.[Number($('compat-card-choice').value)];
+ if(!choice||choice.kind!=='character')return;
+ try{
+  const plan=onboard().make(scan.resources,choice),c=plan.counts;
+  el('strong',{text:'一键开玩将绑定：'+plan.name},output);
+  el('p',{text:`卡内自动读取：世界书 ${c.worldbookEnabled}/${c.worldbookEntries} 条原始启用候选（按触发词和预算进入请求）、正则 ${c.regex} 条、MVU 状态来源 ${c.variable_schema} 项。人物描述、系统创作提示和后置指令从所选版本读取。`},output);
+  el('p',{text:`需额外授权或手动启用：脚本 ${c.script_source} 项、CSS ${c.css} 项、HTML ${c.html_template} 项；原始卡片和禁用世界书不会被修改。`},output);
+  if(plan.warnings.length)el('small',{text:plan.warnings.join('；')},output);
+ }catch(e){el('p',{text:(e.code||'E_MOUNT_PLAN')+': '+e.message},output);}
+}
+async function doImport(fileOverride=null){const generation=++scanGeneration,file=fileOverride&&typeof fileOverride.arrayBuffer==='function'?fileOverride:$('compat-file').files[0];if(!file)return message('请先选择 PNG、JSON、CHARX 或 ZIP','error');scan=null;$('compat-create').disabled=true;$('compat-save').disabled=true;clear($('compat-quick-status'));clear($('compat-mount-readiness'));clear($('compat-card-choice'));clear($('compat-greeting-choice'));message('正在读取角色卡…');try{const next=await i().inspect(file);if(generation!==scanGeneration)return;scan=next;diagnostics();$('compat-save').disabled=false;message(`已读取 ${scan.resources.length} 项资料，选择开场后即可开始聊天；外部代码仍不会自动运行。`);}catch(e){if(generation===scanGeneration)reportImportFailure(e,file);}}
+async function commit(){if(!scan)return;try{const result=await s().importSource({sha256:scan.sha256,filename:scan.filename,format:scan.format,bytes:scan.bytes,versions:scan.versions,warnings:scan.warnings},scan.resources);if(result.projectionChanged)throw Object.assign(new Error('同一原始卡的旧资源清单与新版解析结果不同，已保留原数据；请先备份并在隔离站点确认。'),{code:'E_RESOURCE_PROJECTION_STALE'});message(result.reused?'相同来源包已存在，未重复写入。':`已原子保存来源包与 ${result.resources} 项资源，不写旧版剧情资料。`);await refreshSourceList();}catch(e){message(`${e.code||'E_IMPORT'}: ${e.message}`,'error');}}
 async function create(){if(creating||!scan)return;
  const selectedScan=scan,scanTicket=scanGeneration,button=$('compat-create');
- creating=true;button.disabled=true;
+ const selectedIndex=Number($('compat-card-choice').value),selectedGreeting=Number($('compat-greeting-choice').value||0);
+ creating=true;button.disabled=true;$('compat-card-choice').disabled=true;$('compat-greeting-choice').disabled=true;
  try{
   const sourceId='sha256:'+selectedScan.sha256;
   // Always recheck source bytes through the idempotent atomic import. An
   // existing capsule is not evidence that its resource projection is intact.
-  await s().importSource({sha256:selectedScan.sha256,filename:selectedScan.filename,format:selectedScan.format,bytes:selectedScan.bytes,versions:selectedScan.versions,warnings:selectedScan.warnings},selectedScan.resources);
+  const importReceipt=await s().importSource({sha256:selectedScan.sha256,filename:selectedScan.filename,format:selectedScan.format,bytes:selectedScan.bytes,versions:selectedScan.versions,warnings:selectedScan.warnings},selectedScan.resources);
+  if(importReceipt.projectionChanged)throw Object.assign(new Error('这张卡的原始字节虽然相同，但旧资料库保存的资源解析清单与当前版本不一致。为保护旧剧情，不会假装挂载成功。请先导出兼容备份，并在独立测试站点核查该卡。'),{code:'E_RESOURCE_PROJECTION_STALE'});
   if(scanGeneration!==scanTicket||scan!==selectedScan)throw Object.assign(new Error('选卡期间已切换文件，本次未建立旧角色剧情；请再次点击开始'),{code:'E_IMPORT_SELECTION_CHANGED'});
-  const selected=Number($('compat-card-choice').value),choice=selectedScan.resources[selected];
+  const choice=selectedScan.resources[selectedIndex];
   const resources=await s().byIndex('resource_ir','sourceId',sourceId);
   if(scanGeneration!==scanTicket||scan!==selectedScan)throw Object.assign(new Error('选择的原始卡片已经变化，请重新确认角色'),{code:'E_IMPORT_SELECTION_CHANGED'});
   const saved=r().resolveCharacterSelection(sourceId,choice,resources);
-  const ses=await r().createSession(sourceId,{characterResourceId:saved.id,greetingIndex:Number($('compat-greeting-choice').value||0)});
-  await loadSession(ses.id);$('compat-lab').classList.add('in-chat');$('compat-lab').classList.remove('show-advanced');message('已进入角色剧情。人物和原始卡片保存在当前浏览器，原生剧情不受影响。');
+  // The one-click operation uses the selected card version's existing,
+  // source-bound resources. It never elevates arbitrary scripts or CSS.
+  const plan=onboard().make(resources,saved);
+  // Check the exact runtime projection BEFORE creating a persistent session.
+  // A bad source/selected version must not leave an orphan conversation.
+  const prepared=await r().resourcesFor({sourceId,characterResourceId:saved.id,mountGraph:[]});
+  onboard().assertRuntime(plan,prepared);
+  if(scanGeneration!==scanTicket||scan!==selectedScan)throw Object.assign(new Error('来源卡在挂载前发生切换，本次未创建剧情'),{code:'E_IMPORT_SELECTION_CHANGED'});
+  const ses=await r().createSession(sourceId,{characterResourceId:saved.id,greetingIndex:selectedGreeting});
+  await loadSession(ses.id);$('compat-lab').classList.add('in-chat');$('compat-lab').classList.remove('show-advanced');message('已一键进入角色剧情：卡内人物设定、世界书、正则和可验证的 MVU 资料已按选定版本绑定；世界书需按规则触发。脚本、CSS 和复杂 HTML 仍需手动授权。原生剧情不受影响。');
  }catch(e){message(`${e.code||'E_COMPAT'}: ${e.message}`,'error');}
- finally{creating=false;button.disabled=!scan||!scan.resources?.some(item=>item.kind==='character');}}
+ finally{creating=false;$('compat-card-choice').disabled=false;$('compat-greeting-choice').disabled=false;button.disabled=!scan||!scan.resources?.some(item=>item.kind==='character');}}
 async function refreshSourceList(){
  const owner=activeId,generation=sessionGeneration;
  const [sources,allResources]=await Promise.all([s().all('source_capsules'),s().all('resource_ir')]);

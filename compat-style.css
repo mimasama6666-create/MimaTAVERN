@@ -41,3 +41,7 @@
 .compat-mvu-template-frame{width:100%;height:320px;border:1px solid var(--line,#8885);border-radius:10px;background:#faf9f6}
 .compat-mvu-template-note{font-size:.83em;opacity:.78}
 #compat-mvu-template-custom{width:100%;min-height:90px;max-width:100%;font:inherit;box-sizing:border-box}
+
+/* One-click launch is an explicit card-version-bound preparation, not a plugin permission grant. */
+.compat-mount-readiness{margin:9px 0;padding:10px 12px;border:1px solid var(--line,#8585af55);border-radius:10px;background:var(--panel,rgba(128,128,128,.06));font-size:.92em;line-height:1.45}
+.compat-mount-readiness p{margin:6px 0}.compat-mount-readiness small{display:block;opacity:.8}
