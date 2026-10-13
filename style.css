@@ -239,10 +239,10 @@ body::before{
   --story-letter-spacing:0em;
   --story-first-line-indent:0em;
 }
-.msg-content{font-family:var(--font-ui)}
+.msg-content{font-family:var(--font-story)}
 .assistant-msg .story-prose,
 .user-msg .story-prose{
-  font-family:var(--font-story);
+  font-family:inherit;
   font-size:var(--story-font-size);
   line-height:var(--story-line-height);
   letter-spacing:var(--story-letter-spacing);
@@ -250,7 +250,7 @@ body::before{
   overflow-wrap:anywhere;
 }
 .assistant-msg .msg-content.safe-html-content{
-  font-family:var(--font-story);
+  font-family:inherit;
   font-size:var(--story-font-size);
   line-height:var(--story-line-height);
   letter-spacing:var(--story-letter-spacing);
