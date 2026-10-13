@@ -216,14 +216,32 @@
       .sort((a,b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
   }
 
-  async function saveSession(s,{allowCreate=false}={}) {
-    const normalized = normalizeSession({ ...s, updatedAt: nowIso() });
-    const i = state.sessions.findIndex(x => x.id === normalized.id);
-    if (i < 0 && !allowCreate) throw new ApiError('E_STORY_SESSION_MISSING','Session 已删除，旧请求不得复活它');
-    if (i >= 0 && Number(state.sessions[i].recordRevision)!==Number(normalized.recordRevision)) throw new ApiError('E_CANONICAL_CONFLICT','会话已发生新修改，本轮旧结果未提交');
-    normalized.recordRevision++;
-    if (i >= 0) state.sessions[i] = normalized; else state.sessions.push(normalized);
-    await persist(); s.recordRevision=normalized.recordRevision; return normalized;
+  // In one tab, A and B may finish independently. Both must start their
+  // canonical write from the latest verified snapshot, not a shared stale
+  // global `state`. Serialize only the short save transaction, never Provider
+  // generation: Direct Reply for each session remains independent.
+  let sessionSaveTail=Promise.resolve();
+  function saveSession(s,{allowCreate=false}={}) {
+    const requested=clone(s);
+    const commit=async()=>{
+      const persisted=normalizeState(await window.MimaLocalStore.loadState());
+      const normalized=normalizeSession({...requested,updatedAt:nowIso()});
+      const i=persisted.sessions.findIndex(x=>x.id===normalized.id);
+      if(i<0&&!allowCreate)throw new ApiError('E_STORY_SESSION_MISSING','Session 已删除，旧请求不得复活它');
+      if(i>=0&&Number(persisted.sessions[i].recordRevision)!==Number(normalized.recordRevision))
+        throw new ApiError('E_CANONICAL_CONFLICT','当前剧情已发生新修改，本轮旧结果未提交');
+      normalized.recordRevision++;
+      if(i>=0)persisted.sessions[i]=normalized;else persisted.sessions.push(normalized);
+      // CAS protects other tabs and the independent memory ledger. A conflict
+      // is surfaced rather than overwritten; no fallback to blank storage.
+      const committed=await window.MimaLocalStore.saveState(persisted,Number(persisted.storeRevision)||0);
+      state=normalizeState(committed);
+      s.recordRevision=normalized.recordRevision;
+      return normalized;
+    };
+    const task=sessionSaveTail.then(commit,commit);
+    sessionSaveTail=task.then(()=>{},()=>{});
+    return task;
   }
   async function saveMask(m) { const n=normalizeMask({ ...m, updatedAt:nowIso() }); const i=state.masks.findIndex(x=>x.id===n.id); if(i>=0)state.masks[i]=n;else state.masks.push(n); await persist(); return n; }
   async function savePreset(p) { const n=normalizePreset({ ...p, updatedAt:nowIso() }); const i=state.presets.findIndex(x=>x.id===n.id); if(i>=0)state.presets[i]=n;else state.presets.push(n); await persist(); return n; }

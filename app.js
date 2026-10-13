@@ -28,6 +28,12 @@ let deferredGenerationProgress = null;
 let lastGenerationFailure = null;
 let currentGenerationAction = null;
 let appearancePreviewSurface = 'chat';
+// A generation owns exactly one original session; a selected tab is merely a view.
+const generationOwners = new Map();
+const generationFailures = new Map();
+const sessionComposerDrafts = new Map();
+let generationSerial = 0;
+
 
 const TEMP_KEY = 'MIMAMAO_TAVERN_TEMP';
 const LEGACY_FONT_URL_KEY = 'storyFontUrl';
@@ -103,11 +109,51 @@ async function fetchStory(endpoint, method='GET', body=null, useAbort=false, pro
     }
 }
 
+function currentGenerationOwner(){return generationOwners.get(currentSessionId)||null;}
+function ownsVisibleGeneration(owner){return !!owner && generationOwners.get(owner.sessionId)===owner && currentSessionId===owner.sessionId;}
+function preserveComposerDraft(id=currentSessionId){
+    if(!id)return;
+    const input=qs('story-input'),director=qs('director-note');
+    sessionComposerDrafts.set(id,{text:input?.value||'',director:director?.value||''});
+}
+function restoreComposerDraft(id){
+    const draft=sessionComposerDrafts.get(id)||{text:'',director:''};
+    if(qs('story-input'))qs('story-input').value=draft.text;
+    if(qs('director-note'))qs('director-note').value=draft.director;
+    autoResizeInput();
+}
+function clearSubmittedDraft(owner){
+    if(owner.action!=='send'||owner.inputCleared)return;
+    owner.inputCleared=true;
+    const saved=sessionComposerDrafts.get(owner.sessionId);
+    if(saved?.text===owner.text)sessionComposerDrafts.set(owner.sessionId,{...saved,text:''});
+    if(ownsVisibleGeneration(owner)){
+        const el=qs('story-input');
+        if(el?.value===owner.text){el.value='';autoResizeInput();}
+    }
+}
+function restoreGenerationView(){
+    const owner=currentGenerationOwner();
+    clearLiveStream();
+    // A previously displayed error belongs only to the original session.
+    lastGenerationFailure=generationFailures.get(currentSessionId)||null;
+    currentGenerationAction=owner?.action||null;
+    deferredGenerationProgress=null;
+    const panel=qs('generation-panel');
+    panel?.classList.add('hidden');
+    if(owner){
+        beginGenerationProgress(owner.action);
+        if(owner.lastProgress)setGenerationProgress(owner.lastProgress);
+        if(owner.action==='send'&&!owner.userSaved&&!arr(currentSessionData?.messages).some(m=>m.content===owner.text&&m.role==='user'))renderPendingUserMessage(owner.text);
+        if(owner.streamText){const st=ensureLiveStreamBubble(owner);if(st){st.targetText=owner.streamText;st.displayText=owner.streamText;renderLiveStreamText();}}
+    }else if(lastGenerationFailure){showGenerationError(lastGenerationFailure,lastGenerationFailure.action,true);}
+    toggleUIState(generationOwners.size>0);
+}
 function openDrawer(){qs('session-drawer').classList.add('open');qs('drawer-scrim').classList.remove('hidden')}
 function closeDrawer(){qs('session-drawer').classList.remove('open');qs('drawer-scrim').classList.add('hidden')}
 function isSettingsOpen(){const modal=qs('settings-modal');return !!modal&&!modal.classList.contains('hidden')}
 function openSettings(tab='roles'){settingsNavigationTouched=true;settingsTab=tab;qs('settings-modal').classList.remove('hidden');renderSettings()}
-function closeSettings(){settingsNavigationTouched=true;++settingsRenderEpoch;qs('settings-modal').classList.add('hidden');if(deferredGenerationProgress){setGenerationProgress(deferredGenerationProgress);deferredGenerationProgress=null}if(liveStreamState)liveStreamState.visualPaused=false}
+function closeSettings(){settingsNavigationTouched=true;++settingsRenderEpoch;qs('settings-modal').classList.add('hidden');if(deferredGenerationProgress){if(ownsVisibleGeneration(deferredGenerationProgress.owner))setGenerationProgress(deferredGenerationProgress.payload);deferredGenerationProgress=null}if(liveStreamState)liveStreamState.visualPaused=false}
 function switchSettingsTab(tab){settingsNavigationTouched=true;settingsTab=tab;renderSettings()}
 function maybeOpenInitialApiSettings(){
     // This delayed first-run invitation must never override a user's tab selection.
@@ -203,8 +249,13 @@ async function openSession(id, close=true){
     const res=await fetchStory(`/sessions/${id}`);
     if(epoch!==sessionNavigationEpoch)return null; // Later navigation owns the page.
     if(!res.success||res.data?.id!==id){toast(res.msg||'打开剧情失败：返回了不同的会话');return null;}
+    const switched=currentSessionId!==id;
+    if(switched)preserveComposerDraft(currentSessionId);
     currentSessionId=id;currentSessionData=res.data;
-    if(close)closeDrawer();refreshHeader();refreshChatBox();applyCustomCss();renderSessions();if(isSettingsOpen())renderSettings();
+    if(close)closeDrawer();refreshHeader();refreshChatBox();
+    if(switched){restoreComposerDraft(id);}else{preserveComposerDraft(id);}
+    restoreGenerationView();
+    applyCustomCss();renderSessions();if(isSettingsOpen())renderSettings();
     return res.data;
 }
 async function patchCurrent(patch, quiet=false){
@@ -1229,7 +1280,17 @@ window.MimaMemoryPriority={
         });
     }
 };
-function toggleUIState(generating){isGenerating=generating;if(!generating){for(const release of [...memoryPriorityWaiters])release();}qs('send-btn').disabled=generating;qsa('.quick-actions .chip-btn').forEach(b=>{if(b.id!=='stop-btn')b.disabled=generating});qs('stop-btn').classList.toggle('hidden',!generating);qs('story-input').disabled=generating}
+function toggleUIState(generating){
+    // The flag remains globally useful for memory priority; composer controls
+    // depend only on the selected session's own request.
+    isGenerating=generationOwners.size>0;
+    if(!isGenerating){for(const release of [...memoryPriorityWaiters])release();}
+    const visible=!!currentGenerationOwner();
+    qs('send-btn').disabled=visible;
+    qsa('.quick-actions .chip-btn').forEach(b=>{if(b.id!=='stop-btn')b.disabled=visible});
+    qs('stop-btn').classList.toggle('hidden',!visible);
+    qs('story-input').disabled=visible;
+}
 function generationActionLabel(action){return action==='regenerate'?'正在重新生成':action==='continue'?'正在续写':action==='auto_advance'?'正在推进剧情':'正在生成剧情'}
 function setGenerationProgress(payload={}){const panel=qs('generation-panel'),bar=qs('generation-progress-bar'),label=qs('generation-label'),pct=qs('generation-percent'),detail=qs('generation-detail');if(!panel)return;panel.classList.remove('hidden','error','done');const n=Math.max(2,Math.min(100,Number(payload.percent)||2));bar.style.width=`${n}%`;pct.textContent=`${Math.round(n)}%`;if(payload.label)label.textContent=payload.label;if(payload.detail)detail.textContent=payload.detail}
 function beginGenerationProgress(action){deferredGenerationProgress=null;currentGenerationAction=action;lastGenerationFailure=null;const retry=qs('generation-retry');if(retry)retry.classList.add('hidden');const panel=qs('generation-panel');panel?.classList.remove('hidden','error','done');setGenerationProgress({percent:4,label:`🤍 ${generationActionLabel(action)}`,detail:'正在准备本轮剧情…'})}
@@ -1237,53 +1298,161 @@ function isStoryNearBottom(box,threshold=96){return !box||((box.scrollHeight-box
 function updateStoryFollowButton(){const b=qs('story-follow-stream');if(!b)return;b.classList.toggle('hidden',!liveStreamState||liveStreamState.followTail!==false)}
 function resumeStoryStreamFollow(){if(!liveStreamState)return;liveStreamState.followTail=true;const box=qs('story-chat-box');if(box)box.scrollTop=box.scrollHeight;updateStoryFollowButton()}
 function bindStoryStreamScroll(){const box=qs('story-chat-box');if(!box||box.dataset.streamFollowBound==='1')return;box.dataset.streamFollowBound='1';box.addEventListener('scroll',()=>{if(!liveStreamState)return;liveStreamState.followTail=isStoryNearBottom(box);updateStoryFollowButton()},{passive:true})}
-function renderLiveStreamText(){if(!liveStreamState?.contentNode)return;const raw=liveStreamState.displayText||'';const rendered=MimaStandalone.applyRegexForSession?MimaStandalone.applyRegexForSession(currentSessionId,raw,'display'):raw;const allowHtml=currentSessionData?.renderMode==='safe_html';liveStreamState.contentNode.className=`msg-content tavern-story-content live-stream-content${allowHtml?' safe-html-content':''}`;liveStreamState.contentNode.innerHTML='';appendRenderedContent(liveStreamState.contentNode,rendered,allowHtml);const box=qs('story-chat-box');if(box&&liveStreamState.followTail!==false)box.scrollTop=box.scrollHeight;updateStoryFollowButton()}
-function ensureLiveStreamBubble(){if(liveStreamState?.node?.isConnected)return liveStreamState;const box=qs('story-chat-box');if(!box)return null;const div=document.createElement('article');div.className='message assistant-msg live-stream-message';const header=document.createElement('div');header.className='msg-header';header.textContent=`${currentChar()?.name||'角色'} · 流式生成中`;const content=document.createElement('div');content.className='msg-content tavern-story-content live-stream-content';div.append(header,content);box.appendChild(div);liveStreamState={node:div,contentNode:content,targetText:'',displayText:'',timer:null,followTail:isStoryNearBottom(box)};updateStoryFollowButton();return liveStreamState}
-function pumpLiveStream(){const st=liveStreamState;if(!st||st.timer)return;st.timer=setInterval(()=>{if(!liveStreamState){clearInterval(st.timer);return}if(isSettingsOpen()||liveStreamState.visualPaused)return;const gap=st.targetText.length-st.displayText.length;if(gap<=0)return;const step=gap>500?6:gap>220?4:gap>80?2:1;st.displayText=st.targetText.slice(0,st.displayText.length+step);renderLiveStreamText()},12)}
-function handleGenerationProgress(payload){if(payload?.phase==='saved_user'&&currentGenerationAction==='send'){const composer=qs('story-input');if(composer){composer.value='';autoResizeInput();}}if(isSettingsOpen())deferredGenerationProgress=payload;else setGenerationProgress(payload);if(payload?.streamText!==undefined){const snippet=String(payload.streamText||'');const blocked=MimaStandalone.classifyStoryReply?.(snippet)?.blocked===true;if(blocked){clearLiveStream();return;}const st=ensureLiveStreamBubble();if(st){st.targetText=String(payload.streamText||'');st.visualPaused=isSettingsOpen();pumpLiveStream()}}}
-function clearLiveStream(){if(liveStreamState?.timer)clearInterval(liveStreamState.timer);if(liveStreamState?.node?.isConnected)liveStreamState.node.remove();liveStreamState=null;updateStoryFollowButton()}
-function finishGenerationProgress(){deferredGenerationProgress=null;lastGenerationFailure=null;currentGenerationAction=null;const retry=qs('generation-retry');if(retry)retry.classList.add('hidden');setGenerationProgress({percent:100,label:'🤍 生成完成',detail:'剧情已保存到本机。'});const panel=qs('generation-panel');panel?.classList.add('done');setTimeout(()=>{if(!isGenerating)panel?.classList.add('hidden')},650)}
-function showGenerationError(err){deferredGenerationProgress=null;const info=describeApiError(err),panel=qs('generation-panel'),bar=qs('generation-progress-bar'),label=qs('generation-label'),pct=qs('generation-percent'),detail=qs('generation-detail'),retry=qs('generation-retry');if(!panel)return;lastGenerationFailure={...info,action:currentGenerationAction};panel.classList.remove('hidden','done');panel.classList.add('error');bar.style.width='100%';pct.textContent=info.status?`HTTP（状态码） ${info.status}`:'ERROR（错误）';label.textContent=`生成失败 · ${info.code}`;detail.textContent=`${info.message}
-可能原因：${info.hint}${info.details?`
-诊断：${info.details}`:''}`;const retryable=info.code==='E_API_NETWORK_CORS'||info.code==='E_STREAM_INTERRUPTED'||[408,409,429,502,503,504].includes(info.status)||info.status>=500;if(retry)retry.classList.toggle('hidden',!retryable)}
-function retryFailedGeneration(){if(isGenerating)return toast('当前已经在生成中。');if(!lastGenerationFailure)return toast('当前没有可重试的失败请求。');const previousAction=lastGenerationFailure.action||'send';const retry=qs('generation-retry');if(retry)retry.classList.add('hidden');if(previousAction==='send')return triggerChat('','regenerate');return triggerChat('',previousAction)}
+function renderLiveStreamText(){
+    const st=liveStreamState;
+    if(!st?.contentNode||!ownsVisibleGeneration(st.owner))return;
+    const raw=st.displayText||'';
+    const rendered=MimaStandalone.applyRegexForSession?MimaStandalone.applyRegexForSession(st.owner.sessionId,raw,'display'):raw;
+    const allowHtml=currentSessionData?.renderMode==='safe_html';
+    st.contentNode.className=`msg-content tavern-story-content live-stream-content${allowHtml?' safe-html-content':''}`;
+    st.contentNode.innerHTML='';appendRenderedContent(st.contentNode,rendered,allowHtml);
+    const box=qs('story-chat-box');if(box&&st.followTail!==false)box.scrollTop=box.scrollHeight;
+    updateStoryFollowButton();
+}
+function ensureLiveStreamBubble(owner=currentGenerationOwner()){
+    if(!ownsVisibleGeneration(owner))return null;
+    if(liveStreamState?.owner===owner&&liveStreamState.node?.isConnected)return liveStreamState;
+    clearLiveStream();const box=qs('story-chat-box');if(!box)return null;
+    const div=document.createElement('article');div.className='message assistant-msg live-stream-message';
+    const header=document.createElement('div');header.className='msg-header';header.textContent=`${currentChar()?.name||'角色'} · 流式生成中`;
+    const content=document.createElement('div');content.className='msg-content tavern-story-content live-stream-content';
+    div.append(header,content);box.appendChild(div);
+    liveStreamState={owner,node:div,contentNode:content,targetText:'',displayText:'',timer:null,followTail:isStoryNearBottom(box)};
+    updateStoryFollowButton();return liveStreamState;
+}
+function pumpLiveStream(){
+    const st=liveStreamState;if(!st||st.timer)return;
+    st.timer=setInterval(()=>{
+        if(liveStreamState!==st||!ownsVisibleGeneration(st.owner)){clearInterval(st.timer);st.timer=null;return;}
+        if(isSettingsOpen()||st.visualPaused)return;
+        const gap=st.targetText.length-st.displayText.length;if(gap<=0)return;
+        const step=gap>500?6:gap>220?4:gap>80?2:1;
+        st.displayText=st.targetText.slice(0,st.displayText.length+step);renderLiveStreamText();
+    },12);
+}
+function handleGenerationProgress(payload,owner=currentGenerationOwner()){
+    if(!owner||generationOwners.get(owner.sessionId)!==owner)return;
+    owner.lastProgress=payload;
+    if(payload?.phase==='saved_user'){owner.userSaved=true;clearSubmittedDraft(owner);}
+    if(payload?.streamText!==undefined){
+        const snippet=String(payload.streamText||'');
+        const blocked=MimaStandalone.classifyStoryReply?.(snippet)?.blocked===true;
+        owner.streamText=blocked?'':snippet;
+        if(blocked&&ownsVisibleGeneration(owner))clearLiveStream();
+    }
+    if(!ownsVisibleGeneration(owner))return;
+    if(isSettingsOpen())deferredGenerationProgress={owner,payload};else setGenerationProgress(payload);
+    if(payload?.streamText!==undefined&&!MimaStandalone.classifyStoryReply?.(String(payload.streamText||''))?.blocked){
+        const st=ensureLiveStreamBubble(owner);
+        if(st){st.targetText=owner.streamText;st.visualPaused=isSettingsOpen();pumpLiveStream();}
+    }
+}
+function clearLiveStream(){
+    if(liveStreamState?.timer)clearInterval(liveStreamState.timer);
+    if(liveStreamState?.node?.isConnected)liveStreamState.node.remove();
+    liveStreamState=null;updateStoryFollowButton();
+}
+function finishGenerationProgress(owner=null){
+    if(owner&&!ownsVisibleGeneration(owner))return;
+    deferredGenerationProgress=null;lastGenerationFailure=null;currentGenerationAction=null;
+    const retry=qs('generation-retry');if(retry)retry.classList.add('hidden');
+    setGenerationProgress({percent:100,label:'🤍 生成完成',detail:'剧情已保存到本机。'});
+    const panel=qs('generation-panel');panel?.classList.add('done');
+    const sessionId=currentSessionId;
+    setTimeout(()=>{if(!currentGenerationOwner()&&currentSessionId===sessionId)panel?.classList.add('hidden')},650);
+}
+function showGenerationError(err,action=currentGenerationAction,fromRestore=false){
+    deferredGenerationProgress=null;
+    const info=describeApiError(err),panel=qs('generation-panel'),bar=qs('generation-progress-bar'),label=qs('generation-label'),pct=qs('generation-percent'),detail=qs('generation-detail'),retry=qs('generation-retry');
+    if(!panel)return;
+    lastGenerationFailure={...info,action};
+    if(!fromRestore&&currentSessionId)generationFailures.set(currentSessionId,lastGenerationFailure);
+    panel.classList.remove('hidden','done');panel.classList.add('error');bar.style.width='100%';
+    pct.textContent=info.status?`HTTP（状态码） ${info.status}`:'ERROR（错误）';label.textContent=`生成失败 · ${info.code}`;
+    detail.textContent=`${info.message}\n可能原因：${info.hint}${info.details?`\n诊断：${info.details}`:''}`;
+    const retryable=info.code==='E_API_NETWORK_CORS'||info.code==='E_STREAM_INTERRUPTED'||[408,409,429,502,503,504].includes(info.status)||info.status>=500;
+    if(retry)retry.classList.toggle('hidden',!retryable);
+}
+function retryFailedGeneration(){
+    if(currentGenerationOwner())return toast('当前剧情正在生成中。');
+    const failure=generationFailures.get(currentSessionId);
+    if(!failure)return toast('当前剧情没有可重试的失败请求。');
+    const retry=qs('generation-retry');if(retry)retry.classList.add('hidden');
+    if(failure.action==='send')return triggerChat('','regenerate');
+    return triggerChat('',failure.action||'regenerate');
+}
 function dismissGenerationPanel(){qs('generation-panel')?.classList.add('hidden')}
 async function triggerChat(text,actionType='send'){
-    if(isGenerating)return toast('当前正在生成剧情，请先停止或等待本轮完成。');
     const targetSessionId=currentSessionId;
     if(!targetSessionId)return toast('请先创建一个剧情。');
+    if(generationOwners.has(targetSessionId))return toast('当前剧情仍在生成，请先停止或等待本轮完成。');
     const directorNote=qs('director-note').value.trim();
-    // 在 UI 当前可见状态下锁定“重说”的确切 assistant 消息。只锁定最后一轮的回复；
-    // 如果当前最后一条是 user，则不提供 targetMessageId，Core 会生成新回复而不是误覆盖上一轮。
     let targetMessageId=null;
     if(actionType==='regenerate'){
-        const msgs=arr(currentSessionData?.messages);
-        let lastUser=-1,lastAssistant=-1;
+        const msgs=arr(currentSessionData?.messages);let lastUser=-1,lastAssistant=-1;
         for(let i=msgs.length-1;i>=0&&(lastUser<0||lastAssistant<0);i--){if(lastUser<0&&msgs[i]?.role==='user')lastUser=i;if(lastAssistant<0&&msgs[i]?.role==='assistant')lastAssistant=i}
         if(lastAssistant>=0&&(lastUser<0||lastAssistant>lastUser))targetMessageId=msgs[lastAssistant]?.id||null;
     }
+    const owner={turnId:++generationSerial,sessionId:targetSessionId,action:actionType,text:String(text||''),
+        controller:new AbortController(),lastProgress:null,streamText:'',userSaved:false,inputCleared:false};
+    generationOwners.set(targetSessionId,owner);generationFailures.delete(targetSessionId);
     clearLiveStream();
-    if(actionType==='send'&&String(text||'').trim()){renderPendingUserMessage(String(text))}
+    if(actionType==='send'&&owner.text.trim())renderPendingUserMessage(owner.text);
     toggleUIState(true);beginGenerationProgress(actionType);
     try{
-        const res=await fetchStory(`/sessions/${targetSessionId}/chat`,'POST',{text,action:actionType,temperature:getTemp(),directorNote,targetMessageId},true,handleGenerationProgress);
-        toggleUIState(false);
-        // The request belongs to its original session, not whichever session
-        // the player selected while waiting for the Provider.
-        if(targetSessionId!==currentSessionId){clearLiveStream();dismissGenerationPanel();try{await refreshSessionSummaryList()}catch(e){console.error('已离开的剧情列表刷新失败',{targetSessionId,error:e});}return;}
-        const storyBox=qs('story-chat-box');
-        const preserveReading=liveStreamState?.followTail===false;
+        // Distinct sessions must never abort each other's Direct Reply.
+        const res=await fetchStory(`/sessions/${targetSessionId}/chat`,'POST',
+            {text,action:actionType,temperature:getTemp(),directorNote,targetMessageId},false,
+            payload=>handleGenerationProgress(payload,owner),owner.controller.signal);
+        if(!res.success&&!res.aborted&&generationOwners.get(targetSessionId)===owner){
+            generationFailures.set(targetSessionId,{...describeApiError(res),action:actionType});
+        }
+        const visible=ownsVisibleGeneration(owner);
+        const storyBox=visible?qs('story-chat-box'):null;
+        const preserveReading=visible&&liveStreamState?.owner===owner&&liveStreamState.followTail===false;
         const preservedScrollTop=preserveReading&&storyBox?storyBox.scrollTop:null;
-        if(res.aborted){toast('生成已停止，主人消息已保留。');setGenerationProgress({percent:100,label:'已停止生成',detail:'主人消息仍然保存在剧情里，可以直接重试。'});setTimeout(()=>dismissGenerationPanel(),900);clearLiveStream();await openSession(currentSessionId,false);if(preserveReading&&storyBox&&preservedScrollTop!==null)requestAnimationFrame(()=>storyBox.scrollTop=preservedScrollTop);return}
-        if(res.success){clearLiveStream();currentSessionData=res.data;qs('story-input').value='';autoResizeInput();refreshChatBox(preserveReading?{scrollTop:preservedScrollTop}:{scrollToBottom:true});try{await refreshSessionSummaryList()}catch(e){console.error('剧情回复已持久化但列表读取失败',{targetSessionId,error:e});toast('回复已保存；会话列表暂时无法刷新')}refreshHeader();finishGenerationProgress()}
-        else{clearLiveStream();showGenerationError(res);toast(`生成失败 · ${res.code||'E_UNKNOWN'}`);await openSession(currentSessionId,false)}
-    }catch(e){clearLiveStream();toggleUIState(false);if(targetSessionId===currentSessionId){showGenerationError(e);toast(`生成失败 · ${e?.code||'E_UNKNOWN'}`)}else console.error('非当前会话的剧情提交异常',{targetSessionId,error:e});}
+        // Final settlement precedes UI unlock; original persisted session is never rewritten to the selected one.
+        if(generationOwners.get(targetSessionId)===owner)generationOwners.delete(targetSessionId);
+        if(visible){
+            clearLiveStream();toggleUIState(false);
+            if(res.aborted){
+                toast('生成已停止，主人消息已保留。');
+                setGenerationProgress({percent:100,label:'已停止生成',detail:'已保存的主人消息仍在剧情中。'});
+                const panel=qs('generation-panel');setTimeout(()=>{if(currentSessionId===targetSessionId&&!currentGenerationOwner())panel?.classList.add('hidden')},900);
+                await openSession(targetSessionId,false);
+            }else if(res.success){
+                if(res.data?.id!==targetSessionId)throw new Error('E_GENERATION_WRONG_SESSION: 回复的会话身份不匹配');
+                clearSubmittedDraft(owner);
+                currentSessionData=res.data;
+                refreshChatBox(preserveReading?{scrollTop:preservedScrollTop}:{scrollToBottom:true});
+                refreshHeader();finishGenerationProgress();
+            }else{
+                showGenerationError(res,actionType);toast(`生成失败 · ${res.code||'E_UNKNOWN'}`);
+                await openSession(targetSessionId,false);
+            }
+            if(preserveReading&&storyBox&&preservedScrollTop!==null)
+                requestAnimationFrame(()=>{if(currentSessionId===targetSessionId)storyBox.scrollTop=preservedScrollTop});
+        }else if(res.success){
+            clearSubmittedDraft(owner);
+        }else if(!res.aborted){
+            console.warn('后台剧情生成失败，已登记在原会话，不影响当前剧情',{sessionId:targetSessionId,turnId:owner.turnId,code:res.code||'E_GENERATION_FAILED'});
+        }
+        try{await refreshSessionSummaryList();}catch(e){console.error('剧情请求已结束但会话列表刷新失败',{targetSessionId,turnId:owner.turnId,error:e});if(currentSessionId===targetSessionId)toast('剧情状态已保存；会话列表暂时无法刷新');}
+    }catch(e){
+        if(generationOwners.get(targetSessionId)===owner)generationOwners.delete(targetSessionId);
+        generationFailures.set(targetSessionId,{...describeApiError(e),action:actionType});
+        if(currentSessionId===targetSessionId){clearLiveStream();toggleUIState(false);showGenerationError(e,actionType);toast(`生成失败 · ${e?.code||'E_UNKNOWN'}`);}
+        else console.error('其他剧情请求异常，原会话仍持有错误信息',{targetSessionId,turnId:owner.turnId,error:e});
+    }finally{
+        if(generationOwners.get(targetSessionId)===owner)generationOwners.delete(targetSessionId);
+        toggleUIState(false);
+    }
 }
 function stopGeneration(){
-    // An abort request is not a completed settlement. The owning request
-    // unlocks the editor only after it actually resolves/rejects.
-    if(activeRequest)activeRequest.abort();
-    clearLiveStream();
+    const owner=currentGenerationOwner();
+    if(!owner)return;
+    owner.controller.abort(); // Only the selected request; settlement happens in triggerChat.
+    if(liveStreamState?.owner===owner)clearLiveStream();
 }
 function sendMsg(){const txt=qs('story-input').value.trim();if(txt)triggerChat(txt,'send')}
 function regenerateMsg(){triggerChat('','regenerate')}
@@ -1292,7 +1461,7 @@ function autoAdvance(){triggerChat(qs('director-note').value.trim()||'请自然�
 function syncComposerContentState(){const el=qs('story-input');if(el)el.classList.toggle('has-content',!!el.value)}
 function autoResizeInput(){const el=qs('story-input');el.style.height='auto';el.style.height=Math.min(170,Math.max(46,el.scrollHeight))+'px';syncComposerContentState()}
 
-function refreshChatBox(options={}){const box=qs('story-chat-box');box.innerHTML='';if(!currentSessionData||!currentSessionData.messages?.length){box.innerHTML=`<div class="empty-state"><div class="empty-icon">${currentChar()?'🤍':'🍷'}</div><h2>${escapeHtml(currentChar()?.name||'这个宇宙还是空的')}</h2><p>${currentChar()?.firstMessage?'角色卡里有开场白，可以在角色设置中插入。':'写下第一句话，剧情从这里开始。'}</p><button class="ghost-btn" onclick="MimaCompatUI.open()">🎴 或者用酒馆角色卡开始聊天</button></div>`;return}currentSessionData.messages.forEach(renderMessageToUI);requestAnimationFrame(()=>{if(Number.isFinite(Number(options.scrollTop)))box.scrollTop=Number(options.scrollTop);else if(options.scrollToBottom!==false)box.scrollTop=box.scrollHeight})}
+function refreshChatBox(options={}){const box=qs('story-chat-box'),renderedSessionId=currentSessionId,renderedEpoch=sessionNavigationEpoch;box.innerHTML='';if(!currentSessionData||!currentSessionData.messages?.length){box.innerHTML=`<div class="empty-state"><div class="empty-icon">${currentChar()?'🤍':'🍷'}</div><h2>${escapeHtml(currentChar()?.name||'这个宇宙还是空的')}</h2><p>${currentChar()?.firstMessage?'角色卡里有开场白，可以在角色设置中插入。':'写下第一句话，剧情从这里开始。'}</p><button class="ghost-btn" onclick="MimaCompatUI.open()">🎴 或者用酒馆角色卡开始聊天</button></div>`;return}currentSessionData.messages.forEach(renderMessageToUI);requestAnimationFrame(()=>{if(renderedSessionId!==currentSessionId||renderedEpoch!==sessionNavigationEpoch)return;if(Number.isFinite(Number(options.scrollTop)))box.scrollTop=Number(options.scrollTop);else if(options.scrollToBottom!==false)box.scrollTop=box.scrollHeight})}
 function renderPendingUserMessage(text){const box=qs('story-chat-box');if(!box)return;const div=document.createElement('article');div.className='message user-msg pending-user-message';div.dataset.msgId='pending_'+Date.now();const header=document.createElement('div');header.className='msg-header';header.textContent=`${currentUser()?.name||'你'} · 正在提交`;const content=document.createElement('div');content.className='msg-content tavern-story-content';appendRenderedContent(content,cleanCorruptText(text),false);div.append(header,content);box.appendChild(div);box.scrollTop=box.scrollHeight}
 function renderMessageToUI(msg){const box=qs('story-chat-box');const role=msg.role||'system';const div=document.createElement('article');div.className=`message ${role}-msg`;div.dataset.msgId=msg.id||'';const header=document.createElement('div');header.className='msg-header';const roleName=role==='user'?(currentUser()?.name||'你'):(role==='assistant'?(currentChar()?.name||(currentSessionData?.mode==='sandalphon'?'圣德芬':'角色')):'系统');header.textContent=`${roleName}${msg.isEdited?' · 已编辑':''}${msg.versions?.length?` · ${msg.versions.length} 个旧版本`:''}`;div.appendChild(header);const content=document.createElement('div');const allowHtml=role==='assistant'&&currentSessionData?.renderMode==='safe_html';content.className=`msg-content tavern-story-content${allowHtml?' safe-html-content':''}`;const displayText=role==='assistant'&&MimaStandalone.applyRegexForSession?MimaStandalone.applyRegexForSession(currentSessionId,msg.content||'','display'):msg.content||'';appendRenderedContent(content,cleanCorruptText(displayText),allowHtml);div.appendChild(content);if(role==='user'||role==='assistant'){const tools=document.createElement('div');tools.className='msg-tools';tools.append(makeToolButton('编辑',()=>openMessageEditor(msg,false)),makeToolButton('从这里分支',()=>openMessageEditor(msg,true)),makeToolButton('删除',()=>deleteStoryMessage(msg),true));if(role==='assistant'&&msg.versions?.length)tools.append(makeToolButton('看旧版本',()=>showVersions(msg)));div.appendChild(tools)}box.appendChild(div)}
 function makeToolButton(text,fn,danger=false){const b=document.createElement('button');b.className=`tool-mini${danger?' danger':''}`;b.textContent=text;b.onclick=fn;return b}
@@ -1300,7 +1469,7 @@ function openMessageEditor(msg,truncateAfter=false){editorState={type:'message',
 async function saveMessageEditor(){const {msg,truncateAfter}=editorState;const res=await fetchStory(`/sessions/${currentSessionId}/messages/${msg.id}`,'PATCH',{content:qs('message-edit-content').value,truncateAfter});if(res.success){currentSessionData=res.data;closeEditor();refreshChatBox();if(truncateAfter&&msg.role==='user'&&confirm('现在从这条玩家消息重新生成后续吗？'))await triggerChat('','regenerate')}else toast(res.msg||'编辑失败')}
 async function deleteStoryMessage(msg){
     if(!currentSessionId||!msg?.id)return;
-    if(isGenerating)return toast('剧情正在生成中，请先停止或等待本轮完成后再删除历史消息。');
+    if(currentGenerationOwner())return toast('本剧情正在生成中，请先停止或等待本轮完成后再删除历史消息。');
     const who=msg.role==='assistant'?(currentChar()?.name||'角色'):(currentUser()?.name||'你');
     const preview=String(msg.content||'').replace(/\s+/g,' ').slice(0,72);
     if(!confirm(`确定删除 ${who} 的这条历史消息吗？${preview?`
