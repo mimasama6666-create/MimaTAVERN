@@ -374,8 +374,8 @@ async function forkSession(sessionId,cutoffTurnId,{requestId}={}){
  if(/<initvar\b/i.test(String(openingText))&&init.state===null)throw error('E_MVU_INIT_UNVERIFIED','分支源开场白初始变量无法验证，不能创建错误状态分支');
  if(init.gaps?.some(g=>g.reason==='MVU_MULTIPLE_INITIAL_SOURCES_CONFLICT'))throw error('E_MVU_HISTORY_CONFLICT','角色初始变量来源冲突，不能创建分支');
  const db=await store().open();return new Promise((resolve,reject)=>{
-  const tx=db.transaction(['compat_sessions','messages','events_jobs'],'readwrite');
-  const sessions=tx.objectStore('compat_sessions'),msgs=tx.objectStore('messages'),jobs=tx.objectStore('events_jobs');
+  const tx=db.transaction(['compat_sessions','messages','events_jobs','sidecar_links'],'readwrite');
+  const sessions=tx.objectStore('compat_sessions'),msgs=tx.objectStore('messages'),jobs=tx.objectStore('events_jobs'),side=tx.objectStore('sidecar_links');
   let outcome,issue;
   const bad=(code,why)=>{issue=error(code,why);try{tx.abort();}catch(_){}};
   const existed=sessions.get(newId);
@@ -407,7 +407,7 @@ async function forkSession(sessionId,cutoffTurnId,{requestId}={}){
       const cutoff=selected?selected.sequence:-1;
       const opening=sourceMessages.filter(m=>m.opening&&m.turnId===null&&m.status==='committed'&&m.sequence<=cutoff);
       if(opening.length>1)throw error('E_STORE_UNVERIFIED','原剧情有重复的开场消息');
-      const copied=[];const committedJobs=sourceJobs.filter(j=>j.settlement==='committed'&&j.sequence<cutoff).sort((a,b)=>a.sequence-b.sequence);
+      const copied=[];const committedJobs=sourceJobs.filter(j=>j.kind!=='assistant_continuation'&&j.settlement==='committed'&&j.sequence<cutoff).sort((a,b)=>a.sequence-b.sequence);
       if(selected){const target=byTurn.get(cutoffTurnId);if(!committedJobs.includes(target))committedJobs.push(target);}
       const set=new Set();
       for(const j of committedJobs){
@@ -434,7 +434,31 @@ async function forkSession(sessionId,cutoffTurnId,{requestId}={}){
        jobs.add({...j,id:newTurnId,sessionId:newId,msgId:u,attemptId:'historical_'+newTurnId,
         branchCopyOf:j.id,historicalCopy:true,stage:'BRANCH_HISTORY_COMMITTED',settlement:'committed',revision:1});
        msgs.add({...user,id:u,sessionId:newId,turnId:newTurnId,originMessageId:user.id,originTurnId:j.id,revision:1});
-       msgs.add({...assistant,id:a,sessionId:newId,turnId:newTurnId,originMessageId:assistant.id,originTurnId:j.id,revision:1});
+       // Copy committed MVU continuation provenance into this branch. A fork
+       // cannot retain foreign session IDs inside the new assistant's segment
+       // ledger: that would break sealed backup recovery and independent replay.
+       const clonedSegments=(assistant.mvuContinuationSegments||[]).map(seg=>{
+        const oldJob=sourceJobs.find(record=>record.id===seg.continuationId);
+        if(!oldJob||oldJob.kind!=='assistant_continuation'||oldJob.settlement!=='committed'||
+           oldJob.assistantId!==assistant.id||oldJob.sessionId!==sessionId)
+          throw error('E_MVU_HISTORY_CONFLICT','原分支的 MVU 续写没有已验证的事务来源');
+        const newContinuationId='cont_branchcopy_'+token+'_'+seg.continuationId.slice(5);
+        jobs.add({...oldJob,id:newContinuationId,sessionId:newId,msgId:u,assistantId:a,parentTurnId:newTurnId,
+          attemptId:'historical_'+newContinuationId,branchCopyOf:seg.continuationId,historicalCopy:true,revision:1});
+        const linkRequest=side.get('continuation_backup_'+seg.continuationId);
+        linkRequest.onsuccess=()=>{
+         const link=linkRequest.result;
+         if(!link||link.sessionId!==sessionId||link.assistantId!==assistant.id||link.parentTurnId!==j.id){
+          bad('E_MVU_HISTORY_CONFLICT','续写版本来源丢失，拒绝创建不完整分支');return;
+         }
+         side.add({...link,id:'continuation_backup_'+newContinuationId,sessionId:newId,assistantId:a,
+           parentTurnId:newTurnId,originLinkId:link.id,revision:1});
+        };
+        linkRequest.onerror=()=>bad('E_STORE_UNVERIFIED','分支 MVU 续写版本读取失败');
+        return{...seg,continuationId:newContinuationId};
+       });
+       msgs.add({...assistant,id:a,sessionId:newId,turnId:newTurnId,originMessageId:assistant.id,originTurnId:j.id,revision:1,
+         ...(clonedSegments.length?{mvuContinuationSegments:clonedSegments}:{})});
        newSession.lastSettledTurnId=newTurnId;
       }
       if(newSession.lastSettledTurnId)sessions.put(newSession);
@@ -740,7 +764,12 @@ async function dispatch(sessionId,t,options={}){
     const result=await finishTurn(sessionId,t,String(reply),'',mvuResult);
     const settled=await store().get('events_jobs',t.turnId);
     if(result.settlement!=='committed'||!settled||settled.attemptId!==t.attemptId||settled.settlement!=='committed')throw error('E_CANONICAL_CONFLICT','回合已由更新的 attempt 处理，旧回复拒绝投递');
-    notifyPlugins(sessionId,'turn.committed',{turnId:t.turnId,attemptId:t.attemptId},'turn.committed:'+t.turnId);return{reply:String(reply),turnId:t.turnId,envelope,result};
+    notifyPlugins(sessionId,'turn.committed',{turnId:t.turnId,attemptId:t.attemptId},'turn.committed:'+t.turnId);
+    // Notify only after the same atomic canonical settlement accepted both
+    // assistant text and MVU state. Failed/aborted turns never emit changes.
+    if(mvuResult?.active&&(mvuResult.operations?.length||0)>0)
+      notifyPlugins(sessionId,'mvu.changed',{turnId:t.turnId,operationCount:mvuResult.operations.length},'mvu.changed:'+t.turnId);
+    return{reply:String(reply),turnId:t.turnId,envelope,result};
   }catch(e){
     try{const transitionReceipt=await finishTurn(sessionId,t,null,e.code||'E_STORY_RUNTIME');const final=await store().get('events_jobs',t.turnId);if(transitionReceipt.settlement==='failed'&&final?.attemptId===t.attemptId&&final.settlement==='failed')notifyPlugins(sessionId,'turn.failed',{turnId:t.turnId,attemptId:t.attemptId,code:final.code},'turn.failed:'+t.turnId+':'+t.attemptId);}catch(settle){e.settlementError=settle.message;}
     throw e;
@@ -766,8 +795,11 @@ async function retryTurn(sessionId,turnId,options={}){
 // message (apart from optional card post-history guidance); no fake user turn
 // is persisted. The original reply is snapshotted before append. A distinct
 // ledger owns the continuation, and late attempts cannot mutate a newer turn.
-async function beginContinuation(sessionId){
+async function beginContinuation(sessionId,expected){
  return transition(sessionId,(session,{s:ses,m,j})=>{
+  // Bind the validated prompt to the exact canonical version that produced it.
+  if(!expected||session.revision!==expected.sessionRevision)
+   throw error('E_CANONICAL_CONFLICT','续写预检后剧情已变化，拒绝旧提示词');
   if(session.pendingTurnId)throw error('E_CANONICAL_CONFLICT','当前剧情有未结算回合，禁止续写覆盖');
   if(!Number.isSafeInteger(session.turnIndex)||session.turnIndex<1)throw error('E_CANONICAL_CONFLICT','请先完成一轮角色回复再续写');
   const sequence=session.turnIndex*2-1,turnId=session.lastSettledTurnId;
@@ -778,7 +810,7 @@ async function beginContinuation(sessionId){
    if(!original||original.sessionId!==sessionId||original.settlement!=='committed'||original.sequence!==sequence-1){try{job.transaction.abort();}catch(_){}return;}
    const q=m.get('a_'+turnId);q.onsuccess=()=>{
     const assistant=q.result;
-    if(!assistant||assistant.sessionId!==sessionId||assistant.status!=='committed'||assistant.sequence!==sequence||!String(assistant.canonicalContent||'').trim()){try{q.transaction.abort();}catch(_){}return;}
+    if(!assistant||assistant.sessionId!==sessionId||assistant.status!=='committed'||assistant.sequence!==sequence||!String(assistant.canonicalContent||'').trim()||assistant.revision!==expected.assistantRevision||assistant.canonicalContent!==expected.assistantContent){try{q.transaction.abort();}catch(_){}return;}
     const id=store().uid('cont'),attemptId=store().uid('attempt');
     const currentTime=new Date().toISOString();
     j.add({id,kind:'assistant_continuation',sessionId,attemptId,attempt:1,msgId:original.msgId,parentTurnId:turnId,assistantId:assistant.id,baseRevision:assistant.revision,sequence,settlement:'pending',stage:'CONTINUATION_ADMITTED',revision:1,createdAt:currentTime});
@@ -812,8 +844,13 @@ async function settleContinuation(sessionId,t,addition,reason='',mvuResult=null)
      const old=aq.result;
      if(!old||old.sessionId!==sessionId||old.turnId!==job.parentTurnId||old.status!=='committed'||old.revision!==job.baseRevision||old.canonicalContent!==t.baseContent){failure(error('E_CANONICAL_CONFLICT','续写时原角色回复已改变，不允许覆盖'));return;}
      const append='\n'+addition;
-     side.add({id:'continuation_backup_'+job.id,sessionId,assistantId:old.id,parentTurnId:job.parentTurnId,originalContent:old.canonicalContent,originalRevision:old.revision,addedText:addition,revision:1,createdAt:new Date().toISOString()});
-     m.put({...old,rawContent:String(old.rawContent??old.canonicalContent)+append,canonicalContent:old.canonicalContent+append,revision:old.revision+1,...(mvuResult?.active?{mvuStateAfter:mvuResult.state,mvuOperationCount:mvuResult.operations?.length||0}:{})});
+     side.add({id:'continuation_backup_'+job.id,sessionId,assistantId:old.id,parentTurnId:job.parentTurnId,originalContent:old.canonicalContent,originalRevision:old.revision,addedText:addition,revision:1,createdAt:new Date().toISOString(),...(mvuResult?.active?{mvuStateAfter:mvuResult.state}: {})});
+     const mvuPatch=mvuResult?.active?{
+       mvuStateAfter:mvuResult.state,
+       mvuOperationCount:(old.mvuOperationCount||0)+(mvuResult.operations?.length||0),
+       mvuContinuationSegments:[...(old.mvuContinuationSegments||[]),{offset:old.canonicalContent.length+1,continuationId:job.id}]
+     }:{};
+     m.put({...old,rawContent:String(old.rawContent??old.canonicalContent)+append,canonicalContent:old.canonicalContent+append,revision:old.revision+1,...mvuPatch});
      finish();
     };
     aq.onerror=()=>failure(aq.error||error('E_STORE_UNVERIFIED','续写目标读取失败'));
@@ -833,18 +870,23 @@ async function continueAssistant(sessionId,options={}){
  const latest=history.filter(m=>!m.opening).at(-1);
  if(!latest||latest.role!=='assistant'||latest.status!=='committed')throw error('E_CANONICAL_CONFLICT','只能在已完成角色回复之后续写');
  const envelope=await createEnvelopeAsync(session,resources,history,'',{...options,assistantContinuation:true});
- if(envelope.mvu?.active)throw error('E_MVU_HISTORY_CONFLICT','此剧情包含动态 MVU 状态；尚不能安全追加续写，原历史未更改');
  if(envelope.gaps.length&&options.strictCompat===true&&!options.acceptGaps)throw error('E_RESOURCE_SEMANTIC_GAP','复杂规则需要先确认');
- const ticket=await beginContinuation(sessionId);
+ const ticket=await beginContinuation(sessionId,{sessionRevision:session.revision,assistantRevision:latest.revision,assistantContent:latest.canonicalContent});
  if(!ticket.id||!ticket.attemptId)throw error('E_CANONICAL_CONFLICT','续写未获得完整权威票据');
  try{
   const cfg=root.MimaStandalone?.getApiConfig?.();if(!cfg)throw error('E_API_CONFIG','未配置原生 API');
   const reply=await root.MimaStandalone.callModelWithConfig(envelope.messages,cfg,0.85,options.signal,{streamOverride:false});
   if(!String(reply||'').trim())throw error('E_API_EMPTY_REPLY','续写模型没有返回正文');
   root.MimaStandalone.validateStoryReply(reply,{stage:'compat_continue'});
-  const settled=await settleContinuation(sessionId,ticket,String(reply));
+  if(envelope.mvu?.required&&!mvu())throw error('E_MVU_UNAVAILABLE','MVU 组件不可用，续写不得丢弃变量状态');
+  // Each continuation's UpdateVariable is validated against the previous
+  // committed state, NOT against the first assistant message's old values.
+  const mvuResult=envelope.mvu?.required?mvu().forReply(envelope.mvu.initial,history,String(reply)):null;
+  const settled=await settleContinuation(sessionId,ticket,String(reply),'',mvuResult);
   if(settled.settlement!=='committed')throw error('E_CANONICAL_CONFLICT','旧续写尝试已失去提交权限');
   notifyPlugins(sessionId,'assistant.continued',{turnId:ticket.parentTurnId,continuationId:ticket.id},'assistant.continued:'+ticket.id);
+  if(mvuResult?.active&&(mvuResult.operations?.length||0)>0)
+    notifyPlugins(sessionId,'mvu.changed',{turnId:ticket.parentTurnId,continuationId:ticket.id,operationCount:mvuResult.operations.length},'mvu.changed:'+ticket.id);
   return{reply:String(reply),turnId:ticket.parentTurnId,continuationId:ticket.id,envelope,result:settled};
  }catch(e){try{await settleContinuation(sessionId,ticket,null,e.code||'E_STORY_RUNTIME');}catch(settle){e.settlementError=settle.message;}throw e;}
 }

@@ -5,11 +5,12 @@ function call(method,args){return new Promise((resolve,reject)=>{const requestId
 const sdk=Object.freeze({
  getChatMessages:()=>call('getChatMessages'),
  getVariables:()=>call('getVariables'),
+ getMvuState:()=>call('getMvuState'),
  setVariables:(value,expectedRevision)=>call('setVariables',{value,expectedRevision}),
  uiButton:(label,id)=>call('uiButton',{label,id}),
  on:(name,fn)=>{
   if(typeof fn!=='function')throw new Error('E_PLUGIN_API_UNSUPPORTED: invalid event callback');
-  const allowed=['session.mounted','turn.committed','turn.failed','assistant.continued','button'];
+  const allowed=['session.mounted','turn.committed','turn.failed','assistant.continued','button','mvu.changed'];
   if(!allowed.includes(name))throw new Error('E_PLUGIN_API_UNSUPPORTED: '+name);
   const list=events.get(name)||new Set();const wasEmpty=list.size===0;list.add(fn);events.set(name,list);
   if(wasEmpty&&name!=='button')call('subscribe',{name}).catch(e=>postMessage({type:'script-error',message:e.message,code:e.code}));

@@ -189,19 +189,44 @@ function patch(current,ops){const state=checked(current);if(!Array.isArray(ops))
  }
  return checked(state);
 }
+// An assistant continuation is a separate, settled generation that happens to
+// share the last assistant message's displayed content. Only a canonical
+// transaction may add these exact, ordered offsets. Ordinary replies still
+// permit ONE UpdateVariable block, never an arbitrary collection of blocks.
+function replayParts(message){
+ const content=String(message.canonicalContent??'');
+ const segments=message.mvuContinuationSegments;
+ if(segments===undefined)return[content];
+ if(message.opening||!Array.isArray(segments)||segments.length<1||segments.length>100)
+  throw err('E_MVU_HISTORY_CONFLICT','MVU 续写边界损坏，拒绝读取不可信状态');
+ const parts=[];let cursor=0;const seen=new Set();
+ for(const seg of segments){
+  const offset=seg?.offset,id=seg?.continuationId;
+  if(!Number.isSafeInteger(offset)||offset<2||offset>=content.length||offset<=cursor+1||
+      content[offset-1]!=='\n'||typeof id!=='string'||!/^cont_[a-zA-Z0-9_-]+$/.test(id)||seen.has(id))
+   throw err('E_MVU_HISTORY_CONFLICT','MVU 续写位置、分隔符或事务标识不合法');
+  const part=content.slice(cursor,offset-1);
+  if(!part.trim())throw err('E_MVU_HISTORY_CONFLICT','MVU 续写原段缺失');
+  parts.push(part);seen.add(id);cursor=offset;
+ }
+ const tail=content.slice(cursor);
+ if(!tail.trim())throw err('E_MVU_HISTORY_CONFLICT','MVU 续写尾段缺失');
+ parts.push(tail);
+ return parts;
+}
 function replay(initialState,messages){if(initialState===null)return{active:false,state:null};let state=checked(initialState);
  for(const m of [...messages].filter(x=>x.role==='assistant'&&x.status==='committed').sort((a,b)=>a.sequence-b.sequence)){
-  let ops=extract(m.canonicalContent);
-  // MVU opening greetings allow a static _.set override even when its old
-  // literal is a placeholder. In normal assistant turns old-value checking
-  // remains strict. No script execution or unchecked variable creation.
-  if(ops&&m.opening)ops=ops.map(op=>{
-   if(op.op!=='compare_replace')return op;
-   const {parent,key,exists}=locate(state,op.path);
-   if(!exists)throw err('E_MVU_PATCH_INVALID','开场白引用不存在的初始变量');
-   const value=parent[key];return{...op,old:Array.isArray(value)&&value.length===2?value[0]:value};
-  });
-  if(ops)state=patch(state,ops);
+  for(const part of replayParts(m)){
+   let ops=extract(part);
+   // Only a genuine opening greeting may use a placeholder old-value.
+   if(ops&&m.opening)ops=ops.map(op=>{
+    if(op.op!=='compare_replace')return op;
+    const {parent,key,exists}=locate(state,op.path);
+    if(!exists)throw err('E_MVU_PATCH_INVALID','开场白引用不存在的初始变量');
+    const value=parent[key];return{...op,old:Array.isArray(value)&&value.length===2?value[0]:value};
+   });
+   if(ops)state=patch(state,ops);
+  }
   if(m.mvuStateAfter!==undefined&&JSON.stringify(state)!==JSON.stringify(m.mvuStateAfter))throw err('E_MVU_HISTORY_CONFLICT','已存 MVU 状态与原始剧情重放不一致，禁止继续生成');
  }
  return{active:true,state};

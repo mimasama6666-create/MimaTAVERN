@@ -12,7 +12,7 @@ async function hashBytes(bytes){if(!(bytes instanceof Uint8Array))throw error('E
 async function verifySources(records){const all=records.source_capsules;if(!Array.isArray(all))throw error('E_STORE_UNVERIFIED','来源记录缺失');const ids=new Set();for(const item of all){if(!item||typeof item.sha256!=='string'||!(/^[a-f0-9]{64}$/).test(item.sha256)||item.id!=='sha256:'+item.sha256||!(item.bytes instanceof Uint8Array)||item.bytes.length>32*1024*1024||ids.has(item.id))throw error('E_SOURCE_CORRUPT','备份中来源包对象/索引异常');ids.add(item.id);if(await hashBytes(item.bytes)!==item.sha256)throw error('E_SOURCE_CORRUPT','原始来源包 SHA256 不符：'+item.id);}for(const item of records.resource_ir||[])if(!ids.has(item.sourceId))throw error('E_SOURCE_CORRUPT','资源引用不存在的来源包');return true;}
 function verifyRelationships(records){
  const map=name=>new Map((records[name]||[]).map(x=>[x.id,x]));
- const capsules=map('source_capsules'),ir=map('resource_ir'),sessions=map('compat_sessions'),messages=map('messages'),jobs=map('events_jobs'),grants=map('grants');
+ const capsules=map('source_capsules'),ir=map('resource_ir'),sessions=map('compat_sessions'),messages=map('messages'),jobs=map('events_jobs'),grants=map('grants'),sidecars=map('sidecar_links');
  const requireRef=(exists,label)=>{if(!exists)throw error('E_SOURCE_CORRUPT','备份关系失效：'+label);};
  for(const r of ir.values())requireRef(capsules.has(r.sourceId),'resource source '+r.id);
  for(const item of records.assets||[])if(item.sourceId)requireRef(capsules.has(item.sourceId),'asset source '+item.id);
@@ -37,6 +37,23 @@ function verifyRelationships(records){
     requireRef(m.role==='assistant'&&m.status==='committed'&&!!m.turnId,'MVU state must belong to committed assistant '+m.id);
     const state=m.mvuStateAfter;
     if(!state||typeof state!=='object'||Array.isArray(state)||JSON.stringify(state).length>64000)throw error('E_SOURCE_CORRUPT','MVU 状态快照无效 '+m.id);
+   }
+   if(m.mvuContinuationSegments!==undefined){
+    requireRef(m.role==='assistant'&&m.status==='committed'&&m.mvuStateAfter!==undefined&&!m.opening,'MVU continuation owner '+m.id);
+    const parts=m.mvuContinuationSegments,content=m.canonicalContent;
+    if(!Array.isArray(parts)||!parts.length||parts.length>100||typeof content!=='string')throw error('E_SOURCE_CORRUPT','MVU 续写分段无效 '+m.id);
+    let previousOffset=0;
+    for(let i=0;i<parts.length;i++){
+     const seg=parts[i],start=seg?.offset,next=parts[i+1]?.offset??content.length;
+     if(!Number.isSafeInteger(start)||start<2||start>=content.length||start<=previousOffset+1||content[start-1]!=='\n'||next<=start)
+      throw error('E_SOURCE_CORRUPT','MVU 续写文本边界损坏 '+m.id);
+     const job=jobs.get(seg.continuationId),link=sidecars.get('continuation_backup_'+seg.continuationId);
+     requireRef(job?.kind==='assistant_continuation'&&job.settlement==='committed'&&job.sessionId===m.sessionId&&job.assistantId===m.id,'MVU continuation journal '+m.id);
+     requireRef(link?.sessionId===m.sessionId&&link?.assistantId===m.id&&link?.parentTurnId===m.turnId&&
+       link.originalContent===content.slice(0,start-1)&&link.addedText===content.slice(start,next===content.length?undefined:next-1),
+       'MVU continuation sidecar '+m.id);
+     previousOffset=start;
+    }
    }
  }
  for(const j of jobs.values()){
