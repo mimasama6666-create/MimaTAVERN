@@ -168,3 +168,22 @@
 #compat-lab.in-chat #compat-messages .compat-message .msg-content>details>summary::before{content:'▸ ';font-size:.68rem}
 #compat-lab.in-chat #compat-messages .compat-message .msg-content>details[open]>summary::before{content:'▾ '}
 #compat-lab.in-chat #compat-messages .compat-message .msg-content>details>pre{max-width:100%;white-space:pre-wrap;overflow-wrap:anywhere}
+
+/* R13: stable reading surface and a compact card-selection flow. */
+#compat-lab.in-chat .compat-main{height:auto;flex:1;min-height:0;width:100%}
+#compat-lab.in-chat{display:flex;flex-direction:column;height:var(--mima-viewport-height,100dvh);top:var(--mima-viewport-top,0px);bottom:auto}
+#compat-lab[hidden]{display:none!important}
+#compat-lab .compat-head{flex:none;min-width:0}#compat-lab .compat-head>div{min-width:0;flex:1}#compat-head-title,#compat-role-heading{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+#compat-lab.in-chat #compat-messages{min-height:0;touch-action:pan-y;overflow-anchor:auto;scroll-behavior:auto}
+#compat-lab .compat-message{content-visibility:auto;contain-intrinsic-size:auto 200px}
+#compat-lab .compat-message-html{border:0;border-radius:0;background:transparent}
+#compat-follow-latest{align-self:center;flex:none;padding:7px 14px;border-radius:999px;border:1px solid var(--compat-rule);background:var(--panel-solid);color:var(--text);font-size:.76rem;margin:4px}
+#compat-follow-latest[hidden]{display:none}
+#compat-lab .compat-render-warning{padding:10px;border:1px solid var(--line);border-radius:10px}
+@media(max-width:640px){#compat-lab:not(.in-chat) .compat-main{padding:12px;gap:12px}#compat-lab:not(.in-chat) .compat-panel{border-radius:20px;padding:16px}#compat-lab .compat-actions{gap:8px}#compat-lab .compat-actions>select{max-width:100%;min-width:0}#compat-lab .compat-head button{min-height:40px}#compat-lab.in-chat #compat-game-drawer[open]{max-height:calc(var(--mima-viewport-height,100dvh) - 90px)}#compat-lab #compat-input{max-height:min(22dvh,160px);resize:none}}
+/* A definite flex chain keeps message content inside the reader scroller. */
+#compat-lab.in-chat>.compat-main{display:flex;flex-direction:column;flex:1 1 0%;margin:0 auto;overflow:hidden}
+#compat-lab.in-chat #compat-chat-panel{height:auto;flex:1 1 0%;overflow:hidden}
+#compat-lab.in-chat #compat-conversation{display:flex;flex-direction:column;flex:1 1 0%;overflow:hidden}
+#compat-lab.in-chat #compat-messages{flex:1 1 0%}
+#compat-lab .compat-message-html[hidden]{display:none!important}

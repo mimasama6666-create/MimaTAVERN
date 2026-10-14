@@ -43,14 +43,21 @@ function sanitise(untrusted){
   }
   if(element.tagName==='STYLE'){try{element.textContent=safeCssText(element.textContent)}catch(_){element.textContent='';}}
  }
+ // Preserve deliberate prose newlines without displaying template indentation.
+ for(const node of [...template.content.childNodes])if(node.nodeType===3&&node.nodeValue.trim()){
+  const span=document.createElement('span');span.className='mima-text-prose';span.textContent=node.nodeValue;node.replaceWith(span);
+ }
  return template.innerHTML;
 }
 // Card HTML lives in an opaque iframe. Only the host-authored resize bridge runs;
 // card-provided scripts/event handlers remain stripped and cannot obtain host origin.
+function stabilizeViewportCss(css){
+ return String(css).replace(/("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|(-?(?:\d*\.)?\d+)(?:dvh|svh|lvh|vh)\b)/gi,(all,token,n)=>n===undefined?all:'calc('+n+' * var(--mima-stable-vh))');
+}
 function srcdoc(content, options={}){
  const raw=String(content??'');if(raw.length>maxBytes)throw new Error('HTML 展示内容超过安全上限；请查看原文');
- const html=sanitise(raw);
- const css=safeCssText(options.css||'');
+ const html=sanitise(raw).replace(/<style\b[^>]*>[\s\S]*?<\/style>|style=("[^"]*"|'[^']*')/gi,part=>part.startsWith('<')?stabilizeViewportCss(part):part.replace(/^(style=)(["'])([\s\S]*)\2$/i,(_,prefix,q,value)=>prefix+q+stabilizeViewportCss(value)+q));
+ const css=stabilizeViewportCss(safeCssText(options.css||''));
  const token=String(options.token||'');const legacyNoResize=!token&&!options.nonce;
  if(!legacyNoResize&&!/^[0-9a-f]{32,64}$/.test(token))throw new Error('E_DISPLAY_TOKEN: 隔离显示令牌无效');
  const nonce=String(options.nonce||'');if(!legacyNoResize&&!/^[0-9a-f]{32,64}$/.test(nonce))throw new Error('E_DISPLAY_NONCE: 高度同步令牌无效');
@@ -60,11 +67,12 @@ function srcdoc(content, options={}){
  const cleanFont=/^[^<>{};\n\r]{1,160}$/.test(font)?font:'system-ui,sans-serif';
  const cleanFontSize=/^(?:\d+(?:\.\d+)?)(?:px|rem|em)$/.test(fontSize)?fontSize:'16px';
  const csp="default-src 'none'; script-src "+(legacyNoResize?"'none'":"'nonce-"+nonce+"'")+"; connect-src 'none'; img-src data:; media-src 'none'; font-src data:; style-src 'unsafe-inline'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'";
- const base='html,body{margin:0;padding:0;overflow-wrap:anywhere}body{background:transparent;color:'+cleanColor+';font-family:'+cleanFont+';font-size:'+cleanFontSize+';line-height:1.65;white-space:pre-wrap}*,*:before,*:after{box-sizing:border-box}table{max-width:100%;border-collapse:collapse}td,th{border:1px solid #9995;padding:5px}img,svg{max-width:100%;height:auto}pre{white-space:pre-wrap;overflow-wrap:anywhere}';
+ const stableHeight=Math.max(160,Math.min(3000,Number(options.viewportHeight)||800));
+ const base=':root{--mima-stable-vh:'+(stableHeight/100)+'px}html,body{margin:0;padding:0;overflow-wrap:anywhere}body{background:transparent;color:'+cleanColor+';font-family:'+cleanFont+';font-size:'+cleanFontSize+';line-height:1.65;white-space:normal}mima-flow{display:flow-root;min-width:0}.mima-text-prose{white-space:pre-wrap}:where(p,blockquote,ul,ol,dl){margin-block:.65em}*,*:before,*:after{box-sizing:border-box}table{max-width:100%;border-collapse:collapse}td,th{border:1px solid #9995;padding:5px}img,svg{max-width:100%;height:auto}pre,code{white-space:pre-wrap;overflow-wrap:anywhere}';
  // The trusted bridge does no DOM mutation. It only reports its own measured
  // content height. Parent verifies token, source window, and session generation.
- const bridge='(function(){const key='+JSON.stringify(token)+';let previous=0;function report(){const d=document.documentElement,b=document.body;const h=Math.ceil(Math.max(d.scrollHeight,b.scrollHeight,d.offsetHeight,b.offsetHeight));if(h!==previous){previous=h;parent.postMessage({mimaSafeHeight:key,height:h},"*");}}new ResizeObserver(report).observe(document.body);new ResizeObserver(report).observe(document.documentElement);addEventListener("load",report);document.addEventListener("DOMContentLoaded",report);report();})();';
- return '<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="'+csp+'"><meta name="viewport" content="width=device-width,initial-scale=1"><style>'+base+'\n'+css+'</style></head><body>'+html+(legacyNoResize?'':'<script nonce="'+nonce+'">'+bridge+'</script>')+'</body></html>';
+ const bridge='(function(){const key='+JSON.stringify(token)+';let previous=0;function report(){const flow=document.querySelector("mima-flow");if(!flow)return;const style=getComputedStyle(document.body);const spacing=[style.paddingBottom,style.borderBottomWidth,style.marginBottom].reduce((n,v)=>n+(parseFloat(v)||0),0);const h=Math.max(1,Math.ceil(flow.getBoundingClientRect().bottom+spacing));if(h!==previous){previous=h;parent.postMessage({mimaSafeHeight:key,height:h},"*");}}new ResizeObserver(report).observe(document.body);new ResizeObserver(report).observe(document.querySelector("mima-flow"));addEventListener("load",report);document.addEventListener("DOMContentLoaded",report);report();})();';
+ return '<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="'+csp+'"><meta name="viewport" content="width=device-width,initial-scale=1"><style>'+base+'\n'+css+'</style></head><body><mima-flow>'+html+'</mima-flow>'+(legacyNoResize?'':'<script nonce="'+nonce+'">'+bridge+'</script>')+'</body></html>';
 }
-return Object.freeze({classify,srcdoc,safeCssText,maxBytes});
+return Object.freeze({classify,srcdoc,safeCssText,stabilizeViewportCss,maxBytes});
 });

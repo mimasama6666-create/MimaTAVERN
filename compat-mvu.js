@@ -86,24 +86,24 @@ function initYaml(input){
  }
  const result=block(0,0);if(index!==lines.length)throw err('MVU_INITVAR_YAML_INVALID','YAML 仍有未解析内容');return checked(result);
 }
-function initial(resources,{greetingIndex=0}={}){let source=null,conflict=false,gaps=[];
- function accept(value,resourceId){try{const v=checked(value);if(source!==null&&JSON.stringify(source)!==JSON.stringify(v)){
+function initial(resources,{greetingIndex=0}={}){let source=null,conflict=false,gaps=[],sources=[];
+ function accept(value,resourceId,provenance={}){try{const v=checked(value);if(source!==null&&JSON.stringify(source)!==JSON.stringify(v)){
     conflict=true;gaps.push({reason:'MVU_MULTIPLE_INITIAL_SOURCES_CONFLICT',resourceId});return;
-   }if(source===null)source=v;
+   }if(source===null)source=v;sources.push({resourceId,...provenance});
   }catch(e){gaps.push({reason:e.code||'E_MVU_INIT_INVALID',resourceId});}}
  for(const r of resources||[]){if(r.kind!=='variable_schema')continue;const value=r.raw;let candidate;
   if(plain(value))candidate=value.stat_data??value.initial_variables??value.initial??value.variables??(r.name.toLowerCase()==='variables'?value:null);
   else if(typeof value==='string'&&value.trim().startsWith('{')){try{candidate=JSON.parse(value);}catch(e){gaps.push({reason:'MVU_INIT_JSON_INVALID',resourceId:r.id});continue;}}
   if(candidate===undefined||candidate===null){gaps.push({reason:'MVU_INIT_FORMAT_UNSUPPORTED',resourceId:r.id});continue;}
-  accept(candidate,r.id);
+  accept(candidate,r.id,{path:r.path||'variable_schema',reason:'declared_initial_variables'});
  }
  // Non-executable InitVar JSON and bounded mapping/sequence YAML only.
  // Full YAML, Zod schemas and arbitrary JavaScript are intentionally unsupported.
  for(const r of resources||[])if(r.kind==='world_info'){
   const entries=r.raw?.entries,items=Array.isArray(entries)?entries:entries&&typeof entries==='object'?Object.values(entries):[];
-  for(const entry of items){if(!/\[?initvar\]?/i.test(String(entry.comment||entry.name||'')))continue;
+  for(const [entryIndex,entry] of items.entries()){if(!/\[?initvar\]?/i.test(String(entry.comment||entry.name||'')))continue;
    const content=String(entry.content||'').replace(/^\s*<initvar>\s*/i,'').replace(/\s*<\/initvar>\s*$/i,'').replace(/^\s*```(?:json|yaml|yml)?\s*\r?\n/i,'').replace(/\s*```\s*$/,'').trim();
-   try{const parsed=content.startsWith('{')?JSON.parse(content):initYaml(content);accept(parsed.stat_data??parsed,r.id);}catch(e){gaps.push({reason:e.code||'MVU_INITVAR_JSON_INVALID',resourceId:r.id});}
+   try{const parsed=content.startsWith('{')?JSON.parse(content):initYaml(content);accept(parsed.stat_data??parsed,r.id,{entryId:entry.uid??entry.id??Object.keys(entries)[entryIndex],path:(r.path||'world_info')+'.entries['+(entry.uid??entry.id??Object.keys(entries)[entryIndex])+']',reason:'InitVar_data_even_when_lore_disabled'});}catch(e){gaps.push({reason:e.code||'MVU_INITVAR_JSON_INVALID',resourceId:r.id});}
   }
  }
  // For cards that explicitly declare a complete opening-specific InitVar,
@@ -121,12 +121,12 @@ function initial(resources,{greetingIndex=0}={}){let source=null,conflict=false,
     const body=blocks[0][1].trim().replace(/^```(?:json|yaml|yml)?\s*\r?\n/i,'').replace(/\s*```\s*$/,'').trim();
     const parsed=body.startsWith('{')?JSON.parse(body):initYaml(body);
     const next=checked(parsed.stat_data??parsed);
-    if(!conflict)source=next;
+    if(!conflict){source=next;sources=[{resourceId:(resources||[]).find(r=>r.kind==='character')?.id,path:'character.greeting['+index+']',reason:'selected_greeting_override'}];}
    }catch(e){conflict=true;gaps.push({reason:e.code||'MVU_GREETING_INIT_INVALID',resourceId:'character.greeting['+index+']'});}
   }
  }
  // A conflicting initializer cannot be silently resolved by source order.
- return{state:conflict?null:source,gaps};
+ return{state:conflict?null:source,gaps,sources};
 }
 function extract(reply){const str=String(reply||'');const matches=[...str.matchAll(/<UpdateVariable(?:\s[^>]*)?>([\s\S]*?)<\/UpdateVariable>/gi)];
  if(!matches.length){if(/<UpdateVariable\b/i.test(str))throw err('E_MVU_PATCH_INVALID','MVU 变量更新块缺少结束标签');return null;}

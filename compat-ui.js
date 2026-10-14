@@ -35,7 +35,7 @@ async function onExternalSettlement(hint){
  }
 }
 function listenLiveSync(){if(!unsubscribeLiveSync&&root.MimaCompatLiveSync?.subscribe)unsubscribeLiveSync=root.MimaCompatLiveSync.subscribe(onExternalSettlement);}
-function refreshSendAvailability(){const send=$('compat-send');if(send)send.disabled=!activeId||busySessions.has(activeId);}
+function refreshSendAvailability(){for(const id of ['compat-send','compat-continue']){const button=$(id);if(button)button.disabled=!activeId||busySessions.has(activeId);}}
 function messageFor(sessionId,generation,text,kind='info'){if(activeId===sessionId&&sessionGeneration===generation)message(text,kind);}
 function beginSessionAction(id){if(busySessions.has(id))return false;busySessions.add(id);refreshSendAvailability();return true;}function endSessionAction(id){busySessions.delete(id);refreshSendAvailability();}
 function el(tag,props={},parent){const node=document.createElement(tag);for(const[k,v]of Object.entries(props)){if(k==='text')node.textContent=String(v);else if(k==='className')node.className=v;else if(k==='onclick')node.addEventListener('click',v);else if(k==='title')node.title=v;else node.setAttribute(k,v);}if(parent)parent.append(node);return node;}
@@ -139,7 +139,7 @@ async function create(){if(creating||!scan)return;
   if(scanGeneration!==scanTicket||scan!==selectedScan)throw Object.assign(new Error('来源卡在挂载前发生切换，本次未创建剧情'),{code:'E_IMPORT_SELECTION_CHANGED'});
   const ses=await r().createSession(sourceId,{characterResourceId:saved.id,greetingIndex:selectedGreeting});
   if($('compat-game-drawer'))$('compat-game-drawer').open=false;
-  await loadSession(ses.id);$('compat-lab').classList.add('in-chat');$('compat-lab').classList.remove('show-advanced');message('已一键进入角色剧情：卡内人物设定、世界书、正则和可验证的 MVU 资料已按选定版本绑定；世界书需按规则触发。脚本、CSS 和复杂 HTML 仍需手动授权。原生剧情不受影响。');
+  await loadSession(ses.id);$('compat-lab').classList.add('in-chat');$('compat-lab').classList.remove('show-advanced');message('已进入角色剧情。人物资料已挂载；尚未支持的效果可在「功能」中查看。');
  }catch(e){message(`${e.code||'E_COMPAT'}: ${e.message}`,'error');}
  finally{creating=false;$('compat-card-choice').disabled=false;$('compat-greeting-choice').disabled=false;button.disabled=!scan||!scan.resources?.some(item=>item.kind==='character');}}
 async function refreshSourceList(){
@@ -207,7 +207,7 @@ async function handleRecovery(sessionId,turnId,action,expectedAttemptId){
 async function refreshSessionList(){const generation=sessionGeneration,ses=await s().all('compat_sessions');if(generation!==sessionGeneration)return;const box=$('compat-sessions');clear(box);
 const shortcuts=$('compat-continue-list');if(shortcuts){clear(shortcuts);if(ses.length){el('strong',{text:'继续之前的酒馆剧情'},shortcuts);for(const item of ses.slice().sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))).slice(0,4)){const row=el('div',{className:'compat-line'},shortcuts);el('span',{text:item.title||'未命名剧情'},row);el('button',{text:'继续聊天',onclick:()=>loadSession(item.id)},row);}}}
 for(const item of ses){const row=el('div',{className:'compat-line'},box);el('span',{text:item.title+(item.parentSessionId?' · 剧情分支':' · 独立剧情')+(item.pendingTurnId?' · 存在未结算回合':'')},row);el('button',{text:'进入',onclick:()=>loadSession(item.id)},row);if(item.id===activeId){await showTurnControls(item.id,box);if(generation!==sessionGeneration)return;}}}
-async function loadSession(id){$('compat-lab').classList.add('in-chat');const generation=++sessionGeneration;if(activeId!==id){const drawer=$('compat-game-drawer');if(drawer){drawer.open=false;$('compat-manage-toggle')?.setAttribute('aria-expanded','false');}selectedMvuTemplate=null;const preview=$('compat-mvu-template-output');if(preview)preview.replaceChildren();root.MimaCompatPlugins?.unmountAll();if($('compat-stscript-input'))$('compat-stscript-input').value='';if($('compat-stscript-result'))$('compat-stscript-result').textContent='已切换剧情：请手动填写并检查本剧情的脚本。';}activeId=id;refreshSendAvailability();const ses=await r().getSession(id);if(generation!==sessionGeneration)return;$('compat-wi-budget').value=String(ses.worldInfoBudget??16000);$('compat-wi-depth').value=String(ses.worldInfoScanDepth??100);$('compat-wi-recursive').checked=ses.worldInfoRecursiveScan!==false;$('compat-wi-recursion-steps').value=String(ses.worldInfoMaxRecursionSteps??6);$('compat-wi-local-advanced').checked=ses.worldInfoLocalAdvancedRules===true;$('compat-preset-history-slot').checked=ses.experimentalChatHistorySlot===true;$('compat-persona-description').value=String(ses.personaDescription||'');$('compat-current').textContent=`咪嘛馆兼容引擎 · ${ses.title}`;$('compat-conversation').hidden=false;await refreshSessionList();if(generation!==sessionGeneration)return;await refreshSourceList();if(generation!==sessionGeneration)return;await refreshMessages();if(generation!==sessionGeneration)return;await refreshMountStatus(id,generation);if(generation!==sessionGeneration)return;await refreshExtensionUI();if(generation!==sessionGeneration)return;await inspectPreview();root.MimaCompatPlugins?.publish?.(id,'session.mounted',{sessionId:id},'session.mounted:'+id+':'+generation)?.catch(e=>messageFor(id,generation,'插件会话事件失败：'+e.message,'error'));}
+async function loadSession(id){$('compat-lab').classList.add('in-chat');const generation=++sessionGeneration;if(activeId!==id){const drawer=$('compat-game-drawer');if(drawer){drawer.open=false;$('compat-manage-toggle')?.setAttribute('aria-expanded','false');}selectedMvuTemplate=null;const preview=$('compat-mvu-template-output');if(preview)preview.replaceChildren();root.MimaCompatPlugins?.unmountAll();if($('compat-stscript-input'))$('compat-stscript-input').value='';if($('compat-stscript-result'))$('compat-stscript-result').textContent='已切换剧情：请手动填写并检查本剧情的脚本。';}activeId=id;refreshSendAvailability();const ses=await r().getSession(id);if(generation!==sessionGeneration)return;$('compat-wi-budget').value=String(ses.worldInfoBudget??16000);$('compat-wi-depth').value=String(ses.worldInfoScanDepth??100);$('compat-wi-recursive').checked=ses.worldInfoRecursiveScan!==false;$('compat-wi-recursion-steps').value=String(ses.worldInfoMaxRecursionSteps??6);$('compat-wi-local-advanced').checked=ses.worldInfoLocalAdvancedRules===true;$('compat-preset-history-slot').checked=ses.experimentalChatHistorySlot===true;$('compat-complete-html').checked=ses.outputContract?.completeHtml===true;$('compat-author-note').value=ses.authorNote?.content||'';$('compat-author-note-depth').value=ses.authorNote?.depth??0;$('compat-persona-description').value=String(ses.personaDescription||'');$('compat-current').textContent=`咪嘛馆兼容引擎 · ${ses.title}`;$('compat-conversation').hidden=false;await refreshSessionList();if(generation!==sessionGeneration)return;await refreshSourceList();if(generation!==sessionGeneration)return;await refreshMessages();if(generation!==sessionGeneration)return;await refreshMountStatus(id,generation);if(generation!==sessionGeneration)return;await refreshExtensionUI();if(generation!==sessionGeneration)return;await inspectPreview();root.MimaCompatPlugins?.publish?.(id,'session.mounted',{sessionId:id},'session.mounted:'+id+':'+generation)?.catch(e=>messageFor(id,generation,'插件会话事件失败：'+e.message,'error'));}
 // The optional MVU template belongs in the story flow, after the current
 // assistant reply, not in a separate status card above the chat.
 function paintMvuTemplate(sessionId,verified,target,css,theme,renderTicket){
@@ -252,14 +252,16 @@ article:hover .compat-message-tools,article:focus-within .compat-message-tools{o
 function cssSafe(css){if(typeof css!=='string'||css.length>65536)throw new Error('E_RESOURCE_SEMANTIC_GAP: CSS 必须为 64KB 内的文本');return root.MimaCompatSafeHtml.safeCssText(css);}
 // A single host-side listener gates every resize by the live iframe, its
 // cryptographic token and the currently displayed session/render generation.
-const fluidFrames=new Map();
+const fluidFrames=new Map(),messageViews=new Map();let renderedSession='',followLatest=true;
 root.addEventListener?.('message',event=>{
  const data=event.data;if(!data||typeof data!=='object'||typeof data.mimaSafeHeight!=='string')return;
  const record=fluidFrames.get(data.mimaSafeHeight);
  if(!record||event.source!==record.iframe.contentWindow||activeId!==record.owner||sessionGeneration!==record.generation||messageRenderGeneration!==record.ticket||!record.iframe.isConnected)return;
- const height=Number(data.height);if(!Number.isFinite(height)||height<1||height>200000)return;
+ const height=Number(data.height);if(!Number.isFinite(height)||height<1)return;
+ if(height>200000){record.iframe.hidden=true;if(!record.failed){record.failed=true;el('p',{className:'compat-render-warning',text:'这条 HTML 的显示高度超出预算，请展开下方原文阅读；完整剧情仍已保存。'},record.iframe.parentElement);}return;}
+ const box=$('compat-messages'),nearBottom=box&&box.scrollHeight-box.clientHeight-box.scrollTop<96;
  const px=Math.ceil(height);if(Math.abs(px-record.last)<2)return;record.last=px;
- record.iframe.style.height=px+'px';
+ record.iframe.style.height=px+'px';if(nearBottom&&followLatest)requestAnimationFrame(()=>{if(followLatest)box.scrollTop=box.scrollHeight;});
 });
 function makeFluidHtml(parent,html,title,css,theme,owner,ticket){
  const token=Array.from(root.crypto.getRandomValues(new Uint8Array(16)),x=>x.toString(16).padStart(2,'0')).join('');
@@ -267,7 +269,11 @@ function makeFluidHtml(parent,html,title,css,theme,owner,ticket){
  const iframe=el('iframe',{sandbox:'allow-scripts',referrerpolicy:'no-referrer',title,className:'compat-message-html'},parent);
  iframe.style.height='1px';
  fluidFrames.set(token,{iframe,owner,generation:sessionGeneration,ticket,last:0});
- iframe.srcdoc=root.MimaCompatSafeHtml.srcdoc(html,{css,token,nonce,...theme});
+ const source=root.MimaCompatSafeHtml.srcdoc(html,{css,token,nonce,viewportHeight:root.visualViewport?.height||root.innerHeight,...theme});
+ if(typeof IntersectionObserver==='function'){
+  iframe.style.minHeight='80px';const observer=new IntersectionObserver(entries=>{if(entries.some(e=>e.isIntersecting)){observer.disconnect();iframe.style.minHeight='';iframe.srcdoc=source;}},{root:$('compat-messages'),rootMargin:'1000px'});observer.observe(iframe);
+  fluidFrames.get(token).observer=observer;
+ }else iframe.srcdoc=source;
  return iframe;
 }
 function frameTheme(){const node=$('compat-messages');const computed=root.getComputedStyle?.(node);
@@ -304,20 +310,35 @@ async function refreshMessages(){if(!activeId)return;
  }catch(e){if(activeId!==sessionId||sessionGeneration!==generation||messageRenderGeneration!==renderTicket)return;if(statusNode){clear(statusNode);el('small',{text:'状态校验失败，原存档未修改。'},statusNode);}mvuNode.textContent='MVU 状态验证失败（未清空存档）：'+(e.code||'E_MVU')+' '+e.message;}}
  const box=$('compat-messages'),shadow=box; // R12.2: safe text uses native DOM; untrusted HTML remains in opaque sandbox iframe
  // Old resize messages cannot change a newly rendered conversation.
- fluidFrames.clear();
+ for(const old of box.querySelectorAll('.compat-inline-mvu-template'))old.remove();
+ const sameSession=renderedSession===sessionId;
+ const wasFollowing=!sameSession||box.scrollHeight-box.scrollTop-box.clientHeight<96;
+ const anchor=sameSession?[...box.children].find(n=>n.getBoundingClientRect().bottom>box.getBoundingClientRect().top):null;
+ const anchorOffset=anchor?anchor.getBoundingClientRect().top-box.getBoundingClientRect().top:0;
+ if(!sameSession){for(const record of fluidFrames.values())record.observer?.disconnect();fluidFrames.clear();messageViews.clear();clear(box);renderedSession=sessionId;}
+ followLatest=wasFollowing;
  const regexErrors=items.filter(x=>x.displayError).map(x=>x.displayError);
  const diag=$('compat-display-errors');if(diag){clear(diag);for(const e of regexErrors)el('p',{text:'显示正则失败（本条保留原文）：'+(e.code||'E_REGEX')+' '+e.message},diag);
  for(const error of frameStyles.failures)el('p',{text:'角色卡 CSS 未加载：'+error},diag);}
- clear(shadow); // native message CSS/custom themes can style the outer, trusted elements directly
+ const used=new Set();let cursor=shadow.firstElementChild;
  const theme=frameTheme();let lastAssistant=null;
- for(const item of items){const article=el('article',{className:'message '+(item.role==='assistant'?'assistant-msg':item.role==='user'?'user-msg':'system-msg')+' compat-message '+item.role},shadow);if(item.role==='assistant'&&item.status==='committed')lastAssistant=article;
- el('div',{className:'msg-header',text:item.role==='assistant'?(session.title||'角色').split(/[\/｜|]/)[0].trim():'你'},article);const content=el('div',{className:'msg-content tavern-story-content'},article);const view=String(item.displayView??'');
+ for(const item of items){
+ const key=item.id||item.turnId+':'+item.role+':'+item.sequence,view=String(item.displayView??''),prior=messageViews.get(key);
+ const signature=JSON.stringify([item.role,item.status,session.title,frameStyles.css,theme,item.displayError||null]);used.add(key);
+ if(prior&&prior.view===view&&prior.signature===signature){
+  const article=prior.article;if(article!==cursor)shadow.insertBefore(article,cursor);cursor=article.nextElementSibling;
+  for(const record of fluidFrames.values())if(article.contains(record.iframe)){record.ticket=renderTicket;record.generation=generation;}
+  if(item.role==='assistant'&&item.status==='committed')lastAssistant=article;continue;
+ }
+ if(prior?.article===cursor)cursor=cursor.nextElementSibling;prior?.article.remove();
+ const article=el('article',{className:'message '+(item.role==='assistant'?'assistant-msg':item.role==='user'?'user-msg':'system-msg')+' compat-message '+item.role},shadow);if(item.role==='assistant'&&item.status==='committed')lastAssistant=article;
+ el('div',{className:'msg-header',text:item.role==='assistant'?(session.title||'角色').split(/[\/｜|]/)[0].trim():'你'},article);const content=el('div',{className:'msg-content tavern-story-content'},article);
  const safe=root.MimaCompatSafeHtml?.classify(view,item.role,item.status);
  if(safe?.showHtml&&!item.displayError){
    // Text and its own HTML/CSS flow together in a borderless, auto-sized
    // sandbox. No fixed-height viewport and no screenshot-like status card.
    makeFluidHtml(content,view,'角色回复（内嵌 HTML 状态栏）',frameStyles.css,theme,sessionId,renderTicket);
-   const source=el('details',{},content);el('summary',{text:'查看本条原始文字'},source);el('pre',{text:view},source);
+   const source=el('details',{},content);el('summary',{text:'查看本条原始文字'},source);source.addEventListener('toggle',()=>{if(source.open&&!source.querySelector('pre'))el('pre',{text:view},source);else if(!source.open)source.querySelector('pre')?.remove();});
  }else{el('div',{className:'story-prose',text:view},content);if(safe?.oversize)el('small',{text:'内容超过隔离 HTML 单条预算，仍以原文显示，不裁剪剧情数据。'},content);}
  if(item.status!=='committed')el('small',{text:'本回合 '+item.status+'（未纳入已完成对话上下文）'},article);
  if(item.role==='assistant'&&item.status==='committed'&&(item.turnId||item.opening)){
@@ -330,12 +351,19 @@ async function refreshMessages(){if(!activeId)return;
    el('button',{text:'编辑此句并重生成（新分支）',onclick:()=>forkEditTurn(sessionId,item.turnId,'edit')},actionBar);
    el('button',{text:'删除此轮及之后（新分支）',onclick:()=>forkEditTurn(sessionId,item.turnId,'delete')},actionBar);
  }
+ messageViews.set(key,{article,view,signature});if(article!==cursor)shadow.insertBefore(article,cursor);cursor=article.nextElementSibling;
  }
+ for(const [key,entry]of messageViews)if(!used.has(key)){entry.article.remove();messageViews.delete(key);}
+ for(const [token,record]of fluidFrames)if(!record.iframe.isConnected){record.observer?.disconnect();fluidFrames.delete(token);}else{record.ticket=renderTicket;record.generation=generation;}
  if(lastAssistant&&selectedMvuTemplate?.sessionId===sessionId)paintMvuTemplate(sessionId,verifiedMvu,lastAssistant,frameStyles.css,theme,renderTicket);
  const oldPreview=$('compat-mvu-template-output');if(oldPreview)clear(oldPreview);
  const info=$('compat-story-status');if(info)info.textContent=regexErrors.length?'部分显示正则未能完成；剧情保留原文，详见诊断区。':frameStyles.failures.length?'部分卡片 CSS 无法安全加载，详见诊断区。':'';
- box.scrollTop=box.scrollHeight;
+ if(wasFollowing)box.scrollTop=box.scrollHeight;
+ else if(anchor?.isConnected)box.scrollTop+=anchor.getBoundingClientRect().top-box.getBoundingClientRect().top-anchorOffset;
+ syncLatestButton();
 }
+function syncLatestButton(){const box=$('compat-messages'),button=$('compat-follow-latest');if(button)button.hidden=!box||box.scrollHeight-box.scrollTop-box.clientHeight<96;}
+
 async function forkFromTurn(sessionId,turnId){
  if(busySessions.has(sessionId)||creating||forking)return messageFor(sessionId,sessionGeneration,'请先等待当前操作结束，再创建剧情分支。','error');
  if(!root.confirm('从这里另开剧情分支？原剧情和已保存的变量不会改变。'))return;
@@ -450,11 +478,12 @@ async function saveWorldInfoScanDepth(){
  const depth=Number(raw),stepsRaw=$('compat-wi-recursion-steps').value.trim(),steps=Number(stepsRaw),recursive=$('compat-wi-recursive').checked,localAdvanced=$('compat-wi-local-advanced').checked,experimentalSlot=$('compat-preset-history-slot').checked;
  const personaDescription=$('compat-persona-description').value;if(personaDescription.length>12000){message('玩家 Persona 描述最长 12000 字符；没有保存旧设置。','error');return;}
  if(!raw||!Number.isSafeInteger(depth)||depth<0||depth>1000||!stepsRaw||!Number.isSafeInteger(steps)||steps<1||steps>12){message('世界书扫描条数必须是 0～1000，递归层数必须是 1～12；没有保存旧设置。','error');return;}
+ const noteDepth=Number($('compat-author-note-depth').value);if(!Number.isInteger(noteDepth)||noteDepth<0||noteDepth>100)return message('作者注记深度须为 0～100 的整数，未保存。','error');
  button.disabled=true;
  try{
   const session=await r().getSession(sessionId);
   if(activeId!==sessionId)return;
-  const saved=await s().putCAS('compat_sessions',{...session,worldInfoBudget:budget,worldInfoScanDepth:depth,worldInfoRecursiveScan:recursive,worldInfoMaxRecursionSteps:steps,worldInfoLocalAdvancedRules:localAdvanced,experimentalChatHistorySlot:experimentalSlot,personaDescription},session.revision);
+  const saved=await s().putCAS('compat_sessions',{...session,worldInfoBudget:budget,worldInfoScanDepth:depth,worldInfoRecursiveScan:recursive,worldInfoMaxRecursionSteps:steps,worldInfoLocalAdvancedRules:localAdvanced,experimentalChatHistorySlot:experimentalSlot,personaDescription,outputContract:{completeHtml:$('compat-complete-html').checked},authorNote:{content:$('compat-author-note').value,depth:Number($('compat-author-note-depth').value),role:'system'}},session.revision);
   const verified=await r().getSession(sessionId);
   if(saved?.worldInfoBudget!==budget||verified.worldInfoBudget!==budget||verified.revision!==saved.revision)throw Object.assign(new Error('预算持久化结果与提交值不一致，当前值不能标记为保存成功'),{code:'E_STORE_UNVERIFIED'});
   if(activeId===sessionId){await inspectPreview();message('已保存世界书预算 '+budget+' 字符、扫描范围 '+depth+' 条、递归 '+(recursive?'开启':'关闭')+'、上限 '+steps+' 层；本地近似概率/分组 '+(localAdvanced?'开启':'关闭')+'，预设动态插槽 '+(experimentalSlot?'开启':'关闭')+'。其它剧情和原始卡片未修改。');}
@@ -594,6 +623,9 @@ async function refreshMountStatus(sessionId,generation){
 }
 function bootstrap(){
  makePlayLayout();
+ const latest=el('button',{id:'compat-follow-latest',text:'回到最新消息',hidden:'hidden',onclick:()=>{const box=$('compat-messages');followLatest=true;box.scrollTop=box.scrollHeight;syncLatestButton();}},$('compat-conversation'));
+ $('compat-composer')?.before(latest);
+ $('compat-messages')?.addEventListener('scroll',()=>{const box=$('compat-messages');followLatest=box.scrollHeight-box.scrollTop-box.clientHeight<96;syncLatestButton();},{passive:true});
  document.addEventListener('visibilitychange',()=>{if(!document.hidden&&opened&&activeId){refreshMessages().catch(e=>messageFor(activeId,sessionGeneration,'恢复显示后状态刷新失败：'+e.message,'error'));}});
  const actions={'compat-open':open,'compat-close':close,'compat-scan':doImport,'compat-save':commit,'compat-create':create,'compat-send':send,'compat-continue':continueReply,'compat-preview':inspectPreview,'compat-wi-save':saveWorldInfoScanDepth,'compat-export':exportCompat,'compat-export-both':exportBoth,'compat-restore-check':()=>restoreCompat(false),'compat-restore-apply':()=>restoreCompat(true),'compat-stscript-check':()=>manualSTscript(true),'compat-stscript-run':()=>manualSTscript(false),'compat-mvu-template-clear':clearMvuTemplate,'compat-mvu-template-custom-run':()=>selectMvuTemplate('当前剧情临时自定义模板',$('compat-mvu-template-custom').value)};for(const [id,fn]of Object.entries(actions))$(id)?.addEventListener('click',fn);$('compat-restore-file')?.addEventListener('change',()=>{inspectedBackup=null;});$('compat-file')?.addEventListener('change',doImport);$('compat-card-choice')?.addEventListener('change',refreshGreetingChoice);$('compat-input')?.addEventListener('input',()=>{});$('compat-manage-toggle')?.addEventListener('click',toggleManage);$('compat-audio')?.addEventListener('change',ev=>{const f=ev.target.files[0];if(f)nativeAudio(f);});$('compat-quick-status').textContent='选择 PNG、JSON 或 CHARX，即可查看人物并开始聊天。';}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',bootstrap,{once:true});else bootstrap();root.MimaCompatUI=Object.freeze({open,openWithFile,close});

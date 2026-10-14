@@ -64,6 +64,7 @@
       pinnedFactsEnabled: input.pinnedFactsEnabled !== false,
       showInjectionLabels: input.showInjectionLabels !== false,
       summaryTriggerMessages: clampInt(input.summaryTriggerMessages, 12, 200, 28),
+      ...(input.outputContract?.completeHtml===true?{outputContract:{completeHtml:true}}:{}),
       inputSemanticMode: ['auto','dialogue_first','quote_dialogue','raw'].includes(input.inputSemanticMode) && (input.inputSemanticMode==='raw'||input.inputSemanticExplicit===true) ? input.inputSemanticMode : 'raw',
       inputSemanticExplicit: input.inputSemanticExplicit===true,
       legacyInputSemanticMode: ['auto','dialogue_first','quote_dialogue'].includes(input.legacyInputSemanticMode) ? input.legacyInputSemanticMode : input.inputSemanticExplicit!==true&&['auto','dialogue_first','quote_dialogue'].includes(input.inputSemanticMode) ? input.inputSemanticMode : null
@@ -391,6 +392,9 @@
   }
   function toHistoryMessage(m,session){
     if(!m?.content)return null;
+    // Preserve legacy evidence in canonical/version storage, but never replay
+    // a positively identified provider refusal as character dialogue.
+    if(m.role==='assistant'&&classifyStoryReply(m.rawContent||m.content).blocked)return null;
     const content=m.role==='user'?userMessagePromptContent(m,session):messagePromptContent(m,session);
     const role=['system','user','assistant'].includes(m.role)?m.role:'system';
     return {role,content,source:{kind:'canonical_history',sourceId:m.id,messageId:m.id,originalRole:m.role}};
@@ -615,6 +619,7 @@
   }
   function apiErrorHint(code,status,message=''){
     const m=String(message||'');
+    if(status===400&&/(?:prompt_rejected|blocked by upstream content policy|content[_ -]?filter|prohibited.use.policy)/i.test(m))return '接口明确报告内容政策拦截。本轮请求已被服务端拒绝，原始请求与剧情已保留，不会自动重复计费。';
     if(code==='E_API_CONFIG')return '请检查 API Base URL（基础地址）、模型名和高级端点设置。';
     if(code==='E_API_NETWORK_CORS')return '浏览器没有拿到可读取的响应。常见原因是 CORS（跨域）被 API 服务拦截、域名不可达、HTTPS 证书异常或网络中断。';
     if(code==='E_API_BAD_JSON')return '接口返回了网页、网关文本或其他非 JSON 内容。通常是 API 地址填错、反代报错，或服务端没有按 OpenAI-compatible 格式响应。';
@@ -760,7 +765,8 @@
   async function readStreamingReply(res,onProgress,model='',allowIncompleteDraft=false){
     if(!res.body?.getReader)throw new ApiError('E_STREAM_PARSE','当前浏览器无法读取流式响应。',{status:res.status});
     const reader=res.body.getReader(),decoder=new TextDecoder();
-    let buffer='',reply='',eventCount=0,finalPayload=null,streamUsage=null,receivedDone=false,finishReason='',finishKind='unknown',badEvents=0;
+    let buffer='',reply='',eventCount=0,finalPayload=null,streamUsage=null,receivedDone=false,finishReason='',finishKind='unknown',badEvents=0,refusalSeen=false,terminalConflict=false;
+    const publishMeta=()=>{if(onProgress?.resultMeta)Object.assign(onProgress.resultMeta,{finishReason:finishReason||'unknown',finishKind,receivedDone,refused:refusalSeen});};
     let eventType='message';
     const consumeLine=line=>{
       const raw=String(line||'').trim();if(!raw)return;if(raw.startsWith(':'))return;
@@ -772,7 +778,17 @@
       if(eventType==='error'||payload?.error){throw new ApiError('E_API_UPSTREAM',String(payload?.error?.message||payload?.message||'上游通过 SSE 返回错误事件'),{status:Number(payload?.error?.status||payload?.status)||res.status,details:`stage: stream_event; events: ${eventCount}`})}
       eventCount++;finalPayload=payload;
       const ending=finishState(payload);
-      if(ending.reason!=='missing'){finishReason=ending.reason;finishKind=ending.kind;}
+      const refusal=payload?.choices?.[0]?.delta?.refusal??payload?.choices?.[0]?.message?.refusal;
+      if(refusal!==undefined&&refusal!==null&&String(refusal).trim()){refusalSeen=true;finishReason='refusal';finishKind='blocked';}
+      if(!refusalSeen&&ending.reason!=='missing'){
+        const known=finishKind!=='unknown',nextKnown=ending.kind!=='unknown';
+        if(known&&nextKnown&&finishKind!==ending.kind){
+          terminalConflict=true;
+          // A later transport terminal cannot turn an observed failure into success.
+          if(finishKind==='complete'){finishReason=ending.reason;finishKind=ending.kind;}
+        }else if(!known||nextKnown){finishReason=ending.reason;finishKind=ending.kind;}
+      }
+      publishMeta();
       const observed=captureUsageMetrics(payload,model,null);if(observed)streamUsage=observed;
       const piece=extractStreamDelta(payload);if(piece){reply+=piece;emitProgress(onProgress,{phase:'streaming',percent:Math.min(90,58+Math.log10(reply.length+1)*12),receivedChars:reply.length,delta:piece,streamText:reply,detail:`已接收 ${reply.length} 个字符`});}
     };
@@ -780,16 +796,20 @@
       while(true){const {done,value}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});const lines=buffer.split(/\r?\n/);buffer=lines.pop()||'';for(const line of lines)consumeLine(line)}
       buffer+=decoder.decode();if(buffer.trim())for(const line of buffer.split(/\r?\n/))consumeLine(line);
     }catch(e){
+      publishMeta();
       if(reply&&e&&typeof e==='object')e.partialDraft=reply.slice(0,24000);
       if(e?.name==='AbortError'||e instanceof ApiError)throw e;
       if(reply)throw Object.assign(new ApiError('E_STREAM_INTERRUPTED',`流式连接在接收 ${reply.length} 字符后异常终止。未将部分文本当成角色回复。`,{status:res.status,details:`stage: stream_read; events: ${eventCount}; cause: ${e?.name||'unknown'}: ${e?.message||String(e)}`}),{partialDraft:reply.slice(0,24000)});
       throw asApiError(e,'E_API_NETWORK_CORS');
     }
     if(!reply&&finalPayload){try{reply=extractReply(finalPayload)}catch(e){if(e instanceof ApiError&&e.code==='E_API_UPSTREAM')throw e;}}
+    publishMeta();
+    if(refusalSeen){const issue=new ApiError('E_API_REFUSAL','流式响应包含明确拒绝字段，未提交角色回复。',{status:res.status,details:JSON.stringify({stage:'provider_terminal_admission',finishKind,finishReason,eventCount})});issue.partialDraft=reply.slice(0,24000);throw issue;}
+    if(terminalConflict){const issue=new ApiError('E_API_TERMINAL_CONFLICT','响应包含相互矛盾的终止状态，无法证明正文完整。',{status:res.status,details:JSON.stringify({stage:'provider_terminal_admission',finishKind,finishReason,eventCount})});issue.partialDraft=reply.slice(0,24000);throw issue;}
     if(!reply&&finishKind!=='unknown')assertFinishState({finishKind,finishReason},0);
     if(!reply)throw new ApiError(badEvents?'E_STREAM_PARSE':'E_API_EMPTY_REPLY',badEvents?'模型流包含无法解析的数据，未获得正文。':'流式请求结束，但模型没有返回可见正文。',{status:res.status,details:`stream events: ${eventCount}; malformed events: ${badEvents}`});
     if(onProgress?.resultMeta){onProgress.resultMeta.finishReason=finishReason||'unknown';onProgress.resultMeta.finishKind=finishKind;onProgress.resultMeta.receivedDone=receivedDone;}
-    if(!receivedDone&&finishKind==='unknown')throw new ApiError('E_STREAM_INTERRUPTED','流式响应已结束，但缺少完成标记，未提交部分正文。',{status:res.status,details:`stage: stream_eof; receivedChars: ${reply.length}; events: ${eventCount}`});
+    if(!receivedDone&&finishKind==='unknown')throw Object.assign(new ApiError('E_STREAM_INTERRUPTED','流式响应已结束，但缺少完成标记，未提交部分正文。',{status:res.status,details:`stage: stream_eof; receivedChars: ${reply.length}; events: ${eventCount}`}),{partialDraft:reply.slice(0,24000)});
     // [DONE] only terminates transport. It does not turn length/safety/missing into success.
     if(!(allowIncompleteDraft&&finishKind==='truncated'))try{assertFinishState({finishKind,finishReason},reply.length)}catch(e){e.partialDraft=reply.slice(0,24000);throw e;}
     if(badEvents)throw Object.assign(new ApiError('E_STREAM_PARSE','收到无法解析的流式事件；不能证明正文完整。',{status:res.status,details:`malformedEvents: ${badEvents}; receivedChars: ${reply.length}`}),{partialDraft:reply.slice(0,24000)});
@@ -925,8 +945,12 @@
     const data=await parseJsonResponse(res,'API');
     captureUsageMetrics(data,cfg.model,options.onProgress);
     const ending=finishState(data);
+    if(options.resultMeta){options.resultMeta.finishReason=ending.reason;options.resultMeta.finishKind=ending.kind;options.resultMeta.refused=!!data?.choices?.[0]?.message?.refusal;options.resultMeta.requestId=requestId;}
     try{options.onDiagnostic?.({type:'provider_result',finishKind:ending.kind,finishReason:ending.reason,responseChars:0});}catch(e){console.error('诊断事件回调失败',e);}
-    if(ending.kind==='blocked'||ending.kind==='abnormal')assertFinishState({finishKind:ending.kind,finishReason:ending.reason},0);
+    if(ending.kind==='blocked'||ending.kind==='abnormal'){
+      const evidence=contentPiece(data?.choices?.[0]?.message?.content??data?.choices?.[0]?.text??'');
+      try{assertFinishState({finishKind:ending.kind,finishReason:ending.reason},evidence.length);}catch(e){e.partialDraft=evidence.slice(0,24000);throw e;}
+    }
     let reply;try{reply=extractReply(data)}catch(e){const cause=asApiError(e,'E_API_UNRECOGNIZED_RESPONSE');if(cause instanceof ApiError)cause.details=diagnostic({errorSource:'response_shape',errorCode:cause.code,httpStatus:res.status,responseShape:Object.keys(data||{}).slice(0,20),messageShape:Object.keys(data?.choices?.[0]?.message||{}).slice(0,20)});throw cause;}
     reply=text(prefixResponseText(reply,body,cfg));
     try{options.onDiagnostic?.({type:'provider_result',finishKind:ending.kind,finishReason:ending.reason,responseChars:reply.length});}catch(e){console.error('诊断事件回调失败',e);}
@@ -2156,12 +2180,24 @@
     if(['content_filter','safety','prohibited_content','blocklist','recitation','spii'].includes(finish)||meta.refused)return {blocked:true,reason:'provider_finish_reason'};
     const value=String(raw??'').trim();
     if(!value)return {blocked:false,reason:''}; // Existing E_API_EMPTY_REPLY owns empty bodies.
-    const start=value.slice(0,340),evidence=value.slice(0,2000);
+    let inspected=value.replace(/<(style|script|head)\b(?:[^"'<>]|"[^"]*"|'[^']*')*>[\s\S]*?<\/\1\s*>/gi,'').trim();
+    // This is an inspection projection only; neither returned text nor canonical
+    // bytes are altered. Explicit quotations remain character-owned evidence.
+    if(/^<blockquote\b/i.test(inspected))return {blocked:false,reason:''};
+    const quoted=inspected.replace(/^(?:\*\*|__)?/,'');
+    if(/^["'“‘「『`>]/.test(quoted)&&!/^```/.test(quoted))return {blocked:false,reason:''};
+    inspected=inspected.replace(/^```(?:html|markdown|md|text)?\s*/i,'').replace(/\s*```$/,'')
+      .replace(/<!--[\s\S]*?-->/g,'').replace(/<\/?[A-Za-z][\w:.-]*\b(?:[^"'<>]|"[^"]*"|'[^']*')*>/g,' ')
+      .replace(/&nbsp;/gi,' ').replace(/&quot;/gi,'"').replace(/&#39;|&apos;/gi,"'").replace(/&amp;/gi,'&')
+      .replace(/^(?:#{1,6}[^\n]*\n\s*)+/,'')
+      .replace(/^[\s*#_—-]+/,'').trim();
+    if(/^["'“‘「『>]/.test(inspected))return {blocked:false,reason:''};
+    const start=inspected.slice(0,340),evidence=inspected.slice(0,2000);
     // Preserve quoted AI refusals and fictional characters discussing policies.
     if(/^(?:[\"'“‘「『`>]|(?:\*|_){1,2}[\"'“‘「『])/.test(start))return {blocked:false,reason:''};
-    const english=/^(?:i (?:cannot|can't|can not|am unable to) (?:fulfill|fulfil|comply with|assist with|help with|continue|generate|provide|participate in)|i(?:'m| am) (?:sorry|programmed to follow|an ai)|as an ai(?: language model)?)[\s,.:!—-]/i.test(start);
+    const english=/^(?:sorry\b|i (?:cannot|can't|can not|am unable to) (?:fulfill|fulfil|comply with|assist with|help with|continue|generate|provide|participate in)|i(?:'m| am) (?:sorry|programmed to follow|an ai)|as an ai(?: language model)?)[\s,.:!—-]/i.test(start);
     const englishStrong=/^i (?:cannot|can't|can not) (?:fulfill|fulfil) this request[.!\s]/i.test(start);
-    const englishPolicy=/(?:safety (?:polic(?:y|ies)|guidelines)|content polic(?:y|ies)|i (?:must|have to) decline|i (?:cannot|can't) (?:generate|continue|assist|participate)|i am programmed|as an ai(?: language model)?|explicit (?:sexual|adult) content|your (?:prompt|request) (?:involves|asks))/i.test(evidence);
+    const englishPolicy=/(?:safety (?:polic(?:y|ies)|guidelines)|content polic(?:y|ies)|i (?:must|have to) decline (?:this|your) request|i am programmed|as an ai(?: language model)?|explicit (?:sexual|adult) content|your (?:prompt|request) (?:involves|asks))/i.test(evidence);
     const chinese=/^(?:很?抱歉|对不起|我(?:不能|无法|不可以|没办法)|作为(?:一个|一名)?(?:ai|人工智能|语言模型))[^\n]{0,100}(?:无法|不能|不可以|生成|协助|帮助|继续|提供|回应|参与|处理)/i.test(start);
     const chineseStrong=/^(?:我(?:无法|不能)(?:继续)?(?:生成|提供|协助|参与|处理)|很?抱歉[，,\s]*我(?:无法|不能))(?:[^\n]{0,50})(?:内容|请求|角色扮演|描写|场景|故事|情节)/.test(start);
     const chinesePolicy=/(?:安全(?:政策|准则|规则|限制|标准)|内容政策|平台(?:政策|规定)|(?:作为|身为)(?:一个|一名)?(?:ai|人工智能|语言模型)|无法(?:生成|参与|继续(?:生成|提供|协助|处理|回答))|不能(?:生成|参与|继续(?:生成|提供|协助|处理|回答))|我(?:必须|只能)拒绝|涉及(?:露骨|色情|性描写)|不(?:能|可以)协助)/i.test(evidence);
@@ -2174,13 +2210,36 @@
     const providerSafety=/(?:平台|系统|模型|服务商|安全|内容|政策|规范|审核|拦截|限制|request|policy|safety|guidelines)/i.test(evidence);
     const engGateway=/^(?:the (?:previous|last|current|given|above)?\s*(?:request|prompt|content)|this (?:request|content)|your (?:request|prompt))[^\n]{0,110}(?:violat|involv|cannot|can't|prohibit|disallow|not allow|blocked)/i.test(front);
     const engBlocked=/(?:cannot (?:be )?(?:fulfilled|generated|processed)|cannot comply|(?:was|has been|is) (?:blocked|refused)|(?:violates|against) (?:the )?(?:safety|content) (?:policy|guidelines))/i.test(evidence);
-    if((english&&(englishPolicy||englishStrong))||(chinese&&(chinesePolicy||chineseStrong))||(thirdParty&&explicitBlock&&providerSafety)||(engGateway&&engBlocked))return {blocked:true,reason:'provider_plaintext_refusal'};
+    const japanese=/^(?:申し訳|すみません|AIとして|人工知能として)/i.test(start)&&/(?:AI|言語モデル|安全ポリシー|ガイドライン|コンテンツポリシー)/i.test(evidence)&&/(?:対応|生成|提供|お手伝い)(?:することが)?できません|お応えできません/.test(evidence);
+    if((english&&(englishPolicy||englishStrong))||(chinese&&(chinesePolicy||chineseStrong))||(thirdParty&&explicitBlock&&providerSafety)||(engGateway&&engBlocked)||japanese)return {blocked:true,reason:'provider_plaintext_refusal'};
     return {blocked:false,reason:''};
   }
   function validateStoryReply(reply,meta={}){
     const result=classifyStoryReply(reply,meta);
     if(result.blocked)throw new ApiError('E_API_REFUSAL_CONTENT','模型返回了拒绝声明，已阻止将其作为角色回复保存或归档。',{hint:'这是模型或网关返回的内容限制，不代表你请求了绘图。可以手动重试或检查模型服务；不会自动重复付费请求。',details:JSON.stringify({stage:'story_reply_admission',reason:result.reason,finishReason:String(meta.finishReason||'unknown'),receivedChars:String(reply||'').length})});
+    if(meta.outputContract?.completeHtml===true)validateCompleteHtml(reply);
     return reply;
+  }
+  function validateCompleteHtml(raw){
+    const source=String(raw??''),stack=[],voidTags=new Set(['area','base','br','col','embed','hr','img','input','link','meta','param','source','track','wbr']);
+    const tags=/<!--[\s\S]*?-->|<!(?!--)[^>]*>|<\/?([A-Za-z][\w:.-]*)\b(?:[^"'<>]|"[^"]*"|'[^']*')*>/g;
+    let match,issue='',cursor=0;
+    const unfinished=part=>/<(?:!--|!doctype\b|\/?[A-Za-z][\w:.-]*(?:\s|$))/i.test(part);
+    while((match=tags.exec(source))){
+      if(unfinished(source.slice(cursor,match.index))){issue='unfinished_markup';break;}
+      cursor=tags.lastIndex;
+      if(!match[1])continue;
+      const tag=match[1].toLowerCase(),close=/^<\//.test(match[0]);
+      if(voidTags.has(tag)||/\/\s*>$/.test(match[0]))continue;
+      if(close){if(stack.pop()!==tag){issue='mismatched_closing_tag';break;}}
+      else if(tag==='script'||tag==='style'){
+        const ending=new RegExp('</'+tag+'\\s*>','ig');ending.lastIndex=tags.lastIndex;const found=ending.exec(source);
+        if(!found){issue='unclosed_raw_element';break;}tags.lastIndex=ending.lastIndex;cursor=tags.lastIndex;
+      }else stack.push(tag);
+    }
+    if(!issue&&unfinished(source.slice(cursor)))issue='unfinished_markup';
+    if(issue||stack.length)throw new ApiError('E_STORY_OUTPUT_INCOMPLETE','回复未满足已开启的 HTML 完整性检查，未提交残缺正文。',{details:JSON.stringify({stage:'story_output_contract',reason:issue||'unclosed_tags',openTags:stack.slice(-12)})});
+    return raw;
   }
   async function processStoryTurn(id,userText,action='send',signal,temp=.85,options={},progress=null){
     const preparationStartedAt=Date.now();
@@ -2277,14 +2336,15 @@
       onDiagnostic:event=>{if(diagnosticId)void journal.event(diagnosticId,event);}});
     if(signal?.aborted)throw new DOMException('生成已取消，结果未提交','AbortError');
     diagnosticCandidate=replyRaw;
-    validateStoryReply(replyRaw,storyResultMeta);
+    const admissionMeta={...storyResultMeta,outputContract:session.promptSettings?.outputContract};
+    validateStoryReply(replyRaw,admissionMeta);
     // Hard invariant: never persist a blank assistant message.
     if(!text(replyRaw))throw new ApiError('E_API_EMPTY_REPLY','模型返回空白正文，已阻止写入剧情。');
     const reply=applyRegexForSession(session,replyRaw,'output');
     diagnosticCandidate=reply;
     // Output regex is a second admission boundary: it must not turn an
     // accepted provider response into an empty or provider-voice refusal.
-    validateStoryReply(reply,storyResultMeta);
+    validateStoryReply(reply,admissionMeta);
     if(!text(reply))throw new ApiError('E_API_EMPTY_REPLY','输出正则处理后没有有效角色正文；未提交空白消息。');
     const renderedReply=applyRegexForSession(session,reply,'display');
     emitProgress(progress,{phase:'saving',percent:95,detail:'正在保存角色回复…'});

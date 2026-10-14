@@ -7,7 +7,7 @@ const flags=['excludeRecursion','preventRecursion','delayUntilRecursion','sticky
 function wiPosition(e){const ext=e.extensions||{};if(Number.isInteger(ext.position))return ext.position;if(Number.isInteger(e.position))return e.position;return e.position==='before_char'?0:e.position==='after_char'?1:null;}
 function unsupportedWI(e,settings={}){const ext=e.extensions||{},gaps=[];
   const position=wiPosition(e);
-  if(![0,1,2,3,4].includes(position))gaps.push('position '+String(e.position)+' requires official ST comparison');
+  if(![0,1,2,3,4,5,6].includes(position))gaps.push('position '+String(e.position)+' requires official ST comparison');
   const n=k=>ext[k]??e[k];
   for(const key of ['sticky','cooldown','outlet_name','vectorized'])if(n(key)!==undefined&&n(key)!==null&&n(key)!==false&&n(key)!==0&&n(key)!=='')gaps.push(key+' requires golden parity');
   if((n('group')||n('group_weight'))&&!settings.localAdvancedRules)gaps.push('group/weight requires explicit local-compatible mode');
@@ -220,7 +220,7 @@ function createEnvelope(session,resources,messages,userText,{skipRegex=false,wor
  const selected=resources.find(r=>r.kind==='character'),card=selected?.raw;
  if(!card)throw error('E_RESOURCE_SEMANTIC_GAP','本来源没有已选定角色');
  const name=card.nickname||card.name||'角色',u=session.userName||'玩家',ctx={char:name,user:u};
- const committed=messages.filter(m=>m.status==='committed');
+ const committed=messages.filter(m=>m.status==='committed'&&!(m.role==='assistant'&&root.MimaStandalone?.classifyStoryReply?.(m.canonicalContent)?.blocked));
  const history=committed.map(m=>({role:m.role,content:m.canonicalContent}));
  const greeting=String((session.greetingIndex??0)===0?card.first_mes||'':(card.alternate_greetings||[])[(session.greetingIndex??0)-1]||'');
  const needsMvu=/<(?:initvar|UpdateVariable)\b/i.test(greeting)||resources.some(r=>r.kind==='variable_schema'||r.kind==='world_info'&&Object.values(r.raw?.entries||{}).some(e=>/\[?initvar\]?/i.test(String(e?.comment||e?.name||''))));
@@ -232,6 +232,10 @@ function createEnvelope(session,resources,messages,userText,{skipRegex=false,wor
  const wi=worldInfoOverride??worldInfo(entriesFromResources(resources),[...history,...(assistantContinuation?[]:[{role:'user',content:userText}])],worldInfoSettings(session,name,u,userText));
  const regex=readRegex(resources),regexTrace=[],segments=[],mountedPreset=mountedPresetInstructions(session,resources);
  const gaps=[...wi.semanticGaps,...mountedPreset.gaps,...(mvuInit?.gaps||[])];
+ for(const resource of resources.filter(r=>['script_source','quick_reply','html_template','plugin_bundle','raw_unknown'].includes(r.kind)))gaps.push({resourceId:resource.id,path:resource.path,slot:resource.kind,reason:'retained_not_automatically_executed'});
+ const metadataExtensions=new Set(['depth_prompt','talkativeness','fav','world','chara_id','character_id','create_date','date_added','date_last_chat']);
+ for(const key of Object.keys(card.extensions||{}))if(!metadataExtensions.has(key)&&!resources.some(r=>r!==selected&&String(r.path).startsWith(selected.path+'.extensions.'+key)))gaps.push({resourceId:selected.id,path:selected.path+'.extensions.'+key,slot:'extension',reason:'extension_retained_unconsumed'});
+
  const cardSource={kind:'character_field',sourceId:selected.sourceId,resourceId:selected.id,path:selected.path,name};
  const loreSource=e=>({kind:'world_info',sourceId:e.sourceId||session.sourceId,resourceId:e.resourceId,path:e.sourcePath,entryId:e.entryId,position:e.position,depth:e.depth,declaredRole:e.role});
  function expand(value,source){const resolved=macro(value,ctx);if(resolved.unsupported.length)gaps.push({slot:source.slot||source.kind,resourceId:source.resourceId,reason:'unsupported_macros_preserved',macros:resolved.unsupported});return resolved.value;}
@@ -240,10 +244,10 @@ function createEnvelope(session,resources,messages,userText,{skipRegex=false,wor
  add('character_name',card.name);if(card.nickname&&card.nickname!==card.name)add('character_nickname',card.nickname);
  add('character_description',card.description);add('personality',card.personality);add('scenario',card.scenario);add('system_prompt',card.system_prompt);
  for(const e of wi.inserted.filter(e=>e.position===1))add('world_info_after',e.content,loreSource(e));
- for(const e of wi.inserted.filter(e=>e.position===2))add('world_info_before_examples',e.content,loreSource(e));
+ for(const e of wi.inserted.filter(e=>e.position===5))add('world_info_before_examples',e.content,loreSource(e));
  add('mes_example',card.mes_example);
  if(card.mes_example)gaps.push({slot:'mes_example',reason:'dialogue_examples_preserved_as_system_material_not_ST_message_parity'});
- for(const e of wi.inserted.filter(e=>e.position===3))add('world_info_after_examples',e.content,loreSource(e));
+ for(const e of wi.inserted.filter(e=>e.position===6))add('world_info_after_examples',e.content,loreSource(e));
  if(session.personaDescription)add('player_persona',session.personaDescription,{kind:'persona',sourceId:session.id,path:'session.personaDescription',name:u});
  const resolvedPresets=mountedPreset.instructions.map(item=>{
   if(item.dynamic)return {...item,content:'',effectiveRole:'slot'};
@@ -294,6 +298,20 @@ function createEnvelope(session,resources,messages,userText,{skipRegex=false,wor
  for(const e of wi.inserted.filter(e=>e.position===4).sort((a,b)=>b.depth-a.depth||a.order-b.order)){
   const origin=loreSource(e),message=tagged({role:e.role,content:expand(e.content,origin)},origin);payload.splice(depthAnchor(e.depth),0,message);
  }
+ // A.N. is a separate explicit source; never route A.N. entries to examples.
+ const note=session.authorNote,anRows=wi.inserted.filter(e=>e.position===2||e.position===3);
+ if(note&&typeof note.content==='string'&&note.content.trim()){
+  const depth=Number(note.depth??0),role=note.role||'system';
+  if(!Number.isInteger(depth)||depth<0||depth>100||!['system','user','assistant'].includes(role))throw error('E_RESOURCE_SEMANTIC_GAP','作者注记的位置或角色无效');
+  const body=[...anRows.filter(e=>e.position===2).map(e=>expand(e.content,loreSource(e))),expand(note.content,{kind:'author_note',path:'session.authorNote'}),...anRows.filter(e=>e.position===3).map(e=>expand(e.content,loreSource(e)))].join('\n');
+  payload.splice(depthAnchor(depth),0,tagged({role,content:body},{kind:'author_note',sourceId:session.id,path:'session.authorNote',depth,declaredRole:role,entries:anRows.map(loreSource)}));
+ }else for(const e of anRows)gaps.push({...loreSource(e),slot:'author_note',reason:'author_note_context_unavailable'});
+ const depthPrompt=card.extensions?.depth_prompt;
+ if(depthPrompt&&typeof depthPrompt==='object'&&String(depthPrompt.prompt||'').trim()){
+  const depth=Number(depthPrompt.depth??4),role=depthPrompt.role||'system',origin={...cardSource,kind:'character_depth_prompt',path:selected.path+'.extensions.depth_prompt',depth,declaredRole:role};
+  if(!Number.isInteger(depth)||depth<0||depth>100||!['system','user','assistant'].includes(role))throw error('E_RESOURCE_SEMANTIC_GAP','角色 depth_prompt 的深度或消息角色无效');
+  payload.splice(depthAnchor(depth),0,tagged({role,content:expand(depthPrompt.prompt,origin)},origin));
+ }else if(depthPrompt&&String(depthPrompt.prompt||'').trim())gaps.push({...cardSource,slot:'depth_prompt',reason:'unsupported_depth_prompt_shape'});
  if(card.post_history_instructions)emit('system',expand(card.post_history_instructions,{...cardSource,slot:'post_history_instructions'}),{...cardSource,slot:'post_history_instructions',declaredRole:'system',position:'post_history'});
  // Resource messages with role=user are user-authored configurations, not new
  // player speech. Keep the last real player utterance last among user messages.
@@ -325,6 +343,10 @@ function resolveCharacterSelection(sourceId,scanned,persisted){
 }
 async function createSession(sourceId,options={}){const source=await store().get('source_capsules',sourceId);if(!source)throw error('E_STORE_UNVERIFIED','来源包不存在');const resources=await store().byIndex('resource_ir','sourceId',sourceId);const charCandidates=resources.filter(x=>x.kind==='character');const selection=options.characterResourceId?charCandidates.find(x=>x.id===options.characterResourceId):charCandidates.length===1?charCandidates[0]:null;if(!selection)throw error('E_RESOURCE_SEMANTIC_GAP','发现多个角色版本或没有角色；请先明确选择');
 const idx=Number(options.greetingIndex??0),card=selection.raw||{},alternates=Array.isArray(card.alternate_greetings)?card.alternate_greetings:[];if(!Number.isInteger(idx)||idx<0||idx>alternates.length)throw error('E_RESOURCE_SEMANTIC_GAP','开场白索引无效');const greeting=String(idx===0?card.first_mes||'':alternates[idx-1]||'');const id=store().uid('compat'),now=new Date().toISOString(),session={id,mode:'native_compat',sourceId,characterResourceId:selection.id,title:options.title||selection.name||'兼容剧情',userName:options.userName||'玩家',activeBranchId:'main',greetingIndex:idx,revision:1,turnIndex:0,pendingTurnId:null,worldInfoBudget:16000,createdAt:now,mountGraph:[],readiness:'limited_runtime'};
+const prepared=await resourcesFor(session),spoken=macro(greeting,{char:card.nickname||card.name||'角色',user:session.userName});
+const opening=greeting?[{id:'opening_'+id,role:'assistant',canonicalContent:spoken.value,status:'committed',sequence:-1,opening:true}]:[];
+const readiness=await createEnvelopeAsync(session,prepared,opening,'');
+session.launchCapabilities={greetingIndex:idx,gaps:readiness.gaps,mvuActive:readiness.mvu.active,checkedAt:now};
 const db=await store().open();await new Promise((resolve,reject)=>{const tx=db.transaction(['compat_sessions','messages'],'readwrite');tx.objectStore('compat_sessions').add(session);if(greeting){const spoken=macro(greeting,{char:card.nickname||card.name||'角色',user:session.userName});tx.objectStore('messages').add({id:'opening_'+id,sessionId:id,turnId:null,role:'assistant',rawContent:greeting,canonicalContent:spoken.value,status:'committed',sequence:-1,opening:true,greetingIndex:idx,unknownMacros:spoken.unsupported,revision:1,createdAt:now});}tx.oncomplete=()=>{db.close();resolve();};tx.onabort=()=>{db.close();reject(tx.error||error('E_STORE_UNVERIFIED','建立剧情事务失败'));};});return getSession(id);}
 // Messages and settlement ledger must be read from the SAME readonly IDB
 // transaction. Two independent all() calls can straddle beginTurn/finishTurn
@@ -610,7 +632,7 @@ async function createEnvelopeAsync(session,resources,messages,userText,options={
   if(hasRegexWorldInfo){
     const card=resources.find(r=>r.kind==='character')?.raw;
     const name=card?.nickname||card?.name||'角色',user=session.userName||'玩家';
-    const history=messages.filter(m=>m.status==='committed').map(m=>({role:m.role,content:m.canonicalContent}));
+    const history=messages.filter(m=>m.status==='committed'&&!(m.role==='assistant'&&root.MimaStandalone?.classifyStoryReply?.(m.canonicalContent)?.blocked)).map(m=>({role:m.role,content:m.canonicalContent}));
     if(!root.MimaCompatWorldInfoIsolation?.evaluate)throw error('E_REGEX_ISOLATION_UNAVAILABLE','世界书包含正则关键词，但隔离组件未加载；不会跳过世界书继续生成');
     worldInfoOverride=await root.MimaCompatWorldInfoIsolation.evaluate(entries,[...history,...(options.assistantContinuation?[]:[{role:'user',content:userText}])],worldInfoSettings(session,name,user,userText),{signal:options.signal});
   }
@@ -686,7 +708,7 @@ async function turnJournal(sessionId){
   const session=records.compat_sessions.find(item=>item.id===sessionId);
   if(!session)throw error('E_STORE_UNVERIFIED','未找到兼容剧情');
   const jobs=records.events_jobs;
-  const mine=jobs.filter(j=>j.sessionId===sessionId).sort((a,b)=>(a.sequence??0)-(b.sequence??0));
+  const mine=jobs.filter(j=>j.sessionId===sessionId).sort((a,b)=>(a.sequence??0)-(b.sequence??0)||String(a.createdAt||'').localeCompare(String(b.createdAt||''))||String(a.id).localeCompare(String(b.id)));
   if(session.pendingTurnId&&!mine.some(j=>j.id===session.pendingTurnId))throw error('E_STORE_UNVERIFIED','未结算回合缺少 journal，禁止自动重置 pending 标志');
   return mine;
 }
@@ -751,7 +773,7 @@ function compatDiagnostic(sessionId,turnId,action,options={}){
   emit(data);
  };
  return {resultMeta,bind:value=>{envelope=value;},candidate:value=>{candidate=String(value||'');},
-  modelOptions:continuation=>({streamOverride:false,resultMeta,onDiagnostic,messageSources:envelope?.messageSources||[],...(continuation?{continuation:true}:{})}),
+  modelOptions:continuation=>({resultMeta,onDiagnostic,messageSources:envelope?.messageSources||[],...(continuation?{continuation:true}:{})}),
   committed:()=>emit({type:'settlement',status:'committed',finishKind:resultMeta.finishKind,finishReason:resultMeta.finishReason}),
   rejected:e=>emit({type:'settlement',status:e?.name==='AbortError'||e?.code==='E_TURN_ABORTED'?'aborted':e?.code==='E_CANONICAL_CONFLICT'?'conflict':'rejected',code:e?.code||'E_STORY_RUNTIME',message:e?.message||String(e),details:e?.details||'',httpStatus:e?.status||0,rawRejectedReply:e?.partialDraft||candidate,finishKind:resultMeta.finishKind,finishReason:resultMeta.finishReason})};
 }
@@ -767,7 +789,7 @@ async function dispatch(sessionId,t,options={}){
     diagnostic.candidate(reply);
     if(!String(reply||'').trim())throw error('E_API_EMPTY_REPLY','模型没有返回正文');
     if(typeof root.MimaStandalone?.validateStoryReply!=='function')throw error('E_STORY_RUNTIME','角色回复校验器未加载，拒绝跳过校验');
-    root.MimaStandalone.validateStoryReply(reply,{...diagnostic.resultMeta,stage:'compat_dispatch'});
+    root.MimaStandalone.validateStoryReply(reply,{...diagnostic.resultMeta,outputContract:session.outputContract,stage:'compat_dispatch'});
     if(envelope?.mvu?.required&&!mvu())throw error('E_MVU_UNAVAILABLE','MVU 校验模块未加载，拒绝在缺失验证时提交回复');
     const mvuResult=envelope?.mvu?.required?mvu().forReply(envelope.mvu.initial,history,reply):null;
     const result=await finishTurn(sessionId,t,String(reply),'',mvuResult);
@@ -891,7 +913,7 @@ async function continueAssistant(sessionId,options={}){
   const reply=await root.MimaStandalone.callModelWithConfig(envelope.messages,cfg,cfg.temperature??0.85,options.signal,diagnostic.modelOptions(true));
   diagnostic.candidate(reply);
   if(!String(reply||'').trim())throw error('E_API_EMPTY_REPLY','续写模型没有返回正文');
-  root.MimaStandalone.validateStoryReply(reply,{...diagnostic.resultMeta,stage:'compat_continue'});
+  root.MimaStandalone.validateStoryReply(reply,{...diagnostic.resultMeta,outputContract:session.outputContract,stage:'compat_continue'});
   if(envelope.mvu?.required&&!mvu())throw error('E_MVU_UNAVAILABLE','MVU 组件不可用，续写不得丢弃变量状态');
   // Each continuation's UpdateVariable is validated against the previous
   // committed state, NOT against the first assistant message's old values.

@@ -5,7 +5,7 @@
  'use strict';
  const fail=(code,message)=>Object.assign(new Error(message),{code});
  function makeWorker(){
-  if(typeof window!=='undefined'&&typeof Worker!=='undefined'){if(root.location?.protocol==='file:')throw fail('E_WORKER_FILE_ORIGIN','本地 file:// 打开无法安全启动世界书 Worker。请通过部署后的 HTTPS 地址游玩；不会跳过这次匹配后假装成功。');if(typeof Worker!=='undefined')return new Worker(new URL('./compat-worldinfo-worker.js?v=redesign-20261014-1',document.baseURI),{name:'mima-worldinfo'});}
+  if(typeof window!=='undefined'&&typeof Worker!=='undefined'){if(root.location?.protocol==='file:')throw fail('E_WORKER_FILE_ORIGIN','本地 file:// 打开无法安全启动世界书 Worker。请通过部署后的 HTTPS 地址游玩；不会跳过这次匹配后假装成功。');if(typeof Worker!=='undefined')return new Worker(new URL('./compat-worldinfo-worker.js?v=r13-20261015',document.baseURI),{name:'mima-worldinfo'});}
   if(typeof require==='function'){const wt=require('node:worker_threads'),path=require('node:path');return new wt.Worker(path.join(__dirname,'compat-worldinfo-worker.js'));}
   throw fail('E_REGEX_ISOLATION_UNAVAILABLE','此浏览器不支持世界书正则隔离 Worker');
  }

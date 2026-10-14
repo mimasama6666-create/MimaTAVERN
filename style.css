@@ -196,7 +196,7 @@ body::before{
    Additive only: preserve legacy theme and selectors.
    ============================================================ */
 .tavern-story-content.safe-html-content{
-  white-space:pre-wrap;
+  white-space:normal;
   tab-size:4;
 }
 .tavern-story-content.safe-html-content system{
@@ -697,3 +697,18 @@ html[data-mima-theme="eink"] .novel-text-unit[open]>summary,html[data-mima-theme
 .diag-detail details{margin-top:8px}
 .diag-detail .prompt-pre{max-height:390px;user-select:text}
 #diag-status{margin:9px 0;overflow-wrap:anywhere}
+
+/* R13: viewport-bounded dialogs; exactly one content scroll area. */
+.modal{top:var(--mima-viewport-top,0px);bottom:auto;height:var(--mima-viewport-height,100dvh);padding:max(8px,env(safe-area-inset-top)) max(8px,env(safe-area-inset-right)) max(8px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left))}
+.modal-panel{min-width:0;max-height:calc(var(--mima-viewport-height,100dvh) - 24px)}
+.settings-panel{height:min(850px,calc(var(--mima-viewport-height,100dvh) - 24px));grid-template-rows:auto auto minmax(0,1fr)}
+.editor-panel{height:min(800px,calc(var(--mima-viewport-height,100dvh) - 24px));grid-template-rows:auto minmax(0,1fr) auto;overflow:hidden}
+.modal-head{min-width:0;align-items:flex-start;flex:none}.modal-head>div{min-width:0;flex:1}.modal-head>.icon-btn{flex:0 0 38px;min-width:38px}
+.modal-head h2{overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.3}
+.settings-content,.editor-body{min-height:0;min-width:0;overflow:auto;overscroll-behavior:contain;overflow-wrap:anywhere}.editor-actions{flex:none;flex-wrap:wrap}
+.settings-panel.appearance-preview-mode{grid-template-rows:auto auto auto minmax(0,1fr)}
+.appearance-preview-stage{height:min(280px,34dvh);grid-template-rows:auto auto minmax(0,1fr)}
+.appearance-preview-toggle{justify-self:start;border:0;background:transparent;color:inherit;padding:8px 16px;cursor:pointer;font:inherit;font-size:.78rem}
+.appearance-preview-stage.is-collapsed{height:36px;display:block}.appearance-preview-stage.is-collapsed>:not(.appearance-preview-toggle){display:none}
+#resume-editor{position:fixed;right:14px;bottom:max(14px,env(safe-area-inset-bottom));z-index:1300;padding:10px 16px;border-radius:20px;background:var(--panel-solid);color:var(--text);border:1px solid var(--line);box-shadow:var(--shadow)}
+@media(max-height:480px){.modal-head{padding:8px 13px}.modal-head h2{font-size:1.05rem;margin:4px 0}.modal-head .eyebrow{font-size:.6rem}.editor-actions{padding:7px 12px}.settings-tabs{padding-top:5px;padding-bottom:5px}.appearance-preview-stage{height:100px}}
