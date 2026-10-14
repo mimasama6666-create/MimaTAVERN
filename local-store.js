@@ -80,16 +80,21 @@
   }
   // Serialize compare-and-swap inside a single IndexedDB readwrite transaction.
   // Never treat a failed read as an empty library, and never silently overwrite a newer tab.
-  async function commitState(candidate, expectedRevision) {
+  async function commitState(candidate, expectedRevision, {signal=null}={}) {
     assertWritableState(candidate);
     const db = await openDb();
+    if(signal?.aborted){db.close();throw new DOMException('生成已取消，资料库未提交','AbortError');}
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE, 'readwrite');
       const objectStore = tx.objectStore(STORE);
       let result, problem = null;
+      const cancel=()=>{problem=new DOMException('生成已取消，资料库未提交','AbortError');try{tx.abort();}catch(e){if(e?.name!=='InvalidStateError')problem=e;}};
+      signal?.addEventListener?.('abort',cancel,{once:true});
+      const release=()=>signal?.removeEventListener?.('abort',cancel);
       const req = objectStore.get(STATE_KEY);
       req.onerror = () => { problem = req.error || new Error('资料库读取失败'); tx.abort(); };
       req.onsuccess = () => {
+        if(signal?.aborted){cancel();return;}
         const current = req.result;
         if (current !== undefined && !isCanonicalStateRecord(current)) {
           problem = new Error('E_CANONICAL_STATE_UNVERIFIED: 资料库内容损坏，拒绝写入'); tx.abort(); return;
@@ -102,8 +107,8 @@
         result = { ...candidate, storeRevision: revision + 1, schemaVersion: 4, savedAt: new Date().toISOString() };
         objectStore.put(result, STATE_KEY);
       };
-      tx.oncomplete = () => { db.close(); resolve(result); };
-      tx.onabort = () => { db.close(); reject(problem || tx.error || new Error('资料库事务中止')); };
+      tx.oncomplete = () => { release();db.close();resolve(result); };
+      tx.onabort = () => { release();db.close();reject(problem || tx.error || new Error('资料库事务中止')); };
       tx.onerror = () => { /* onabort retains the root cause */ };
     });
   }
@@ -119,7 +124,7 @@
     const blank = {schemaVersion:4,sessions:[],masks:[],presets:[],worldbooks:[],cssPresets:[],regexPacks:[],novelProjects:[],themeSettings:{...EMPTY_THEME}};
     return blank; // verified nonexistent; first write still uses CAS
   }
-  async function saveState(state, expectedRevision) {
+  async function saveState(state, expectedRevision, options={}) {
     // Never turn a missing caller field into an empty persisted collection.
     // Only the explicit first-run loadState() may create a new blank library.
     assertWritableState(state);
@@ -131,7 +136,7 @@
       novelProjects:Array.isArray(state.novelProjects)?state.novelProjects:[],
       themeSettings:state.themeSettings&&typeof state.themeSettings==='object'?state.themeSettings:{...EMPTY_THEME},
       savedAt:new Date().toISOString()
-    }, expectedRevision === undefined ? Number(state.storeRevision) || 0 : expectedRevision);
+    }, expectedRevision === undefined ? Number(state.storeRevision) || 0 : expectedRevision,options);
   }
   // The original schemaVersion=4 was reused in several shipped releases.
   // Backup contract revisions are separate from the on-disk schema: marking
@@ -507,7 +512,20 @@
           if(job.kind==='facts'&&JSON.stringify(currentMemory.facts)!==JSON.stringify(baselineMemory.facts)){fail('E_MEMORY_FACTS_CONFLICT');return;}
           if(job.kind==='core'&&(JSON.stringify(currentMemory.core)!==JSON.stringify(baselineMemory.core)||(job.options?.source==='facts'&&JSON.stringify(currentMemory.facts)!==JSON.stringify(baselineMemory.facts)))){fail('E_MEMORY_CORE_CONFLICT');return;}
           if(job.kind==='rolling'&&(latest.rollingSummary!==snapshot.rollingSummary||latest.lastSummarizedIndex!==snapshot.lastSummarizedIndex)){fail('E_MEMORY_ROLLING_CONFLICT');return;}
-          const changed={...latest,...patch,recordRevision:(Number(latest.recordRevision)||0)+1,updatedAt:new Date().toISOString()};
+          let currentPatch=patch;
+          if(job.kind==='facts'||job.kind==='core'){
+            if(!patch.manualMemory){fail('E_MEMORY_PATCH_INVALID');return;}
+            const requested=contract.normalizeManualMemory(patch.manualMemory);
+            const field=job.kind==='facts'?'facts':'core';
+            // Independent facts/core jobs own only their target. The other
+            // target and injection settings may have changed in another tab
+            // after the producer built its patch; preserve the current ones.
+            const settings={...currentMemory.settings};
+            if(currentMemory.settings.summaryTemperature===baselineMemory.settings.summaryTemperature)
+              settings.summaryTemperature=requested.settings.summaryTemperature;
+            currentPatch={...patch,manualMemory:{...currentMemory,[field]:requested[field],settings}};
+          }
+          const changed={...latest,...currentPatch,recordRevision:(Number(latest.recordRevision)||0)+1,updatedAt:new Date().toISOString()};
           const sessions=current.sessions.slice();sessions[index]=changed;
           committed={...current,sessions,storeRevision:(Number(current.storeRevision)||0)+1,savedAt:new Date().toISOString()};
           kv.put(committed,STATE_KEY);

@@ -3,7 +3,7 @@
 'use strict';
 function fail(code,message){return Object.assign(new Error(message),{code});}
 function resolveWorker(){
-  if(typeof window!=='undefined'&&typeof Worker!=='undefined')return new Worker('./compat-regex-worker.js?advanced=r11.12',{name:'mima-compat-regex'});
+  if(typeof window!=='undefined'&&typeof Worker!=='undefined'){if(root.location?.protocol==='file:')throw fail('E_WORKER_FILE_ORIGIN','本地 file:// 打开无法安全启动正则 Worker。请上传 Git 网页版并从 HTTPS 链接游玩；此次未执行正则，也未改动剧情。');if(typeof Worker!=='undefined')return new Worker(new URL('./compat-regex-worker.js?advanced=redesign-20261014-1',document.baseURI),{name:'mima-compat-regex'});}
   if(typeof require==='function'){const wt=require('node:worker_threads'),path=require('node:path');return new wt.Worker(path.join(__dirname,'compat-regex-worker.js'));}
   throw fail('E_REGEX_ISOLATION_UNAVAILABLE','此环境无可终止的 Worker，外来正则不能执行');
 }

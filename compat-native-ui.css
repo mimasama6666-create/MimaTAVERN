@@ -1,0 +1,170 @@
+/* R12.2: share the native reader's layout/skin tokens without touching native UX.
+ * Compatibility data, sandboxed HTML, and message authority remain separate.
+ */
+#compat-lab{
+ --compat-glass:var(--skin-glass,rgba(247,248,249,.76));
+ --compat-control:var(--skin-control,rgba(255,255,255,.64));
+ --compat-rule:var(--line,rgba(255,255,255,.56));
+ --compat-shadow:var(--shadow,0 10px 34px rgba(52,56,62,.1));
+ background:var(--skin-body,linear-gradient(150deg,var(--bg,#eef0f2),var(--bg-deep,#d9dce0)));
+ color:var(--text,#24262a);font-family:var(--font-ui,system-ui,sans-serif);
+}
+#compat-lab *{box-sizing:border-box}
+#compat-lab .compat-head{
+ min-height:62px;margin:0;padding:calc(9px + env(safe-area-inset-top)) max(14px,calc((100vw - 1100px)/2)) 9px;
+ background:var(--compat-glass);border-bottom:1px solid var(--compat-rule);
+ box-shadow:inset 0 1px rgba(255,255,255,.55),0 5px 18px rgba(50,54,60,.045);
+ backdrop-filter:blur(28px) saturate(1.12);-webkit-backdrop-filter:blur(28px) saturate(1.12);
+}
+#compat-lab .compat-head strong{display:block;font-size:1rem;font-weight:650;letter-spacing:.005em}
+#compat-lab .compat-head small{font-size:.68rem;color:var(--muted);margin-top:3px}
+#compat-lab button{font:inherit;cursor:pointer;transition:background-color .15s,border-color .15s,box-shadow .15s}
+#compat-lab .compat-head button{flex:0 0 auto;padding:9px 12px;border-radius:13px;border:1px solid var(--compat-rule);
+ background:var(--compat-control);box-shadow:inset 0 1px rgba(255,255,255,.55);font-size:.81rem}
+#compat-lab.in-chat .compat-main{height:calc(100dvh - 62px - env(safe-area-inset-top));max-width:1100px;padding:0 14px}
+#compat-lab.in-chat #compat-chat-panel{padding:0;gap:0;background:transparent;display:flex}
+#compat-lab.in-chat #compat-conversation{gap:0}
+#compat-lab .compat-play-header{
+ flex:none;min-height:55px;padding:7px 8px;gap:12px;border-bottom:1px solid var(--compat-rule);
+}
+#compat-lab .compat-play-label{font-size:.67rem;letter-spacing:.04em;color:var(--muted);opacity:1}
+#compat-lab .compat-play-header h3{font-size:1rem;font-weight:650;margin:2px 0 0;line-height:1.2}
+#compat-lab #compat-manage-toggle{padding:8px 12px;border-radius:999px;font-size:.78rem;
+ background:var(--compat-control);border:1px solid var(--compat-rule);color:var(--text);
+ box-shadow:inset 0 1px rgba(255,255,255,.57)}
+#compat-lab.in-chat #compat-current{display:none}
+#compat-lab.in-chat #compat-messages{
+ padding:17px clamp(5px,2.4vw,22px) 28px;border:0;scrollbar-width:thin;
+ font-family:var(--font-story,inherit);line-height:1.78;
+}
+#compat-lab #compat-story-status{border:0;border-radius:0;background:transparent;padding:6px 10px;color:var(--danger,#9d4e56)}
+#compat-lab #compat-composer{
+ display:flex;flex-direction:column;gap:0;flex:none;margin:0;padding:8px 10px calc(9px + env(safe-area-inset-bottom));
+ border:0;border-top:1px solid var(--compat-rule);border-radius:0;
+ background:var(--compat-glass);box-shadow:0 -6px 24px rgba(50,54,60,.05);
+ backdrop-filter:blur(26px) saturate(1.15);-webkit-backdrop-filter:blur(26px) saturate(1.15);
+}
+#compat-lab #compat-input{
+ display:block;width:100%;min-height:51px;max-height:25dvh;padding:11px 13px;resize:vertical;
+ background:var(--compat-control);border:1px solid var(--compat-rule);border-radius:17px;
+ outline:none;box-shadow:inset 0 1px rgba(255,255,255,.6);font:400 .94rem/1.46 var(--font-ui,inherit);
+}
+#compat-lab #compat-input:focus{border-color:var(--accent,#737982);box-shadow:0 0 0 3px var(--accent-soft,rgba(100,100,120,.12))}
+#compat-lab #compat-input::placeholder{color:var(--muted,#737781)}
+#compat-lab #compat-primary-actions{display:flex!important;margin:0;min-height:49px;padding:7px 0 0;gap:7px;justify-content:flex-start;align-items:center;flex-wrap:nowrap}
+#compat-lab #compat-primary-actions button{white-space:nowrap;border-radius:999px;border:1px solid var(--compat-rule);
+ background:var(--compat-control);padding:8px 11px;min-height:35px;color:var(--text);font-size:.78rem;box-shadow:inset 0 1px rgba(255,255,255,.54)}
+#compat-lab #compat-primary-actions #compat-preview{margin-right:auto}
+#compat-lab #compat-primary-actions #compat-send{
+ order:3;min-width:68px;min-height:36px;background:var(--skin-accent,var(--accent,#6f747c));
+ color:var(--skin-accent-text,#fff);border-color:transparent;border-radius:13px;padding:9px 13px;
+ box-shadow:0 6px 17px rgba(56,61,68,.15);font-weight:650
+}
+#compat-lab #compat-primary-actions #compat-send:disabled{opacity:.5;box-shadow:none}
+#compat-lab #compat-notice:not(:empty){font-size:.76rem;padding:5px 12px;border-top:1px solid var(--compat-rule);max-height:70px;overflow:auto}
+#compat-lab #compat-notice[data-kind=error]{color:var(--danger,#a34c56)}
+/* A real slide-over management sheet, not a second chat footer. */
+#compat-lab.in-chat #compat-game-drawer:not([open]){display:none}
+#compat-lab.in-chat #compat-game-drawer[open]{
+ display:block;position:fixed;z-index:1200;top:auto;left:max(8px,calc((100vw - 960px)/2));right:max(8px,calc((100vw - 960px)/2));
+ bottom:max(10px,env(safe-area-inset-bottom));width:auto;max-height:min(82dvh,840px);
+ overflow:auto;overscroll-behavior:contain;margin:0;padding:14px 16px 18px;
+ border:1px solid var(--compat-rule);border-radius:22px;
+ background:var(--skin-panel,var(--panel-solid,rgba(250,251,252,.96)));
+ box-shadow:0 18px 70px rgba(35,39,46,.2),inset 0 1px rgba(255,255,255,.65);
+ backdrop-filter:blur(35px);-webkit-backdrop-filter:blur(35px);
+}
+#compat-lab #compat-game-drawer>summary{position:sticky;top:-14px;z-index:2;margin:-14px -16px 8px;padding:16px;
+ background:var(--skin-panel,var(--panel-solid,#f7f8f9));border-bottom:1px solid var(--compat-rule);
+ font-size:.92rem;font-weight:650}
+#compat-lab #compat-tools-stack>details{padding:10px 12px;border:1px solid var(--compat-rule);border-radius:12px;background:var(--compat-control)}
+#compat-lab #compat-tools-stack summary{font-size:.86rem;font-weight:500}
+#compat-lab #compat-mount-status{background:var(--compat-control);padding:12px}
+#compat-lab #compat-mount-status .compat-mount-item{background:var(--skin-card,transparent)}
+#compat-lab .compat-main .compat-advanced-panel{background:transparent}
+/* Import/library view also inherits the same controls, rather than a separate gray form theme. */
+#compat-lab:not(.in-chat) .compat-main{max-width:940px;padding:18px clamp(12px,3vw,22px)}
+#compat-lab:not(.in-chat) .compat-main>section{background:var(--panel);border-color:var(--compat-rule);border-radius:20px;
+ box-shadow:inset 0 1px rgba(255,255,255,.64),0 8px 32px rgba(58,63,70,.06);padding:clamp(14px,3vw,24px)}
+#compat-lab:not(.in-chat) #compat-quick-status{background:var(--compat-control);border-radius:14px;padding:13px;min-width:0}
+#compat-lab .compat-main button:not(#compat-send):hover{border-color:var(--accent,#737982)}
+#compat-lab .compat-main textarea,#compat-lab .compat-main select,#compat-lab .compat-main input[type=number]{
+ color:var(--text);background:var(--compat-control);border:1px solid var(--compat-rule);border-radius:10px;padding:8px 10px;
+}
+#compat-lab #compat-mvu-panel,#compat-lab .compat-main details{border-color:var(--compat-rule)}
+#compat-lab .compat-mvu-readonly,#compat-lab .compat-mount-grid{min-width:0}
+@media(max-width:640px){
+ #compat-lab .compat-head{padding:calc(7px + env(safe-area-inset-top)) 12px 7px;min-height:55px}
+ #compat-lab .compat-head small{font-size:.63rem}
+ #compat-lab .compat-head strong{font-size:.9rem}
+ #compat-lab.in-chat .compat-main{padding:0 5px;height:calc(100dvh - 55px - env(safe-area-inset-top))}
+ #compat-lab .compat-play-header{padding:6px 10px;min-height:53px}
+ #compat-lab.in-chat #compat-messages{padding:13px 9px 22px}
+ #compat-lab #compat-composer{padding:7px 8px calc(8px + env(safe-area-inset-bottom))}
+ #compat-lab #compat-input{min-height:49px;font-size:.9rem}
+ #compat-lab #compat-primary-actions{gap:5px}
+ #compat-lab #compat-primary-actions button{min-height:35px;font-size:.7rem;padding:7px 8px}
+ #compat-lab #compat-primary-actions #compat-send{min-width:56px;min-height:36px;padding:8px 10px}
+ #compat-lab.in-chat #compat-game-drawer[open]{left:6px;right:6px;bottom:max(5px,env(safe-area-inset-bottom));max-height:86dvh;padding:12px}
+ #compat-lab #compat-game-drawer>summary{top:-12px;margin:-12px -12px 8px;padding:14px}
+}
+
+/* One compact native-style topbar in active play; import keeps its own heading. */
+#compat-lab .compat-head{gap:12px}
+#compat-lab .compat-head-identity{min-width:0;flex:1}
+#compat-lab .compat-head-identity strong,#compat-lab .compat-head-identity small{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+#compat-lab .compat-head-actions{display:flex;align-items:center;gap:7px;flex-shrink:0}
+#compat-lab:not(.in-chat) #compat-manage-toggle{display:none}
+#compat-lab.in-chat .compat-play-header{display:none}
+#compat-lab.in-chat #compat-messages{padding-top:21px}
+#compat-lab #compat-head-title{font-weight:650}
+@media(max-width:640px){
+ #compat-lab .compat-head-actions{gap:5px}
+ #compat-lab .compat-head-actions button{padding:8px 10px;font-size:.74rem}
+ #compat-lab .compat-head small{font-size:.65rem}
+}
+/* The inherited old grid made short conversations stretch one message per huge row.
+   Native reader uses a continuous block flow, so do that here too. */
+#compat-lab.in-chat #compat-messages{display:block!important;align-content:start}
+@media(max-width:380px){
+ #compat-lab.in-chat #compat-close{font-size:0;padding:8px 11px}
+ #compat-lab.in-chat #compat-close::after{content:'← 返回';font-size:.76rem}
+}
+
+/* Inline native-like message tools: available without permanent long labels. */
+#compat-lab #compat-messages{scrollbar-width:thin}
+
+/* Native prose is trusted text in the light DOM, same structure as #story-chat-box.
+   Only the card-provided HTML is opaque/sandboxed. Existing user CSS selectors
+   for .message, .msg-content and .tavern-story-scope now work here as well. */
+#compat-lab.in-chat #compat-messages .compat-message{width:min(760px,100%);margin:0 auto 21px;
+ padding:0;border:0;border-radius:0;background:transparent;box-shadow:none;line-height:1.78;white-space:normal;}
+#compat-lab.in-chat #compat-messages .compat-message .msg-header{margin-bottom:7px;font-size:.72rem;color:var(--muted);font-family:var(--font-ui,inherit)}
+#compat-lab.in-chat #compat-messages .compat-message .msg-content{font-family:var(--font-story);font-size:1rem;line-height:1.78;
+ white-space:pre-wrap;overflow-wrap:anywhere;}
+#compat-lab.in-chat #compat-messages .compat-message.assistant .msg-content{padding:0 5px;background:transparent;border:0;box-shadow:none}
+#compat-lab.in-chat #compat-messages .compat-message.user{width:min(650px,92%);margin-left:auto;margin-right:max(0px,calc((100% - 760px)/2));}
+#compat-lab.in-chat #compat-messages .compat-message.user .msg-content{background:var(--skin-control,rgba(255,255,255,.62));
+ border:1px solid var(--compat-rule);border-radius:20px 20px 6px 20px;padding:12px 15px;box-shadow:0 5px 20px rgba(50,54,60,.05)}
+#compat-lab.in-chat #compat-messages .compat-message .compat-message-action-menu{width:max-content;max-width:100%;margin:4px 5px 0;
+ padding:0;border:0;background:transparent;box-shadow:none;font-family:var(--font-ui)}
+#compat-lab.in-chat #compat-messages .compat-message-action-menu summary{display:inline-flex;align-items:center;justify-content:center;
+ min-width:32px;height:23px;padding:0 10px;border:1px solid var(--compat-rule);border-radius:999px;list-style:none;
+ background:var(--compat-control);font-size:.86rem;color:var(--muted);cursor:pointer}
+#compat-lab.in-chat #compat-messages .compat-message-action-menu summary::-webkit-details-marker{display:none}
+#compat-lab.in-chat #compat-messages .compat-message-tools{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+#compat-lab.in-chat #compat-messages .compat-message-tools button{padding:6px 10px;min-height:32px;border:1px solid var(--compat-rule);
+ border-radius:999px;background:var(--compat-control);font:400 .77rem var(--font-ui);color:var(--text)}
+#compat-lab.in-chat #compat-messages .compat-message .msg-content details{font:400 .8rem var(--font-ui,inherit);color:var(--muted);margin:5px 0}
+#compat-lab.in-chat #compat-messages .compat-inline-mvu-template{margin-top:4px}
+#compat-lab.in-chat #compat-messages .compat-message .msg-content>details{
+ display:inline-block;width:auto;max-width:100%;margin:6px 5px 0;padding:0;border:0;border-radius:0;
+ background:transparent;box-shadow:none;color:var(--muted);font-size:.78rem;
+}
+#compat-lab.in-chat #compat-messages .compat-message .msg-content>details>summary{
+ display:inline-block;cursor:pointer;border:0;list-style:none;font-size:.78rem;
+}
+#compat-lab.in-chat #compat-messages .compat-message .msg-content>details>summary::-webkit-details-marker{display:none}
+#compat-lab.in-chat #compat-messages .compat-message .msg-content>details>summary::before{content:'▸ ';font-size:.68rem}
+#compat-lab.in-chat #compat-messages .compat-message .msg-content>details[open]>summary::before{content:'▾ '}
+#compat-lab.in-chat #compat-messages .compat-message .msg-content>details>pre{max-width:100%;white-space:pre-wrap;overflow-wrap:anywhere}

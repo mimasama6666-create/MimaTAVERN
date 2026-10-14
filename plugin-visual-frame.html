@@ -1,0 +1,60 @@
+<!doctype html><html lang="zh"><head><meta charset="utf-8">
+<!-- Opaque-origin and no outbound connections. This is deliberately *not* the host page. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; connect-src 'none'; img-src data: blob:; media-src data: blob:; font-src data:; style-src 'unsafe-inline'; form-action 'none'; base-uri 'none'; frame-src 'none'; object-src 'none'">
+<meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>html,body{min-height:100%;margin:0}body{font:14px system-ui,sans-serif;background:#181b25;color:#ececf0;overflow:auto}#mima-visual-status{padding:5px 8px;background:#2c3040;font-size:12px;position:relative;z-index:1}#mima-visual-root{min-height:260px;isolation:isolate;position:relative;overflow:auto}button{cursor:pointer}</style></head>
+<body><div id="mima-visual-status" role="status">可视化隔离沙箱尚未启动</div><div id="mima-visual-root"></div>
+<script>
+(()=>{'use strict';
+// The iframe is sandboxed WITHOUT allow-same-origin. Script execution here
+// cannot access the actual chat DOM, cookies, indexedDB or API keys.
+let initialized=false,port=null,nextId=0;const calls=new Map(),subscriptions=new Map();
+const status=document.getElementById('mima-visual-status');
+const fail=e=>{status.textContent='脚本异常（仅沙箱）：'+String(e&&e.message||e).slice(0,400);};
+function rpc(method,args){return new Promise((resolve,reject)=>{let requestId=++nextId;calls.set(requestId,{resolve,reject});port.postMessage({type:'rpc',requestId,method,args});});}
+const allowed=['session.mounted','turn.committed','turn.failed','assistant.continued','button','mvu.changed'];
+const sdk=Object.freeze({
+ getChatMessages:()=>rpc('getChatMessages'),getVariables:()=>rpc('getVariables'),getMvuState:()=>rpc('getMvuState'),
+ setVariables:(value,revision)=>rpc('setVariables',{value,expectedRevision:revision}),
+ uiButton:(label,id)=>rpc('uiButton',{label,id}),
+ on:(event,fn)=>{if(!allowed.includes(event)||typeof fn!=='function')throw new Error('E_PLUGIN_API_UNSUPPORTED: '+event);
+  let listeners=subscriptions.get(event);if(!listeners){listeners=new Set();subscriptions.set(event,listeners);if(event!=='button')rpc('subscribe',{name:event}).catch(fail);}listeners.add(fn);
+  return()=>{listeners.delete(fn);if(!listeners.size){subscriptions.delete(event);if(event!=='button')rpc('unsubscribe',{name:event}).catch(fail);}};}
+});
+function ephemeralStorage(){const map=new Map();return Object.freeze({get length(){return map.size},key(i){return [...map.keys()][i]??null},getItem(k){return map.get(String(k))??null},setItem(k,v){k=String(k);v=String(v);if(k.length+v.length>65536||(!map.has(k)&&map.size>=128)||([ ...map ].reduce((n,[a,b])=>n+a.length+b.length,0)-(map.has(k)?k.length+map.get(k).length:0)+k.length+v.length)>262144)throw new Error('sandbox temporary storage quota');map.set(k,v)},removeItem(k){map.delete(String(k))},clear(){map.clear()}});}
+// Sandboxed opaque-origin Storage throws SecurityError; old UI-only scripts
+// often expect localStorage for appearance preferences. Never expose the
+// host's storage or persist these settings across launches.
+try{Object.defineProperty(window,'localStorage',{configurable:true,value:ephemeralStorage()});}catch(_){}
+// Minimal event adapter for legacy UI-only scripts that call $(window).on('pagehide', ...).
+// Not a jQuery implementation; all other selectors and operations fail explicitly.
+if(typeof window.$==='undefined')Object.defineProperty(window,'$',{value:function(target){if(target!==window)throw new Error('E_PLUGIN_API_UNSUPPORTED: jQuery selector');return Object.freeze({on:(name,fn)=>{if(name!=='pagehide'||typeof fn!=='function')throw new Error('E_PLUGIN_API_UNSUPPORTED: jQuery event');window.addEventListener(name,fn);return window.$(window);},off:(name,fn)=>{if(name!=='pagehide')throw new Error('E_PLUGIN_API_UNSUPPORTED: jQuery event');window.removeEventListener(name,fn);return window.$(window);}});},configurable:true});
+window.addEventListener('error',e=>fail(e.error||e.message));
+window.addEventListener('unhandledrejection',e=>fail(e.reason));
+window.addEventListener('message',ev=>{
+ if(initialized||ev.source!==window.parent||ev.data?.type!=='mima-init'||ev.ports.length!==1)return;
+ initialized=true;port=ev.ports[0];
+ port.onmessage=async e=>{
+  const p=e.data;if(!p)return;
+  if(p.type==='rpc-result'){
+   const task=calls.get(p.requestId);if(!task)return;calls.delete(p.requestId);
+   if(p.error)task.reject(Object.assign(new Error(p.error.message),{code:p.error.code}));else task.resolve(p.result);
+  }else if(p.type==='event'){
+   try{for(const fn of subscriptions.get(p.name)||[])await fn(Object.freeze({name:p.name,eventId:p.eventId,detail:p.detail,buttonId:p.buttonId}));}
+   catch(err){fail(err);}finally{port.postMessage({type:'event-ack',eventId:p.eventId});}
+  }
+ };
+ // The source is executed ONLY inside this opaque, network-blocked iframe.
+ // No injected source is concatenated into host HTML or main-origin scripts.
+ try{
+  Object.defineProperty(window,'MimaCompatSDK',{value:sdk,writable:false,configurable:false});
+  const source=String(ev.data.source||'');
+  if(source.length>256*1024)throw new Error('E_PLUGIN_BUDGET: script oversized');
+  const fn=new Function('MimaCompatSDK',source+'\n//# sourceURL=mima-visual-plugin.js');
+  const result=fn.call(window,sdk);
+  status.textContent='沙箱页面已加载：无外网、无主页面权限；部分原版插件 API 不可用';
+  Promise.resolve(result).catch(fail);
+ }catch(e){fail(e);}
+});
+})();
+</script></body></html>

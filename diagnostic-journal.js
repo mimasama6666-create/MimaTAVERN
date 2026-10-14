@@ -44,7 +44,11 @@
      // Deleting a record is final, even if a request still runs.
      if(row){
        if(data.type==='request'){
-         const req=data.request||{},safe={model:pickString(req.model,300),stream:req.stream===true,temperature:req.temperature,max_tokens:req.max_tokens, messages:Array.isArray(req.messages)?req.messages.map(m=>({role:pickString(m.role,50),content:String(m.content??'')})):[]};
+         const req=data.request||{},safe={model:String(req.model??''),messages:Array.isArray(req.messages)?req.messages.map(m=>({role:String(m.role??''),content:String(m.content??''),...(m.prefix===true?{prefix:true}:{})})):[]};
+         for(const key of ['stream','temperature','max_tokens'])if(Object.hasOwn(req,key))safe[key]=req[key];
+         // Exact protocol body, plus source metadata outside the messages. No credentials or headers.
+         const sourceKeys=['kind','sourceId','messageId','resourceId','name','section','path','slot','declaredRole','originalRole','depth','position','positionAdaptation'];
+         row.messageSources=Array.isArray(data.messageSources)?data.messageSources.map(source=>Object.fromEntries(sourceKeys.filter(key=>Object.hasOwn(source||{},key)).map(key=>[key,source[key]]))):[];
          const all=JSON.stringify(safe);
          row.request=all.length<=MAX_REQUEST_CHARS?safe:null;
          row.requestTruncated=all.length>MAX_REQUEST_CHARS;

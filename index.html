@@ -8,7 +8,7 @@
     <title>咪嘛馆 · MIMAMAO Tavern（酒馆） · Standalone（独立版）</title>
     <link rel="stylesheet" href="./style.css?v=1.1.2&hotfix=1.1.3&release=1.3.1&auditfix=1.3.2&themefix=1.4.0&memoryfix=1.3.9&uihotfix=20261013-1&ctxsave=20261013-2&diagnostics=r8">
     <link rel="stylesheet" href="./theme-skin.css?v=1.4.0">
-    <link rel="stylesheet" href="./compat-style.css?v=r11-card-launch-20261014&mvustatus=r11.8&dynamic=r11.14">
+    <link rel="stylesheet" href="./compat-style.css?v=r11-card-launch-20261014&mvustatus=r11.8&dynamic=r11.14&redesign=20261014-inline-2">
 <!-- v1.1.5 compatibility regression marker: release=1.1.5 -->
 <!-- v1.1.6 compatibility regression marker: release=1.1.6 -->
 <!-- v1.1.7 compatibility regression marker: release=1.1.7 -->
@@ -17,8 +17,9 @@
 <!-- v1.1.10 BOND visible-number hydration hotfix marker: release=1.1.10 -->
 <!-- v1.2.0 canonical branch merge marker: release=1.2.0 -->
 <!-- v1.3.1 Novel Studio Root Fix marker: release=1.3.1&auditfix=1.3.2 -->
-<!-- v1.1.9 regression compatibility marker only: ./app.js?v=1.1.2&release=1.1.9 -->
+<!-- v1.1.9 regression compatibility marker only: ./app.js?p0request=20261014-r12.3&v=1.1.2&release=1.1.9 -->
     <link rel="stylesheet" href="./ux-r6.css?v=r6-20261012&seventh=20261012">
+    <link rel="stylesheet" href="./compat-native-ui.css?v=20261014-visual-unification-1">
 </head>
 <body>
 <div id="drawer-scrim" class="scrim hidden" onclick="closeDrawer()"></div>
@@ -85,7 +86,8 @@
         </div>
         <div class="quick-actions">
             <button class="chip-btn" onclick="toggleDirector()">🎬 导演</button>
-            <button class="chip-btn" onclick="regenerateMsg()">↻ 重说</button>
+            <button class="chip-btn" onclick="regenerateMsg()" title="按原轮请求快照重新采样；旧记录无快照会明确使用当前挂载">↻ 重说</button>
+            <button class="chip-btn" onclick="regenerateCurrentMsg()" title="主动使用当前预设和资料重新生成">↻ 当前挂载</button>
             <button class="chip-btn" onclick="continueMsg()">» 续写</button>
             <button class="chip-btn" onclick="autoAdvance()">✦ 推进</button>
             <button id="stop-btn" class="chip-btn danger hidden" onclick="stopGeneration()">■ 停止</button>
@@ -194,7 +196,7 @@
 
 <!-- Independent compatibility lab: it does not mount inside the native chat's DOM tree. -->
 <div id="compat-lab" class="hidden" role="dialog" aria-modal="true" aria-label="玩酒馆角色卡">
- <header class="compat-head"><div><strong>🎴 玩酒馆角色卡</strong><small style="display:block">手机浏览器就能聊天，复杂互动功能可能需要额外授权</small></div><button id="compat-close">← 返回咪嘛馆</button></header>
+ <header class="compat-head glass-bar"><div class="compat-head-identity"><strong id="compat-head-title">🎴 酒馆角色卡</strong><small id="compat-head-subtitle">打开角色故事 · 随时管理资源</small></div><div class="compat-head-actions"><button type="button" id="compat-manage-toggle" class="chip-btn" aria-controls="compat-game-drawer" aria-expanded="false">☷ 功能</button><button id="compat-close">← 返回咪嘛馆</button></div></header>
  <div class="compat-main">
   <section id="compat-import-panel"><div id="compat-continue-list" class="compat-continue-list" aria-live="polite"></div><h3>① 选择喜欢的角色</h3><p>可以选择 PNG、JSON 或 CHARX。读取卡片不会运行里面的脚本，也不需要 Windows。</p>
    <div class="compat-actions"><input id="compat-file" type="file" accept=".png,.json,.charx,.zip"><button id="compat-scan">重新读取</button><button id="compat-save">保存原始卡片</button></div>
@@ -203,8 +205,9 @@
    <div id="compat-mount-readiness" class="compat-mount-readiness" role="status" aria-live="polite"></div>
    <details class="compat-advanced"><summary>查看卡片包含的功能与原始信息</summary><div id="compat-report" aria-live="polite"></div></details>
   </section>
-  <section id="compat-chat-panel"><h3>② 和角色聊天 <button type="button" id="compat-manage-toggle">管理卡片与功能</button></h3><div id="compat-current">咪嘛馆兼容引擎 · 未进入剧情</div><div id="compat-conversation" hidden>
-   <details id="compat-mvu-panel"><summary>剧情状态与变量（MVU，部分兼容）</summary><div id="compat-mvu-live-status" role="status" aria-live="polite"></div><details><summary>查看完整原始变量（只读）</summary><pre id="compat-mvu-state">当前角色卡没有可验证的 MVU 状态。</pre></details><details><summary>MVU 状态栏模板（手动、只读）</summary><p>仅 {{mvu:/变量路径}} 会读取当前已提交 MVU 状态，例如 {{mvu:/stat_data/好感度}}。卡片原有宏和 JavaScript 不会执行；来源世界书中禁用的状态栏不会自动启用。</p><div id="compat-mvu-template-output"></div><label for="compat-mvu-template-custom">自定义 HTML 状态栏（当前网页临时预览，不保存或提交）</label><textarea id="compat-mvu-template-custom" placeholder="&lt;div&gt;当前好感度：{{mvu:/stat_data/好感度}}&lt;/div&gt;" maxlength="100000"></textarea><div class="compat-actions"><button id="compat-mvu-template-custom-run" type="button">手动预览当前模板</button><button id="compat-mvu-template-clear" type="button">关闭模板预览</button></div></details></details><div id="compat-messages" aria-live="polite"></div><textarea id="compat-input" placeholder="输入剧情"></textarea>
+  <section id="compat-chat-panel"><div class="compat-play-header"><div class="compat-play-identity"><small class="compat-play-label">正在游玩 · 兼容剧情</small><h3 id="compat-role-heading">和角色聊天</h3></div></div><div id="compat-current">咪嘛馆兼容引擎 · 未进入剧情</div><div id="compat-conversation" hidden>
+   <div id="compat-story-status" role="status"></div><div id="compat-status-display" aria-label="当前剧情手动启用的动态状态栏"></div>
+   <details id="compat-mvu-panel"><summary>剧情状态与变量（MVU，部分兼容）</summary><div id="compat-mvu-live-status" role="status" aria-live="polite"></div><details><summary>查看完整原始变量（只读）</summary><pre id="compat-mvu-state">当前角色卡没有可验证的 MVU 状态。</pre></details><details><summary>MVU 状态栏模板（手动、只读）</summary><p>仅 {{mvu:/变量路径}} 会读取当前已提交 MVU 状态，例如 {{mvu:/stat_data/好感度}}。卡片原有宏和 JavaScript 不会执行；来源世界书中禁用的状态栏不会自动启用。</p><div id="compat-mvu-template-output"></div><label for="compat-mvu-template-custom">自定义 HTML 状态栏（当前网页临时预览，不保存或提交）</label><textarea id="compat-mvu-template-custom" placeholder="&lt;div&gt;当前好感度：{{mvu:/stat_data/好感度}}&lt;/div&gt;" maxlength="100000"></textarea><div class="compat-actions"><button id="compat-mvu-template-custom-run" type="button">手动预览当前模板</button><button id="compat-mvu-template-clear" type="button">关闭模板预览</button></div></details></details><div id="compat-messages" class="chat-box tavern-story-scope" aria-live="polite"></div><div id="compat-composer" class="composer-shell glass-bar"><textarea id="compat-input" placeholder="写下你的动作、语言或剧情……" aria-label="兼容剧情输入框"></textarea></div>
    <div class="compat-actions"><label for="compat-wi-budget">当前兼容剧情的世界书预算（字符，不等于模型窗口）</label><input id="compat-wi-budget" type="number" min="1000" max="1000000" step="1" value="16000" style="width:9em"><label for="compat-wi-depth">世界书关键词扫描最近多少条消息（0 = 不扫描普通关键词）</label><input id="compat-wi-depth" type="number" min="0" max="1000" step="1" value="100" style="width:5.5em"><label for="compat-wi-recursive"><input id="compat-wi-recursive" type="checkbox" checked> 允许世界书递归匹配</label><label for="compat-wi-recursion-steps">最多扫描层数</label><input id="compat-wi-recursion-steps" type="number" min="1" max="12" step="1" value="6" style="width:4em"><label for="compat-wi-local-advanced"><input id="compat-wi-local-advanced" type="checkbox"> 启用本地可重放概率/分组（与官方算法不完全等价）</label><label for="compat-preset-history-slot"><input id="compat-preset-history-slot" type="checkbox"> 试运行酒馆预设排序及常见动态插槽（角色、世界书、聊天历史；非官方完全等价）</label><label for="compat-persona-description">玩家 Persona 描述（兼容预设 PersonaDescription 插槽；按剧情独立保存）</label><textarea id="compat-persona-description" maxlength="12000" rows="2" placeholder="可选，留空则不注入"></textarea><button type="button" id="compat-wi-save">保存世界书规则</button></div>
    <div class="compat-actions"><label class="compat-gap-choice" hidden><input id="compat-accept-gaps" type="checkbox"> 只在专家严格对照模式中确认差异</label><label class="compat-mode-label"><input type="radio" name="compat-mode" value="basic" checked>基础聊天</label><label class="compat-mode-label"><input type="radio" name="compat-mode" value="strict">严格检查高级规则</label><button id="compat-send">发送消息</button><button id="compat-continue">续写最近的角色回复</button><button id="compat-preview">查看本轮发送内容</button></div>
    <div id="compat-gap"></div><details><summary>真实 Provider 消息 / 触发追踪</summary><pre id="compat-prompt"></pre></details>
@@ -215,8 +218,8 @@
     <pre id="compat-stscript-result" role="status" aria-live="polite">尚未执行；导入卡片不触发脚本。</pre>
    </details>
    <div class="compat-actions"><label>本地音频（用户手动播放）<input type="file" id="compat-audio" accept="audio/*"></label><div id="compat-media"></div></div>
-  </div></section>
-  <section class="compat-advanced-panel"><h3>互动功能（手动授权）</h3><p>不自动运行来源中的 JavaScript。只有隔离 iframe 的特定 SDK 可受控调用；原版 Tavern Helper 的其它 API 不保证运行。</p><div id="compat-plugins"></div><div id="compat-css-list"></div><div id="compat-plugin-slot"></div><div id="compat-html-preview"></div></section>
+  <details id="compat-game-drawer" class="compat-game-drawer"><summary>功能、资源与诊断</summary><div id="compat-mount-status" role="status">进入剧情后显示实际绑定资源。</div><div id="compat-tools-stack"></div><details id="compat-diagnostics-panel"><summary>运行错误与正则诊断（不参与剧情）</summary><div id="compat-display-errors"></div><div id="compat-diagnostics"></div></details></details></div></section>
+  <section class="compat-advanced-panel"><h3>互动功能（手动授权）</h3><p>不自动运行来源中的 JavaScript。可以手动选 Worker 或独立无网络的可视化沙箱；可视化模式要求 ui.mount 授权，仅能操作沙箱自身的 DOM；没有剧情/变量读取权限，也无法访问主页面。远程媒体和原版 Tavern Helper API 不可用。</p><div id="compat-plugins"></div><div id="compat-css-list"></div><div id="compat-plugin-slot"></div><div id="compat-html-preview"></div></section>
   <section class="compat-advanced-panel"><h3>我的卡片与外部资源</h3><p>原始字节可原样导出；该资源未因检查而成为可执行插件。</p><div id="compat-sources"></div><div id="compat-sessions"></div></section>
   <section class="compat-advanced-panel"><h3>资料备份与恢复检查</h3><div class="compat-actions"><button id="compat-export">仅导出兼容数据库</button><button id="compat-export-both">导出原生 + 兼容</button><input id="compat-restore-file" type="file" accept=".json"><button id="compat-restore-check">只读检查备份</button><button id="compat-restore-apply">安全恢复缺失数据（不覆盖）</button></div>
   <p>先检查，再手动确认：仅补充兼容数据库里缺少的记录；同名不同内容会整体拒绝，绝不覆盖旧剧情。双库备份仍只支持导出，跨库原子恢复尚未开放。</p></section>
@@ -228,34 +231,35 @@
  </div>
 </div>
 
-<script src="./local-store.js?memorylifecycle=r11.15&v=1.3.1&auditfix=1.3.2&rework=1.3.3&reworkfix=1.3.4&arrayguard=1.3.5&legacycontract=1.3.6&fifth=20261012&seventh=20261012&r10plus=20261012-facts1&memfence=20261013-2"></script>
+<script src="./local-store.js?p0request=20261014-r12.3&memorylifecycle=r11.15&v=1.3.1&auditfix=1.3.2&rework=1.3.3&reworkfix=1.3.4&arrayguard=1.3.5&legacycontract=1.3.6&fifth=20261012&seventh=20261012&r10plus=20261012-facts1&memfence=20261013-2"></script>
 <script src="./theme-engine.js?v=1.4.0"></script>
 <script src="./regex-engine.js?v=1.1.0&ctxsave=20261013-2&nativeui=20261013-1&priority0=r11.2"></script>
 <script src="./persona-macro-resolver.js?v=1.1.6"></script>
-<script src="./user-input-semantic-parser.js?v=1.1.7"></script>
+<script src="./user-input-semantic-parser.js?p0request=20261014-r12.3&v=1.1.7"></script>
 <script src="./novel-memory.js?v=1.3.1&auditfix=1.3.2&rework=1.3.3&reworkfix=1.3.4"></script>
 <script src="./novel-engine.js?v=1.3.1&auditfix=1.3.2&rework=1.3.3"></script>
-<script src="./novel-prompt-assembler.js?v=1.3.1&auditfix=1.3.2&rework=1.3.3&ctxsave=20261013-2&priority0=r11.2"></script>
+<script src="./novel-prompt-assembler.js?p0request=20261014-r12.3&v=1.3.1&auditfix=1.3.2&rework=1.3.3&ctxsave=20261013-2&priority0=r11.2"></script>
 <script src="./history-search.js?v=r11-20261012-2"></script>
-<script src="./diagnostic-journal.js?v=20261014-r8"></script>
-<script src="./standalone-core.js?v=1.1.0&release=1.3.1&auditfix=1.3.2&rework=1.3.3&reworkfix=1.3.4&legacycontract=1.3.6&memoryfix=1.3.9&pnginspect=1.4.0&fifth=20261012&seventh=20261012&r11=20261012-2&replyguard=20261012-1&promptfix=r11.4&provenance=r11.9&memoryevent=r11.10&memorylifecycle=r11.15&factlineage=r11.16&rollingcumulative=r11.17&ledgerproof=r11.18&semanticproof=r11.19&factscoverage=r11.20&memorybatch=r11.21&ctxsave=20261013-2&prompttrace=r11.24&nativeowner=20261013-1&priority0=r11.2&nativepreset=20261013-r5&nativep0=20261014-1&diagnostics=r8"></script>
+<script src="./diagnostic-journal.js?p0request=20261014-r12.3&v=20261014-r8"></script>
+<script src="./standalone-core.js?p0request=20261014-r12.3&v=1.1.0&release=1.3.1&auditfix=1.3.2&rework=1.3.3&reworkfix=1.3.4&legacycontract=1.3.6&memoryfix=1.3.9&pnginspect=1.4.0&fifth=20261012&seventh=20261012&r11=20261012-2&replyguard=20261012-1&promptfix=r11.4&provenance=r11.9&memoryevent=r11.10&memorylifecycle=r11.15&factlineage=r11.16&rollingcumulative=r11.17&ledgerproof=r11.18&semanticproof=r11.19&factscoverage=r11.20&memorybatch=r11.21&ctxsave=20261013-2&prompttrace=r11.24&nativeowner=20261013-1&priority0=r11.2&nativepreset=20261013-r5&nativep0=20261014-1&diagnostics=r8"></script>
 <script src="./font-manager.js?v=1.1.0&fontsplit=20261013-1&txguard=20261013-2"></script>
 <script src="./png-card-import.js?v=1.4.0&r11=20261012-2"></script>
 <script src="./png-resource-inspector.js?v=1.4.0"></script>
-<script src="./app.js?v=1.1.2&release=1.3.1&auditfix=1.3.2&themefix=1.4.0&pngcard=1.3.8&memoryfix=1.3.9&pnginspect=1.4.0&fifth=20261012&seventh=20261012&replyguard=20261012-1&memorylifecycle=r11.15&uihotfix=20261013-1&ctxsave=20261013-2&ctxsave=20261013-2&prompttrace=r11.24&nativeowner=20261013-1&priority0=r11.2&nativepreset=20261013-r5&nativep0=20261014-1&diagnostics=r8"></script>
+<script src="./app.js?p0request=20261014-r12.3&v=1.1.2&release=1.3.1&auditfix=1.3.2&themefix=1.4.0&pngcard=1.3.8&memoryfix=1.3.9&pnginspect=1.4.0&fifth=20261012&seventh=20261012&replyguard=20261012-1&memorylifecycle=r11.15&uihotfix=20261013-1&ctxsave=20261013-2&ctxsave=20261013-2&prompttrace=r11.24&nativeowner=20261013-1&priority0=r11.2&nativepreset=20261013-r5&nativep0=20261014-1&diagnostics=r8"></script>
 <script src="./sha256-browser.js?v=r11-20261012-2"></script>
 <script src="./compat-store.js?v=r1r5-p0fix&r11=20261012-2&sourceversion=20261012-3&idbindex=r11.13&roleconsent=r11.9&grantfence=20261013-r2&mvubackup=r6-20261013"></script>
 <script src="./compat-import.js?v=r1r5-1&r11=20261012-2"></script>
-<script src="./compat-regex-isolation.js?advanced=r11.12&v=r1r5-p0fix"></script>
+<script src="./compat-regex-isolation.js?advanced=r11.12&v=redesign-20261014-1"></script>
 <script src="./compat-mvu.js?v=r6-mvu-continuation-20261013"></script>
+<script src="./compat-safe-html.js?v=20261014-inline-2"></script>
 <script src="./compat-mvu-template.js?v=r10-readonly-mvu-template-20261014"></script>
-<script src="./compat-worldinfo-isolation.js?v=20261013-r2"></script>
+<script src="./compat-worldinfo-isolation.js?v=redesign-20261014-1"></script>
 <script src="./compat-live-sync.js?v=r9-cross-tab-20261014"></script>
-<script src="./compat-runtime.js?v=r9-cross-tab-20261014"></script>
+<script src="./compat-runtime.js?p0request=20261014-r12.3&v=r9-cross-tab-20261014"></script>
 <script src="./compat-stscript.js?v=20261013-r4"></script>
-<script src="./compat-plugins.js?v=r7-mvu-event-state-20261013"></script>
+<script src="./compat-plugins.js?v=r12-visual-sandbox-20261014"></script>
 <script src="./compat-onboarding.js?v=r11-card-launch-20261014"></script>
-<script src="./compat-ui.js?v=r11-card-launch-20261014&sessionowner=r10.1"></script>
+<script src="./compat-ui.js?p0request=20261014-r12.3&v=20261014-visual-unification-1"></script>
 <script src="./assistant-studio.js?v=1.1.2&hotfix=1.1.3&release=1.3.1&auditfix=1.3.2&artifactpriority0=r11.2"></script>
 <script src="./novel-studio.js?v=1.3.1&auditfix=1.3.2&release=1.3.1&auditfix=1.3.2&rework=1.3.3&reworkfix=1.3.4&themefix=1.4.0&memoryfix=1.3.9&pnginspect=1.4.0"></script>
 <script src="./ux-r6.js?v=r6-20261012"></script>

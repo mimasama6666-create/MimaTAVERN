@@ -21,7 +21,7 @@
 
   function normalizeMode(value) {
     const mode = String(value || '').trim();
-    return MODES.has(mode) ? mode : 'auto';
+    return MODES.has(mode) ? mode : 'raw';
   }
 
   function trimSegment(value) {
