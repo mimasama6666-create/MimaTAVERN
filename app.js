@@ -1210,11 +1210,11 @@ function renderApiTab(box){
     <div class="form-full"><label class="form-label">API Key（接口密钥）</label><input id="api-key" class="field" type="password" autocomplete="off" placeholder="sk-..." value="${escapeHtml(c.apiKey||'')}"></div>
     <div class="form-full"><label class="form-label">Model（模型）</label><div class="model-picker-stack"><div class="inline-field-row"><select id="api-model-select" class="field" onchange="syncApiModelSelect()"><option value="">先点“拉取模型”，然后从这里展开选择</option>${c.model?`<option value="${escapeHtml(c.model)}" selected>${escapeHtml(c.model)} · 当前</option>`:''}</select><button class="ghost-btn" onclick="loadApiModels()">拉取模型</button></div><input id="api-model" class="field" placeholder="也可以手动填写模型名" value="${escapeHtml(c.model||'')}"><div class="row-sub">iPhone / iPad（苹果移动设备）会使用原生下拉选择器；选择后会自动同步到下方模型名输入框。</div></div></div>
     <div class="form-full"><label class="form-label">Temperature（温度） <span id="api-temp-value" class="value-pill">${temp.toFixed(2)}</span></label><div class="temperature-row"><input id="api-temp-range" class="temp-range" type="range" min="0.1" max="2" step="0.05" value="${temp}" oninput="syncTemperature('range')"><input id="api-temperature" class="field temp-number" type="number" min="0.1" max="2" step="0.05" value="${temp}" oninput="syncTemperature('number')"></div><div class="row-sub">数值越高通常越发散，越低通常越稳定。具体有效范围以模型/中转站为准。</div></div>
-    <div><label class="form-label">模型上下文窗口（Tokens，0=未知，不假设硬上限）</label><input id="api-context-window" class="field" type="number" min="0" value="${Number(c.contextWindowTokens||0)}"><div class="row-sub">建议按模型提供商的真实数值填写。留空或填 0 时不会误把 32K 当作模型上限；仅对额外旧原文检索使用软预算，真实限制由 API 决定。不会删除 Persona 或 History。</div></div><div><label class="form-label">Max Tokens（最大 Token 数量，0=不发送）</label><input id="api-max-tokens" class="field" type="number" min="0" value="${Number(c.maxTokens||0)}"></div>
+    <div><label class="form-label">模型上下文窗口（Tokens，0=未知，不假设硬上限）</label><input id="api-context-window" class="field" type="number" min="0" value="${Number(c.contextWindowTokens||0)}"><div class="row-sub">建议按模型提供商的真实数值填写。留空或填 0 时不会误把 32K 当作模型上限；仅对额外旧原文检索使用软预算，真实限制由 API 决定。不会删除 Persona 或 History。</div></div><div><label class="form-label">Max Tokens（最大输出 Tokens，0=不发送）</label><input id="api-max-tokens" class="field" type="number" min="0" value="${Number(c.maxTokens||0)}"></div>
     <div class="form-full"><label class="form-label">续写接口方式</label><select id="api-continuation-mode" class="field"><option value="assistant_tail" ${c.continuationMode!=='deepseek_prefix'?'selected':''}>普通 Chat：生成后续 assistant 段落</option><option value="deepseek_prefix" ${c.continuationMode==='deepseek_prefix'?'selected':''}>已确认支持 DeepSeek prefix 的端点</option></select><div class="row-sub">普通 Chat 保留真实 assistant 尾文，不保证原文前缀补全。prefix 模式仅适用于支持该字段的端点；部分模型要求请求以 user 结束，可能不支持无伪玩家消息的续写。失败会保留原文，不自动换端点或追加指令。</div><label class="check-row"><input id="api-prefix-suffix" type="checkbox" ${c.prefixReturnsSuffix===true?'checked':''}> 前缀接口仅回新后缀（仅在接口确实如此时选择；默认按完整前缀响应校验）</label></div>
     <div><label class="check-row api-check"><input id="api-send-temp" type="checkbox" ${c.sendTemperature!==false?'checked':''}> 发送 Temperature（温度）参数</label><label class="check-row"><input id="api-stream" type="checkbox" ${c.stream?'checked':''}> Streaming（流式传输）</label></div>
     <div class="form-full"><details><summary>Advanced（高级设置）</summary><div class="form-grid advanced-grid"><div class="form-full"><label class="form-label">Chat Endpoint Override（聊天端点覆盖，可空）</label><input id="api-chat-endpoint" class="field" placeholder="例如 /v1/chat/completions" value="${escapeHtml(c.chatEndpoint||'')}"></div><div class="form-full"><label class="form-label">Models Endpoint Override（模型端点覆盖，可空）</label><input id="api-models-endpoint" class="field" placeholder="例如 /v1/models" value="${escapeHtml(c.modelsEndpoint||'')}"></div><div class="form-full"><label class="form-label">Extra Headers JSON（额外请求头 JSON 数据，可空）</label><textarea id="api-extra-headers" class="field textarea" placeholder='{"X-Custom-Key":"value"}'>${escapeHtml(c.extraHeaders||'')}</textarea></div></div></details></div></div>
-    <div class="toolbar"><button class="primary-btn" onclick="saveApiSettings()">保存 API（接口）</button><button class="ghost-btn" onclick="testApiConnection()">测试连接</button><button class="ghost-btn" onclick="chooseApiImport()">⇧ 导入 API（接口）配置</button></div><div id="api-status" class="api-status"></div></section>
+    <div class="toolbar"><button class="primary-btn" onclick="saveApiSettings()">保存 API（接口）</button><button class="ghost-btn" onclick="testApiConnection()">检查模型列表</button><button class="ghost-btn" onclick="chooseApiImport()">⇧ 导入 API（接口）配置</button></div><div id="api-status" class="api-status"></div></section>
     <section class="settings-section"><h3>🌐 浏览器直连说明</h3><p class="helper">Standalone（独立版）是纯前端，因此 API（接口）服务必须允许浏览器跨域（CORS）。如果出现 “Failed to fetch（请求失败） / CORS（跨域）” 而地址和 Key（密钥）都正确，是 API 站点禁止网页直连，不是咪嘛馆剧情配置错误。此时需要换支持 CORS 的中转，或把本静态前端部署到该服务允许的来源。</p></section>`;
 }
 function syncApiModelSelect(){const sel=qs('api-model-select'),input=qs('api-model');if(sel?.value&&input){input.value=sel.value;MimaStandalone.saveApiConfig({...MimaStandalone.getApiConfig(),model:sel.value});const status=qs('api-status');if(status)status.textContent=`✅ 已选择 Model（模型）：${sel.value}`}}
@@ -1243,7 +1243,7 @@ function saveApiSettings(){
     }
 }
 async function loadApiModels(){if(!saveApiSettings())return;const status=qs('api-status');status.textContent='正在拉取模型……';try{const models=await MimaStandalone.listModels();populateApiModelSelect(models);status.textContent=`✅ 拉到 ${models.length} 个 Model（模型）。现在可以点击上方下拉框展开选择，也可以继续手填。`;if(models.length&&!qs('api-model').value){qs('api-model').value=models[0];populateApiModelSelect(models);MimaStandalone.saveApiConfig({...collectApiForm(),model:models[0]})}}catch(e){const info=describeApiError(e);status.textContent=`❌ ${info.code}${info.status?` · HTTP（状态码） ${info.status}`:''}\n${info.message}\n可能原因：${info.hint}`}}
-async function testApiConnection(){if(!saveApiSettings())return;const status=qs('api-status');status.textContent='正在测试 API（接口）……';try{const r=await MimaStandalone.testApi();status.textContent=`✅ API（接口）可访问，模型列表 ${r.count} 个。`;populateApiModelSelect(r.models)}catch(e){const info=describeApiError(e);status.textContent=`❌ ${info.code}${info.status?` · HTTP（状态码） ${info.status}`:''}\n${info.message}\n可能原因：${info.hint}`}}
+async function testApiConnection(){if(!saveApiSettings())return;const status=qs('api-status');status.textContent='正在读取模型列表……';try{const r=await MimaStandalone.testApi();status.textContent=`✅ 模型列表可访问，共 ${r.count} 个；本操作未测试聊天生成。`;populateApiModelSelect(r.models)}catch(e){const info=describeApiError(e);status.textContent=`❌ ${info.code}${info.status?` · HTTP（状态码） ${info.status}`:''}\n${info.message}\n可能原因：${info.hint}`}}
 function describeApiError(e){const message=e?.message||e?.msg||(typeof e==='string'?e:'未知 API 错误');const code=e?.code||(/Failed to fetch|NetworkError|Load failed|CORS/i.test(message)?'E_API_NETWORK_CORS':'E_API_UNKNOWN');const status=Number(e?.status)||0;let hint=e?.hint||'';if(!hint&&code==='E_API_NETWORK_CORS')hint='浏览器 Fetch 在拿不到响应时无法可靠区分 CORS、网络断线、证书错误或“网关错误响应缺少 CORS 头”。如果同一配置一会成功一会失败，更像中转/CDN 节点抖动，而不是你的剧情数据坏了。';if(!hint&&code==='E_STREAM_INTERRUPTED')hint='流式连接已建立后中断。不要自动重复计费；可点击“仅重试本轮”手动重试，玩家消息不会重复写入。';if(!hint&&code==='E_API_REFUSAL_CONTENT')hint='模型把拒绝文本当普通回复返回；正文已拦截且不会进入角色历史或旧版本。可手动重试，不会自动重复计费。';if(!hint)hint='请检查 API（接口）地址、密钥、模型名、参数兼容性以及中转站状态。';return{message,code,status,hint,details:e?.details||'',partialDraft:typeof e?.partialDraft==='string'?e.partialDraft.slice(0,24000):''}}
 function friendlyApiError(e){const i=describeApiError(e);return `${i.code}${i.status?` · HTTP（状态码） ${i.status}`:''} · ${i.message}\n可能原因：${i.hint}`}
 function chooseApiImport(){qs('api-config-file-input').value='';qs('api-config-file-input').click()}
@@ -1320,7 +1320,8 @@ async function refreshDiagnosticsView(){
     wrap.innerHTML=`<h4>诊断详情 · ${escapeHtml(record.action)}</h4>
       <div class="row-sub">会话：${escapeHtml(record.sessionId)} · Turn：${escapeHtml(record.turnId)} · Request：${escapeHtml(record.requestId||'请求前失败')}<br>
       结果：${escapeHtml(record.status)} · Model：${escapeHtml(record.model||'未请求')} · 结束：${escapeHtml(record.finishKind||'—')} / ${escapeHtml(record.finishReason||'—')} · HTTP：${Number(record.error?.status||0)||'—'}</div>
-      <div class="toolbar"><button class="ghost-btn" id="diag-delete-one">删除这条</button><button class="ghost-btn" id="diag-copy-one">复制此条 JSON</button></div>
+      <div class="toolbar"><button class="ghost-btn" id="diag-delete-one">删除这条</button><button class="ghost-btn" id="diag-copy-one">复制此条 JSON</button><button class="ghost-btn" id="diag-download-one">下载此条 JSON</button></div>
+      <div class="row-sub">请求体：${record.requestBytes?Number(record.requestBytes).toLocaleString()+' bytes':'未记录'} · 准备：${record.preparationElapsedMs==null?'未记录':Number(record.preparationElapsedMs)+' ms'} · 等待响应头：${record.transport?Number(record.transport.fetchElapsedMs)+' ms':'未记录'}${record.transport?.providerRequestId?` · 服务端请求 ID：${escapeHtml(record.transport.providerRequestId)}`:''}${record.transport?.cfRay?` · CF-Ray：${escapeHtml(record.transport.cfRay)}`:''}</div>
       <h4>真实请求内容（不包含 API Key 和请求头）</h4>
       ${record.requestTruncated?'<div class="row-sub">本轮请求超过日志单条上限，未保留完整正文。实际发送不受影响；本条不能作为完整 Prompt 证据。</div>':''}
       ${request?`<div class="row-sub">${request.messages.length} 条消息 · 模型 ${escapeHtml(request.model)} · stream=${request.stream} · max_tokens=${escapeHtml(request.max_tokens??'未设置')}</div><details><summary>展开实际 messages</summary><pre class="prompt-pre">${escapeHtml(fmt)}</pre></details>`:'<div class="row-sub">没有保存完整请求：可能在发送前失败，或超出日志容量上限。</div>'}
@@ -1334,6 +1335,7 @@ async function refreshDiagnosticsView(){
         if(!confirm('本记录可能含完整私人 Prompt。确定复制到剪贴板？'))return;
         try{await navigator.clipboard.writeText(JSON.stringify(record,null,2));toast('诊断记录已复制。')}catch(e){toast(`复制失败：${e.message}`)}
     };
+    qs('diag-download-one').onclick=()=>downloadJson(`咪嘛馆_诊断_${String(record.requestId||record.id).replace(/[^\w.-]/g,'_')}.json`,record);
 }
 
 function setupEditorButtons(deleteFn,saveFn){qs('editor-save').textContent='保存';const del=qs('editor-delete');if(deleteFn){del.classList.remove('hidden');del.onclick=deleteFn}else{del.classList.add('hidden');del.onclick=null}qs('editor-save').onclick=saveFn}
@@ -1367,7 +1369,8 @@ function toggleUIState(generating){
 }
 function generationActionLabel(action){return action==='regenerate'?'正在重新生成':action==='continue'?'正在续写':action==='auto_advance'?'正在推进剧情':'正在生成剧情'}
 function setGenerationProgress(payload={}){const panel=qs('generation-panel'),bar=qs('generation-progress-bar'),label=qs('generation-label'),pct=qs('generation-percent'),detail=qs('generation-detail');if(!panel)return;panel.classList.remove('hidden','error','done');const n=Math.max(2,Math.min(100,Number(payload.percent)||2));bar.style.width=`${n}%`;pct.textContent=`${Math.round(n)}%`;if(payload.label)label.textContent=payload.label;if(payload.detail)detail.textContent=payload.detail}
-function beginGenerationProgress(action){deferredGenerationProgress=null;currentGenerationAction=action;lastGenerationFailure=null;const retry=qs('generation-retry');if(retry)retry.classList.add('hidden');const panel=qs('generation-panel');panel?.classList.remove('hidden','error','done');setGenerationProgress({percent:4,label:`🤍 ${generationActionLabel(action)}`,detail:'正在准备本轮剧情…'})}
+function setGenerationRetryVisible(visible){for(const id of ['generation-retry','generation-retry-current'])qs(id)?.classList.toggle('hidden',!visible);}
+function beginGenerationProgress(action){deferredGenerationProgress=null;currentGenerationAction=action;lastGenerationFailure=null;setGenerationRetryVisible(false);const panel=qs('generation-panel');panel?.classList.remove('hidden','error','done');setGenerationProgress({percent:4,label:`🤍 ${generationActionLabel(action)}`,detail:'正在准备本轮剧情…'})}
 function isStoryNearBottom(box,threshold=96){return !box||((box.scrollHeight-box.scrollTop-box.clientHeight)<=threshold)}
 function updateStoryFollowButton(){const b=qs('story-follow-stream');if(!b)return;b.classList.toggle('hidden',!liveStreamState||liveStreamState.followTail!==false)}
 function resumeStoryStreamFollow(){if(!liveStreamState)return;liveStreamState.followTail=true;const box=qs('story-chat-box');if(box)box.scrollTop=box.scrollHeight;updateStoryFollowButton()}
@@ -1429,7 +1432,7 @@ function clearLiveStream(){
 function finishGenerationProgress(owner=null){
     if(owner&&!ownsVisibleGeneration(owner))return;
     deferredGenerationProgress=null;lastGenerationFailure=null;currentGenerationAction=null;
-    const retry=qs('generation-retry');if(retry)retry.classList.add('hidden');
+    setGenerationRetryVisible(false);
     setGenerationProgress({percent:100,label:'🤍 生成完成',detail:'剧情已保存到本机。'});
     const panel=qs('generation-panel');panel?.classList.add('done');
     const sessionId=currentSessionId;
@@ -1451,14 +1454,14 @@ function showGenerationError(err,action=currentGenerationAction,fromRestore=fals
         evidence.append(caption,content);detail.appendChild(evidence);
     }
     const retryable=info.code==='E_API_NETWORK_CORS'||info.code==='E_STREAM_INTERRUPTED'||[408,409,429,502,503,504].includes(info.status)||info.status>=500;
-    if(retry)retry.classList.toggle('hidden',!retryable);
+    setGenerationRetryVisible(retryable);
 }
-function retryFailedGeneration(){
+function retryFailedGeneration(parameters='original'){
     if(currentGenerationOwner())return toast('当前剧情正在生成中。');
     const failure=generationFailures.get(currentSessionId);
     if(!failure)return toast('当前剧情没有可重试的失败请求。');
-    const retry=qs('generation-retry');if(retry)retry.classList.add('hidden');
-    return triggerChat('','retry');
+    setGenerationRetryVisible(false);
+    return triggerChat('','retry',{retryParameters:parameters==='current'?'current':'original'});
 }
 function dismissGenerationPanel(){qs('generation-panel')?.classList.add('hidden')}
 async function triggerChat(text,actionType='send',generationOptions={}){
@@ -1481,7 +1484,7 @@ async function triggerChat(text,actionType='send',generationOptions={}){
     try{
         // Distinct sessions must never abort each other's Direct Reply.
         const res=await fetchStory(`/sessions/${targetSessionId}/chat`,'POST',
-            {text,action:actionType,temperature:getTemp(),directorNote,targetMessageId,regenerationContext:generationOptions.regenerationContext||'original',diagnosticTurnId:String(owner.turnId)},false,
+            {text,action:actionType,temperature:getTemp(),directorNote,targetMessageId,regenerationContext:generationOptions.regenerationContext||'original',retryParameters:generationOptions.retryParameters||'original',diagnosticTurnId:String(owner.turnId)},false,
             payload=>handleGenerationProgress(payload,owner),owner.controller.signal);
         if(!res.success&&!res.aborted&&generationOwners.get(targetSessionId)===owner){
             generationFailures.set(targetSessionId,{...describeApiError(res),action:actionType});

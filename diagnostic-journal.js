@@ -38,7 +38,7 @@
    return id;
  }
  function event(id,data={}){
-   if(!id||!data||!['request','provider_result','settlement'].includes(data.type))return Promise.resolve();
+   if(!id||!data||!['request','transport_response','provider_result','settlement'].includes(data.type))return Promise.resolve();
    return transact(async()=>{
      const db=await open();const tx=db.transaction(STORE,'readwrite'),st=tx.objectStore(STORE),row=await waitRequest(st.get(id));
      // Deleting a record is final, even if a request still runs.
@@ -53,6 +53,11 @@
          row.request=all.length<=MAX_REQUEST_CHARS?safe:null;
          row.requestTruncated=all.length>MAX_REQUEST_CHARS;
          row.requestChars=all.length;row.messageCount=safe.messages.length;row.model=safe.model;row.requestId=pickString(data.requestId,120);row.endpointOrigin=pickString(data.endpointOrigin,260);row.status='requesting';
+         row.requestBytes=Number(data.requestBytes)||0;row.preparationElapsedMs=Number.isFinite(data.preparationElapsedMs)?data.preparationElapsedMs:null;
+         row.serializationElapsedMs=Number(data.serializationElapsedMs)||0;row.generationId=pickString(data.generationId,120);row.generationAttempt=Number(data.generationAttempt)||null;
+       }else if(data.type==='transport_response'){
+         row.transport={requestStartedAt:pickString(data.requestStartedAt,50),responseReceivedAt:pickString(data.responseReceivedAt,50),fetchElapsedMs:Number(data.fetchElapsedMs)||0,httpStatus:Number(data.httpStatus)||0,
+           providerRequestId:pickString(data.providerRequestId,200),cfRay:pickString(data.cfRay,200)};
        }else if(data.type==='provider_result'){
          row.finishKind=pickString(data.finishKind,50);row.finishReason=pickString(data.finishReason,120);row.responseChars=Number(data.responseChars)||0;row.status='provider_returned';
        }else if(data.type==='settlement'){

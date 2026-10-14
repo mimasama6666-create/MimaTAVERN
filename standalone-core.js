@@ -356,11 +356,11 @@
     const middle=matched.filter(x=>Number(x.entry.depth||0)===0&&x.entry.position==='middle');
     const back=matched.filter(x=>Number(x.entry.depth||0)===0&&x.entry.position==='back');
     const chunks=[],sections=[];const add=(name,content,source={})=>{const resolved=String(resolveMacrosForSession(session,content)??'');if(!resolved.trim())return;chunks.push(resolved);sections.push({name,chars:resolved.length,content:resolved,source:{kind:name.includes('memory')||name.includes('summary')?'memory':name.startsWith('worldbook')?'world_info':name.includes('persona')?'persona':name==='director_note'?'director_note':'player_material',sourceId:name,section:name,...source}});};
-    add('worldbook_front',joinWb(front,'System Front'),{sourceId:front.map(x=>x.entry.id).join(','),resourceId:front.map(x=>x.book.id).join(',')});
-    if(session.loadedCharMaskId)add('character_persona',formatMask(enabledMask(session.loadedCharMaskId),'character'),{sourceId:session.loadedCharMaskId,resourceId:session.loadedCharMaskId});
-    if(session.loadedUserMaskId)add('user_persona',formatMask(enabledMask(session.loadedUserMaskId),'user'),{sourceId:session.loadedUserMaskId,resourceId:session.loadedUserMaskId});
-    add('worldbook_middle',joinWb(middle,'System Middle'),{sourceId:middle.map(x=>x.entry.id).join(','),resourceId:middle.map(x=>x.book.id).join(',')});
     const ps=sortedPresets(session);for(const preset of ps)add('presets',preset.content,{kind:'preset',sourceId:preset.id,resourceId:preset.id,name:preset.name});
+    add('worldbook_front',joinWb(front,'System Front'),{sourceId:front.map(x=>x.entry.id).join(','),resourceId:front.map(x=>x.book.id).join(',')});
+    if(session.loadedUserMaskId)add('user_persona',formatMask(enabledMask(session.loadedUserMaskId),'user'),{sourceId:session.loadedUserMaskId,resourceId:session.loadedUserMaskId});
+    if(session.loadedCharMaskId)add('character_persona',formatMask(enabledMask(session.loadedCharMaskId),'character'),{sourceId:session.loadedCharMaskId,resourceId:session.loadedCharMaskId});
+    add('worldbook_middle',joinWb(middle,'System Middle'),{sourceId:middle.map(x=>x.entry.id).join(','),resourceId:middle.map(x=>x.book.id).join(',')});
     if(session.promptSettings?.pinnedFactsEnabled!==false&&session.pinnedFacts?.length)add('pinned_facts',`【Pinned Facts】\n${session.pinnedFacts.map(x=>`- ${x}`).join('\n')}`);
     if(options.excludeRollingSummary!==true&&session.promptSettings?.summaryEnabled!==false&&(!session.rollingSourceFingerprint?!(session.legacyMemoryQuarantined||session.promptLineageProjection):session.rollingSourceCount>0&&session.messages.length>=session.rollingSourceCount&&memorySourceFingerprint(session.messages,session.rollingSourceCount)===session.rollingSourceFingerprint)&&(session.rollingSummary||session.summary||session.longSummary))add('story_summary',`【剧情摘要 / Rolling Summary】\n${session.rollingSummary||session.summary||session.longSummary}`);
     const memory=normalizeManualMemory(session.manualMemory||{});const memoryTrace=[];
@@ -628,6 +628,7 @@
     if(status===404)return '请求端点或模型不存在。请重点检查 Base URL（基础地址）、Chat Endpoint（聊天端点）以及模型名。';
     if(status===413)return '提交到 API 的正文或上下文超过当前接口允许的请求体大小；请先识别章节再单章分析，不要把整本书作为一个章节提交。';
     if(status===408||status===504)return '请求超时。可能是模型生成过慢、上游拥堵或网关超时。';
+    if(status===524)return '接口返回 HTTP 524 超时。该状态码本身不能确定原因；请核对本轮发送参数、响应耗时及服务端请求 ID。修改 API 设置后可选择“原上下文 · 当前 API 参数”重试。';
     if(status===409)return '服务端状态冲突，可能是上游会话/任务状态异常；稍后重试通常可恢复。';
     if(status===422)return '请求字段格式可解析但无法处理，通常是模型参数或消息格式不兼容。';
     if(status===429)return '触发频率/额度限制。请检查中转站余额、并发限制、RPM/TPM 或模型额度。';
@@ -815,7 +816,7 @@
     if(Number(cfg.maxTokens)>0)body.max_tokens=Math.floor(Number(cfg.maxTokens));
     return body;
   }
-  function generationSnapshot(session,promptSession,body,messageSources=[],operation='send',excludeReferenceId=null){
+  function generationSnapshot(session,promptSession,body,messageSources=[],operation='send',excludeReferenceId=null,sourceFingerprint=null){
     const safe={model:body.model,messages:body.messages.map((m,index)=>{
       const original=messageSources[index]?.kind==='canonical_history'?promptSession.messages.find(x=>x.id===messageSources[index].messageId):null;
       const row={role:m.role};if(m.prefix===true)row.prefix=true;
@@ -826,12 +827,12 @@
       return row;
     })};
     for(const key of ['stream','temperature','max_tokens'])if(Object.hasOwn(body,key))safe[key]=body[key];
-    return {version:1,operation,requestBody:safe,messageSources:clone(messageSources),sourceCount:promptSession.messages.length,sourceFingerprint:memorySourceFingerprint(promptSession.messages,promptSession.messages.length)};
+    return {version:1,operation,requestBody:safe,messageSources:clone(messageSources),sourceCount:promptSession.messages.length,sourceFingerprint:sourceFingerprint??memorySourceFingerprint(promptSession.messages,promptSession.messages.length)};
   }
-  function restoreGenerationRequest(snapshot,promptSession){
+  function restoreGenerationRequest(snapshot,promptSession,sourceFingerprint=null){
     if(snapshot?.version!==1||!snapshot.requestBody?.model||!Array.isArray(snapshot.requestBody.messages))
       throw new ApiError('E_GENERATION_SNAPSHOT_INVALID','原轮请求快照结构无法核实。');
-    if(snapshot.sourceCount!==promptSession.messages.length||snapshot.sourceFingerprint!==memorySourceFingerprint(promptSession.messages,promptSession.messages.length))
+    if(snapshot.sourceCount!==promptSession.messages.length||snapshot.sourceFingerprint!==(sourceFingerprint??memorySourceFingerprint(promptSession.messages,promptSession.messages.length)))
       throw new ApiError('E_GENERATION_SNAPSHOT_STALE','原轮上下文已被编辑，无法使用原请求快照。',{hint:'原始版本仍保留；选择“按当前挂载重说”可从当前时间线重新生成。'});
     const body={model:String(snapshot.requestBody.model),messages:snapshot.requestBody.messages.map(m=>{
       let content=m.content;
@@ -868,24 +869,40 @@
           details:JSON.stringify({estimatedInputTokens:estimated,reservedOutputTokens:output,windowTokens:Number(cfg.contextWindowTokens),stage:options.memoryContext?.stage||'provider_request'}),
           hint:'请检查上下文窗口与 max_tokens 配置；不会自动改变设置或删除 Persona/History。'});
     }
-    const body=makeApiBody(messages,cfg,temperature,options);
-    const requestId=makeId('req'),diag={requestId,jobId:options.memoryContext?.jobId||null,attemptId:options.memoryContext?.attemptId||null,stage:options.memoryContext?.stage||'story',model:cfg.model,endpointOrigin:(()=>{try{return new URL(chat).origin}catch{return 'unknown'}})(),requestFields:Object.keys(body).sort(),messageCount:messages.length,temperaturePresent:Object.hasOwn(body,'temperature'),maxTokens:body.max_tokens||null,stream:streamEnabled};
+    const body=makeApiBody(messages,cfg,temperature,options),serializationStartedAt=Date.now();
+    const requestJson=JSON.stringify(body),requestBytes=new TextEncoder().encode(requestJson).byteLength;
+    const requestId=makeId('req'),diag={requestId,jobId:options.memoryContext?.jobId||null,attemptId:options.memoryContext?.attemptId||null,stage:options.memoryContext?.stage||'story',model:body.model,endpointOrigin:(()=>{try{return new URL(chat).origin}catch{return 'unknown'}})(),requestFields:Object.keys(body).sort(),messageCount:body.messages.length,temperaturePresent:Object.hasOwn(body,'temperature'),maxTokens:body.max_tokens||null,stream:streamEnabled,requestBytes,serializationElapsedMs:Date.now()-serializationStartedAt,
+      generationId:options.storyContext?.generationId||null,generationAttempt:options.storyContext?.generationAttempt||null,preparationElapsedMs:options.storyContext?.preparationElapsedMs??null};
     const diagnostic=extra=>JSON.stringify({...diag,...extra});
     // Exact body.messages at the fetch boundary. Credentials, auth headers and
     // extraHeaders never enter the independent diagnostics database.
-    try{options.onDiagnostic?.({type:'request',request:body,messageSources:options.messageSources||[],requestId,endpointOrigin:diag.endpointOrigin});}
+    try{options.onDiagnostic?.({type:'request',request:body,messageSources:options.messageSources||[],...diag});}
     catch(e){console.error('诊断事件回调失败；真实模型请求继续执行',e);}
     emitProgress(options.onProgress,{phase:'requesting',percent:42,detail:`正在请求 ${cfg.model}`});
-    let res;try{res=await fetch(chat,{method:'POST',headers:apiHeaders(cfg),body:JSON.stringify(body),signal,mode:'cors',credentials:'omit',cache:'no-store'});}catch(e){
+    const fetchStartedAt=Date.now(),requestStartedAt=new Date(fetchStartedAt).toISOString();
+    let res;try{res=await fetch(chat,{method:'POST',headers:apiHeaders(cfg),body:requestJson,signal,mode:'cors',credentials:'omit',cache:'no-store'});}catch(e){
       const err=asApiError(e);
       if(err instanceof ApiError&&err.code==='E_API_NETWORK_CORS'){
         let endpoint='';try{endpoint=new URL(chat).origin}catch(_){}
         const online=(typeof navigator!=='undefined'&&typeof navigator.onLine==='boolean')?String(navigator.onLine):'unknown';
         err.details=[err.details,`stage: fetch_before_response`,`endpoint: ${endpoint||'unknown'}`,`navigator.onLine: ${online}`].filter(Boolean).join('; ');
       }
-      err.details=diagnostic({errorSource:'transport',causeCode:err.code||'E_API_NETWORK'});throw err;
+      err.details=diagnostic({errorSource:'transport',causeCode:err.code||'E_API_NETWORK',requestStartedAt,fetchElapsedMs:Date.now()-fetchStartedAt});throw err;
     }
-    if(!res.ok){let data={};try{data=await res.clone().json()}catch(_){}const problem=httpApiError(res.status,data?.error?.message||data?.message||`API 请求失败 HTTP ${res.status}`);problem.details=diagnostic({errorSource:'http',httpStatus:res.status,responseShape:Object.keys(data||{}).slice(0,20)});throw problem;}
+    // Record only named public correlation headers, never arbitrary response
+    // headers, credentials or the private request URL/query string.
+    const safeId=value=>{const s=String(value??'');return /^[A-Za-z0-9_.:-]{1,200}$/.test(s)?s:null;};
+    const responseTiming={requestStartedAt,responseReceivedAt:new Date().toISOString(),fetchElapsedMs:Date.now()-fetchStartedAt,httpStatus:res.status,requestBytes,
+      providerRequestId:safeId(res.headers?.get?.('x-request-id')||res.headers?.get?.('request-id')),cfRay:safeId(res.headers?.get?.('cf-ray'))};
+    try{options.onDiagnostic?.({type:'transport_response',...responseTiming});}catch(e){console.error('诊断事件回调失败；真实响应继续解析',e);}
+    if(!res.ok){
+      let data={};try{data=await (res.clone?res.clone():res).json()}catch(_){}
+      const err=data?.error&&typeof data.error==='object'?data.error:{};
+      const field=value=>typeof value==='string'||typeof value==='number'?String(value).slice(0,200):null;
+      const providerError={type:field(err.type),code:field(err.code),param:field(err.param),requestId:safeId(err.request_id||data?.request_id)};
+      const problem=httpApiError(res.status,err.message||data?.message||`API 请求失败 HTTP ${res.status}`);
+      problem.details=diagnostic({errorSource:'http',...responseTiming,providerError,responseBodyElapsedMs:Date.now()-fetchStartedAt,responseShape:Object.keys(data||{}).slice(0,20)});throw problem;
+    }
     const contentType=String(res.headers?.get?.('content-type')||'').toLowerCase();
     if(streamEnabled&&!/application\/json/i.test(contentType)){
       emitProgress(options.onProgress,{phase:'streaming',percent:55,detail:'连接成功，正在接收流式正文…'});
@@ -2161,29 +2178,33 @@
     return reply;
   }
   async function processStoryTurn(id,userText,action='send',signal,temp=.85,options={},progress=null){
+    const preparationStartedAt=Date.now();
     let session=getSession(id);
     if(!session)throw new ApiError('E_STORY_SESSION_MISSING','剧本档案丢失猫！',{hint:'本地剧情 Session（剧情会话）不存在或已被删除，请重新打开剧情。'});
     session=normalizeSession(session);
+    let canonicalFingerprint=null;
     const retryPending=action==='retry'?session.pendingGeneration:null;
     if(action==='retry'){
       if(!retryPending?.snapshot)throw new ApiError('E_STORY_RETRY_MISSING','没有可重试的未结算请求。');
-      if(retryPending.canonicalFingerprint!==memorySourceFingerprint(session.messages,session.messages.length))throw new ApiError('E_STORY_RETRY_STALE','失败后剧情原文已变化，不能把旧请求提交到新时间线。');
+      canonicalFingerprint=memorySourceFingerprint(session.messages,session.messages.length);
+      if(retryPending.canonicalFingerprint!==canonicalFingerprint)throw new ApiError('E_STORY_RETRY_STALE','失败后剧情原文已变化，不能把旧请求提交到新时间线。');
       action=retryPending.action;
       options={...options,targetMessageId:retryPending.targetMessageId};
     }
     emitProgress(progress,{phase:'preparing',percent:8,detail:'正在整理本轮上下文…'});
+    let unsavedUserInput=false,commitStarted=false;
     if(action==='send'&&!retryPending){
       if(!String(userText||'').trim())throw new ApiError('E_STORY_EMPTY_INPUT','还没有输入内容猫！',{hint:'请输入动作、语言或剧情后再发送。'});
       const originalUserText=String(userText||'');const transformedUserText=applyRegexForSession(session,originalUserText,'input');
       const userMsg=makeMessage('user',transformedUserText,session,{source:'manual_send',regexInputApplied:transformedUserText!==originalUserText,inputSemanticMode:inputSemanticMode(session),inputSemanticParserVersion:'1.1.7'});userMsg.rawContent=originalUserText;session.messages.push(userMsg);
-      session=await saveSession(session);
-      emitProgress(progress,{phase:'saved_user',percent:14,detail:'主人消息已安全写入本地剧情。'});
+      unsavedUserInput=true;
     }
+    let sourceBeforeReply,target=null,opts,cfg,built=null,requestBody=null,snapshot=null,messages,pending;
+    try{
     // “重说”必须在任何摘要/异步保存之前锁定目标消息 ID，避免后续状态变化后误替换上一轮剧情。
     const requestedTargetId=action==='regenerate'?text(options?.targetMessageId):'';
     const lockedTargetId=action==='regenerate'?(resolveRegenerationTarget(session,requestedTargetId)?.id||null):null;
-    const sourceBeforeReply=clone(session.messages);
-    let target=null;
+    sourceBeforeReply=clone(session.messages);
     if(action==='continue'){
       target=[...session.messages].reverse().find(m=>m.role==='assistant');
       if(!target)throw new ApiError('E_STORY_NO_ASSISTANT','还没有 Assistant（助手）回复，无法续写猫！',{hint:'先生成一条角色回复，再使用续写。'});
@@ -2193,28 +2214,52 @@
     }
     // 当前最后一轮还没有 assistant 时，“重说”退化为生成该轮回复；不会去覆盖上一轮 assistant。
     const promptAction=(action==='regenerate'&&!target)?'respond':action;
-    const opts=actionOptions(promptAction,userText,options);
+    opts=actionOptions(promptAction,userText,options);
     // Regeneration is an alternate completion of the *prior* transcript.
     // Do not let replaced text trigger lore, lexical retrieval or summaries.
     // Canonical session and its versions remain unchanged until settlement.
     const targetIndex=target&&action==='regenerate'?session.messages.findIndex(m=>m.id===target.id):-1;
     const promptSession=targetIndex>=0?normalizeSession({...session,messages:session.messages.slice(0,targetIndex),promptLineageProjection:true}):session;
-    let cfg=getApiConfig(),built=null,requestBody=null,snapshot=null;
+    // Reuse an exact hash only within this synchronous preparation. Canonical
+    // and replacement-prefix hashes remain distinct; no cross-turn cache.
+    canonicalFingerprint??=memorySourceFingerprint(session.messages,session.messages.length);
+    const sourceFingerprint=promptSession===session?canonicalFingerprint:memorySourceFingerprint(promptSession.messages,promptSession.messages.length);
+    cfg=getApiConfig();
     const originalSnapshot=retryPending?.snapshot||(action==='regenerate'&&target&&options.regenerationContext!=='current'?target.metadata?.generationSnapshot:null);
     if(originalSnapshot){
-      requestBody=restoreGenerationRequest(originalSnapshot,promptSession);snapshot=clone(originalSnapshot);
-      emitProgress(progress,{phase:'prompt_ready',percent:34,detail:retryPending?'重试原轮冻结请求，不重复玩家消息。':'使用原轮冻结上下文重新采样；旧回复与版本不进入请求。'});
+      requestBody=restoreGenerationRequest(originalSnapshot,promptSession,sourceFingerprint);snapshot=clone(originalSnapshot);
+      if(retryPending&&options.retryParameters==='current'){
+        // Only the explicitly selected transport parameters change. Lore,
+        // memory, presets and player text remain those of the frozen request.
+        const frozenMessages=requestBody.messages.map(m=>({role:m.role,content:m.content}));
+        requestBody=makeApiBody(frozenMessages,cfg,cfg.temperature??temp,{continuation:action==='continue'});
+        snapshot=generationSnapshot(session,promptSession,requestBody,originalSnapshot.messageSources,action,action==='continue'?target?.id:null,sourceFingerprint);
+      }
+      emitProgress(progress,{phase:'prompt_ready',percent:34,detail:retryPending?(options.retryParameters==='current'?'保留原轮冻结消息，使用当前 API 模型与参数重试；不重复玩家消息。':'按原模型和参数重试冻结请求；API 设置变更不会改变本次请求。'):'使用原轮冻结上下文重新采样；旧回复与版本不进入请求。'});
     }else{
       built=assemble(promptSession,opts);
       requestBody=makeApiBody(built.messages,cfg,temp,{continuation:action==='continue'});
-      snapshot=generationSnapshot(session,promptSession,requestBody,built.messageSources,action,action==='continue'?target?.id:null);
+      snapshot=generationSnapshot(session,promptSession,requestBody,built.messageSources,action,action==='continue'?target?.id:null,sourceFingerprint);
       const detail=action==='regenerate'&&target&&options.regenerationContext!=='current'?'旧记录没有请求快照，已明确使用当前挂载重建原轮。':action==='continue'?(cfg.continuationMode==='deepseek_prefix'?'按已声明的 prefix 协议请求续写。':'普通 Chat 后续 assistant 生成；接口未声明原文前缀补全，连续性由上下文和玩家预设决定。'):`Prompt（提示词）已组装 · ${requestBody.messages.length} 条消息`;
       emitProgress(progress,{phase:'prompt_ready',percent:34,detail});
     }
     cfg={...cfg,model:requestBody.model,stream:requestBody.stream===true,sendTemperature:Object.hasOwn(requestBody,'temperature'),maxTokens:requestBody.max_tokens||0};
-    const messages=requestBody.messages;
-    const pending={id:retryPending?.id||makeId('generation'),action,targetMessageId:target?.id||null,snapshot,canonicalFingerprint:memorySourceFingerprint(session.messages,session.messages.length),status:'prepared',attempt:(retryPending?.attempt||0)+1};
+    messages=requestBody.messages;
+    pending={id:retryPending?.id||makeId('generation'),action,targetMessageId:target?.id||null,snapshot,canonicalFingerprint,status:'prepared',attempt:(retryPending?.attempt||0)+1};
+    // The new player message and its frozen request share one CAS commit.
+    // Both are durable before fetch without rewriting the full library twice.
+    commitStarted=true;
     session=await saveSession({...session,pendingGeneration:pending});
+    if(unsavedUserInput){unsavedUserInput=false;emitProgress(progress,{phase:'saved_user',percent:38,detail:'主人消息与本轮请求已安全写入本地剧情。'});}
+    }catch(preparationError){
+      // Invalid presets/budget/assembly must not discard a submitted player
+      // message. A failed CAS is never retried against newer canonical data.
+      if(unsavedUserInput&&!commitStarted){
+        try{session=await saveSession(session);emitProgress(progress,{phase:'saved_user',percent:14,detail:'主人消息已保留；本轮请求准备失败，尚未发送。'});}
+        catch(storageError){console.error('请求准备失败且玩家消息保存失败；未覆盖新时间线',{sessionId:id,error:storageError});}
+      }
+      throw preparationError;
+    }
     const storyResultMeta={};
     // Diagnostics intentionally live outside state, local-store, History,
     // versions, rolling/core/fact memory and the backup/export contract.
@@ -2223,6 +2268,7 @@
     let diagnosticCandidate='';
     try{
     const replyRaw=await callModelWithConfig(messages,cfg,temp,signal,{onProgress:progress,resultMeta:storyResultMeta,requestBody,messageSources:snapshot.messageSources,
+      storyContext:{sessionId:id,generationId:pending.id,generationAttempt:pending.attempt,preparationElapsedMs:Date.now()-preparationStartedAt},
       onDiagnostic:event=>{if(diagnosticId)void journal.event(diagnosticId,event);}});
     if(signal?.aborted)throw new DOMException('生成已取消，结果未提交','AbortError');
     diagnosticCandidate=replyRaw;
@@ -2366,7 +2412,7 @@
       let m=path.match(/^\/sessions\/([^/]+)$/);if(m&&method==='GET'){const s=getSession(m[1]);return s?ok(s):fail('未找到剧本');}
       if(m&&method==='PATCH'){const s=getSession(m[1]);return s?ok(await saveSession({...s,...body,id:s.id,createdAt:s.createdAt})):fail('未找到剧本');}
       if(m&&method==='DELETE'){const before=state.sessions.length;state.sessions=state.sessions.filter(x=>x.id!==m[1]);await persist();return ok({deleted:state.sessions.length<before});}
-      m=path.match(/^\/sessions\/([^/]+)\/chat$/);if(m&&method==='POST')return ok(await processStoryTurn(m[1],body?.text,body?.action||'send',signal,body?.temperature,{directorNote:body?.directorNote||'',targetMessageId:body?.targetMessageId||null,diagnosticTurnId:body?.diagnosticTurnId||'',regenerationContext:body?.regenerationContext||'original'},progress));
+      m=path.match(/^\/sessions\/([^/]+)\/chat$/);if(m&&method==='POST')return ok(await processStoryTurn(m[1],body?.text,body?.action||'send',signal,body?.temperature,{directorNote:body?.directorNote||'',targetMessageId:body?.targetMessageId||null,diagnosticTurnId:body?.diagnosticTurnId||'',regenerationContext:body?.regenerationContext||'original',retryParameters:body?.retryParameters==='current'?'current':'original'},progress));
       m=path.match(/^\/sessions\/([^/]+)\/prompt-preview$/);if(m&&method==='POST')return ok(previewPrompt(m[1],body||{}));
       m=path.match(/^\/sessions\/([^/]+)\/opening$/);if(m&&method==='POST')return ok(await addOpening(m[1],body?.content||''));
       m=path.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)$/);if(m&&method==='PATCH')return ok(await editMessage(m[1],m[2],body?.content,{truncateAfter:!!body?.truncateAfter}));
