@@ -339,11 +339,10 @@
     return {active:true,reason:'keyword',hits};
   }
   function mountedWorldbooks(session){return arr(session.worldbookIds).map(getWorldbook).filter(w=>w&&w.enabled!==false);}
-  // Priority is a creative-rule precedence, not a provider weight. Lower
-  // numbers win conflicts. Render higher numbers first, then priority 0 last,
-  // so later same-role text does not immediately undermine the top rule.
-  // Stable ties retain the session's explicit mount order.
-  function sortedPresets(session){return arr(session.presetIds).map(getPreset).filter(p=>p&&p.enabled!==false).sort((a,b)=>Number(b.priority??50)-Number(a.priority??50));}
+  // Priority determines sending order: lower numbers first, including 0.
+  // Equal priorities retain this session's mount order. This does not assign
+  // provider weights or automatically resolve conflicts in free-text rules.
+  function sortedPresets(session){return arr(session.presetIds).map(getPreset).filter(p=>p&&p.enabled!==false).sort((a,b)=>Number(a.priority??50)-Number(b.priority??50));}
   function collectWorldbookEntries(session){const matched=[],skipped=[];for(const book of mountedWorldbooks(session)){for(const entry of arr(book.entries)){const activation=entryActivation(entry,session),item={book,entry,activation};(activation.active?matched:skipped).push(item);}}matched.sort((a,b)=>Number(a.entry.depth||0)-Number(b.entry.depth||0)||Number(a.entry.priority??50)-Number(b.entry.priority??50));return {matched,skipped};}
   function formatMask(mask,kind){if(!mask)return'';const blocks=[`【${kind==='user'?'当前玩家 Persona':'当前角色 Persona'}：${mask.name}】`];if(mask.description)blocks.push(`简介：${mask.description}`);
     // normalizeMask intentionally keeps legacy content = description fallback.
@@ -356,7 +355,7 @@
     const middle=matched.filter(x=>Number(x.entry.depth||0)===0&&x.entry.position==='middle');
     const back=matched.filter(x=>Number(x.entry.depth||0)===0&&x.entry.position==='back');
     const chunks=[],sections=[];const add=(name,content,source={})=>{const resolved=String(resolveMacrosForSession(session,content)??'');if(!resolved.trim())return;chunks.push(resolved);sections.push({name,chars:resolved.length,content:resolved,source:{kind:name.includes('memory')||name.includes('summary')?'memory':name.startsWith('worldbook')?'world_info':name.includes('persona')?'persona':name==='director_note'?'director_note':'player_material',sourceId:name,section:name,...source}});};
-    const ps=sortedPresets(session);for(const preset of ps)add('presets',preset.content,{kind:'preset',sourceId:preset.id,resourceId:preset.id,name:preset.name});
+    const ps=sortedPresets(session);for(const preset of ps)add('presets',preset.content,{kind:'preset',sourceId:preset.id,resourceId:preset.id,name:preset.name,priority:preset.priority});
     add('worldbook_front',joinWb(front,'System Front'),{sourceId:front.map(x=>x.entry.id).join(','),resourceId:front.map(x=>x.book.id).join(',')});
     if(session.loadedUserMaskId)add('user_persona',formatMask(enabledMask(session.loadedUserMaskId),'user'),{sourceId:session.loadedUserMaskId,resourceId:session.loadedUserMaskId});
     if(session.loadedCharMaskId)add('character_persona',formatMask(enabledMask(session.loadedCharMaskId),'character'),{sourceId:session.loadedCharMaskId,resourceId:session.loadedCharMaskId});
@@ -584,6 +583,8 @@
     const ordered=[...sections,...depthApplied.messages];
     const messages=ordered.map(({role,content})=>({role,content}));
     const messageSources=ordered.map(x=>x.source||{kind:'canonical_history'});
+    for(const row of presetTrace){const index=messageSources.findIndex(x=>x.kind==='preset'&&x.sourceId===row.id);row.sendIndex=index<0?null:index+1;row.injected=index>=0;}
+    presetTrace.sort((a,b)=>(a.sendIndex??Number.MAX_SAFE_INTEGER)-(b.sendIndex??Number.MAX_SAFE_INTEGER));
     const header=sections.map(x=>x.content).join('\n\n');
     const estimatedInputTokens=messages.reduce((sum,m)=>sum+estimateTokens(m?.content||''),0);
     if(promptCap.verified&&estimatedInputTokens>promptCap.usable)throw new ApiError('E_CONTEXT_BUDGET','上下文检索结果超过已配置的模型预算，已中止发送但保留全部资料。',{details:JSON.stringify({estimatedInputTokens,promptCap,trace})});
@@ -896,12 +897,16 @@
       providerRequestId:safeId(res.headers?.get?.('x-request-id')||res.headers?.get?.('request-id')),cfRay:safeId(res.headers?.get?.('cf-ray'))};
     try{options.onDiagnostic?.({type:'transport_response',...responseTiming});}catch(e){console.error('诊断事件回调失败；真实响应继续解析',e);}
     if(!res.ok){
+      const responseBodyStartedAt=Date.now();
       let data={};try{data=await (res.clone?res.clone():res).json()}catch(_){}
       const err=data?.error&&typeof data.error==='object'?data.error:{};
       const field=value=>typeof value==='string'||typeof value==='number'?String(value).slice(0,200):null;
-      const providerError={type:field(err.type),code:field(err.code),param:field(err.param),requestId:safeId(err.request_id||data?.request_id)};
-      const problem=httpApiError(res.status,err.message||data?.message||`API 请求失败 HTTP ${res.status}`);
-      problem.details=diagnostic({errorSource:'http',...responseTiming,providerError,responseBodyElapsedMs:Date.now()-fetchStartedAt,responseShape:Object.keys(data||{}).slice(0,20)});throw problem;
+      const message=err.message||data?.message||`API 请求失败 HTTP ${res.status}`;
+      const messageRequestId=typeof message==='string'?message.match(/\(request id:\s*([A-Za-z0-9_.:-]{1,200})\)\s*$/i)?.[1]:null;
+      const providerError={type:field(err.type),code:field(err.code),param:field(err.param),requestId:safeId(err.request_id||data?.request_id||messageRequestId)};
+      const problem=httpApiError(res.status,message);
+      if(err.code==='model_not_found'&&/No available channel for model/i.test(String(message)))problem.hint='中转报告当前模型在该分组下没有可用渠道。请中转管理员按上游 request id 核查模型映射与渠道状态；连续重试同一路由无法修复渠道配置。';
+      problem.details=diagnostic({errorSource:'http',...responseTiming,providerError,responseBodyElapsedMs:Date.now()-responseBodyStartedAt,responseShape:Object.keys(data||{}).slice(0,20)});throw problem;
     }
     const contentType=String(res.headers?.get?.('content-type')||'').toLowerCase();
     if(streamEnabled&&!/application\/json/i.test(contentType)){
