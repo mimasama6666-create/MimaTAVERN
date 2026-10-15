@@ -157,7 +157,7 @@ async function refreshSourceList(){
   const row=el('details',{},box);el('summary',{text:`${item.filename} · SHA256 ${item.sha256.slice(0,16)}`},row);
   el('button',{text:'原样导出',onclick:()=>download(item.filename,new Blob([item.bytes],{type:'application/octet-stream'}),'application/octet-stream')},row);
   if(!active||item.id===active.sourceId)continue;
-  for(const res of allResources.filter(x=>x.sourceId===item.id&&['world_info','regex','preset','prompt_presets','css','html_template','media','script_source'].includes(x.kind))){
+  for(const res of allResources.filter(x=>x.sourceId===item.id&&['world_info','regex','preset','prompt_presets','css','html_template','media','script_source','quick_reply'].includes(x.kind))){
    const line=el('div',{className:'compat-line'},row);
    const mount=(active.mountGraph||[]).find(m=>m.resourceId===res.id);
    el('span',{text:`${res.kind} · ${res.name} · 来源 ${res.path} · ${mount?'已挂载（不等于验证可运行）':'可手动挂载'}`},line);
@@ -211,7 +211,7 @@ async function refreshSessionList(){const generation=sessionGeneration,ses=await
 const shortcuts=$('compat-continue-list');if(shortcuts){clear(shortcuts);if(ses.length){el('span',{className:'compat-eyebrow',text:'继续上次的故事'},shortcuts);for(const item of ses.slice().sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))).slice(0,4)){const row=el('div',{className:'compat-library-row'},shortcuts);el('span',{className:'compat-story-monogram',text:(item.title||'故').slice(0,1)},row);el('strong',{text:item.title||'未命名剧情'},row);el('button',{text:'继续故事',onclick:()=>loadSession(item.id)},row);}}}
 const libraryList=$('compat-library-sessions');if(libraryList){clear(libraryList);$('compat-library-all').hidden=ses.length<=4;for(const item of ses){const row=el('div',{className:'compat-library-row'},libraryList);el('span',{text:item.title||'未命名剧情'},row);el('button',{text:'继续故事',onclick:()=>loadSession(item.id)},row);}}
 for(const item of ses){const row=el('div',{className:'compat-line'},box);el('span',{text:item.title+(item.parentSessionId?' · 剧情分支':' · 独立剧情')+(item.pendingTurnId?' · 存在未结算回合':'')},row);el('button',{text:'进入',onclick:()=>loadSession(item.id)},row);if(item.id===activeId){await showTurnControls(item.id,box);if(generation!==sessionGeneration)return;}}}
-async function loadSessionData(id){$('compat-lab').classList.add('in-chat');const generation=++sessionGeneration;if(activeId!==id){const drawer=$('compat-game-drawer');if(drawer){drawer.open=false;$('compat-manage-toggle')?.setAttribute('aria-expanded','false');}selectedMvuTemplate=null;const preview=$('compat-mvu-template-output');if(preview)preview.replaceChildren();root.MimaCompatPlugins?.unmountAll();if($('compat-stscript-input'))$('compat-stscript-input').value='';if($('compat-stscript-result'))$('compat-stscript-result').textContent='已切换剧情：请手动填写并检查本剧情的脚本。';}activeId=id;refreshSendAvailability();const ses=await r().getSession(id);if(generation!==sessionGeneration)return;$('compat-wi-budget').value=String(ses.worldInfoBudget??16000);$('compat-wi-depth').value=String(ses.worldInfoScanDepth??100);$('compat-wi-recursive').checked=ses.worldInfoRecursiveScan!==false;$('compat-wi-recursion-steps').value=String(ses.worldInfoMaxRecursionSteps??6);$('compat-wi-local-advanced').checked=ses.worldInfoLocalAdvancedRules===true;$('compat-preset-history-slot').checked=ses.experimentalChatHistorySlot===true;$('compat-complete-html').checked=ses.outputContract?.completeHtml===true;$('compat-author-note').value=ses.authorNote?.content||'';$('compat-author-note-depth').value=ses.authorNote?.depth??0;$('compat-persona-description').value=String(ses.personaDescription||'');$('compat-current').textContent=`咪嘛馆兼容引擎 · ${ses.title}`;$('compat-conversation').hidden=false;await refreshSessionList();if(generation!==sessionGeneration)return;await refreshSourceList();if(generation!==sessionGeneration)return;await refreshMessages();if(generation!==sessionGeneration)return;await refreshMountStatus(id,generation);if(generation!==sessionGeneration)return;await refreshExtensionUI();if(generation!==sessionGeneration)return;await inspectPreview();root.MimaCompatPlugins?.publish?.(id,'session.mounted',{sessionId:id},'session.mounted:'+id+':'+generation)?.catch(e=>messageFor(id,generation,'插件会话事件失败：'+e.message,'error'));}
+async function loadSessionData(id){$('compat-lab').classList.add('in-chat');const generation=++sessionGeneration;if(activeId!==id){const drawer=$('compat-game-drawer');if(drawer){drawer.open=false;$('compat-manage-toggle')?.setAttribute('aria-expanded','false');}selectedMvuTemplate=null;const preview=$('compat-mvu-template-output');if(preview)preview.replaceChildren();root.MimaCompatPlugins?.unmountAll();root.MimaAuthorHost?.unmountAll('已离开当前故事；已提交变量保留');if($('compat-stscript-input'))$('compat-stscript-input').value='';if($('compat-stscript-result'))$('compat-stscript-result').textContent='已切换剧情：请手动填写并检查本剧情的脚本。';}activeId=id;refreshSendAvailability();const ses=await r().getSession(id);if(generation!==sessionGeneration)return;$('compat-wi-budget').value=String(ses.worldInfoBudget??16000);$('compat-wi-depth').value=String(ses.worldInfoScanDepth??100);$('compat-wi-recursive').checked=ses.worldInfoRecursiveScan!==false;$('compat-wi-recursion-steps').value=String(ses.worldInfoMaxRecursionSteps??6);$('compat-wi-local-advanced').checked=ses.worldInfoLocalAdvancedRules===true;$('compat-preset-history-slot').checked=ses.experimentalChatHistorySlot===true;$('compat-complete-html').checked=ses.outputContract?.completeHtml===true;$('compat-author-note').value=ses.authorNote?.content||'';$('compat-author-note-depth').value=ses.authorNote?.depth??0;$('compat-persona-description').value=String(ses.personaDescription||'');$('compat-current').textContent=`咪嘛馆兼容引擎 · ${ses.title}`;$('compat-conversation').hidden=false;await refreshSessionList();if(generation!==sessionGeneration)return;await refreshSourceList();if(generation!==sessionGeneration)return;await refreshMessages();if(generation!==sessionGeneration)return;await refreshMountStatus(id,generation);if(generation!==sessionGeneration)return;await refreshExtensionUI();if(generation!==sessionGeneration)return;await inspectPreview();root.MimaCompatPlugins?.publish?.(id,'session.mounted',{sessionId:id},'session.mounted:'+id+':'+generation)?.catch(e=>messageFor(id,generation,'插件会话事件失败：'+e.message,'error'));}
 // The optional MVU template belongs in the story flow, after the current
 // assistant reply, not in a separate status card above the chat.
 function paintMvuTemplate(sessionId,verified,target,css,theme,renderTicket){
@@ -440,6 +440,7 @@ async function mountStyle(resourceId){const ses=await r().getSession(activeId),r
 async function disableStyle(){const ses=await r().getSession(activeId);await s().putCAS('compat_sessions',{...ses,styleResourceId:null},ses.revision);await refreshMessages();message('已取消手动 CSS 指定，恢复卡片原始启用的安全 CSS（若有）；剧情原文未变。');}
 function standalonePluginSource(resource){const v=resource.raw;const sources=Array.isArray(v)?v:[v];return sources.map((x,index)=>({label:String(x?.name||x?.scriptName||('脚本 '+(index+1))),code:typeof x==='string'?x:(x?.script||x?.code||x?.content||'')})).filter(x=>typeof x.code==='string'&&x.code.length>0);}
 async function refreshExtensionUI(){const owner=activeId,generation=sessionGeneration;if(!owner)return;
+root.MimaAuthorHost?.unmountAll('扩展面板重新载入，作者脚本已停止；已提交变量保留');
 const ses=await r().getSession(owner);if(activeId!==owner||sessionGeneration!==generation)return;
 const assets=await r().resourcesFor(ses);if(activeId!==owner||sessionGeneration!==generation)return;
 const target=$('compat-plugins'),cssList=$('compat-css-list'),preview=$('compat-html-preview');clear(target);clear(cssList);clear(preview);for(const res of assets.filter(x=>x.kind==='css')){const row=el('div',{className:'compat-line'},cssList);el('span',{text:res.name+' · 安全 CSS 可在隔离 HTML 内生效（不执行 JS）'},row);el('button',{text:ses.styleResourceId===res.id?'已挂载':'手动启用局部 CSS',onclick:()=>mountStyle(res.id).catch(e=>message(e.message,'error'))},row);}if(ses.styleResourceId)el('button',{text:'卸载当前 CSS',onclick:()=>disableStyle().catch(e=>message(e.message,'error'))},cssList);
@@ -496,7 +497,16 @@ async function startPlugin(mode){const launchOwner=owner,launchGeneration=genera
 el('button',{text:'明确授权并运行 Worker 脚本',onclick:()=>startPlugin('worker').catch(e=>message((e.code||'E_PLUGIN')+': '+e.message,'error'))},row);
 el('button',{text:'试运行隔离可视化界面（需 ui.mount）',onclick:()=>startPlugin('visual').catch(e=>message((e.code||'E_PLUGIN')+': '+e.message,'error'))},row);
 el('button',{text:'撤销并卸载',onclick:async()=>{try{await root.MimaCompatPlugins.revoke(ses.id,hash);frame.hidden=true;visualFrame.hidden=true;slot.replaceChildren();message('已撤销当前脚本授权和 iframe。');}catch(e){message(e.message,'error');}}},row);
-}}
+}
+if(root.MimaCompatQuickReply)await root.MimaCompatQuickReply.render(ses,assets,$('compat-quick-replies'),target,{
+ live:()=>opened&&$('compat-lab').classList.contains('in-chat')&&activeId===owner&&sessionGeneration===generation,
+ isBusy:()=>busySessions.has(owner),getDraft:()=>$('compat-input').value,onFill:text=>{$('compat-input').value=text;$('compat-input').focus();},onSend:send,
+ getContext:async()=>{const session=await r().getSession(owner),card=await s().get('resource_ir',session.characterResourceId);return {char:card?.raw?.nickname||card?.raw?.name||'角色',user:session.userName||'玩家'};},
+ onRun:async source=>{$('compat-stscript-input').value=source;$('compat-stscript-panel').open=true;openSheet('settings');await manualSTscript(false);},onMessage:(text,kind)=>messageFor(owner,generation,text,kind)
+});
+if(root.MimaAuthorUI)await root.MimaAuthorUI.render(ses,assets,target,{live:()=>opened&&$('compat-lab')?.classList.contains('in-chat')&&activeId===owner&&sessionGeneration===generation,onMessage:(text,kind)=>messageFor(owner,generation,text,kind)});
+else el('p',{text:'作者交互组件未加载；旧脚本模式仍保留。'},target);
+}
 async function saveWorldInfoScanDepth(){
  if(!activeId)return;
  const sessionId=activeId,field=$('compat-wi-depth'),button=$('compat-wi-save'),raw=field.value.trim();
@@ -545,7 +555,7 @@ async function send(){
      }
    }
    const response=await r().send(sessionId,input,{basicRoleplay:!strict,strictCompat:strict,acceptGaps:false,onDiagnostic:actualRequestView(sessionId,generation)});
-   if(activeId===sessionId&&sessionGeneration===generation){$('compat-input').value='';await refreshMessages();const trigger=response.envelope?.worldInfo;
+   if(activeId===sessionId&&sessionGeneration===generation){if($('compat-input').value===input)$('compat-input').value='';await refreshMessages();const trigger=response.envelope?.worldInfo;
      $('compat-gap').textContent=trigger?`本轮实际加入 ${trigger.inserted.length} 条世界设定；${trigger.skipped.length} 条未触发或未适配。高级效果差异 ${response.envelope.gaps.length} 项，不会自动执行不可信脚本。`:'回复已保存。';
    }
    messageFor(sessionId,generation,'角色已回复，剧情记录已保存到当前浏览器。');
@@ -556,7 +566,7 @@ async function manualSTscript(dryRun=false){
  const sessionId=activeId,generation=sessionGeneration;
  const result=$('compat-stscript-result'),source=$('compat-stscript-input')?.value||'';
  if(!sessionId){result.textContent='请先进入兼容剧情';return;}
- const button=$('compat-stscript-run');if(button?.disabled)return;
+ const button=$('compat-stscript-run');if(button?.disabled)return;let actionStarted=false;
  try{
   const engine=root.MimaCompatSTscript;
   if(!engine)throw new Error('STscript 模块未加载');
@@ -569,12 +579,13 @@ async function manualSTscript(dryRun=false){
   const card=await s().get('resource_ir',session.characterResourceId);
   if(activeId!==sessionId||sessionGeneration!==generation)return;
   const name=card?.raw?.nickname||card?.raw?.name||'角色';
-  const output=await engine.execute(sessionId,source,{char:name,user:session.userName||'玩家'});
+  if(!beginSessionAction(sessionId))throw new Error('当前故事有操作正在执行');actionStarted=true;
+  const output=await engine.execute(sessionId,source,{char:name,user:session.userName||'玩家'},{live:()=>opened&&$('compat-lab').classList.contains('in-chat')&&activeId===sessionId&&sessionGeneration===generation});
   if(activeId===sessionId&&sessionGeneration===generation){
    result.textContent='执行 '+(output.aborted?'中止':'完成')+'；'+(output.committed?'变量事务已提交，修订 '+output.revision:'没有变量写入')+'。\n输出：\n'+(output.logs.join('\n')||'(无)')+'\n管道结果：'+String(typeof output.pipe==='string'?output.pipe:JSON.stringify(output.pipe));
   }
  }catch(e){if(activeId===sessionId&&sessionGeneration===generation)result.textContent=(e.code||'E_STSCRIPT')+': '+e.message+'；未报告任何假成功。';}
- finally{if(button)button.disabled=false;}
+ finally{if(actionStarted)endSessionAction(sessionId);if(button)button.disabled=false;}
 }
 async function exportCompat(){try{const snapshot=await s().snapshot();download('咪嘛馆-兼容资料-哈希备份.json',await s().packBackup(snapshot));message('已导出兼容资料（包含原始卡片与兼容剧情，不包含原生账户密钥）。');}catch(e){message('备份失败，未生成假文件：'+e.message,'error');}}
 async function exportBoth(){try{const a=await s().snapshot(),native=await root.MimaStandalone.exportLibrary();root.MimaStandalone.validateLibrary(native);const again=await s().snapshot();const revisionList=o=>JSON.stringify(Object.fromEntries(s().STORES.map(name=>[name,o.records[name].map(x=>[x.id,x.revision??null]).sort((a,b)=>String(a[0]).localeCompare(String(b[0])))])));const first=revisionList(a),second=revisionList(again);if(first!==second)throw new Error('兼容库资源/会话/消息或权限修订版在快照过程中改变，请重试');const nativeAgain=await root.MimaStandalone.exportLibrary();if(native.storeRevision!==nativeAgain.storeRevision)throw new Error('原生库在快照过程中改变，请重试');const manifest={nativeSha256:await i().digest(new TextEncoder().encode(JSON.stringify(native))),compatSha256:await i().digest(new TextEncoder().encode(s().jsonify(a)))};const envelope={contractRevision:2,label:'non-atomic-dual-snapshot',nativeRevision:native.storeRevision,manifest,compat:a,native};download('咪嘛馆-双库完整备份.json',s().jsonify(envelope));message('双库数据已导出；浏览器两库无法原子同时提交，已对可见修订进行复核。');}catch(e){message('完整备份失败：'+e.message,'error');}}
@@ -601,18 +612,20 @@ async function restoreCompat(apply=false){
 
 async function nativeAudio(file){try{if(player){player.pause();player.remove();player=null;}for(const uri of assetUrls)URL.revokeObjectURL(uri);assetUrls=[];const uri=URL.createObjectURL(file);assetUrls.push(uri);player=el('audio',{controls:'',preload:'none'},$('compat-media'));player.src=uri;await player.play();message('已由用户手势启动当前剧情的本地音频。');}catch(e){message('媒体播放需要用户手势或此格式不受浏览器支持：'+e.message,'error');}}
 function stopMedia(){if(player){player.pause();player.remove();player=null;}for(const uri of assetUrls)URL.revokeObjectURL(uri);assetUrls=[];}
-function close(){closeSheet();if(activeId)storyDrafts.set(activeId,$('compat-input').value);if(unsubscribeLiveSync){unsubscribeLiveSync();unsubscribeLiveSync=null;}++sessionGeneration;opened=false;clearMvuTemplate();if(cardPreviewUrl){URL.revokeObjectURL(cardPreviewUrl);cardPreviewUrl='';}$('compat-lab').classList.add('hidden');$('compat-lab').classList.remove('in-chat');stopMedia();root.MimaCompatPlugins?.unmountAll();}
+function close(){closeSheet();if(activeId)storyDrafts.set(activeId,$('compat-input').value);if(unsubscribeLiveSync){unsubscribeLiveSync();unsubscribeLiveSync=null;}++sessionGeneration;opened=false;clearMvuTemplate();if(cardPreviewUrl){URL.revokeObjectURL(cardPreviewUrl);cardPreviewUrl='';}$('compat-lab').classList.add('hidden');$('compat-lab').classList.remove('in-chat');stopMedia();root.MimaCompatPlugins?.unmountAll();root.MimaAuthorHost?.unmountAll('已离开当前故事；已提交变量保留');}
 function open(){opened=true;listenLiveSync();$('compat-lab').classList.remove('hidden');showLibrary();root.closeDrawer?.();Promise.all([refreshSourceList(),refreshSessionList()]).catch(e=>message('兼容库读取失败，禁止假装无数据：'+e.message,'error'));}
 async function openWithFile(file){if(!file||typeof file.arrayBuffer!=='function')throw new Error('选中的原始角色卡已不可用，请重新选择');open();await doImport(file);}
 function closeSheet(){const sheet=$('compat-sheet');if(sheet?.open)sheet.close();const drawer=$('compat-game-drawer');if(drawer)drawer.open=false;$('compat-manage-toggle')?.setAttribute('aria-expanded','false');}
 function selectPane(pane){sheetPane=['character','effects','settings','archive'].includes(pane)?pane:'effects';for(const button of document.querySelectorAll('[data-compat-pane]')){const selected=button.dataset.compatPane===sheetPane;button.setAttribute('aria-selected',String(selected));button.tabIndex=selected?0:-1;}for(const section of document.querySelectorAll('.compat-sheet-pane'))section.hidden=section.id!=='compat-pane-'+sheetPane;}
 function openSheet(pane='effects'){if(!activeId)return;selectPane(pane);const sheet=$('compat-sheet');if(!sheet.open)sheet.showModal();$('compat-game-drawer').open=true;$('compat-manage-toggle').setAttribute('aria-expanded','true');}
 function toggleManage(){if($('compat-sheet')?.open)closeSheet();else openSheet('effects');}
-function showLibrary(){if(activeId)storyDrafts.set(activeId,$('compat-input').value);closeSheet();$('compat-lab').classList.remove('in-chat');$('compat-head-title').textContent='酒馆游玩版';$('compat-head-subtitle').textContent='打开一个故事，慢慢读下去。';$('compat-head-avatar').replaceChildren(document.createTextNode('馆'));const notice=$('compat-notice');if(notice)$('compat-import-panel').append(notice);}
+function showLibrary(){root.MimaAuthorHost?.unmountAll('已返回故事库；已提交变量保留');if(activeId)storyDrafts.set(activeId,$('compat-input').value);closeSheet();$('compat-lab').classList.remove('in-chat');$('compat-head-title').textContent='酒馆游玩版';$('compat-head-subtitle').textContent='打开一个故事，慢慢读下去。';$('compat-head-avatar').replaceChildren(document.createTextNode('馆'));const notice=$('compat-notice');if(notice)$('compat-import-panel').append(notice);}
 async function loadSession(id){
  if(activeId)storyDrafts.set(activeId,$('compat-input').value);closeSheet();
- const loading=loadSessionData(id),generation=sessionGeneration;await loading;if(activeId!==id||sessionGeneration!==generation)return;
+ // Restore the target draft before making the reader interactive. A delayed
+ // source/preview load must never overwrite text entered in the meantime.
  $('compat-input').value=storyDrafts.get(id)||'';
+ const loading=loadSessionData(id),generation=sessionGeneration;await loading;if(activeId!==id||sessionGeneration!==generation)return;
  const session=await r().getSession(id);if(activeId!==id||sessionGeneration!==generation)return;
  if(session.turnIndex===0){followLatest=false;$('compat-messages').scrollTop=0;syncLatestButton();}
  await refreshCharacterInfo(id,sessionGeneration);if(activeId!==id)return;
@@ -630,19 +643,19 @@ async function refreshCharacterInfo(id,generation){
  const full=el('details',{className:'compat-info-section'},target);el('summary',{text:'完整人物与原始资源'},full);full.addEventListener('toggle',()=>{if(full.open&&!full.querySelector('pre'))el('pre',{text:JSON.stringify(data,null,2)},full);else if(!full.open)full.querySelector('pre')?.remove();});
  if(capsule)el('button',{type:'button',text:'导出原始角色卡',onclick:()=>download(capsule.filename,new Blob([capsule.bytes],{type:'application/octet-stream'}),'application/octet-stream')},target);
  const matrix=el('details',{className:'compat-info-section'},target);el('summary',{text:'这张卡的兼容能力'},matrix);
- for(const [name,state]of[['人物 / 开场 / 原始资源','可读取与查看'],['世界书 / 预设','按已实现的触发与插槽生成'],['正则 / HTML / 安全 CSS','支持本地测试与隔离显示'],['MVU','声明式初值与更新；复杂 Zod 未完整实现'],['Tavern Helper / 作者 JS','仍是授权沙箱子集，原版宿主 API 未齐备']]){const row=el('div',{className:'compat-capability-row'},matrix);el('strong',{text:name},row);el('small',{text:state},row);}
+ for(const [name,state]of[['人物 / 开场 / 原始资源','可读取与查看'],['世界书 / 预设','按已实现的触发与插槽生成'],['正则 / HTML / 安全 CSS','支持本地测试与隔离显示'],['MVU','声明式初值与更新；完整原版写入协议尚未接管'],['Tavern Helper / 作者 JS','授权消息/变量/事件、离线 jQuery/lodash/Vue/Zod 与本地模块；其它接口需适配']]){const row=el('div',{className:'compat-capability-row'},matrix);el('strong',{text:name},row);el('small',{text:state},row);}
 }
 async function importResource(file,ticket={id:activeId,generation:sessionGeneration}){
  if(!ticket.id)throw new Error('请先进入一个故事，再导入外部资源');
  const imported=await i().inspect(file);if(activeId!==ticket.id||sessionGeneration!==ticket.generation)throw new Error('读取资源期间已切换故事，本次未挂载');
- const allowed=new Set(['regex','world_info','preset','prompt_presets']);if(!imported.resources.length||imported.resources.some(resource=>!allowed.has(resource.kind)))throw Object.assign(new Error('此入口只挂载正则、世界书和预设 JSON；角色卡请从故事页选择，脚本请使用授权入口。'),{code:'E_RESOURCE_IMPORT_KIND'});
+ const allowed=new Set(['regex','world_info','preset','prompt_presets','quick_reply','script_source']);if(!imported.resources.length||imported.resources.some(resource=>!allowed.has(resource.kind)))throw Object.assign(new Error('此入口支持正则、世界书、预设、Quick Reply v2 和作者脚本 JSON；角色卡请从故事页选择。脚本导入后仍需单独授权。'),{code:'E_RESOURCE_IMPORT_KIND'});
  const capsule={sha256:imported.sha256,filename:imported.filename,format:imported.format,bytes:imported.bytes,versions:imported.versions,warnings:imported.warnings};
  const regexOnly=imported.resources.every(resource=>resource.kind==='regex');
  const receipt=await (regexOnly?s().importRegexSource(capsule,imported.resources):s().importSource(capsule,imported.resources));
  if(receipt.projectionChanged)throw Object.assign(new Error('此来源的旧投影与新版解析不同，已保留原数据；未挂载不一致的资源。'),{code:'E_RESOURCE_PROJECTION_STALE'});
  const resources=await s().byIndex('resource_ir','sourceId',receipt.id),ids=receipt.resourceIds||resources.filter(x=>allowed.has(x.kind)).map(x=>x.id);
  for(const resourceId of ids){if(activeId!==ticket.id||sessionGeneration!==ticket.generation)throw new Error('故事已切换，剩余资源未挂载；已保存来源保持可查看');const session=await r().getSession(ticket.id);if(session.sourceId!==receipt.id&&!session.mountGraph?.some(m=>m.resourceId===resourceId))await r().mountResource(ticket.id,resourceId);}
- if(activeId===ticket.id&&sessionGeneration===ticket.generation){await refreshSourceList();await refreshMessages();await refreshMountStatus(ticket.id,ticket.generation);await inspectPreview();messageFor(ticket.id,ticket.generation,'已挂载 '+ids.length+' 项外部资料。正则可在这里开关、排序和本地测试；原始来源完整保留。');}
+ if(activeId===ticket.id&&sessionGeneration===ticket.generation){await refreshSourceList();await refreshMessages();await refreshMountStatus(ticket.id,ticket.generation);await refreshExtensionUI();await inspectPreview();messageFor(ticket.id,ticket.generation,'已挂载 '+ids.length+' 项外部资料。正则、快捷回复与作者脚本可在对应工具中配置；导入不自动运行脚本，原始来源完整保留。');}
  return{resourceIds:ids};
 }
 function setupPlaySheet(){
@@ -695,7 +708,7 @@ async function refreshMountStatus(sessionId,generation){
   if(activeId!==sessionId||sessionGeneration!==generation)return;
   clear(status);
   const counts={};for(const resource of resources)counts[resource.kind]=(counts[resource.kind]||0)+1;
-  const byKind=[['character','人物设定'],['world_info','世界书'],['preset','预设'],['prompt_presets','预设资料'],['regex','显示正则'],['variable_schema','MVU 资料'],['html_template','HTML 模板'],['script_source','插件脚本'],['css','CSS']];
+  const byKind=[['character','人物设定'],['world_info','世界书'],['preset','预设'],['prompt_presets','预设资料'],['regex','显示正则'],['variable_schema','MVU 资料'],['html_template','HTML 模板'],['script_source','插件脚本'],['quick_reply','快捷回复'],['css','CSS']];
   el('strong',{text:'当前剧情资源实际绑定 · '+resources.length+' 项'},status);
   el('small',{text:'以下列出已绑定资源，不代表本轮全部触发。原卡声明启用的安全 CSS 会用于隔离 HTML 状态栏，插件脚本仍需单独授权。'},status);
   const list=el('div',{className:'compat-mount-grid'},status);

@@ -101,7 +101,19 @@ function evaluate(program,starting={},context={}){
  }
  return Object.freeze({pipe,logs,variables:vars,changed,aborted,steps:program.length});
 }
-async function execute(sessionId,source,context={}){
+async function persist(session,old,record,live){
+ const db=await root.MimaCompatStore.open();return new Promise((resolve,reject)=>{
+  const tx=db.transaction(['compat_sessions','variables'],'readwrite'),ss=tx.objectStore('compat_sessions'),vs=tx.objectStore('variables');let current,previous,remaining=2,result,issue;
+  const bad=e=>{issue=e;try{tx.abort();}catch(_){}};
+  const ready=()=>{if(--remaining)return;try{
+   if(!live()||!current||current.revision!==session.revision||current.pendingTurnId||(previous?.revision??null)!==(old?.revision??null))throw err('E_CANONICAL_CONFLICT','脚本执行时故事、变量或页面已变化，整批未保存');
+   result={...record,revision:(old?.revision||0)+1};vs.put(result);ss.put({...current,revision:current.revision+1});
+  }catch(e){bad(e);}};
+  const a=ss.get(session.id),b=vs.get(record.id);a.onsuccess=()=>{current=a.result;ready();};b.onsuccess=()=>{previous=b.result;ready();};a.onerror=()=>bad(a.error);b.onerror=()=>bad(b.error);
+  tx.oncomplete=()=>{db.close();resolve(result);};tx.onabort=()=>{db.close();reject(issue||tx.error);};
+ });
+}
+async function execute(sessionId,source,context={},options={}){
  if(typeof sessionId!=='string'||!sessionId.trim())throw err('E_STSCRIPT_NO_SESSION','需要选择兼容剧情');
  const program=compile(source),store=root.MimaCompatStore;
  if(!store?.get||!store?.putCAS)throw err('E_STORE_UNVERIFIED','兼容库不可用');
@@ -109,6 +121,7 @@ async function execute(sessionId,source,context={}){
  try{
   const session=await store.get('compat_sessions',sessionId);
   if(!session||session.id!==sessionId)throw err('E_STORE_UNVERIFIED','兼容剧情未经过验证');
+  const live=options.live||(()=>true);if(typeof live!=='function'||!live()||session.pendingTurnId)throw err('E_STSCRIPT_BUSY','故事正在生成或脚本页面已失效');
   const id=sessionId+':__stscript_local_v1',old=await store.get('variables',id);
   if(old&&(old.sessionId!==sessionId||old.namespace!=='stscript'||old.id!==id||!Number.isInteger(old.revision)))throw err('E_STORE_UNVERIFIED','脚本变量来源与剧情不一致');
   const result=evaluate(program,old?.value||{},context);
@@ -116,7 +129,7 @@ async function execute(sessionId,source,context={}){
   const record={id,sessionId,namespace:'stscript',value:result.variables,updatedAt:new Date().toISOString()};
   // Store version is checked by IndexedDB in the SAME write transaction.
   // Any other tab's conflicting edit rejects the entire batch.
-  const saved=await store.putCAS('variables',record,old?.revision??null);
+  const saved=await persist(session,old,record,live);
   return {...result,committed:true,revision:saved.revision};
  }finally{active.delete(sessionId);}
 }

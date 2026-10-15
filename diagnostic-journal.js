@@ -49,7 +49,7 @@
          const req=data.request||{},safe={model:String(req.model??''),messages:Array.isArray(req.messages)?req.messages.map(m=>({role:String(m.role??''),content:String(m.content??''),...(m.prefix===true?{prefix:true}:{})})):[]};
          for(const key of ['stream','temperature','max_tokens'])if(Object.hasOwn(req,key))safe[key]=req[key];
          // Exact protocol body, plus source metadata outside the messages. No credentials or headers.
-         const sourceKeys=['kind','sourceId','messageId','resourceId','name','section','path','slot','declaredRole','originalRole','depth','position','priority','positionAdaptation'];
+         const sourceKeys=['kind','sourceId','messageId','resourceId','name','section','path','slot','declaredRole','originalRole','depth','position','priority','positionAdaptation','authorVariables'];
          row.messageSources=Array.isArray(data.messageSources)?data.messageSources.map(source=>Object.fromEntries(sourceKeys.filter(key=>Object.hasOwn(source||{},key)).map(key=>[key,source[key]]))):[];
          const all=JSON.stringify(safe);
          row.request=all.length<=MAX_REQUEST_CHARS?safe:null;

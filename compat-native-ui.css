@@ -335,3 +335,19 @@
  #compat-lab .compat-regex-editor{padding:12px}
 }
 @media(max-height:450px){#compat-lab .compat-sheet{height:calc(var(--mima-viewport-height,100dvh) - 10px);max-height:calc(var(--mima-viewport-height,100dvh) - 10px)}#compat-lab .compat-sheet-head{padding:7px 14px}#compat-lab .compat-sheet-head .compat-eyebrow{display:none}#compat-lab #compat-sheet-tabs{padding-top:3px;padding-bottom:3px}}
+/* Independently authorized author host; bounded inside the existing tools sheet. */
+.compat-author-tools{min-width:0;margin-top:18px;padding-top:14px;border-top:1px solid var(--line,#8884)}
+.compat-author-resource{min-width:0;margin:12px 0;padding:10px;border:1px solid var(--line,#8884);border-radius:12px}
+.compat-author-tools fieldset{display:grid;gap:8px;min-width:0;margin:10px 0;border:1px solid var(--line,#8884);border-radius:10px}
+.compat-author-tools fieldset label{display:flex;gap:7px;align-items:flex-start;overflow-wrap:anywhere}
+.compat-author-tools pre,.compat-author-source{max-height:260px;max-width:100%;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;font-size:.75rem}
+.compat-author-slot{min-width:0;max-width:100%}
+.compat-author-slot iframe{display:block;width:100%;height:360px;max-height:65dvh;margin-top:10px;border:1px solid var(--line,#8884);border-radius:10px}
+/* QR controls remain inside the bounded composer and existing tools sheet. */
+#compat-lab .compat-quick-replies{display:flex;flex-wrap:wrap;gap:6px;max-height:128px;overflow:auto;overscroll-behavior:contain;padding:0 0 8px;min-width:0}
+#compat-lab .compat-quick-replies[hidden]{display:none}
+#compat-lab .compat-qr-button-pair{display:inline-flex;align-items:stretch;max-width:100%;gap:2px}
+#compat-lab .compat-qr-button-pair button{font:inherit;font-size:.73rem;padding:6px 9px;white-space:normal;overflow-wrap:anywhere;max-width:100%}
+#compat-lab .compat-qr-settings{min-width:0;margin:16px 0;padding-top:12px;border-top:1px solid var(--line,#8884)}
+#compat-lab .compat-qr-settings pre{max-height:220px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%}
+#compat-lab .compat-qr-settings details{margin:9px 0}

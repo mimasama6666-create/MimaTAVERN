@@ -70,6 +70,8 @@ function verifyRelationships(records){
  for(const g of grants.values())requireRef(sessions.has(g.sessionId),'grant session '+g.id);
  for(const v of records.variables||[])if(v.sessionId)requireRef(sessions.has(v.sessionId),'variable session '+v.id);
  for(const j of records.import_journal||[])if(j.sourceId)requireRef(capsules.has(j.sourceId),'import journal source '+j.id);
+ const hasAuthor=[...(records.variables||[]),...(records.grants||[]),...(records.sidecar_links||[])].some(x=>x.kind==='helper_table_v1'||x.kind==='helper_operation_v1'||x.kind==='author_grant_v1');
+ if(hasAuthor){if(!globalThis.MimaAuthorContract)throw error('E_AUTHOR_UNAVAILABLE','备份包含作者变量，但校验组件未加载');globalThis.MimaAuthorContract.verify(records,{complete:true});}
  return true;
 }
 const check=(v,what)=>{if(!v||typeof v!=='object'||Array.isArray(v))throw error('E_STORE_UNVERIFIED',what+' 必须是对象');return v;};
@@ -202,6 +204,9 @@ function parseBackup(str){if(typeof str!=='string'||str.length>180*1024*1024)thr
 async function restoreVerified(parsed,{dryRun=true,mode='merge-new-only',allowLegacyUnsealed=false}={}){
  if(!parsed||parsed.contractRevision!==1||parsed.dbName!==DB||![1,VERSION].includes(parsed.dbVersion)||!parsed.records||STORES.some(n=>!Array.isArray(parsed.records[n])))throw error('E_STORE_UNVERIFIED','未校验备份');
  if(!['merge-new-only','empty-only'].includes(mode))throw error('E_IMPORT_CONFLICT','未知恢复模式，不允许覆盖');
+ // A missing author grant is imported revoked. An identical grant already
+ // owned by this installation is not changed merely by inspecting a backup.
+ const restoredItem=(name,item)=>name==='grants'&&item.kind==='author_grant_v1'&&!item.revokedAt?{...item,revokedAt:item.createdAt||'restored-requires-explicit-regrant',revision:item.revision+1,restoreRequiresRegrant:true}:item;
  const recordIds=new Set();for(const name of STORES){if(parsed.records[name].length>200000)throw error('E_DECOMPRESS_BUDGET','单表备份记录数超出上限');for(const item of parsed.records[name]){if(!item||typeof item.id!=='string'||!item.id.trim()||recordIds.has(name+':'+item.id))throw error('E_STORE_UNVERIFIED','备份重复主键/无效记录');recordIds.add(name+':'+item.id);}}
  await verifySources(parsed.records);verifyRelationships(parsed.records);
  // Read-only inspection is allowed regardless of existing data. Never conflate
@@ -212,7 +217,7 @@ async function restoreVerified(parsed,{dryRun=true,mode='merge-new-only',allowLe
   const additions={},conflicts=[];let existingCount=0;
   for(const n of STORES){const known=new Map(existing[n].map(item=>[item.id,item]));additions[n]=[];
    if(mode==='empty-only'&&known.size)conflicts.push({store:n,reason:'target_nonempty'});
-   for(const item of parsed.records[n]){const old=known.get(item.id);if(old===undefined)additions[n].push(item);else{existingCount++;if(!same(old,item))conflicts.push({store:n,id:item.id,reason:'id_collision_changed'});}}
+   for(const item of parsed.records[n]){const old=known.get(item.id);if(old===undefined)additions[n].push(restoredItem(n,item));else{existingCount++;if(!same(old,item)&&!same(old,restoredItem(n,item)))conflicts.push({store:n,id:item.id,reason:'id_collision_changed'});}}
   }
   if(!conflicts.length){const combined=Object.fromEntries(STORES.map(n=>[n,[...existing[n],...additions[n]]]));verifyRelationships(combined);}
   return{additions,conflicts,existingCount,counts:Object.fromEntries(STORES.map(n=>[n,parsed.records[n].length])),willAdd:Object.fromEntries(STORES.map(n=>[n,additions[n].length]))};

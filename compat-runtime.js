@@ -397,7 +397,7 @@ async function createSession(sourceId,options={}){const source=await store().get
 const idx=Number(options.greetingIndex??0),card=selection.raw||{},alternates=Array.isArray(card.alternate_greetings)?card.alternate_greetings:[];if(!Number.isInteger(idx)||idx<0||idx>alternates.length)throw error('E_RESOURCE_SEMANTIC_GAP','开场白索引无效');const greeting=String(idx===0?card.first_mes||'':alternates[idx-1]||'');const id=store().uid('compat'),now=new Date().toISOString(),session={id,mode:'native_compat',sourceId,characterResourceId:selection.id,title:options.title||selection.name||'兼容剧情',userName:options.userName||'玩家',activeBranchId:'main',greetingIndex:idx,revision:1,turnIndex:0,pendingTurnId:null,worldInfoBudget:16000,createdAt:now,mountGraph:[],readiness:'limited_runtime'};
 const prepared=await resourcesFor(session),spoken=macro(greeting,{char:card.nickname||card.name||'角色',user:session.userName});
 const opening=greeting?[{id:'opening_'+id,role:'assistant',canonicalContent:spoken.value,status:'committed',sequence:-1,opening:true}]:[];
-const readiness=await createEnvelopeAsync(session,prepared,opening,'');
+const readiness=await createEnvelopeAsync(session,prepared,opening,'',{newSessionPreflight:true});
 session.launchCapabilities={greetingIndex:idx,gaps:readiness.gaps,mvuActive:readiness.mvu.active,checkedAt:now};
 const db=await store().open();await new Promise((resolve,reject)=>{const tx=db.transaction(['compat_sessions','messages'],'readwrite');tx.objectStore('compat_sessions').add(session);if(greeting){const spoken=macro(greeting,{char:card.nickname||card.name||'角色',user:session.userName});tx.objectStore('messages').add({id:'opening_'+id,sessionId:id,turnId:null,role:'assistant',rawContent:greeting,canonicalContent:spoken.value,status:'committed',sequence:-1,opening:true,greetingIndex:idx,unknownMacros:spoken.unsupported,revision:1,createdAt:now});}tx.oncomplete=()=>{db.close();resolve();};tx.onabort=()=>{db.close();reject(tx.error||error('E_STORE_UNVERIFIED','建立剧情事务失败'));};});return getSession(id);}
 // Messages and settlement ledger must be read from the SAME readonly IDB
@@ -439,7 +439,7 @@ async function sessionMessages(sessionId){
 // Non-destructive story fork: create an independent, internally consistent
 // canonical session. Never rewrite the parent's messages, journal or MVU state.
 // The caller may supply a stable requestId to make retries idempotent.
-async function forkSession(sessionId,cutoffTurnId,{requestId}={}){
+async function forkSessionUnfenced(sessionId,cutoffTurnId,{requestId}={}){
  const token=requestId===undefined?store().uid('fork'):String(requestId);
  if(!/^[-_a-zA-Z0-9]{6,128}$/.test(token))throw error('E_CANONICAL_CONFLICT','分支请求 ID 无效');
  const newId='branch_'+token;
@@ -449,7 +449,7 @@ async function forkSession(sessionId,cutoffTurnId,{requestId}={}){
  if(/<initvar\b/i.test(String(openingText))&&init.state===null)throw error('E_MVU_INIT_UNVERIFIED','分支源开场白初始变量无法验证，不能创建错误状态分支');
  if(init.gaps?.some(g=>g.reason==='MVU_MULTIPLE_INITIAL_SOURCES_CONFLICT'))throw error('E_MVU_HISTORY_CONFLICT','角色初始变量来源冲突，不能创建分支');
  const db=await store().open();return new Promise((resolve,reject)=>{
-  const tx=db.transaction(['compat_sessions','messages','events_jobs','sidecar_links'],'readwrite');
+  const tx=db.transaction(['compat_sessions','messages','events_jobs','sidecar_links','variables','grants','resource_ir'],'readwrite');
   const sessions=tx.objectStore('compat_sessions'),msgs=tx.objectStore('messages'),jobs=tx.objectStore('events_jobs'),side=tx.objectStore('sidecar_links');
   let outcome,issue;
   const bad=(code,why)=>{issue=error(code,why);try{tx.abort();}catch(_){}};
@@ -467,9 +467,11 @@ async function forkSession(sessionId,cutoffTurnId,{requestId}={}){
     if(current.pendingTurnId){bad('E_CANONICAL_CONFLICT','有未结算回合，不能从不稳定的剧情创建分支');return;}
     if(typeof db.version==='number'&&(!msgs.indexNames?.contains('sessionId')||!jobs.indexNames?.contains('sessionId'))){bad('E_STORE_UNVERIFIED','分支创建时会话索引缺失，禁止复制不完整历史');return;}
     const mReq=typeof msgs.index==='function'&&msgs.indexNames?.contains('sessionId')?msgs.index('sessionId').getAll(sessionId):msgs.getAll();
-    const jReq=typeof jobs.index==='function'&&jobs.indexNames?.contains('sessionId')?jobs.index('sessionId').getAll(sessionId):jobs.getAll();let rows=null,ledger=null;
+    const jReq=typeof jobs.index==='function'&&jobs.indexNames?.contains('sessionId')?jobs.index('sessionId').getAll(sessionId):jobs.getAll();let rows=null,ledger=null,authorRecords=null;
+    const author={},authorNames=['variables','grants','resource_ir','sidecar_links'];let authorRemaining=authorNames.length;
+    for(const name of authorNames){const request=tx.objectStore(name).getAll();request.onsuccess=()=>{author[name]=name==='resource_ir'?request.result:request.result.filter(x=>x.sessionId===sessionId);if(!--authorRemaining){authorRecords=author;assemble();}};request.onerror=()=>bad('E_STORE_UNVERIFIED','分支作者数据读取失败：'+name);}
     const assemble=()=>{
-     if(!rows||!ledger)return;
+     if(!rows||!ledger||!authorRecords)return;
      try{
       const sourceMessages=rows.filter(m=>m.sessionId===sessionId).sort((a,b)=>a.sequence-b.sequence);
       const sourceJobs=ledger.filter(j=>j.sessionId===sessionId);
@@ -500,7 +502,7 @@ async function forkSession(sessionId,cutoffTurnId,{requestId}={}){
       else if(replayInput.some(m=>m.mvuStateAfter!==undefined))throw error('E_MVU_HISTORY_CONFLICT','无法校验原始 MVU 状态，拒绝复制');
       const newSession={...current,id:newId,title:(current.title||'剧情')+' · 分支',activeBranchId:newId,
         parentSessionId:sessionId,forkedAtTurnId:cutoffTurnId??null,forkedAtSequence:cutoff,branchRequestId:token,
-        pendingTurnId:null,lastSettledTurnId:null,turnIndex:cutoff<0?0:(cutoff+1)/2,revision:1,createdAt:new Date().toISOString()};
+        pendingTurnId:null,lastSettledTurnId:null,turnIndex:cutoff<0?0:(cutoff+1)/2,revision:1,authorVariableRevision:0,createdAt:new Date().toISOString()};
       sessions.add(newSession);
       for(const old of opening)msgs.add({...old,id:'opening_'+newId,sessionId:newId,originMessageId:old.id,revision:1});
       for(const {j,user,assistant} of copied){
@@ -536,6 +538,12 @@ async function forkSession(sessionId,cutoffTurnId,{requestId}={}){
          ...(clonedSegments.length?{mvuContinuationSegments:clonedSegments}:{})});
        newSession.lastSettledTurnId=newTurnId;
       }
+      const helperTables=authorRecords.variables.filter(x=>x.kind==='helper_table_v1');
+      if(helperTables.length){
+       if(!root.MimaAuthorStore)throw error('E_AUTHOR_UNAVAILABLE','分支需要作者变量组件，未创建丢失变量的分支');
+       const ids=new Map(opening.map(x=>[x.id,'opening_'+newId]));for(const item of copied){const turn='branchcopy_'+token+'_'+item.j.sequence;ids.set(item.user.id,'u_'+turn);ids.set(item.assistant.id,'a_'+turn);}
+       root.MimaAuthorStore.forkRows(tx,{...authorRecords,compat_sessions:[current],messages:sourceMessages,events_jobs:sourceJobs},newId,ids,cutoff);
+      }
       if(newSession.lastSettledTurnId)sessions.put(newSession);
       outcome={sessionId:newId,reused:false,parentSessionId:sessionId,historyTurns:copied.length};
      }catch(e){issue=e;tx.abort();}
@@ -564,7 +572,7 @@ async function mountResource(sessionId,resourceId){
   const source=resource?await store().get('source_capsules',resource.sourceId):null;
   if(!resource||!source||source.sha256!==resource.sourceId.slice(7))throw error('E_STORE_UNVERIFIED','挂载资源的不可变来源指纹缺失');
   if(resource.kind==='character')throw error('E_RESOURCE_SEMANTIC_GAP','禁止把外置角色直接改写当前剧情身份');
-  if(!['world_info','regex','preset','prompt_presets','css','html_template','media','script_source'].includes(resource.kind))throw error('E_RESOURCE_SEMANTIC_GAP','该资源只能原样查看，暂不能挂载');
+  if(!['world_info','regex','preset','prompt_presets','css','html_template','media','script_source','quick_reply'].includes(resource.kind))throw error('E_RESOURCE_SEMANTIC_GAP','该资源只能原样查看，暂不能挂载');
   if(resource.sourceId===session.sourceId)throw error('E_CANONICAL_CONFLICT','本卡包绑定资源已随角色可见，无需重复挂载');
   const graph=Array.isArray(session.mountGraph)?session.mountGraph:[];
   if(graph.some(m=>m.resourceId===resourceId))throw error('E_CANONICAL_CONFLICT','该资源已经挂载');
@@ -689,6 +697,14 @@ async function createEnvelopeAsync(session,resources,messages,userText,options={
     worldInfoOverride=await root.MimaCompatWorldInfoIsolation.evaluate(entries,[...history,...(options.assistantContinuation?[]:[{role:'user',content:userText}])],worldInfoSettings(session,name,user,userText),{signal:options.signal});
   }
   const out=createEnvelope(session,resources,messages,userText,{skipRegex:true,worldInfoOverride,assistantContinuation:options.assistantContinuation===true}),regex=readRegex(resources,session);
+  out.authorHost={version:'mima-author-host/1',active:root.MimaAuthorHost?.state(session.id)||[],capabilityScope:'chat/message/script variables and committed-message snapshot; other Helper APIs are unsupported'};
+  if(root.MimaAuthorPrompt?.needs(out)&&options.newSessionPreflight===true)out.gaps.push({slot:'author_variables',reason:'requires_explicit_author_initialization_before_generation'});
+  else if(root.MimaAuthorPrompt?.needs(out)){
+    if(!root.MimaAuthorStore)throw error('E_AUTHOR_UNAVAILABLE','作者变量读取组件未加载，未发送无法解析的变量宏');
+    const snapshot=await root.MimaAuthorStore.snapshot(session.id);
+    if(snapshot.sessionRevision!==session.revision)throw error('E_AUTHOR_CONFLICT','提示词准备期间故事状态变化，请重新预览或发送');
+    root.MimaAuthorPrompt.project(out,snapshot);
+  }
   const isolate=root.MimaCompatRegexIsolation;
   const warn=(stage,e)=>{out.gaps.push({reason:e.code||'E_REGEX_WORKER_FAILED',stage,details:e.message,ruleName:e.ruleName||null,ruleKey:e.ruleKey||null,resourceId:e.resourceId||null,path:e.path||null,rawRetained:true});};
   if(!isolate){if(regex.length)warn('worker',error('E_REGEX_ISOLATION_UNAVAILABLE','无法初始化隔离正则执行器'));return projectCompatHistory(out,userText);}
@@ -714,7 +730,7 @@ async function createEnvelopeAsync(session,resources,messages,userText,options={
   out.estimatedTokens=out.messages.reduce((n,m)=>n+Math.ceil(m.content.length/3),0);
   return projectCompatHistory(out,userText);
 }
-async function preview(sessionId,input,options={}){const s=await getSession(sessionId),msgs=await sessionMessages(sessionId),resources=await resourcesFor(s);return createEnvelopeAsync(s,resources,msgs,input,options);}
+async function previewUnfenced(sessionId,input,options={}){const s=await getSession(sessionId),msgs=await sessionMessages(sessionId),resources=await resourcesFor(s);return createEnvelopeAsync(s,resources,msgs,input,options);}
 async function transition(sessionId,work){const db=await store().open();return new Promise((resolve,reject)=>{const tx=db.transaction(['compat_sessions','messages','events_jobs'],'readwrite'),s=tx.objectStore('compat_sessions'),m=tx.objectStore('messages'),j=tx.objectStore('events_jobs');let result,issue;const q=s.get(sessionId);q.onsuccess=()=>{try{const current=q.result;if(!current)throw error('E_STORE_UNVERIFIED','剧情已不存在');result=work(current,{s,m,j});}catch(e){issue=e;tx.abort();}};q.onerror=()=>{issue=q.error;tx.abort();};tx.oncomplete=()=>{db.close();resolve(result);};tx.onabort=()=>{db.close();reject(issue||tx.error||error('E_CANONICAL_CONFLICT','剧情事务中止'));};});}
 async function beginTurn(sessionId,text){
   if(!String(text).trim())throw error('E_STORY_RUNTIME','请输入消息');
@@ -837,6 +853,7 @@ async function dispatch(sessionId,t,options={}){
     const history=msgs.filter(m=>m.turnId!==t.turnId&&m.sequence<t.sequence),envelope=await createEnvelopeAsync(session,resources,history,t.text,options);
     diagnostic.bind(envelope);
     if(envelope.gaps.length&&options.strictCompat===true&&!options.acceptGaps)throw error('E_RESOURCE_SEMANTIC_GAP','本回合含未确认的语义差异，保留消息待重试');
+    await root.MimaAuthorPrompt?.assertCurrent(envelope);
     const cfg=root.MimaStandalone?.getApiConfig?.();if(!cfg)throw error('E_API_CONFIG','未配置原生 API');
     const reply=await root.MimaStandalone.callModelWithConfig(envelope.messages,cfg,cfg.temperature??0.85,options.signal,diagnostic.modelOptions(false));
     diagnostic.candidate(reply);
@@ -862,13 +879,15 @@ async function dispatch(sessionId,t,options={}){
     throw e;
   }
 }
-async function send(sessionId,text,options={}){
-  const check=await preview(sessionId,text,{signal:options.signal});
+async function sendUnfenced(sessionId,text,options={}){
+  // send() already owns the author freeze. Re-entering public preview() here
+  // would reject our own in-progress operation before reaching the Provider.
+  const check=await previewUnfenced(sessionId,text,{signal:options.signal});
   if(check.gaps.length&&options.strictCompat===true&&!options.acceptGaps)throw error('E_RESOURCE_SEMANTIC_GAP','资源存在未验证语义，请确认后再发送');
   const t=await beginTurn(sessionId,text);
   return dispatch(sessionId,t,options);
 }
-async function retryTurn(sessionId,turnId,options={}){
+async function retryTurnUnfenced(sessionId,turnId,options={}){
   const before=await store().get('events_jobs',turnId),message=before?await store().get('messages',before.msgId||'u_'+turnId):null;
   if(!before||!message||before.sessionId!==sessionId)throw error('E_STORE_UNVERIFIED','原回合数据无法验证');
   const s=await getSession(sessionId),resources=await resourcesFor(s),msgs=await sessionMessages(sessionId);
@@ -954,7 +973,7 @@ async function settleContinuation(sessionId,t,addition,reason='',mvuResult=null,
   tx.onabort=()=>{db.close();reject(issue||tx.error||error('E_CANONICAL_CONFLICT','续写提交中止，原角色回复仍保留'));};
  });
 }
-async function continueAssistant(sessionId,options={}){
+async function continueAssistantUnfenced(sessionId,options={}){
  // Do preflight before recording a journal, so unsupported MVU does not
  // produce a synthetic pending turn or consume provider calls.
  const session=await getSession(sessionId),history=await sessionMessages(sessionId),resources=await resourcesFor(session);
@@ -967,6 +986,7 @@ async function continueAssistant(sessionId,options={}){
  if(!ticket.id||!ticket.attemptId)throw error('E_CANONICAL_CONFLICT','续写未获得完整权威票据');
  const diagnostic=compatDiagnostic(sessionId,ticket.id,'compat_continue',options,ticket.attemptId);diagnostic.bind(envelope);
  try{
+  await root.MimaAuthorPrompt?.assertCurrent(envelope);
   const cfg=root.MimaStandalone?.getApiConfig?.();if(!cfg)throw error('E_API_CONFIG','未配置原生 API');
   const reply=await root.MimaStandalone.callModelWithConfig(envelope.messages,cfg,cfg.temperature??0.85,options.signal,diagnostic.modelOptions(true));
   diagnostic.candidate(reply);
@@ -997,6 +1017,7 @@ async function restoreRejectedReply(diagnosticId,{confirmed=false}={}){
  if(confirmed!==true)throw error('E_REPLY_RECOVERY_CONFIRM','请先确认手动恢复正文。');
  const record=await root.MimaDiagnosticJournal.recoveryCandidate(diagnosticId),sessionId=record.sessionId;
  if(!['compat_send','compat_continue'].includes(record.action))throw error('E_REPLY_RECOVERY_OWNER','本诊断不属于酒馆兼容回合。');
+ root.MimaAuthorHost?.stopSession(sessionId,'手动恢复原回复，作者页面已停止；已提交变量保留');
  const records=await readAtomicStores(['compat_sessions','messages','events_jobs'],sessionId),session=records.compat_sessions[0],job=records.events_jobs.find(x=>x.id===record.turnId);
  if(!session||!job)throw error('E_REPLY_RECOVERY_STALE','原剧情或失败回合已不存在。');
  if(job.settlement==='committed'&&job.manualRecovery?.diagnosticId===record.id)return {sessionId,messageId:job.assistantId||'a_'+job.id,alreadyRestored:true,action:record.action};
@@ -1048,5 +1069,11 @@ async function displayMessages(sessionId){
   return items.map(m=>{const packet=byId.get(m.id);if(!packet)return{...m,displayView:inputFor(m)};return{...m,displayView:packet.result?.output??inputFor(m),displayTrace:packet.result?.trace||[],...(!packet.ok?{displayError:{...packet.error,rawRetained:true},displayErrors:packet.result?.errors||[packet.error]}:{})};});
 }
 async function currentMvuState(sessionId){const session=await getSession(sessionId),resources=await resourcesFor(session),items=await sessionMessages(sessionId);if(!mvu())throw error('E_MVU_UNAVAILABLE','MVU 状态组件未加载');const init=mvu().initial(resources,{greetingIndex:session.greetingIndex??0});return {...mvu().replay(init.state,items),gaps:init.gaps};}
+const authorOperation=(id,work,kind)=>root.MimaAuthorHost?root.MimaAuthorHost.withTurn(id,work,kind):work();
+function send(id,text,options){return authorOperation(id,()=>sendUnfenced(id,text,options),'send');}
+function retryTurn(id,turnId,options){return authorOperation(id,()=>retryTurnUnfenced(id,turnId,options),'retry');}
+function continueAssistant(id,options){return authorOperation(id,()=>continueAssistantUnfenced(id,options),'continue');}
+function forkSession(id,cutoff,options){return authorOperation(id,()=>forkSessionUnfenced(id,cutoff,options));}
+function preview(id,input,options){return authorOperation(id,()=>previewUnfenced(id,input,options));}
 return Object.freeze({forkSession,currentMvuState,worldInfo,unsupportedWI,applyRegex,regexRules:readRegex,regexMacroContext,regexProjection,saveRegexSettings,macro,createEnvelope,createEnvelopeAsync,createSession,resolveCharacterSelection,getSession,sessionMessages,resourcesFor,mountResource,unmountResource,setPresetCreativeRole,resolveMedia,preview,send,continueAssistant,restoreRejectedReply,abortContinuation,retryTurn,recoverTurn,turnJournal,displayMessages,beginTurn,finishTurn});
 });

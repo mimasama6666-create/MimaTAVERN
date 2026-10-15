@@ -1,0 +1,8 @@
+{
+  "type": "script",
+  "id": "mima-r16-offline-counter",
+  "name": "R16 离线 Vue / Zod 计数器（可选，未实测）",
+  "enabled": false,
+  "info": "仅手动授权后运行的中性示例；不调用模型。选择 lodash、vue、zod 和 chat/事件权限。不是原卡验收证据。",
+  "content": "import { createApp, ref } from 'vue';\nimport { z } from 'zod';\nimport _ from 'lodash';\nregisterVariableSchema(z.object({ counter: z.coerce.number().prefault(0) }).passthrough(), { type: 'chat' });\nconst counter = ref(_.get(getVariables(), 'counter', 0)), note = ref('尚未操作'), busy = ref(false);\neventOn('counter_changed', value => { counter.value = value; });\neventOn(tavern_events.MESSAGE_RECEIVED, () => { counter.value = _.get(getVariables(), 'counter', 0); });\ncreateApp({\n setup() { return { counter, note, busy, async add() {\n  if (busy.value) return; busy.value = true;\n  try {\n   updateVariablesWith(vars => ({ ...vars, counter: Number(_.get(vars, 'counter', 0)) + 1 }));\n   await MimaAuthor.whenCommitted(); counter.value = getVariables().counter;\n   await eventEmit('counter_changed', counter.value); note.value = '变量已保存，事件已结算';\n  } catch (e) { note.value = e.message; } finally { busy.value = false; }\n } }; },\n template: '<section><h3>离线插件示例</h3><p>当前值：{{counter}}</p><button @click=\"add\" :disabled=\"busy\">加一并保存</button><p>{{note}}</p></section>'\n}).mount('#mima-author-root');\n"
+}

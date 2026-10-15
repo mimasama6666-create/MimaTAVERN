@@ -1,0 +1,536 @@
+{
+  "format": "mima-author-offline-libraries/1",
+  "runtimeExecuted": false,
+  "build": "Node 24 stripTypeScriptTypes mode=transform; local import specifiers rewritten; no product execution",
+  "bundleSha256": "833e539b712ac3d18dab9308e043af58d02b9f279688306fcce676b3f89e7430",
+  "libraries": [
+    {
+      "id": "jquery",
+      "version": "3.7.1",
+      "format": "classic",
+      "global": "jQuery",
+      "sha256": "fc9a93dd241f6b045cbff0481cf4e1901becd0e12fb45166a8f17f95823f0b1a",
+      "provenance": "jquery/jquery@3.7.1 dist/jquery.min.js blob 7f37b5d99122b4928505d1e0ac5ca7279edd56ed",
+      "files": []
+    },
+    {
+      "id": "lodash",
+      "version": "4.17.21",
+      "format": "classic",
+      "global": "_",
+      "sha256": "a9705dfc47c0763380d851ab1801be6f76019f6b67e40e9b873f8b4a0603f7a9",
+      "provenance": "lodash/lodash@4.17.21 dist/lodash.min.js blob 4219da738cbb17f96c30aeac5885ebef94ced1e4",
+      "files": []
+    },
+    {
+      "id": "vue",
+      "version": "3.5.13",
+      "format": "classic",
+      "global": "Vue",
+      "sha256": "91019c91e9b5c47c8502550f6f8b9b2931b93e8257f2b69cc4b272f4a4dcbe3f",
+      "provenance": "Vue global production bundle supplied by trame_client/vue3-www; version verified from source header; MIT Vue license",
+      "files": []
+    },
+    {
+      "id": "zod",
+      "version": "4.4.3",
+      "format": "esm-graph",
+      "entry": "@mima/zod/v4/classic/index.js",
+      "provenance": "colinhacks/zod@v4.4.3 tree 1fb56a5c18c27102dbc92260a4007c7732a0ccca; Node stripTypeScriptTypes; relative imports rewritten only",
+      "files": [
+        {
+          "id": "@mima/zod/v4/classic/checks.js",
+          "sha256": "df80b9cec7510099371f8b017563477249418eadc62140090e5621e4c5636618",
+          "upstreamPath": "packages/zod/src/v4/classic/checks.ts",
+          "upstreamBlob": "cd78c0e450450b8240cfce4e4ae3b76c4b499e59"
+        },
+        {
+          "id": "@mima/zod/v4/classic/coerce.js",
+          "sha256": "20f9f4b1af1fbbc03e372dcc307dea992af64bc2aa07f1afa206e69447d83883",
+          "upstreamPath": "packages/zod/src/v4/classic/coerce.ts",
+          "upstreamBlob": "cc400e0d8ef0b0d07d20bcf2dc3db66e9655c3c2"
+        },
+        {
+          "id": "@mima/zod/v4/classic/compat.js",
+          "sha256": "a583e773e0d83f27f12ec25a065b61549b911cf128ca978811b443b69535f7ce",
+          "upstreamPath": "packages/zod/src/v4/classic/compat.ts",
+          "upstreamBlob": "86a5813a026faab58ecc9aefc9b53384d33432d1"
+        },
+        {
+          "id": "@mima/zod/v4/classic/errors.js",
+          "sha256": "346926a5f0aae2d079e2822defebc11b134fc4f44426df0a24e879a97be6901b",
+          "upstreamPath": "packages/zod/src/v4/classic/errors.ts",
+          "upstreamBlob": "e4eb99d01b4df341c391bc40b09d938a9ac7136c"
+        },
+        {
+          "id": "@mima/zod/v4/classic/external.js",
+          "sha256": "d026e0b6cd6ac2babddeb5d695b826084ae5c2c0b011753b7fd41af3ccb0cc98",
+          "upstreamPath": "packages/zod/src/v4/classic/external.ts",
+          "upstreamBlob": "56cabdcdf586cbe79b6b50ff62c27cc84c7fa30f"
+        },
+        {
+          "id": "@mima/zod/v4/classic/from-json-schema.js",
+          "sha256": "0dbc358412ef8958bde808003b89b2f409b01753c380a2e40ce44ce24df63d12",
+          "upstreamPath": "packages/zod/src/v4/classic/from-json-schema.ts",
+          "upstreamBlob": "7934f337597801e046ae4462c59633c5e1f24396"
+        },
+        {
+          "id": "@mima/zod/v4/classic/index.js",
+          "sha256": "8ae87e9492e30d9fa62de025543bdd5c27cd68c590be054a0e111c995d430f0b",
+          "upstreamPath": "packages/zod/src/v4/classic/index.ts",
+          "upstreamBlob": "f0f7547ff0e82ca2fc646de0d7436486c82ec292"
+        },
+        {
+          "id": "@mima/zod/v4/classic/iso.js",
+          "sha256": "b388c3f4cd001288063853032f27e8067b27a0f18b7530a91668c2ce5b087a2c",
+          "upstreamPath": "packages/zod/src/v4/classic/iso.ts",
+          "upstreamBlob": "b08696d6787c0f07eb6be04f4cbb46639e33d86c"
+        },
+        {
+          "id": "@mima/zod/v4/classic/parse.js",
+          "sha256": "5e9ee7a6167251ee7b234bdc0dd34034b17c56afd7792b8120d964b586454f32",
+          "upstreamPath": "packages/zod/src/v4/classic/parse.ts",
+          "upstreamBlob": "7df7b290dafa31fd60d26d90545cad5055813586"
+        },
+        {
+          "id": "@mima/zod/v4/classic/schemas.js",
+          "sha256": "036d20f587331c338861cd18f4fb3927d330acce1665b906a256b6cd2f3eeaa6",
+          "upstreamPath": "packages/zod/src/v4/classic/schemas.ts",
+          "upstreamBlob": "e46abf57b7fc49642ff5438bb2e182029f064a58"
+        },
+        {
+          "id": "@mima/zod/v4/core/api.js",
+          "sha256": "f0cf4d17289d733dfc604134c065742e5bd9bb4e7f8c10b22c3c2eb171fd00ca",
+          "upstreamPath": "packages/zod/src/v4/core/api.ts",
+          "upstreamBlob": "c1d2d7ef028e7c90c1f1dce563a6e91776ef6155"
+        },
+        {
+          "id": "@mima/zod/v4/core/checks.js",
+          "sha256": "765c66e49c1606eddd64b3811589e90b6dcc8cc7070f8b38dec917bd4f8ca6b9",
+          "upstreamPath": "packages/zod/src/v4/core/checks.ts",
+          "upstreamBlob": "e640775056bf6e3764a97ffec0e459377e56b805"
+        },
+        {
+          "id": "@mima/zod/v4/core/config.js",
+          "sha256": "51532f0938498bf4a72bc50efc9ee2ba72a69523504e5b0a4bc4cdde3b0d51c3",
+          "upstreamPath": "packages/zod/src/v4/core/config.ts",
+          "upstreamBlob": "38510d89720d99950344fb8d180b1359a73c7317"
+        },
+        {
+          "id": "@mima/zod/v4/core/core.js",
+          "sha256": "86d26803252a356e4e0cd1bb12ef07e6052137c1c6a1fbc1a63d5ea7c7dc5b81",
+          "upstreamPath": "packages/zod/src/v4/core/core.ts",
+          "upstreamBlob": "c191fdbe6fb30267ed38444655fe57f810c118bf"
+        },
+        {
+          "id": "@mima/zod/v4/core/doc.js",
+          "sha256": "9af831056158e4de419de1fd9b4faf15634d0967676471a0aaee7143862c5f16",
+          "upstreamPath": "packages/zod/src/v4/core/doc.ts",
+          "upstreamBlob": "cec43e670bb4a194aba897f05aeac39cba8ac846"
+        },
+        {
+          "id": "@mima/zod/v4/core/errors.js",
+          "sha256": "74f2811e739eddb046e10bce2097b8e68b22ef0dfc1845399116a01a817f46ae",
+          "upstreamPath": "packages/zod/src/v4/core/errors.ts",
+          "upstreamBlob": "27f7c5a733f1b6c1c1bfc905ed301258dd2ee579"
+        },
+        {
+          "id": "@mima/zod/v4/core/index.js",
+          "sha256": "7c35c61ead4ef6b0d5624f5a459f91039046123e29284ba9484e6a149eb8a127",
+          "upstreamPath": "packages/zod/src/v4/core/index.ts",
+          "upstreamBlob": "d334515bf004600f2e55ff85e3730f1b2f2ff703"
+        },
+        {
+          "id": "@mima/zod/v4/core/json-schema-generator.js",
+          "sha256": "5915eaa8f9903f90d870714f0e0b05042b5b5c073e3749a05e81f32cfeb65314",
+          "upstreamPath": "packages/zod/src/v4/core/json-schema-generator.ts",
+          "upstreamBlob": "94071971c7a5ab26b669283bec407e00af8f43ae"
+        },
+        {
+          "id": "@mima/zod/v4/core/json-schema-processors.js",
+          "sha256": "c120e8a22dfc9b796ec80beccacefc3a85ee1a322cf2ed928e628e469280afa5",
+          "upstreamPath": "packages/zod/src/v4/core/json-schema-processors.ts",
+          "upstreamBlob": "8d2790e15f24fbbeb3443b68ff76d34bdb32613a"
+        },
+        {
+          "id": "@mima/zod/v4/core/json-schema.js",
+          "sha256": "aefa14c24027f7ab14b2be6ffe9693b8b2d9f5c3774cb6d11434fc52c7cdca19",
+          "upstreamPath": "packages/zod/src/v4/core/json-schema.ts",
+          "upstreamBlob": "f48e05b8da47e4e0e8e33ddad23761ecffc7f730"
+        },
+        {
+          "id": "@mima/zod/v4/core/parse.js",
+          "sha256": "c774c8f0148f8256b20d811f6eef4b57580493d0adac7adef1fe8cdd65d449da",
+          "upstreamPath": "packages/zod/src/v4/core/parse.ts",
+          "upstreamBlob": "aaf2929742decb61443307f83bc45770d78d377c"
+        },
+        {
+          "id": "@mima/zod/v4/core/regexes.js",
+          "sha256": "c025766898cd53ec7a2c300024addaf737c4bbc53be85a97ba8d57e4390bd387",
+          "upstreamPath": "packages/zod/src/v4/core/regexes.ts",
+          "upstreamBlob": "4afe8872e513e974456fb61c7a7ddd9a12dd0e4d"
+        },
+        {
+          "id": "@mima/zod/v4/core/registries.js",
+          "sha256": "a5e26dc6a9286eef1cef1cd08b4288c5df1be1e4876015e353f0039dc5c05db7",
+          "upstreamPath": "packages/zod/src/v4/core/registries.ts",
+          "upstreamBlob": "6d04ea15859a20d9754b8d58d69577c7f4822e20"
+        },
+        {
+          "id": "@mima/zod/v4/core/schemas.js",
+          "sha256": "5f9b60393a131890ba6c473870caa96a2dcdde88e3b7c262742bae36cbd8c939",
+          "upstreamPath": "packages/zod/src/v4/core/schemas.ts",
+          "upstreamBlob": "4f85fbf0ceb0905697b0e90f2f5b314f78d678b7"
+        },
+        {
+          "id": "@mima/zod/v4/core/standard-schema.js",
+          "sha256": "9acf74236c918c1449bc85a161f5fe81e5f396c9d425375d2e4b433379db763e",
+          "upstreamPath": "packages/zod/src/v4/core/standard-schema.ts",
+          "upstreamBlob": "50d5a597e804691bc60d7d951e4b08efa5f4f3a1"
+        },
+        {
+          "id": "@mima/zod/v4/core/to-json-schema.js",
+          "sha256": "5d36e067694ab17454417f231172a20f619b5ff2065eddcada8dc6200ebfa0c2",
+          "upstreamPath": "packages/zod/src/v4/core/to-json-schema.ts",
+          "upstreamBlob": "c7c744049d425935408e995c5c23c77cac0daf9a"
+        },
+        {
+          "id": "@mima/zod/v4/core/util.js",
+          "sha256": "36122cc1b13cc526b65c6c99a66c29e52225c0084b31a54d67ea73815ddb37bd",
+          "upstreamPath": "packages/zod/src/v4/core/util.ts",
+          "upstreamBlob": "8738df4ed090c9c700376f2f2e4e1fd92ec73560"
+        },
+        {
+          "id": "@mima/zod/v4/core/versions.js",
+          "sha256": "72df68326c8fa46a7ec3baa2227d4e84da652ffef39bbcb66e07bb787019d582",
+          "upstreamPath": "packages/zod/src/v4/core/versions.ts",
+          "upstreamBlob": "49bb43ffd07fd6ef8227e37354f120d163fd5c93"
+        },
+        {
+          "id": "@mima/zod/v4/core/zsf.js",
+          "sha256": "ea47260e1d1c793f8e0fb5a79d43fe46b59cea8892999b5fd7c6952cdebfb27c",
+          "upstreamPath": "packages/zod/src/v4/core/zsf.ts",
+          "upstreamBlob": "8966cf646b2c7bc3960d9047d1b07d00e91eff41"
+        },
+        {
+          "id": "@mima/zod/v4/locales/ar.js",
+          "sha256": "a5b2f79343e5eb35545f8aebe0f6ec39b24760a3dd6dd502c2dc3d97d2eb2c76",
+          "upstreamPath": "packages/zod/src/v4/locales/ar.ts",
+          "upstreamBlob": "f28bde9907870075cdcdcfe0d0056d00a4361708"
+        },
+        {
+          "id": "@mima/zod/v4/locales/az.js",
+          "sha256": "dd3af57d711c54f8db807a46f1b3558c3d5f72de4395d492828b83adc277ba10",
+          "upstreamPath": "packages/zod/src/v4/locales/az.ts",
+          "upstreamBlob": "d6ae91fb1a2ab45b900a3a15b605cf892b7125e2"
+        },
+        {
+          "id": "@mima/zod/v4/locales/be.js",
+          "sha256": "c0a04199aeec5c0c18c0f019c99313f49437cec091143889ee6fd8c712bccbb7",
+          "upstreamPath": "packages/zod/src/v4/locales/be.ts",
+          "upstreamBlob": "e8a7bad9cb09f79760f00fa6b4a99579a74d2326"
+        },
+        {
+          "id": "@mima/zod/v4/locales/bg.js",
+          "sha256": "4158597590f079e9d95bef0f902500fa45d97859cc6dae6d370ed4e6138e9136",
+          "upstreamPath": "packages/zod/src/v4/locales/bg.ts",
+          "upstreamBlob": "f103d48fa8c0c75da09a9fbb3f84d07843842a41"
+        },
+        {
+          "id": "@mima/zod/v4/locales/ca.js",
+          "sha256": "09992547cb6461043ba095505beef480d5fa8381ad9c7be69ab254cc26b36415",
+          "upstreamPath": "packages/zod/src/v4/locales/ca.ts",
+          "upstreamBlob": "13d38b653157af1fae1db2917a901b937cf2b1e3"
+        },
+        {
+          "id": "@mima/zod/v4/locales/cs.js",
+          "sha256": "573152a3bd463d7df54f3b1770f91a61b0c780804aa5d06fcaea016b4c1fccfa",
+          "upstreamPath": "packages/zod/src/v4/locales/cs.ts",
+          "upstreamBlob": "75d59714140d79bafe10165fe508a1b7db6c11f0"
+        },
+        {
+          "id": "@mima/zod/v4/locales/da.js",
+          "sha256": "386dcd80dfe17629e3ed3a18cce52b9a417a96ed03f28606a8a57fc173eb0cfa",
+          "upstreamPath": "packages/zod/src/v4/locales/da.ts",
+          "upstreamBlob": "e28062a43d1c8b9a0a4b1f7918f3b2050e38d30f"
+        },
+        {
+          "id": "@mima/zod/v4/locales/de.js",
+          "sha256": "ee388072f3a933593b1726cf18a3a225e762ad975669affbd2f9da1d482639c4",
+          "upstreamPath": "packages/zod/src/v4/locales/de.ts",
+          "upstreamBlob": "dbcae388a3f703e678444da657f8830873dd9a60"
+        },
+        {
+          "id": "@mima/zod/v4/locales/el.js",
+          "sha256": "20a83264edc7a2c6ac417158bd7cebec8789cf30376b33c7c03c105971867fd1",
+          "upstreamPath": "packages/zod/src/v4/locales/el.ts",
+          "upstreamBlob": "d2a394d08fba666447fbcccbc408d4288c55d9eb"
+        },
+        {
+          "id": "@mima/zod/v4/locales/en.js",
+          "sha256": "802eeeb124eda61725578e063d33aced4daf4ef543a241feabea79c5d14daa33",
+          "upstreamPath": "packages/zod/src/v4/locales/en.ts",
+          "upstreamBlob": "08bf45fc5dd8f1cbf07464c800b03cc3e1acc6b1"
+        },
+        {
+          "id": "@mima/zod/v4/locales/eo.js",
+          "sha256": "37cd22720f27b1434951d6b2835d669a32404a7561bf02209b4615af843897f1",
+          "upstreamPath": "packages/zod/src/v4/locales/eo.ts",
+          "upstreamBlob": "f848cc65a09a9e6a101a8b19e8dfc5f8ae330367"
+        },
+        {
+          "id": "@mima/zod/v4/locales/es.js",
+          "sha256": "b7b9135f438be463fa8bd4c41a75e97cb009a0b2eee0660fc5e7326fadd13cf8",
+          "upstreamPath": "packages/zod/src/v4/locales/es.ts",
+          "upstreamBlob": "7b890a6952973f0617338b4c9d8e5a917655a6ed"
+        },
+        {
+          "id": "@mima/zod/v4/locales/fa.js",
+          "sha256": "3c78835c83f674f1c899c9e4e8b2353379d851177f5f207a8882566d7466e1f1",
+          "upstreamPath": "packages/zod/src/v4/locales/fa.ts",
+          "upstreamBlob": "524894a4e0467f95b370aba86bfbd229c262b133"
+        },
+        {
+          "id": "@mima/zod/v4/locales/fi.js",
+          "sha256": "fbdc6ee0394207cb6fddca58c21cd9b2d5daf23a99bd5c9cf66588e7edf46c77",
+          "upstreamPath": "packages/zod/src/v4/locales/fi.ts",
+          "upstreamBlob": "c6e8a982b78f0b692488da1850cada6d3b1a75b1"
+        },
+        {
+          "id": "@mima/zod/v4/locales/fr-CA.js",
+          "sha256": "89c575a555af69d05662806b3092a038b0cadaa47f749984f1fd51988e6459cb",
+          "upstreamPath": "packages/zod/src/v4/locales/fr-CA.ts",
+          "upstreamBlob": "91406077e964533e757c6734e7b7524be3721f8c"
+        },
+        {
+          "id": "@mima/zod/v4/locales/fr.js",
+          "sha256": "a76b432f0bb289f8934fe3a4611faa4dea363298f3836915277fd26bff6d9380",
+          "upstreamPath": "packages/zod/src/v4/locales/fr.ts",
+          "upstreamBlob": "8578fc4eb5b02e9cd6e9e9d6baad35d6ebe190b5"
+        },
+        {
+          "id": "@mima/zod/v4/locales/he.js",
+          "sha256": "8c53440e0a8b52803d4e49dec8f3059f4ca337f1dbb36fa33054e3904b48423c",
+          "upstreamPath": "packages/zod/src/v4/locales/he.ts",
+          "upstreamBlob": "fd85db333c41991390bb91be6439b43587ab20af"
+        },
+        {
+          "id": "@mima/zod/v4/locales/hr.js",
+          "sha256": "ecc01af7e42e9631766a6ff9aea68d9e3ba48054b45f5c4703898d464d3a7fb5",
+          "upstreamPath": "packages/zod/src/v4/locales/hr.ts",
+          "upstreamBlob": "124c5a27994a538ce33b44f29a424098b20306d8"
+        },
+        {
+          "id": "@mima/zod/v4/locales/hu.js",
+          "sha256": "b9765fdedd33af6ea616178d5ab83c023c3b1619f854ff2dc1085863c1bb9db2",
+          "upstreamPath": "packages/zod/src/v4/locales/hu.ts",
+          "upstreamBlob": "5ea46a9d38715b84bbf4f6d16532498fbbb5bb82"
+        },
+        {
+          "id": "@mima/zod/v4/locales/hy.js",
+          "sha256": "f781dfeef8db5eee124aed3c4a5112f22799ffa06c80720a6f39d8b330919e00",
+          "upstreamPath": "packages/zod/src/v4/locales/hy.ts",
+          "upstreamBlob": "8635804d6068d7f09d4ce30a50a1ea3293e5da85"
+        },
+        {
+          "id": "@mima/zod/v4/locales/id.js",
+          "sha256": "3e61ec103c2d1d527e7cbd84d0af4adc86d75a12540dcc311dec9e19685d4544",
+          "upstreamPath": "packages/zod/src/v4/locales/id.ts",
+          "upstreamBlob": "72ca30579999d8e849b31a8289cfb937d75ae93c"
+        },
+        {
+          "id": "@mima/zod/v4/locales/index.js",
+          "sha256": "9c36d2acae200acac448e3bc8bfb0c12f003bae4502caf05159deebcb1fbef53",
+          "upstreamPath": "packages/zod/src/v4/locales/index.ts",
+          "upstreamBlob": "2e0c03994bc12a75f58f2c15b91bf4f6e0b4ed6b"
+        },
+        {
+          "id": "@mima/zod/v4/locales/is.js",
+          "sha256": "1bbd9260e0f7d531d4bacdf1f4439dbcc1580b54237431025614df1ee9b7d8d4",
+          "upstreamPath": "packages/zod/src/v4/locales/is.ts",
+          "upstreamBlob": "7b3e9f775b0c4d17eb85f42072b8795bb33a3628"
+        },
+        {
+          "id": "@mima/zod/v4/locales/it.js",
+          "sha256": "12ff3e21411ef6466c5b3fb67374c36f347d57391db7918c9ff2f3d2a9abfee1",
+          "upstreamPath": "packages/zod/src/v4/locales/it.ts",
+          "upstreamBlob": "68074fac8f3be801bd52f6bfb6347cb3b8d0331c"
+        },
+        {
+          "id": "@mima/zod/v4/locales/ja.js",
+          "sha256": "a0a33d91933321d0741a508a0d6e1cf0b19fbcfc7cf2b5a200193d7c5ec4b92f",
+          "upstreamPath": "packages/zod/src/v4/locales/ja.ts",
+          "upstreamBlob": "0cb3c5c8057e86af6740b1c0b42093ff255de58d"
+        },
+        {
+          "id": "@mima/zod/v4/locales/ka.js",
+          "sha256": "87dc8c448e3311ba9dfb9ef4fc4fd7ef762d032455ab1019f073efcf358585b9",
+          "upstreamPath": "packages/zod/src/v4/locales/ka.ts",
+          "upstreamBlob": "867843fbcc8333010b3d88e9faa10622a9654a09"
+        },
+        {
+          "id": "@mima/zod/v4/locales/kh.js",
+          "sha256": "542f665ec4ead90a139c3203314defd494d4a8e58f4cd3447c722956b688cd8e",
+          "upstreamPath": "packages/zod/src/v4/locales/kh.ts",
+          "upstreamBlob": "84371b306d97564f3bacc90e443c0b3c46243230"
+        },
+        {
+          "id": "@mima/zod/v4/locales/km.js",
+          "sha256": "70a19ad092527426c0a13fbab83088d013311fd79bbe52b29eb28f4fd80490c0",
+          "upstreamPath": "packages/zod/src/v4/locales/km.ts",
+          "upstreamBlob": "9988eadc8f55159bcc58c61e10d1278c528dd197"
+        },
+        {
+          "id": "@mima/zod/v4/locales/ko.js",
+          "sha256": "2623db8257aec9e8efe02e9565e62aaac4335601b3f7bea3d68f23e393b154e3",
+          "upstreamPath": "packages/zod/src/v4/locales/ko.ts",
+          "upstreamBlob": "fb55b0d6d407bd03eaeb0a17888fe13106eccb6c"
+        },
+        {
+          "id": "@mima/zod/v4/locales/lt.js",
+          "sha256": "aa5ec9ca6060f1e06ae09b280bb7a7ba309dc2bf8f1b2852743e308f824113e3",
+          "upstreamPath": "packages/zod/src/v4/locales/lt.ts",
+          "upstreamBlob": "f4d4e17713e983869a0497dc5efab0068481e9dc"
+        },
+        {
+          "id": "@mima/zod/v4/locales/mk.js",
+          "sha256": "ec0ff024d37447d3d42aa302c08d06bf7e55b980f632baffe26ec7bba6f5e490",
+          "upstreamPath": "packages/zod/src/v4/locales/mk.ts",
+          "upstreamBlob": "f320fa83aedb58c63c7f42c4bca16a433e786591"
+        },
+        {
+          "id": "@mima/zod/v4/locales/ms.js",
+          "sha256": "24a59cbabbb283fe2500b36a0532e1a35df045c3af8c781722520400e877c908",
+          "upstreamPath": "packages/zod/src/v4/locales/ms.ts",
+          "upstreamBlob": "8ead32da42980807c3bf327506a8a98fd0ab974d"
+        },
+        {
+          "id": "@mima/zod/v4/locales/nl.js",
+          "sha256": "5e810eb3fa5aee66455fc145aa547459a3b745d1ea9bfc1da7b8524761251371",
+          "upstreamPath": "packages/zod/src/v4/locales/nl.ts",
+          "upstreamBlob": "3ed3099e5e9cc5ad7d1bd65bb5be98e4bff7f6d6"
+        },
+        {
+          "id": "@mima/zod/v4/locales/no.js",
+          "sha256": "129dc62c182ebbcb1e447dcb7d12267aafae57f2f1c8100d40727f18cb86010c",
+          "upstreamPath": "packages/zod/src/v4/locales/no.ts",
+          "upstreamBlob": "ca3028eb2a8283137456f9919b4c36c3f041942b"
+        },
+        {
+          "id": "@mima/zod/v4/locales/ota.js",
+          "sha256": "4afc1557a774970b8ef22a524166b7a8d99ad1ebbd53ff031e09a14c99ee8d6a",
+          "upstreamPath": "packages/zod/src/v4/locales/ota.ts",
+          "upstreamBlob": "d157d864db39b9329d5c0e306326b849fd772523"
+        },
+        {
+          "id": "@mima/zod/v4/locales/pl.js",
+          "sha256": "152b0011a56f9163134dda5b4fc60ad49577e303e699733d3400ef58886bce5f",
+          "upstreamPath": "packages/zod/src/v4/locales/pl.ts",
+          "upstreamBlob": "df7a7c60ca660839db565b849b2f326c9e79b3bd"
+        },
+        {
+          "id": "@mima/zod/v4/locales/ps.js",
+          "sha256": "791366eceb0758a7a0482a1a74d392edba2f8d6997d06b05e0d21bb573a5167b",
+          "upstreamPath": "packages/zod/src/v4/locales/ps.ts",
+          "upstreamBlob": "dc60fdd5038c51ee9d045c8b3b511f16556d24c3"
+        },
+        {
+          "id": "@mima/zod/v4/locales/pt.js",
+          "sha256": "d4cb5c2eed5fb5010755089164bafc7a42def90f7b29ecea62a41f3656e23c8e",
+          "upstreamPath": "packages/zod/src/v4/locales/pt.ts",
+          "upstreamBlob": "9ded285b58f5a09cc1a39748e91f4d7fd0a29283"
+        },
+        {
+          "id": "@mima/zod/v4/locales/ro.js",
+          "sha256": "a3b8eec20ccd82a325f589d37f8479a121d78a36607c341560c33db907712482",
+          "upstreamPath": "packages/zod/src/v4/locales/ro.ts",
+          "upstreamBlob": "8ac116dbd57b76fe5c44cd26fe4131943b7bc1f2"
+        },
+        {
+          "id": "@mima/zod/v4/locales/ru.js",
+          "sha256": "bc65ca2286136b4ea4b63c5b7064ac3564559d61ba002164bfe4b8775d6a9b2e",
+          "upstreamPath": "packages/zod/src/v4/locales/ru.ts",
+          "upstreamBlob": "cf223db405a8ca5fee6914613edc3ba6415cab9f"
+        },
+        {
+          "id": "@mima/zod/v4/locales/sl.js",
+          "sha256": "351f1685e9396a78df19580a42a319dd3ae2c79e6d08b81e3181719dd85a1ffd",
+          "upstreamPath": "packages/zod/src/v4/locales/sl.ts",
+          "upstreamBlob": "1b83c44349f94b5cc16dd38eb18196133528ffee"
+        },
+        {
+          "id": "@mima/zod/v4/locales/sv.js",
+          "sha256": "c077fc666a780e3c7c39855a7f3895cd124cf969536c6a327c9ceedd175a88fa",
+          "upstreamPath": "packages/zod/src/v4/locales/sv.ts",
+          "upstreamBlob": "a25aed8f23b900aac9f1fef0639bd8663b073394"
+        },
+        {
+          "id": "@mima/zod/v4/locales/ta.js",
+          "sha256": "83e115a279ddb8f1318e441ecc3a044c0a7590c43eea179714914c028155c1c4",
+          "upstreamPath": "packages/zod/src/v4/locales/ta.ts",
+          "upstreamBlob": "ea83f8b7aa1e742c3f79eeeb7d42fc8cf1384bb3"
+        },
+        {
+          "id": "@mima/zod/v4/locales/th.js",
+          "sha256": "022b0d6a3c9c8c3ddb865ef346053ce5fc404df00bd10b83938c3abd3635f051",
+          "upstreamPath": "packages/zod/src/v4/locales/th.ts",
+          "upstreamBlob": "47f435154ba38100dab422f689b34c65a0e0b548"
+        },
+        {
+          "id": "@mima/zod/v4/locales/tr.js",
+          "sha256": "61ee0cb9d3e13a3fab650b9e49da49456a50c7084e4bc68b987b2bfc2f1271bf",
+          "upstreamPath": "packages/zod/src/v4/locales/tr.ts",
+          "upstreamBlob": "2bc578d7b20a6c5c7ab7e34d5f591812165b1eae"
+        },
+        {
+          "id": "@mima/zod/v4/locales/ua.js",
+          "sha256": "9cde13f77dec43ac65e52e14cba670dbcb0a273a032cab849267615731188471",
+          "upstreamPath": "packages/zod/src/v4/locales/ua.ts",
+          "upstreamBlob": "e43526272e9c345dc603b4e4918b85f22ef97ad6"
+        },
+        {
+          "id": "@mima/zod/v4/locales/uk.js",
+          "sha256": "2d8afca9f4f0197fa9569a2d1d34d0c60d03409cc6f2fc3a28165d26782daa38",
+          "upstreamPath": "packages/zod/src/v4/locales/uk.ts",
+          "upstreamBlob": "424e2f3b2fd266404b4e9b3eeccab75043e8479a"
+        },
+        {
+          "id": "@mima/zod/v4/locales/ur.js",
+          "sha256": "0cdf33702d9270de1095720698f78027593b4305cec34518a0fc7cb93deedb37",
+          "upstreamPath": "packages/zod/src/v4/locales/ur.ts",
+          "upstreamBlob": "86f4cb2022d529f2122708f366ee118e97dbafee"
+        },
+        {
+          "id": "@mima/zod/v4/locales/uz.js",
+          "sha256": "86b471f9c04d1f9b6655321f8bafab7b1553ed6176622d08ba241eb84bd5524e",
+          "upstreamPath": "packages/zod/src/v4/locales/uz.ts",
+          "upstreamBlob": "08b690eb1203213212ab556eff7fb5d79e1682dc"
+        },
+        {
+          "id": "@mima/zod/v4/locales/vi.js",
+          "sha256": "e793e3409400ff59cd596ec7b2156a5832f30ee1b32b20d45ec224d899bde322",
+          "upstreamPath": "packages/zod/src/v4/locales/vi.ts",
+          "upstreamBlob": "673594d1a83eb1a199fe5866b9a5cb6ce04126c7"
+        },
+        {
+          "id": "@mima/zod/v4/locales/yo.js",
+          "sha256": "b6e528b2dfe4e80ce982dc04479e917f484efed845c718ffc1cf521ff46fb765",
+          "upstreamPath": "packages/zod/src/v4/locales/yo.ts",
+          "upstreamBlob": "c821d229c98d66e3caac1a8fb4c5611a81e94ca2"
+        },
+        {
+          "id": "@mima/zod/v4/locales/zh-CN.js",
+          "sha256": "a4612a8ead0faac0a0ff481133bd8798348b7113758b9d31fe7bd84e61a45bbb",
+          "upstreamPath": "packages/zod/src/v4/locales/zh-CN.ts",
+          "upstreamBlob": "728759ad8ac06d4fef7ea3eca33fcfcfc220b303"
+        },
+        {
+          "id": "@mima/zod/v4/locales/zh-TW.js",
+          "sha256": "f06e2042480b6357877eb8801f85f5b4abcb0c07e23458e2db415055d33cab91",
+          "upstreamPath": "packages/zod/src/v4/locales/zh-TW.ts",
+          "upstreamBlob": "62a02defb2433aba12d420c0f0670a6e6f47e5a5"
+        }
+      ]
+    }
+  ]
+}

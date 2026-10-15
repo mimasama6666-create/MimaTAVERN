@@ -1,0 +1,196 @@
+<!doctype html><html lang="zh"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' blob:; connect-src 'none'; img-src data: blob:; media-src data: blob:; font-src data:; style-src 'unsafe-inline'; form-action 'none'; base-uri 'none'; frame-src 'none'; object-src 'none'">
+<meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>html,body{margin:0;min-height:100%;font:14px/1.5 system-ui;background:#202128;color:#eee;overflow:auto}#mima-author-status{padding:7px 10px;font-size:12px;background:#30323c}#mima-author-root{padding:12px}button,input,select{font:inherit}button{cursor:pointer}</style></head>
+<body><div id="mima-author-status" role="status">作者宿主尚未授权启动</div><main id="mima-author-root"></main>
+<script>
+(()=>{'use strict';
+ let port,initialized=false,snapshot=null,tables=new Map(),committed=new Map(),dirty=new Map(),inFlight=null,localId=0,scheduled=false,writable=false,available=false,activeUpdates=0,mutationEpoch=0;
+ const waiters=[],copy=v=>JSON.parse(JSON.stringify(v)),error=(code,message)=>Object.assign(new Error(message),{code});
+ const listeners=new Map(),emits=new Map(),eventReceipts=new Map(),schemas=new Map(),blobUrls=[];let emitId=0;
+ const tavernEvents=Object.freeze({MESSAGE_SENT:'message_sent',MESSAGE_RECEIVED:'message_received',MESSAGE_UPDATED:'message_updated',GENERATION_ENDED:'generation_ended'});
+ const status=document.getElementById('mima-author-status');
+ function report(state,message){if(status?.isConnected)status.textContent=message;port?.postMessage({type:'state',state,message:String(message).slice(0,800)});}
+ function unavailable(e){available=false;writable=false;tables=new Map([...committed].map(([k,v])=>[k,copy(v)]));dirty.clear();report('error',(e.code||'E_AUTHOR_SCRIPT')+': '+e.message);for(const w of waiters.splice(0))w.reject(e);for(const w of emits.values())w.reject(e);emits.clear();}
+ function assertReady(){if(!available)throw error('E_AUTHOR_UNAVAILABLE','作者快照尚未就绪或上次提交失败，请停止后重新启动');}
+ function permission(cap){assertReady();if(!snapshot.capabilities.includes(cap))throw error('E_AUTHOR_PERMISSION','未授权 '+cap);}
+ function json(value){const seen=new WeakSet();let n=0;
+  function visit(v,d){if(++n>20000||d>32)throw error('E_AUTHOR_VALUE','变量结构超过预算');if(v===null||['string','boolean'].includes(typeof v)||typeof v==='number'&&Number.isFinite(v))return;
+   if(!v||typeof v!=='object'||seen.has(v)||(!Array.isArray(v)&&Object.getPrototypeOf(v)!==Object.prototype&&Object.getPrototypeOf(v)!==null))throw error('E_AUTHOR_VALUE','变量必须是无循环的 JSON 数据');seen.add(v);Object.values(v).forEach(x=>visit(x,d+1));seen.delete(v);}
+  if(!value||typeof value!=='object'||Array.isArray(value))throw error('E_AUTHOR_VALUE','变量表必须是对象');visit(value,0);const text=JSON.stringify(value);if(text.length>65536)throw error('E_AUTHOR_VALUE','变量表超过 64KB');return JSON.parse(text);
+ }
+ function floor(index,strict=true){
+  if(index==='latest')index=-1;if(!Number.isSafeInteger(index))throw error('E_AUTHOR_OPTION','message_id 必须为整数或 latest');
+  const actual=index<0?snapshot.messages.length+index:index;if(strict&&(actual<0||actual>=snapshot.messages.length))throw error('E_AUTHOR_MESSAGE_RANGE','消息楼层超出当前已提交快照');return actual;
+ }
+ function table(option,write=false){
+  assertReady();if(!option||typeof option!=='object'||Array.isArray(option)||!['chat','message','script'].includes(option.type))throw error('E_AUTHOR_SCOPE','本宿主仅支持明确指定 type 的 chat/message/script');
+  const allowed=option.type==='message'?['type','message_id']:option.type==='script'?['type','script_id']:['type'];
+  if(Object.keys(option).some(k=>!allowed.includes(k)))throw error('E_AUTHOR_OPTION','变量参数包含未支持的选项');
+  permission(option.type+'.'+(write?'write':'read'));
+  if(write&&!writable)throw error('E_AUTHOR_FROZEN','故事正在形成请求或读取快照，作者写入已暂停');
+  let owner='';if(option.type==='message')owner=snapshot.messages[floor(option.message_id??'latest')].stableId;
+  if(option.type==='script'){if(option.script_id!==undefined&&option.script_id!==snapshot.owner.scriptId)throw error('E_AUTHOR_PERMISSION','不能访问其他脚本变量');owner=JSON.stringify([snapshot.owner.sourceId,snapshot.owner.resourceId,snapshot.owner.path,snapshot.owner.scriptId]);}
+  const row=[...tables.values()].find(t=>t.scope===option.type&&t.owner===owner);
+  if(!row)throw error('E_AUTHOR_UNVERIFIED','变量表不存在于已验证快照，未返回假空表');return row;
+ }
+ function idle(){if(!inFlight&&!dirty.size&&!activeUpdates){for(const w of waiters.splice(0))w.resolve();if(available)report(writable?'ready':'paused',writable?'变量已提交到当前故事':'作者写入已暂停，变量已提交');}}
+ function drain(){if(!available)return Promise.reject(error('E_AUTHOR_UNAVAILABLE','上次作者动作失败'));if(!inFlight&&!dirty.size&&!activeUpdates)return Promise.resolve();return new Promise((resolve,reject)=>waiters.push({resolve,reject}));}
+ function flush(){
+  scheduled=false;if(!available||inFlight||!dirty.size){idle();return;}
+  const changes=[...dirty.keys()].map(id=>{const t=tables.get(id);return {id,expectedRevision:t.revision,value:copy(t.value)};});dirty.clear();
+  inFlight={localId:++localId,changes};report('pending','作者变量正在保存，尚未收到提交回执');
+  port.postMessage({type:'commit',localId:inFlight.localId,base:{sessionRevision:snapshot.sessionRevision,canonicalFingerprint:snapshot.canonicalFingerprint,tables:[...committed.values()].map(t=>({id:t.id,revision:t.revision}))},changes});
+ }
+ function schedule(){if(!scheduled){scheduled=true;queueMicrotask(flush);}}
+ function getVariables(option={type:'chat'}){return copy(table(option).value);}
+ function lodash(){if(typeof window._?.mergeWith!=='function'||typeof window._?.unset!=='function')throw error('E_AUTHOR_DEPENDENCY','此变量辅助 API 需要勾选真实离线 lodash');return window._;}
+ function insertOrAssignVariables(variables,option={type:'chat'}){const data=json(variables),lib=lodash();return updateVariablesWith(old=>lib.mergeWith(old,data,(_left,right)=>Array.isArray(right)?right:undefined),option);}
+ function insertVariables(variables,option={type:'chat'}){const data=json(variables),lib=lodash();return updateVariablesWith(old=>lib.mergeWith({},data,old,(_left,right)=>Array.isArray(right)?right:undefined),option);}
+ function deleteVariable(path,option={type:'chat'}){
+  const lib=lodash();if(typeof path!=='string'||path.length>512||lib.toPath(path).some(x=>['__proto__','constructor','prototype'].includes(x)))throw error('E_AUTHOR_OPTION','变量删除路径无效');
+  let delete_occurred=false;const variables=updateVariablesWith(old=>{delete_occurred=lib.unset(old,path);return old;},option);return {variables,delete_occurred};
+ }
+ function replaceVariables(variables,option={type:'chat'}){const row=table(option,true);row.value=json(variables);dirty.set(row.id,true);mutationEpoch++;schedule();}
+ function updateVariablesWith(updater,option={type:'chat'}){
+  if(typeof updater!=='function')throw error('E_AUTHOR_OPTION','updater 必须为函数');const row=table(option,true),epoch=mutationEpoch,result=updater(copy(row.value));
+  if(result&&typeof result.then==='function'){
+   activeUpdates++;report('pending','作者异步变量动作进行中，尚未保存');
+   return Promise.resolve(result).then(next=>{if(mutationEpoch!==epoch)throw error('E_AUTHOR_CONFLICT','异步 updater 期间已有其他变量动作');
+    if(!available)throw error('E_AUTHOR_UNAVAILABLE','作者动作已失效');row.value=json(next);dirty.set(row.id,true);mutationEpoch++;schedule();return copy(row.value);
+   }).catch(e=>{unavailable(e);throw e;}).finally(()=>{activeUpdates--;idle();});
+  }
+  replaceVariables(result,option);return copy(row.value);
+ }
+ function getChatMessages(range,option={}){
+  permission('messages.read');permission('message.read');
+  if(!option||typeof option!=='object'||Array.isArray(option)||Object.keys(option).some(k=>!['role','hide_state','include_swipes'].includes(k))||!['all','system','assistant','user'].includes(option.role??'all')||!['all','hidden','unhidden'].includes(option.hide_state??'all')||option.include_swipes!==undefined&&option.include_swipes!==false)throw error('E_AUTHOR_API_UNSUPPORTED','消息选项无效；尚不支持 swipes');
+  const expanded=String(range).replace(/\{\{lastMessageId\}\}/g,String(snapshot.messages.length-1));
+  let start,end;if(/^-?\d+$/.test(expanded)){start=end=floor(Number(expanded),false);}else{
+   const match=/^(-?\d+)-(-?\d+)$/.exec(expanded);if(!match)throw error('E_AUTHOR_MESSAGE_RANGE','消息范围只支持整数或闭区间');start=floor(Number(match[1]),false);end=floor(Number(match[2]),false);
+  }
+  return snapshot.messages.filter(m=>m.message_id>=start&&m.message_id<=end&&(option.role===undefined||option.role==='all'||m.role===option.role)&&(option.hide_state===undefined||option.hide_state==='all'||m.is_hidden===(option.hide_state==='hidden'))).map(m=>({message_id:m.message_id,name:m.name,role:m.role,is_hidden:m.is_hidden,message:m.message,data:getVariables({type:'message',message_id:m.message_id}),extra:{mima_stable_id:m.stableId,source:'committed_snapshot'}}));
+ }
+ function reset(next){
+  if(inFlight||dirty.size||activeUpdates)throw error('E_AUTHOR_CONFLICT','不能用新快照覆盖未结算作者动作');
+  snapshot=copy(next);tables=new Map(snapshot.tables.map(t=>[t.id,t]));committed=new Map(snapshot.tables.map(t=>[t.id,copy(t)]));available=true;writable=true;report('ready','作者快照已就绪；仅本故事、已授权变量可读写');refreshSchemas();
+ }
+ function eventName(name){if(typeof name!=='string'||!/^[^\u0000-\u001f]{1,128}$/.test(name))throw error('E_AUTHOR_EVENT','事件名应为 1～128 字符的字符串');return name;}
+ function eventOn(name,fn,mode='on'){
+  permission('events.listen');eventName(name);if(typeof fn!=='function')throw error('E_AUTHOR_EVENT','事件监听器必须为函数');
+  if(Object.values(tavernEvents).includes(name))permission('messages.read');
+  let list=listeners.get(name)||[],item=list.find(x=>x.fn===fn);
+  if(!item){if([...listeners.values()].reduce((n,x)=>n+x.length,0)>=256)throw error('E_AUTHOR_BUDGET','监听器超过 256 个');item={fn,once:mode==='once'};list.push(item);}
+  if(mode==='first'||mode==='last'){list=list.filter(x=>x!==item);mode==='first'?list.unshift(item):list.push(item);}listeners.set(name,list);
+  return {stop:()=>eventRemoveListener(name,fn)};
+ }
+ function eventRemoveListener(name,fn){listeners.set(eventName(name),(listeners.get(name)||[]).filter(x=>x.fn!==fn));}
+ function eventClearEvent(name){listeners.delete(eventName(name));}
+ function eventClearListener(fn){for(const name of listeners.keys())eventRemoveListener(name,fn);}
+ function eventClearAll(){listeners.clear();}
+ async function dispatch(events){
+  for(const event of events||[]){if(!snapshot.capabilities.includes('events.listen'))continue;eventName(event.name);
+   for(const item of [...(listeners.get(event.name)||[])]){if(!(listeners.get(event.name)||[]).includes(item))continue;if(item.once)eventRemoveListener(event.name,item.fn);await item.fn(...copy(event.args));}
+  }
+  await drain();
+ }
+ async function eventEmit(name,...args){
+  permission('events.emit');eventName(name);if(/^(?:message_|generation_|js_|chat_id_changed|app_ready|mima\.)/i.test(name))throw error('E_AUTHOR_EVENT','不能伪造宿主事件');
+  if(emits.size>=32||activeUpdates)throw error('E_AUTHOR_EVENT','未完成事件过多，或正在异步 updater 中；不支持这种重入');
+  const checked=json({args});await drain();assertReady();if(!writable)throw error('E_AUTHOR_FROZEN','故事操作期间不能发出作者事件');
+  const id=++emitId,promise=new Promise((resolve,reject)=>{emits.set(id,{resolve,reject});port.postMessage({type:'emit',localId:id,name,args:checked.args});});emits.get(id).promise=promise;return promise;
+ }
+ function schemaOption(entry){return entry.type==='chat'?{type:'chat'}:{type:'message',message_id:entry.floor.value==='latest'?'latest':Number(entry.floor.value)};}
+ function refreshSchema(entry){if(!entry.dirty)try{entry.text.value=JSON.stringify(getVariables(schemaOption(entry)),null,2);}catch(e){entry.out.textContent=e.message;}}
+ function refreshSchemas(){for(const entry of schemas.values())refreshSchema(entry);}
+ function registerVariableSchema(schema,option){
+  if(!option||Object.keys(option).some(k=>k!=='type')||!['chat','message'].includes(option.type)||typeof schema?.safeParse!=='function')throw error('E_AUTHOR_API_UNSUPPORTED','结构注册仅支持真实 Zod schema 与 chat/message 变量管理器');
+  permission(option.type+'.read');schemas.get(option.type)?.node.remove();
+  const node=document.createElement('details'),title=document.createElement('summary'),text=document.createElement('textarea'),button=document.createElement('button'),out=document.createElement('pre');node.className='mima-schema-editor';title.textContent=option.type+' · 已注册 Zod 变量管理器';node.append(title);
+  const note=document.createElement('p');note.textContent='结构用于这里的手动校验与保存。脚本写入继续遵循变量 API。';node.append(note);
+  const entry={type:option.type,schema,node,text,out,dirty:false};if(option.type==='message'){entry.floor=document.createElement('input');entry.floor.value='latest';entry.floor.setAttribute('aria-label','消息楼层：latest 或整数');entry.floor.onchange=()=>{entry.dirty=false;refreshSchema(entry);};node.append(entry.floor);}
+  text.rows=8;text.style.cssText='display:block;width:100%;box-sizing:border-box;max-height:260px';text.setAttribute('aria-label',option.type+' 变量 JSON');text.oninput=()=>entry.dirty=true;node.append(text);button.textContent='校验并保存';button.type='button';node.append(button,out);document.body.append(node);schemas.set(option.type,entry);refreshSchema(entry);
+  button.onclick=async()=>{button.disabled=true;try{
+   const target=schemaOption(entry),row=table(target,true),id=row.id,revision=row.revision,epoch=mutationEpoch,fingerprint=snapshot.canonicalFingerprint;
+   const parsed=typeof schema.safeParseAsync==='function'?await schema.safeParseAsync(JSON.parse(text.value)):schema.safeParse(JSON.parse(text.value));
+   if(!parsed.success){out.textContent=JSON.stringify(parsed.error.issues||parsed.error,null,2);return;}
+   const current=table(target,true);if(current.id!==id||current.revision!==revision||mutationEpoch!==epoch||snapshot.canonicalFingerprint!==fingerprint)throw error('E_AUTHOR_CONFLICT','校验期间变量或消息已变化，请重新读取');
+   replaceVariables(parsed.data,target);await drain();entry.dirty=false;refreshSchema(entry);out.textContent='已收到保存回执';
+  }catch(e){out.textContent=(e.code||'E_AUTHOR_SCHEMA')+': '+e.message;}finally{button.disabled=false;}};
+ }
+ async function loadLibraries(dependencies,mode){
+  if(!Array.isArray(dependencies)||dependencies.length>4)throw error('E_AUTHOR_DEPENDENCY','离线依赖清单无效');
+  const modules={},aliases={},metadata=[];
+  const url=source=>{const value=URL.createObjectURL(new Blob([source],{type:'text/javascript'}));blobUrls.push(value);return value;};
+  for(const lib of dependencies){metadata.push({id:lib.id,version:lib.version});
+   if(lib.format==='classic'){(0,eval)(lib.source+'\n//# sourceURL=mima-offline-'+lib.id+'.js');const value=window[lib.global];if(!value)throw error('E_AUTHOR_DEPENDENCY',lib.id+' 没有创建声明的真实库');
+    const names=lib.id==='jquery'?[]:Object.keys(value).filter(k=>/^[A-Za-z_$][\w$]*$/.test(k)&&!['default','await','enum','implements','interface','let','package','private','protected','public','static','yield','var','const','function','class','new','delete','return','throw','import','export','extends','super','switch','case','break','continue','do','else','for','if','in','instanceof','this','try','typeof','void','while','with','null','true','false'].includes(k));
+    const shim='const value=globalThis['+JSON.stringify(lib.global)+']; export default value;\n'+names.map(k=>'export const '+k+'=value['+JSON.stringify(k)+'];').join('\n');modules[lib.id]=url(shim);
+   }else if(lib.format==='esm-graph'){for(const file of lib.modules)modules[file.id]=url(file.source);aliases[lib.id]=lib.entry;if(lib.id==='zod')aliases['zod/v4']=lib.entry;}
+   else throw error('E_AUTHOR_DEPENDENCY','未知离线模块格式');
+  }
+  if(mode==='module'||dependencies.some(x=>x.format==='esm-graph')){
+   if(!HTMLScriptElement.supports?.('importmap'))throw error('E_AUTHOR_DEPENDENCY','此浏览器不支持本地 import map，未启动模块插件');
+   for(const [alias,entry]of Object.entries(aliases)){if(!modules[entry])throw error('E_AUTHOR_DEPENDENCY','离线模块入口不存在');modules[alias]=modules[entry];}
+   // Opting into a displayed fixed library also opts into these exact CDN aliases.
+   // An explicitly different version is never silently substituted.
+   for(const lib of dependencies){const target=modules[lib.id];if(!target)throw error('E_AUTHOR_DEPENDENCY','离线库没有模块入口');
+    for(const name of [lib.id,lib.id+'@'+lib.version]){modules['https://esm.sh/'+name]=target;modules['https://cdn.jsdelivr.net/npm/'+name+'/+esm']=target;}
+    if(lib.id==='zod'){modules['https://esm.sh/zod/v4']=target;modules['https://esm.sh/zod@'+lib.version+'/v4']=target;modules['https://cdn.jsdelivr.net/npm/zod@'+lib.version+'/v4/+esm']=target;}
+   }
+   const map=document.createElement('script');map.type='importmap';map.textContent=JSON.stringify({imports:modules});document.head.append(map);
+   for(const lib of dependencies.filter(x=>x.format==='esm-graph')){const namespace=await import(lib.entry);if(lib.id==='zod'){window.z=namespace.z||namespace.default;window.Zod=window.z;}}
+  }
+  return metadata;
+ }
+ const facade=Object.freeze({getVariables,replaceVariables,updateVariablesWith,insertOrAssignVariables,insertVariables,deleteVariable,getChatMessages,registerVariableSchema,eventOn,eventOnce:(n,f)=>eventOn(n,f,'once'),eventMakeFirst:(n,f)=>eventOn(n,f,'first'),eventMakeLast:(n,f)=>eventOn(n,f,'last'),eventRemoveListener,eventClearEvent,eventClearListener,eventClearAll,eventEmit,eventEmitAndWait:(n,...args)=>{void eventEmit(n,...args).catch(unavailable);},getScriptId:()=>{assertReady();return snapshot.owner.scriptId;},getLastMessageId:()=>{permission('messages.read');return snapshot.messages.length-1;}});
+ window.addEventListener('pagehide',()=>{eventClearAll();blobUrls.forEach(value=>URL.revokeObjectURL(value));});
+ window.addEventListener('error',e=>unavailable(e.error||new Error(e.message)));
+ window.addEventListener('unhandledrejection',e=>unavailable(e.reason instanceof Error?e.reason:new Error(String(e.reason))));
+ window.addEventListener('message',event=>{
+  if(initialized||event.source!==parent||event.data?.type!=='mima-author-init'||event.ports.length!==1)return;
+  initialized=true;port=event.ports[0];
+  port.onmessage=e=>{const packet=e.data;if(!packet)return;
+   try{
+    if(packet.type==='commit-result'){
+     if(!inFlight||packet.localId!==inFlight.localId)return;
+     if(packet.error){inFlight=null;unavailable(Object.assign(new Error(packet.error.message),{code:packet.error.code}));return;}
+     const receipt=packet.receipt;
+     for(const change of receipt.changes){const row=tables.get(change.id);if(!row)throw error('E_AUTHOR_UNVERIFIED','提交回执含未知变量表');
+      const saved={...row,value:copy(change.value),revision:change.revision};committed.set(row.id,copy(saved));row.revision=saved.revision;if(!dirty.has(row.id))row.value=copy(saved.value);
+     }
+     snapshot.sessionRevision=receipt.sessionRevision;snapshot.variableRevision=receipt.variableRevision;inFlight=null;
+     port.postMessage({type:'committed',operationId:receipt.operationId});schedule();
+    }else if(packet.type==='sync'){
+     const applied=available&&writable&&!inFlight&&!dirty.size&&!activeUpdates&&!emits.size&&packet.snapshot.sessionRevision>=snapshot.sessionRevision;
+     if(applied)reset(packet.snapshot);
+     port.postMessage({type:'sync-ready',token:packet.token,applied});
+    }else if(packet.type==='emit-result'){const waiter=emits.get(packet.localId);if(waiter){emits.delete(packet.localId);packet.error?waiter.reject(Object.assign(new Error(packet.error.message),{code:packet.error.code})):waiter.resolve();}}
+    else if(packet.type==='freeze'){
+     writable=false;const outstanding=packet.forEvent?[]:[...emits.values()].map(x=>x.promise);
+     Promise.all(outstanding).then(drain).then(()=>{if(available)port.postMessage({type:'frozen',token:packet.token});}).catch(unavailable);
+    }else if(packet.type==='snapshot'){
+     const previous=eventReceipts.get(packet.token);if(previous){previous.then(()=>port.postMessage({type:'snapshot-ready',token:packet.token})).catch(unavailable);return;}
+     if(eventReceipts.size>=2048)throw error('E_AUTHOR_BUDGET','本次挂载事件超过预算，请停止后重新启动');reset(packet.snapshot);
+     const work=dispatch(packet.events);eventReceipts.set(packet.token,work);work.then(()=>port.postMessage({type:'snapshot-ready',token:packet.token})).catch(unavailable);
+    }
+    else if(packet.type==='unavailable')unavailable(Object.assign(new Error(packet.message),{code:packet.code}));
+   }catch(err){unavailable(err);}
+  };
+  try{
+   reset(event.data.snapshot);
+   for(const [name,fn]of Object.entries(facade))Object.defineProperty(window,name,{value:fn,writable:false,configurable:false});
+   Object.defineProperty(window,'tavern_events',{value:tavernEvents,writable:false});
+   let libraries=[];Object.defineProperty(window,'MimaAuthor',{value:Object.freeze({version:'mima-author-host/1',whenCommitted:drain,getLibraries:()=>copy(libraries),getStatus:()=>({available,pending:!!inFlight||!!dirty.size||activeUpdates>0,writable,sessionRevision:snapshot.sessionRevision})}),writable:false});
+   const source=String(event.data.source||'');if(source.length>262144)throw error('E_AUTHOR_BUDGET','脚本超过预算');
+   const mode=event.data.scriptMode||'classic';
+   loadLibraries(event.data.libraries||[],mode).then(async metadata=>{
+    libraries=metadata;assertReady();
+    if(mode==='module'){const url=URL.createObjectURL(new Blob([source+'\n//# sourceURL=mima-author-module.js'],{type:'text/javascript'}));blobUrls.push(url);await import(url);}
+    else await new Function(source+'\n//# sourceURL=mima-author-script.js').call(window);
+    port.postMessage({type:'ready'});
+   }).catch(unavailable);
+  }catch(err){unavailable(err);}
+ });
+})();
+</script></body></html>

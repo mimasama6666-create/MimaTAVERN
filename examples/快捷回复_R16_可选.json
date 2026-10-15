@@ -1,0 +1,32 @@
+[
+  {
+    "version": 2,
+    "name": "R16 示例 · 仅填入",
+    "disableSend": true,
+    "injectInput": true,
+    "placeBeforeInput": false,
+    "qrList": [
+      {
+        "id": 1,
+        "label": "补充环境",
+        "message": "请继续描写当前环境中的日常活动。",
+        "isHidden": false
+      }
+    ]
+  },
+  {
+    "version": 2,
+    "name": "R16 示例 · 本地脚本",
+    "disableSend": false,
+    "injectInput": false,
+    "placeBeforeInput": false,
+    "qrList": [
+      {
+        "id": 1,
+        "label": "本地计数",
+        "message": "/incvar clicks | /echo 本地按钮点击次数：{{pipe}}",
+        "isHidden": false
+      }
+    ]
+  }
+]

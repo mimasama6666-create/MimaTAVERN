@@ -1,0 +1,31 @@
+{
+  "spec": "chara_card_v2",
+  "spec_version": "2.0",
+  "data": {
+    "name": "作者交互示例",
+    "description": "一个中性的计数与消息读取示例。本故事已保存的计数为 {{get_chat_variable::score}}。",
+    "personality": "简洁说明界面当前的状态。",
+    "scenario": "变量按钮演示，不需要调用模型即可查看作者变量和发送前请求预览。",
+    "first_mes": "这里是一条已提交的开场消息，可用来读取楼层和更新该楼变量。",
+    "mes_example": "",
+    "system_prompt": "",
+    "post_history_instructions": "",
+    "creator_notes": "未实测的可选示例：互动功能 → 作者交互宿主，明确选择三类变量与消息权限及首次初始化后运行。按钮更新不调用模型。",
+    "tags": [
+      "mima-author-host/1",
+      "未实测示例"
+    ],
+    "creator": "MimaTAVERN",
+    "character_version": "R15-subset",
+    "extensions": {
+      "scripts": [
+        {
+          "type": "script",
+          "id": "mima-author-example-counter-v1",
+          "name": "三类变量按钮与已提交消息",
+          "content": "const panel = document.getElementById('mima-author-root');\npanel.innerHTML = '<h3>作者变量按钮</h3><p>按钮只更新本故事变量，不调用模型。</p><button id=\"score-add\">三类变量各加一</button><pre id=\"score-view\"></pre>';\nconst options = [{type:'chat'}, {type:'message', message_id:-1}, {type:'script'}];\nfor (const option of options) { const variables = getVariables(option); if (variables.score === undefined) replaceVariables({...variables, score:0}, option); }\nfunction paint() { document.getElementById('score-view').textContent = JSON.stringify({chat:getVariables(options[0]), latestMessage:getVariables(options[1]), script:getVariables(options[2]), floor:getLastMessageId(), lastMessage:getChatMessages(-1)[0]?.message, host:MimaAuthor.getStatus()},null,2); }\ndocument.getElementById('score-add').onclick = async () => {\n  const button = document.getElementById('score-add'); button.disabled = true;\n  try { for (const option of options) updateVariablesWith(variables => ({...variables, score:Number(variables.score || 0)+1}), option);\n    document.getElementById('score-view').textContent = '待保存，正在等待提交回执';\n    await MimaAuthor.whenCommitted(); paint();\n  } catch (error) { document.getElementById('score-view').textContent = error.code + ': ' + error.message; }\n  finally { button.disabled = false; }\n};\nMimaAuthor.whenCommitted().then(paint);"
+        }
+      ]
+    }
+  }
+}

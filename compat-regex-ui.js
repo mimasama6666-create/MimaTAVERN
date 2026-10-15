@@ -8,7 +8,7 @@ function create(panel,bridge){
  node('span',{className:'compat-eyebrow',text:'REGEX · 文字与界面'},panel);
  node('h3',{text:'正则规则'},panel);
  node('p',{className:'compat-help',text:'卡内规则和手动导入的规则一起列在这里。开关、修改与排序只保存到当前故事，原卡完整保留。'},panel);
- const importBar=node('div',{className:'compat-tool-actions'},panel),label=node('label',{className:'compat-button-label',for:'compat-resource-file',text:'＋ 导入正则 / 世界书 / 预设'},importBar);
+ const importBar=node('div',{className:'compat-tool-actions'},panel),label=node('label',{className:'compat-button-label',for:'compat-resource-file',text:'＋ 导入 JSON 资源（含快捷回复 / 作者脚本）'},importBar);
  const file=node('input',{id:'compat-resource-file',type:'file',accept:'.json',className:'compat-file-input'},importBar);
  const createButton=node('button',{type:'button',text:'新建规则'},importBar);
  const status=node('p',{id:'compat-regex-status',role:'status',className:'compat-help'},panel);
