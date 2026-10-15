@@ -149,7 +149,53 @@ function macro(str,ctx){let unsupported=[];const value=String(str??'')
  .replace(/<(char|bot|user|player)>/gi,(_,tag)=>/^(char|bot)$/i.test(tag)?ctx.char||'角色':ctx.user||'玩家');
  return{value,unsupported};}
 function entriesFromResources(resources){const entries=[];for(const r of resources)if(r.kind==='world_info'){const data=r.raw?.entries,items=Array.isArray(data)?data.map((e,i)=>[i,e]):data&&typeof data==='object'?Object.entries(data):[];for(const [key,e] of items)entries.push(e&&typeof e==='object'?{...e,__mimaSourcePath:r.path+'.entries['+String(key)+']',__mimaSourceId:r.sourceId,__mimaResourceId:r.id}:e);}return entries;}
-function readRegex(resources){const all=[];for(const r of resources)if(r.kind==='regex'){const v=r.raw;if(Array.isArray(v))all.push(...v);else if(v&&typeof v==='object')all.push(v);}return all;}
+function readRegex(resources,session={}){
+ const all=[],settings=session.regexSettings||{},overrides=settings.overrides||{};
+ const ordered=resources.filter(r=>r.kind==='regex').map((resource,index)=>({resource,index})).sort((a,b)=>Number(a.resource.sourceId===session.sourceId)-Number(b.resource.sourceId===session.sourceId)||a.index-b.index);
+ for(const {resource}of ordered){const values=Array.isArray(resource.raw)?resource.raw:[resource.raw];
+  for(const [index,value]of values.entries()){if(!value||typeof value!=='object')continue;const key=String(resource.id||resource.path)+':'+index,override=overrides[key]||{};
+   all.push({...value,...(override.rule||{}),...(typeof override.enabled==='boolean'?{disabled:!override.enabled}:{}),__mimaRegexRef:{key,resourceId:resource.id||null,index,sourceId:resource.sourceId||null,path:resource.path+(Array.isArray(resource.raw)?'['+index+']':''),scope:resource.sourceId===session.sourceId?'card':'mounted',overridden:!!overrides[key]}});
+  }
+ }
+ if(Array.isArray(settings.order)){const rank=new Map(settings.order.map((key,index)=>[key,index]));all.sort((a,b)=>(rank.get(a.__mimaRegexRef.key)??settings.order.length)-(rank.get(b.__mimaRegexRef.key)??settings.order.length));}
+ return all;
+}
+async function regexMacroContext(session,resources){
+ const card=resources.find(r=>r.kind==='character')?.raw||{},context={char:card.nickname||card.name||'角色',user:session.userName||'玩家',description:String(card.description||''),personality:String(card.personality||''),scenario:String(card.scenario||''),persona:String(session.personaDescription||''),mesexamples:String(card.mes_example||'')};
+ const id=session.id+':__stscript_local_v1';
+ if(root.MimaCompatStore?.get){const row=await store().get('variables',id);if(row&&(row.id!==id||row.sessionId!==session.id||row.namespace!=='stscript'||!Number.isInteger(row.revision)||!row.value||typeof row.value!=='object'||Array.isArray(row.value)))throw error('E_STORE_UNVERIFIED','正则变量不是经过验证的本剧情 STscript 来源');context.variables=row?.value||{};}
+ return context;
+}
+async function regexProjection(items,rules,options={}){
+ const isolate=root.MimaCompatRegexIsolation;if(!isolate?.applyBatch)throw error('E_REGEX_ISOLATION_UNAVAILABLE','正则隔离执行器未加载');
+ if(!items.length)return[];
+ // ST applies unflagged scripts before ephemeral display/prompt scripts. Both
+ // passes operate on disposable copies; the original message stays canonical.
+ const source=await isolate.applyBatch(items.map(item=>({...item,options:{...item.options,isMarkdown:false,isPrompt:false}})),rules,options);
+ const projected=await isolate.applyBatch(items.map((item,index)=>({...item,input:source[index]?.result?.output??String(item.input),options:{...item.options,isMarkdown:options.isMarkdown===true,isPrompt:options.isPrompt===true}})),rules,options);
+ return projected.map((packet,index)=>{const first=source[index],errors=[...(first?.result?.errors||(first?.ok?[]:[first.error])),...(packet?.result?.errors||(packet?.ok?[]:[packet.error]))].filter(Boolean);
+  const result={output:packet?.result?.output??first?.result?.output??String(items[index].input),trace:[...(first?.result?.trace||[]),...(packet?.result?.trace||[])],errors};
+  return{ok:errors.length===0,result,...(errors.length?{error:errors[0]}:{})};
+ });
+}
+async function saveRegexSettings(sessionId,change){
+ const session=await getSession(sessionId),resources=await resourcesFor(session),rules=readRegex(resources,session),keys=new Set(rules.map(r=>r.__mimaRegexRef.key));
+ if(session.pendingTurnId)throw error('E_CANONICAL_CONFLICT','请等待当前回合结算后再保存正则设置');
+ const current=session.regexSettings||{},settings={...current,overrides:{...(current.overrides||{})}};
+ if(change?.order){if(!Array.isArray(change.order)||change.order.length!==keys.size||new Set(change.order).size!==keys.size||change.order.some(key=>!keys.has(key)))throw error('E_REGEX_SETTINGS','规则排序与当前挂载不一致，请重新打开列表');settings.order=change.order.slice();}
+ if(change?.key){if(!keys.has(change.key))throw error('E_REGEX_SETTINGS','正则来源已变化，未保存旧规则');
+  if(change.reset)delete settings.overrides[change.key];
+  else{const value={...(settings.overrides[change.key]||{})};if(typeof change.enabled==='boolean')value.enabled=change.enabled;
+   if(change.rule){const allowed=['scriptName','findRegex','replaceString','trimStrings','placement','markdownOnly','promptOnly','runOnEdit','substituteRegex','minDepth','maxDepth','flags'];
+    if(Object.keys(change.rule).some(key=>!allowed.includes(key)))throw error('E_REGEX_SETTINGS','规则包含不可修改的来源字段');
+    const rule=change.rule;if(typeof rule.findRegex!=='string'||rule.findRegex.length>2048||typeof rule.replaceString!=='string'||rule.replaceString.length>262144||!Array.isArray(rule.placement)||rule.placement.some(n=>![0,1,2,3,5,6].includes(n))||!Array.isArray(rule.trimStrings)||rule.trimStrings.length>32||rule.trimStrings.some(t=>typeof t!=='string'||t.length>256)||![0,1,2].includes(Number(rule.substituteRegex??0)))throw error('E_REGEX_SETTINGS','规则格式或隔离运行预算无效；未裁剪内容或覆盖原卡');
+    value.rule=structuredClone(rule);
+   }settings.overrides[change.key]=value;
+  }
+ }
+ if(JSON.stringify(settings).length>512000)throw error('E_REGEX_SETTINGS','本剧情正则覆盖超过保存预算，未裁剪或保存');
+ return store().putCAS('compat_sessions',{...session,regexSettings:settings},session.revision);
+}
 // External ST presets must participate in the outgoing provider request.
 // Only an explicitly mounted resource from another capsule is user-authorized;
 // native card system_prompt/post_history_instructions are already included once.
@@ -230,7 +276,7 @@ function createEnvelope(session,resources,messages,userText,{skipRegex=false,wor
  if(mvuInit?.state===null&&messages.some(x=>x.status==='committed'&&x.mvuStateAfter!==undefined))throw error('E_MVU_HISTORY_CONFLICT','旧剧情已有 MVU 状态，但当前初始变量来源缺失；不得用空状态继续');
  const mvuState=mvuInit?.state!==null?mvu()?.replay(mvuInit?.state??null,messages):{active:false,state:null};
  const wi=worldInfoOverride??worldInfo(entriesFromResources(resources),[...history,...(assistantContinuation?[]:[{role:'user',content:userText}])],worldInfoSettings(session,name,u,userText));
- const regex=readRegex(resources),regexTrace=[],segments=[],mountedPreset=mountedPresetInstructions(session,resources);
+ const regex=readRegex(resources,session),regexTrace=[],segments=[],mountedPreset=mountedPresetInstructions(session,resources);
  const gaps=[...wi.semanticGaps,...mountedPreset.gaps,...(mvuInit?.gaps||[])];
  for(const resource of resources.filter(r=>['script_source','quick_reply','html_template','plugin_bundle','raw_unknown'].includes(r.kind)))gaps.push({resourceId:resource.id,path:resource.path,slot:resource.kind,reason:'retained_not_automatically_executed'});
  const metadataExtensions=new Set(['depth_prompt','talkativeness','fav','world','chara_id','character_id','create_date','date_added','date_last_chat']);
@@ -636,18 +682,18 @@ async function createEnvelopeAsync(session,resources,messages,userText,options={
     if(!root.MimaCompatWorldInfoIsolation?.evaluate)throw error('E_REGEX_ISOLATION_UNAVAILABLE','世界书包含正则关键词，但隔离组件未加载；不会跳过世界书继续生成');
     worldInfoOverride=await root.MimaCompatWorldInfoIsolation.evaluate(entries,[...history,...(options.assistantContinuation?[]:[{role:'user',content:userText}])],worldInfoSettings(session,name,user,userText),{signal:options.signal});
   }
-  const out=createEnvelope(session,resources,messages,userText,{skipRegex:true,worldInfoOverride,assistantContinuation:options.assistantContinuation===true}),regex=readRegex(resources);
+  const out=createEnvelope(session,resources,messages,userText,{skipRegex:true,worldInfoOverride,assistantContinuation:options.assistantContinuation===true}),regex=readRegex(resources,session);
   const isolate=root.MimaCompatRegexIsolation;
-  const warn=(stage,e)=>{out.gaps.push({reason:e.code||'E_REGEX_WORKER_FAILED',stage,details:e.message,rawRetained:true});};
+  const warn=(stage,e)=>{out.gaps.push({reason:e.code||'E_REGEX_WORKER_FAILED',stage,details:e.message,ruleName:e.ruleName||null,ruleKey:e.ruleKey||null,resourceId:e.resourceId||null,path:e.path||null,rawRetained:true});};
   if(!isolate){if(regex.length)warn('worker',error('E_REGEX_ISOLATION_UNAVAILABLE','无法初始化隔离正则执行器'));return projectCompatHistory(out,userText);}
-  const cardForMacro=resources.find(r=>r.kind==='character')?.raw;const macroContext={char:cardForMacro?.nickname||cardForMacro?.name||'角色',user:session.userName||'玩家'};
+  const macroContext=await regexMacroContext(session,resources);
   // Regex transforms request copies selected by provenance, never by a fixed
   // message index or by the message role of user-owned configuration text.
   const loreQueue=out.messages.map((msg,index)=>({msg,index,source:out.messageSources[index]})).filter(row=>row.source.kind==='world_info');
   if(loreQueue.length&&regex.some(rule=>Array.isArray(rule?.placement)&&rule.placement.includes(5)&&rule.disabled!==true)){
     try{
-      const applied=await isolate.applyBatch(loreQueue.map(row=>({input:row.msg.content,phase:5,options:{isMarkdown:false,macroContext}})),regex,{signal:options.signal});
-      applied.forEach((item,i)=>{const target=loreQueue[i];if(!item.ok){warn('worldinfo regex #'+i,error(item.error.code,item.error.message));return;}
+      const applied=await regexProjection(loreQueue.map(row=>({input:row.msg.content,phase:5,options:{macroContext}})),regex,{signal:options.signal,isPrompt:true});
+      applied.forEach((item,i)=>{const target=loreQueue[i];if(!item.ok)for(const issue of item.result.errors)warn('worldinfo regex #'+i,issue);
         target.msg.content=item.result.output;
         const segment=out.segments.find(row=>row.id===target.source.segmentId);if(segment)segment.content=item.result.output;
         out.regexTrace.push(...item.result.trace.map(trace=>({...trace,messageIndex:target.index,sourceResourceId:target.source.resourceId,worldInfoEntryId:target.source.entryId})));
@@ -655,11 +701,9 @@ async function createEnvelopeAsync(session,resources,messages,userText,options={
     }catch(e){warn('worldinfo regex batch',e);}
   }
   const queue=out.messages.map((msg,idx)=>({msg,idx,source:out.messageSources[idx],phase:msg.role==='assistant'?2:msg.role==='user'?1:null})).filter(row=>row.phase!==null&&['canonical_history','player_input'].includes(row.source.kind));
-  if(regex.some(rule=>rule&&rule.disabled!==true&&(Number.isInteger(rule.minDepth)||Number.isInteger(rule.maxDepth))))
-    out.gaps.push({slot:'regex',reason:'regex_message_depth_ST_parity_unverified',effectiveDepth:0});
   try{
-    const transformed=await isolate.applyBatch(queue.map(row=>({input:row.msg.content,phase:row.phase,options:{isMarkdown:false,depth:0,macroContext}})),regex,{signal:options.signal});
-    transformed.forEach((item,i)=>{const {msg,idx}=queue[i];if(item.ok){msg.content=item.result.output;out.regexTrace.push(...item.result.trace.map(trace=>({...trace,messageIndex:idx})));}else warn('prompt '+msg.role+' #'+idx,error(item.error.code,item.error.message));});
+    const transformed=await regexProjection(queue.map((row,index)=>({input:row.msg.content,phase:row.phase,options:{depth:options.assistantContinuation&&index===queue.length-1?-1:queue.length-1-index,macroContext}})),regex,{signal:options.signal,isPrompt:true});
+    transformed.forEach((item,i)=>{const {msg,idx}=queue[i];msg.content=item.result.output;out.regexTrace.push(...item.result.trace.map(trace=>({...trace,messageIndex:idx})));if(!item.ok)for(const issue of item.result.errors)warn('prompt '+msg.role+' #'+idx,issue);});
   }catch(e){warn('prompt batch',e);}
   out.estimatedTokens=out.messages.reduce((n,m)=>n+Math.ceil(m.content.length/3),0);
   return projectCompatHistory(out,userText);
@@ -946,13 +990,14 @@ async function abortContinuation(sessionId,id,attemptId){
  return receipt;
 }
 async function displayMessages(sessionId){
-  const s=await getSession(sessionId),resources=await resourcesFor(s),regex=readRegex(resources),items=await sessionMessages(sessionId);
-  const assistant=items.filter(m=>m.role==='assistant'&&m.status==='committed');const useMvuDisplay=mvu()?.initial(resources,{greetingIndex:s.greetingIndex??0}).state!==null;
-  let results=[];try{results=await root.MimaCompatRegexIsolation.applyBatch(assistant.map(m=>({input:useMvuDisplay?mvu().display(m.canonicalContent):m.canonicalContent,phase:2,options:{isMarkdown:true,macroContext:{char:resources.find(r=>r.kind==='character')?.raw?.nickname||resources.find(r=>r.kind==='character')?.raw?.name||'角色',user:s.userName||'玩家'}}})),regex,{budgetMs:Math.min(5000,300+assistant.length*8)});}
-  catch(e){results=assistant.map(()=>({ok:false,error:{code:e.code||'E_REGEX_WORKER_FAILED',message:e.message}}));}
-  const byId=new Map(assistant.map((m,i)=>[m.id,results[i]]));
-  return items.map(m=>{const packet=byId.get(m.id);if(!packet)return{...m,displayView:useMvuDisplay?mvu().display(m.canonicalContent):m.canonicalContent};return packet.ok?{...m,displayView:packet.result.output,displayTrace:packet.result.trace}:{...m,displayView:useMvuDisplay?mvu().display(m.canonicalContent):m.canonicalContent,displayError:{code:packet.error.code,message:packet.error.message,rawRetained:true}};});
+  const s=await getSession(sessionId),resources=await resourcesFor(s),regex=readRegex(resources,s),items=await sessionMessages(sessionId);
+  const committed=items.filter(m=>['assistant','user'].includes(m.role)&&m.status==='committed'),useMvuDisplay=mvu()?.initial(resources,{greetingIndex:s.greetingIndex??0}).state!==null;
+  const inputFor=m=>useMvuDisplay?mvu().display(m.canonicalContent):m.canonicalContent;
+  let results=[];try{const macroContext=await regexMacroContext(s,resources);results=await regexProjection(committed.map((m,index)=>({input:inputFor(m),phase:m.role==='assistant'?2:1,options:{depth:committed.length-1-index,macroContext}})),regex,{isMarkdown:true,budgetMs:Math.min(5000,300+committed.length*8)});}
+  catch(e){results=committed.map(()=>({ok:false,error:{code:e.code||'E_REGEX_WORKER_FAILED',message:e.message}}));}
+  const byId=new Map(committed.map((m,i)=>[m.id,results[i]]));
+  return items.map(m=>{const packet=byId.get(m.id);if(!packet)return{...m,displayView:inputFor(m)};return{...m,displayView:packet.result?.output??inputFor(m),displayTrace:packet.result?.trace||[],...(!packet.ok?{displayError:{...packet.error,rawRetained:true},displayErrors:packet.result?.errors||[packet.error]}:{})};});
 }
 async function currentMvuState(sessionId){const session=await getSession(sessionId),resources=await resourcesFor(session),items=await sessionMessages(sessionId);if(!mvu())throw error('E_MVU_UNAVAILABLE','MVU 状态组件未加载');const init=mvu().initial(resources,{greetingIndex:session.greetingIndex??0});return {...mvu().replay(init.state,items),gaps:init.gaps};}
-return Object.freeze({forkSession,currentMvuState,worldInfo,unsupportedWI,applyRegex,macro,createEnvelope,createEnvelopeAsync,createSession,resolveCharacterSelection,getSession,sessionMessages,resourcesFor,mountResource,unmountResource,setPresetCreativeRole,resolveMedia,preview,send,continueAssistant,abortContinuation,retryTurn,recoverTurn,turnJournal,displayMessages,beginTurn,finishTurn});
+return Object.freeze({forkSession,currentMvuState,worldInfo,unsupportedWI,applyRegex,regexRules:readRegex,regexMacroContext,regexProjection,saveRegexSettings,macro,createEnvelope,createEnvelopeAsync,createSession,resolveCharacterSelection,getSession,sessionMessages,resourcesFor,mountResource,unmountResource,setPresetCreativeRole,resolveMedia,preview,send,continueAssistant,abortContinuation,retryTurn,recoverTurn,turnJournal,displayMessages,beginTurn,finishTurn});
 });

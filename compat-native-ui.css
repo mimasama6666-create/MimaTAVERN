@@ -140,7 +140,7 @@
 #compat-lab.in-chat #compat-messages .compat-message{width:min(760px,100%);margin:0 auto 21px;
  padding:0;border:0;border-radius:0;background:transparent;box-shadow:none;line-height:1.78;white-space:normal;}
 #compat-lab.in-chat #compat-messages .compat-message .msg-header{margin-bottom:7px;font-size:.72rem;color:var(--muted);font-family:var(--font-ui,inherit)}
-#compat-lab.in-chat #compat-messages .compat-message .msg-content{font-family:var(--font-story);font-size:1rem;line-height:1.78;
+#compat-lab.in-chat #compat-messages .compat-message .msg-content{font-family:var(--font-story);font-size:var(--story-font-size,16px);line-height:var(--story-line-height,1.78);letter-spacing:var(--story-letter-spacing,normal);
  white-space:pre-wrap;overflow-wrap:anywhere;}
 #compat-lab.in-chat #compat-messages .compat-message.assistant .msg-content{padding:0 5px;background:transparent;border:0;box-shadow:none}
 #compat-lab.in-chat #compat-messages .compat-message.user{width:min(650px,92%);margin-left:auto;margin-right:max(0px,calc((100% - 760px)/2));}
@@ -187,3 +187,151 @@
 #compat-lab.in-chat #compat-conversation{display:flex;flex-direction:column;flex:1 1 0%;overflow:hidden}
 #compat-lab.in-chat #compat-messages{flex:1 1 0%}
 #compat-lab .compat-message-html[hidden]{display:none!important}
+
+/* R14: the shipped story/library/tools surfaces, using existing theme tokens. */
+#compat-lab{--compat-accent:var(--skin-accent,var(--accent,#738276));--compat-paper:var(--skin-panel,var(--panel-solid,#f6f7f5));--compat-soft:var(--skin-control,var(--panel,#ffffff80))}
+#compat-lab [hidden]{display:none!important}
+#compat-lab .compat-eyebrow{display:block;font:600 .64rem/1.5 var(--font-ui,system-ui);letter-spacing:.12em;color:var(--muted);margin-bottom:5px}
+#compat-lab .compat-head{gap:10px;box-shadow:none;z-index:3}
+#compat-lab .compat-head-identity{flex:1;min-width:0}
+#compat-lab .compat-head>.compat-head-actions{flex:0 0 auto;gap:5px}
+#compat-lab .compat-head>.compat-head-identity{flex:1;min-width:0}
+#compat-lab .compat-head button{min-height:44px;border:0;box-shadow:none;background:transparent;padding:8px 10px;white-space:nowrap}
+#compat-lab .compat-head button:hover{background:var(--compat-soft)}
+#compat-lab .compat-avatar{display:grid;place-items:center;width:40px;height:40px;flex:0 0 40px;border-radius:13px;background:var(--compat-soft);border:1px solid var(--line);font-family:var(--font-story);font-size:1.15rem;color:var(--compat-accent);overflow:hidden}
+#compat-lab .compat-avatar img{display:block;width:100%;height:100%;object-fit:contain}
+#compat-lab:not(.in-chat) #compat-chat-panel,#compat-lab:not(.in-chat) #compat-back-library,#compat-lab:not(.in-chat) #compat-open-info,#compat-lab:not(.in-chat) #compat-open-settings,#compat-lab:not(.in-chat) #compat-manage-toggle{display:none}
+#compat-lab:not(.in-chat) .compat-main{max-width:720px;padding:28px 22px 36px}
+#compat-lab:not(.in-chat) #compat-import-panel{background:transparent;border:0;box-shadow:none;padding:0;border-radius:0}
+#compat-lab .compat-library-intro{margin:0 0 22px}
+#compat-lab .compat-library-intro h2{margin:4px 0 7px;font:650 clamp(1.5rem,4vw,1.9rem)/1.3 var(--font-ui)}
+#compat-lab .compat-library-intro p{color:var(--muted);margin:0;font-size:.88rem}
+#compat-lab .compat-file-actions{margin:18px 0 14px;display:flex;gap:8px}
+#compat-lab .compat-file-picker{width:100%;display:grid;grid-template-columns:32px 1fr;align-items:center;gap:3px 7px;padding:20px 18px;border:1px dashed var(--compat-accent);border-radius:18px;background:var(--compat-soft);cursor:pointer}
+#compat-lab .compat-file-picker>span{grid-row:1/3;font-size:1.6rem;font-weight:300;color:var(--compat-accent)}
+#compat-lab .compat-file-picker strong{font-size:.95rem;font-weight:600}
+#compat-lab .compat-file-picker small{font-size:.73rem;color:var(--muted)}
+#compat-lab #compat-file,#compat-lab .compat-file-input{position:absolute;width:1px;height:1px;padding:0;margin:-1px;clip-path:inset(50%);overflow:hidden;white-space:nowrap}
+#compat-lab .compat-file-picker:focus-within,#compat-lab .compat-button-label:focus-within{outline:2px solid var(--compat-accent)}
+#compat-lab #compat-import-panel:not([data-has-card=true]) .compat-start-controls,#compat-lab #compat-import-panel:not([data-has-card=true]) #compat-mount-readiness,#compat-lab #compat-import-panel:not([data-has-card=true]) #compat-create,#compat-lab #compat-import-panel:not([data-has-card=true]) #compat-scan,#compat-lab #compat-import-panel:not([data-has-card=true]) #compat-save{display:none}
+#compat-lab #compat-quick-status{display:flex;align-items:center;gap:16px;padding:16px!important;background:var(--compat-soft)!important;border:1px solid var(--line);border-radius:18px!important;margin:12px 0 18px}
+#compat-lab #compat-quick-status .compat-card-cover{max-width:88px;width:88px;max-height:124px;height:124px;object-fit:contain;margin:0;border:0;flex:0 0 88px;border-radius:10px}
+#compat-lab .compat-card-monogram{display:grid;place-items:center;flex:0 0 72px;width:72px;height:96px;background:var(--panel-solid);border-radius:12px;border:1px solid var(--line);font:500 2rem var(--font-story);color:var(--compat-accent)}
+#compat-lab .compat-card-description{min-width:0;flex:1}
+#compat-lab .compat-card-description strong{font-size:1.05rem;overflow-wrap:anywhere}
+#compat-lab .compat-card-description p{font-size:.8rem;line-height:1.65;color:var(--muted);margin:6px 0 0}
+#compat-lab .compat-start-controls{gap:7px}
+#compat-lab .compat-start-controls>label{font-size:.79rem;margin-top:5px;font-weight:500;color:var(--muted)}
+#compat-lab .compat-start-controls>input,#compat-lab .compat-start-controls>select{width:100%;min-height:46px;padding:10px 12px;background:var(--compat-soft);border:1px solid var(--line);border-radius:12px;color:var(--text);font:400 .88rem var(--font-ui)}
+#compat-lab #compat-greeting-preview{margin:3px 0 8px;border:0;padding:0;background:transparent;font-size:.8rem}
+#compat-lab #compat-greeting-preview>summary{min-height:40px;padding:10px 0;color:var(--compat-accent)}
+#compat-lab #compat-greeting-preview .story-prose{white-space:pre-wrap;font:400 .92rem/1.75 var(--font-story);max-height:340px;overflow:auto;padding:14px;background:var(--compat-soft);border-radius:12px;overflow-wrap:anywhere}
+#compat-lab #compat-mount-readiness{background:transparent;border:0;padding:12px 0;margin:7px 0}
+#compat-lab #compat-mount-readiness>strong{font-size:.85rem;font-weight:600}
+#compat-lab .compat-capability-row{display:flex;align-items:baseline;gap:10px;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--line);font-size:.84rem;line-height:1.5;min-width:0}
+#compat-lab .compat-capability-row small{font-size:.72rem;color:var(--muted);margin-left:auto;overflow-wrap:anywhere}
+#compat-lab .compat-capability-state{font-size:.68rem;color:var(--compat-accent);white-space:nowrap}
+#compat-lab #compat-create{min-height:50px;border:0;border-radius:14px;background:var(--compat-accent)!important;font-size:.94rem;letter-spacing:.02em;box-shadow:none;margin:5px 0 12px}
+#compat-lab .compat-continue-list{border:0;padding:0;background:transparent;margin:0 0 18px}
+#compat-lab .compat-library-row{display:flex;align-items:center;gap:10px;padding:12px;margin:8px 0;border-radius:15px;background:var(--compat-soft);border:1px solid var(--line);min-width:0}
+#compat-lab .compat-library-row>strong,#compat-lab .compat-library-row>span:not(.compat-story-monogram){flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.85rem}
+#compat-lab .compat-library-row button{flex:0 0 auto;min-height:42px;padding:8px 10px;border:0;border-radius:10px;font-size:.75rem;background:var(--panel-solid)}
+#compat-lab .compat-story-monogram{display:grid;place-items:center;width:34px;height:42px;flex:0 0 34px;border-radius:9px;background:var(--panel-solid);color:var(--compat-accent);font:500 1.15rem var(--font-story)}
+#compat-lab #compat-saved-cards,#compat-lab #compat-library-all{margin:10px 0;padding:4px 0;border:0;background:transparent;font-size:.8rem}
+#compat-lab #compat-saved-cards>summary,#compat-lab #compat-library-all>summary{padding:7px 0;color:var(--muted)}
+#compat-lab.in-chat>.compat-main{max-width:900px;padding:0 16px;width:100%}
+#compat-lab.in-chat #compat-chat-panel{width:100%;min-width:0;border:0}
+#compat-lab.in-chat #compat-messages{padding:24px 14px 30px}
+#compat-lab.in-chat #compat-composer{align-self:stretch;width:100%;min-width:0;margin:0;border:1px solid var(--line);border-bottom:0;border-radius:20px 20px 0 0;padding:10px 12px calc(10px + env(safe-area-inset-bottom));background:var(--compat-paper);box-shadow:0 -4px 25px #00000004}
+#compat-lab #compat-input{min-height:58px;border:0;border-radius:12px;padding:12px;background:var(--compat-soft);box-shadow:none;line-height:1.5}
+#compat-lab #compat-primary-actions{min-width:0;min-height:46px;gap:6px}
+#compat-lab #compat-primary-actions button{min-height:44px;font-size:.76rem;box-shadow:none;background:transparent;border:0;padding:7px 10px}
+#compat-lab #compat-primary-actions #compat-send{min-height:44px;min-width:72px;border-radius:12px;background:var(--compat-accent);font-size:.85rem}
+#compat-lab #compat-primary-actions #compat-preview{margin-right:auto;font-size:.76rem}
+#compat-lab #compat-primary-actions #compat-continue{font-size:.76rem}
+#compat-lab #compat-story-status:empty,#compat-lab #compat-notice:empty{display:none}
+#compat-lab #compat-story-status{display:flex;align-items:center;gap:9px;justify-content:space-between;flex:none;font-size:.75rem;padding:8px 12px;border-bottom:1px solid var(--line)}
+#compat-lab #compat-story-status button{flex:0 0 auto;border:0;background:var(--compat-soft);border-radius:9px;padding:8px;min-height:40px;font-size:.72rem;color:var(--text)}
+#compat-lab.in-chat #compat-notice{position:static;flex:none;max-height:45px;margin:0;padding:5px 10px;font-size:.68rem;border:0;background:transparent;border-radius:0;line-height:1.5}
+#compat-lab #compat-game-drawer{display:none!important}
+#compat-lab .compat-sheet{width:min(720px,calc(100vw - 32px));max-width:none;max-height:none;height:min(820px,calc(var(--mima-viewport-height,100dvh) - 48px));padding:0;border:1px solid var(--line);border-radius:24px;color:var(--text);background:var(--compat-paper);box-shadow:0 24px 90px #0003;overflow:hidden;font-family:var(--font-ui);top:var(--mima-viewport-top,0px)}
+#compat-lab .compat-sheet:not([open]){display:none}
+#compat-lab .compat-sheet[open]{display:flex;flex-direction:column}
+#compat-lab .compat-sheet::backdrop{background:#10171766;backdrop-filter:blur(5px)}
+#compat-lab .compat-sheet-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 20px 14px;flex:none;border-bottom:1px solid var(--line)}
+#compat-lab .compat-sheet-head>div{min-width:0}
+#compat-lab .compat-sheet-head h2{margin:0;font-size:1.12rem;font-weight:600;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#compat-lab #compat-sheet-close{display:grid;place-items:center;width:44px;height:44px;flex:0 0 44px;border:0;border-radius:13px;background:var(--compat-soft);color:var(--text);font-size:1.5rem}
+#compat-lab #compat-sheet-tabs{display:flex;flex:none;gap:3px;padding:8px 12px;border-bottom:1px solid var(--line)}
+#compat-lab #compat-sheet-tabs button{flex:1;min-width:0;min-height:44px;border:0;border-radius:10px;background:transparent;color:var(--muted);font-size:.78rem;white-space:nowrap;padding:6px}
+#compat-lab #compat-sheet-tabs button[aria-selected=true]{background:var(--compat-soft);color:var(--text);font-weight:600}
+#compat-lab #compat-sheet-body{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;padding:18px 20px calc(24px + env(safe-area-inset-bottom));scrollbar-width:thin}
+#compat-lab .compat-sheet-pane{min-width:0}
+#compat-lab .compat-sheet-pane>details,#compat-lab .compat-info-section{margin:12px 0;padding:12px;border:1px solid var(--line);border-radius:13px}
+#compat-lab .compat-sheet-pane summary{min-height:38px;padding:8px 0;cursor:pointer;font-size:.86rem;font-weight:500;overflow-wrap:anywhere}
+#compat-lab .compat-sheet-pane .compat-advanced-panel{display:block!important;border:0;background:transparent;padding:0;min-width:0}
+#compat-lab .compat-sheet-pane h3{font-size:1rem;font-weight:600;margin:7px 0 12px}
+#compat-lab .compat-help{font-size:.76rem;line-height:1.65;color:var(--muted);margin:6px 0 12px;overflow-wrap:anywhere}
+#compat-lab .compat-sheet-pane p{line-height:1.65;overflow-wrap:anywhere}
+#compat-lab .compat-role-hero{display:flex;align-items:center;gap:15px;margin:0 0 18px}
+#compat-lab .compat-role-avatar{width:64px;height:82px;flex-basis:64px;border-radius:15px;font-size:2rem}
+#compat-lab .compat-full-text{font:400 .93rem/1.75 var(--font-story);white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0}
+#compat-lab .compat-sheet-pane pre{white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%;max-height:340px;overflow:auto;padding:12px;border:1px solid var(--line);border-radius:10px;font-size:.76rem;background:var(--compat-soft)}
+#compat-lab .compat-sheet-pane button,#compat-lab .compat-button-label{min-height:44px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--compat-soft);color:var(--text);font:400 .78rem var(--font-ui);cursor:pointer}
+#compat-lab .compat-sheet-pane button:disabled{opacity:.45;cursor:default}
+#compat-lab .compat-tool-actions{display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin:12px 0}
+#compat-lab .compat-button-label{display:inline-flex;align-items:center;justify-content:center}
+#compat-lab .compat-regex-row{padding:13px 14px;border:1px solid var(--line);border-radius:15px;margin:12px 0;background:var(--compat-soft)}
+#compat-lab .compat-regex-row-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+#compat-lab .compat-rule-switch{display:flex;align-items:center;gap:9px;min-width:0;cursor:pointer}
+#compat-lab .compat-rule-switch strong{font-size:.86rem;overflow-wrap:anywhere}
+#compat-lab .compat-rule-switch input,#compat-lab .compat-regex-form input[type=checkbox]{width:20px;height:20px;accent-color:var(--compat-accent);flex:0 0 20px}
+#compat-lab .compat-rule-scope{font-size:.65rem;white-space:nowrap;border:1px solid var(--line);border-radius:6px;padding:3px 7px;color:var(--muted)}
+#compat-lab .compat-regex-row>details{padding:0;border:0;font-size:.75rem}
+#compat-lab .compat-regex-row>details>summary{min-height:34px;font-size:.74rem;color:var(--muted)}
+#compat-lab .compat-regex-row .compat-tool-actions button{min-height:40px;padding:8px 10px;font-size:.74rem;background:var(--compat-paper)}
+#compat-lab .compat-regex-editor{border:1px solid var(--line);border-radius:17px;padding:16px;margin:18px 0;background:var(--compat-soft);scroll-margin-top:12px}
+#compat-lab .compat-regex-form{display:grid;gap:13px}
+#compat-lab .compat-regex-form>label{font-size:.8rem;line-height:1.5;display:grid;gap:6px}
+#compat-lab .compat-sheet-pane input:not([type=checkbox]):not([type=file]),#compat-lab .compat-sheet-pane select,#compat-lab .compat-sheet-pane textarea{max-width:100%;min-width:0;min-height:44px;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--compat-paper);color:var(--text);font:400 .86rem/1.5 var(--font-ui);box-sizing:border-box}
+#compat-lab .compat-regex-form textarea,#compat-lab #compat-regex-test-input{width:100%;resize:vertical}
+#compat-lab .compat-regex-form fieldset{display:flex;flex-wrap:wrap;gap:7px 15px;margin:0;padding:10px;border:1px solid var(--line);border-radius:10px;font-size:.78rem}
+#compat-lab .compat-regex-form fieldset>label{display:flex;align-items:center;gap:6px;min-height:36px}
+#compat-lab .compat-accent-button{background:var(--compat-accent)!important;color:var(--skin-accent-text,#fff)!important;border-color:transparent!important}
+#compat-lab .compat-regex-tester{margin-top:16px;border-top:1px solid var(--line);padding-top:10px}
+#compat-lab .compat-regex-tester select,#compat-lab .compat-regex-tester button{margin:8px 4px 8px 0}
+#compat-lab .compat-regex-diagnostic{padding:12px;border:1px solid var(--line);border-radius:12px;margin:10px 0;font-size:.82rem}
+#compat-lab [data-kind=error]{color:var(--danger,#a34c56)}
+#compat-lab .compat-soft-empty{padding:20px 14px;border:1px dashed var(--line);border-radius:14px;color:var(--muted);font-size:.82rem;line-height:1.7}
+#compat-lab.in-chat #compat-messages .compat-markdown{white-space:normal}
+#compat-lab .compat-markdown p{margin:0 0 var(--story-paragraph-gap,.85em);line-height:inherit;text-indent:var(--story-first-line-indent,0)}
+#compat-lab .compat-markdown p:last-child{margin-bottom:0}
+#compat-lab .compat-markdown blockquote{margin:1em 0;padding:2px 0 2px 14px;border-left:3px solid var(--line);color:var(--muted)}
+#compat-lab .compat-markdown h1,#compat-lab .compat-markdown h2,#compat-lab .compat-markdown h3{line-height:1.4;margin:1em 0 .65em;font-weight:600}
+#compat-lab .compat-markdown h1{font-size:1.45em}#compat-lab .compat-markdown h2{font-size:1.3em}#compat-lab .compat-markdown h3{font-size:1.15em}
+#compat-lab .compat-markdown ul,#compat-lab .compat-markdown ol{padding-left:1.6em;margin:.75em 0}
+#compat-lab .compat-markdown pre{padding:13px;background:var(--compat-soft);border:1px solid var(--line);border-radius:12px;white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%;overflow:auto}
+#compat-lab .compat-markdown code{font-family:ui-monospace,monospace;font-size:.88em;background:var(--compat-soft);padding:.1em .25em;border-radius:4px}
+#compat-lab .compat-markdown pre code{padding:0;background:transparent}
+#compat-lab .compat-markdown table{border-collapse:collapse;max-width:100%;display:block;overflow:auto;margin:1em 0}
+#compat-lab .compat-markdown th,#compat-lab .compat-markdown td{padding:7px 10px;border:1px solid var(--line)}
+#compat-lab .compat-markdown a{color:var(--compat-accent);text-decoration:underline}
+@media(max-width:640px){
+ #compat-lab .compat-head{padding:calc(6px + env(safe-area-inset-top)) 8px 6px;gap:6px;min-height:58px}
+ #compat-lab .compat-head-actions{gap:0}
+ #compat-lab .compat-head button{padding:7px 8px;font-size:.76rem}
+ #compat-lab.in-chat #compat-close{display:none}
+ #compat-lab .compat-head strong{font-size:.92rem}
+ #compat-lab .compat-head .compat-avatar{width:34px;height:38px;flex-basis:34px;border-radius:11px;font-size:1rem}
+ #compat-lab:not(.in-chat) .compat-main{padding:23px 18px 30px}
+ #compat-lab.in-chat>.compat-main{padding:0 8px}
+ #compat-lab.in-chat #compat-messages{padding:20px 9px 24px}
+ #compat-lab.in-chat #compat-composer{padding:8px 9px calc(8px + env(safe-area-inset-bottom));border-radius:18px 18px 0 0}
+ #compat-lab .compat-sheet{width:100%;height:min(92dvh,calc(var(--mima-viewport-height,100dvh) - 12px));max-height:calc(var(--mima-viewport-height,100dvh) - 12px);margin:auto 0 0;top:auto;bottom:0;border-radius:22px 22px 0 0}
+ #compat-lab .compat-sheet-head{padding:14px 16px 11px}
+ #compat-lab #compat-sheet-tabs{padding:6px 8px;gap:0}
+ #compat-lab #compat-sheet-tabs button{font-size:.73rem}
+ #compat-lab #compat-sheet-body{padding:15px 16px calc(22px + env(safe-area-inset-bottom))}
+ #compat-lab .compat-regex-editor{padding:12px}
+}
+@media(max-height:450px){#compat-lab .compat-sheet{height:calc(var(--mima-viewport-height,100dvh) - 10px);max-height:calc(var(--mima-viewport-height,100dvh) - 10px)}#compat-lab .compat-sheet-head{padding:7px 14px}#compat-lab .compat-sheet-head .compat-eyebrow{display:none}#compat-lab #compat-sheet-tabs{padding-top:3px;padding-bottom:3px}}

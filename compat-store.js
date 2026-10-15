@@ -154,6 +154,32 @@ async function importSource(capsule,resources){check(capsule,'来源包');if(typ
   result={id,reused:true,resources:saved.length,projectionChanged:saved.length!==resources.length||resources.some(v=>!saved.some(x=>x.path===v.path&&x.kind===v.kind&&JSON.stringify(x.raw)===JSON.stringify(v.raw)))};
  };return;}
  s.add({...capsule,id,revision:1,importedAt:new Date().toISOString()});for(let i=0;i<resources.length;i++){const item=check(resources[i],'资源');ir.add({...item,id:id+'#'+i,sourceId:id,revision:1});}journal.add({id,sourceId:id,count:resources.length,status:'committed',revision:1,createdAt:new Date().toISOString()});result={id,reused:false,resources:resources.length};};tx.oncomplete=()=>{db.close();resolve(result);};tx.onabort=()=>{db.close();reject(issue||tx.error||error('E_STORE_UNVERIFIED','来源导入事务失败'));};});}
+async function importRegexSource(capsule,resources){
+ // Narrow, add-only recovery for the old scanner's single-rule JSON bug.
+ // Never replace old IR or relax the general immutable import contract.
+ let raw;try{raw=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(capsule.bytes));}catch(e){throw error('E_SOURCE_CORRUPT','正则来源不是完整 UTF-8 JSON');}
+ const expected=typeof raw?.findRegex==='string'?[raw]:Array.isArray(raw)?raw:raw?.regexScripts||raw?.regex_scripts;
+ if(!Array.isArray(expected)||!expected.length||resources.length!==expected.length||resources.some((r,index)=>r.kind!=='regex'||typeof expected[index]?.findRegex!=='string'||JSON.stringify(r.raw)!==JSON.stringify(expected[index])))throw error('E_SOURCE_CORRUPT','正则投影与来源字节不一致');
+ const receipt=await importSource(capsule,resources);if(!receipt.projectionChanged)return receipt;
+ const id=receipt.id,db=await open();return new Promise((resolve,reject)=>{
+  const tx=db.transaction(['resource_ir','import_journal'],'readwrite'),ir=tx.objectStore('resource_ir');let result,issue;
+  const request=ir.index('sourceId').getAll(id);request.onerror=()=>{issue=request.error;tx.abort();};
+  request.onsuccess=()=>{try{
+   const old=request.result,original=old.find(r=>r.kind==='raw_unknown'&&r.path==='json.root'&&JSON.stringify(r.raw)===JSON.stringify(raw));
+   if(!original||old.some(r=>r.id!==original.id&&!r.id.startsWith(id+'#regex-r14-')))throw error('E_RESOURCE_PROJECTION_STALE','来源含有其它旧投影，未覆盖或迁移它们');
+   const resourceIds=[];
+   for(const [index,resource]of resources.entries()){
+    const key=id+'#regex-r14-'+index,existing=old.find(r=>r.id===key);resourceIds.push(key);
+    if(existing){if(existing.kind!==resource.kind||existing.path!==resource.path||JSON.stringify(existing.raw)!==JSON.stringify(resource.raw))throw error('E_SOURCE_CORRUPT','已有正则追加投影内容不一致');}
+    else ir.add({...resource,id:key,sourceId:id,revision:1,projectionOf:original.id,projectionVersion:'regex-r14'});
+   }
+   const journal=tx.objectStore('import_journal'),key=id+'#regex-projection-r14',q=journal.get(key);
+   q.onsuccess=()=>{if(!q.result)journal.add({id:key,sourceId:id,count:resources.length,status:'committed',revision:1,projectionOf:original.id,createdAt:new Date().toISOString()});};q.onerror=()=>{issue=q.error;tx.abort();};
+   result={id,reused:true,resources:resources.length,resourceIds,projectionAppended:true,projectionChanged:false};
+  }catch(e){issue=e;tx.abort();}};
+  tx.oncomplete=()=>{db.close();resolve(result);};tx.onabort=()=>{db.close();reject(issue||tx.error||error('E_STORE_UNVERIFIED','正则追加投影事务失败'));};
+ });
+}
 async function snapshot(){const db=await open();return new Promise((resolve,reject)=>{const tx=db.transaction(STORES,'readonly');const records={},errors=[];for(const n of STORES){const r=tx.objectStore(n).getAll();r.onsuccess=()=>records[n]=r.result;r.onerror=()=>errors.push(r.error);}tx.oncomplete=()=>{db.close();if(errors.length)reject(errors[0]);else resolve({contractRevision:1,dbName:DB,dbVersion:VERSION,records});};tx.onabort=()=>{db.close();reject(tx.error||error('E_STORE_UNVERIFIED','快照失败'));};});}
 function bytesToBase64(bytes){let chunks=[];for(let i=0;i<bytes.length;i+=0x4000)chunks.push(String.fromCharCode(...bytes.subarray(i,i+0x4000)));return btoa(chunks.join(''));}
 function base64ToBytes(s){if(typeof s!=='string'||s.length>60*1024*1024||!/^(?:[a-zA-Z0-9+/]{4})*(?:[a-zA-Z0-9+/]{2}==|[a-zA-Z0-9+/]{3}=)?$/.test(s))throw error('E_SOURCE_CORRUPT','备份编码无效');const bin=atob(s),b=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)b[i]=bin.charCodeAt(i);return b;}
@@ -216,5 +242,5 @@ async function restoreVerified(parsed,{dryRun=true,mode='merge-new-only',allowLe
   tx.onabort=()=>{db.close();reject(issue||tx.error||error('E_STORE_UNVERIFIED','恢复事务被中止，资料未写入'));};
  });
 }
-return Object.freeze({DB,VERSION,STORES,error,uid,open,get,all,byIndex,putCAS,putVariableWithGrant,importSource,snapshot,jsonify,packBackup,unpackBackup,parseBackup,restoreVerified,verifySources,verifyRelationships});
+return Object.freeze({DB,VERSION,STORES,error,uid,open,get,all,byIndex,putCAS,putVariableWithGrant,importSource,importRegexSource,snapshot,jsonify,packBackup,unpackBackup,parseBackup,restoreVerified,verifySources,verifyRelationships});
 });

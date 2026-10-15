@@ -1,14 +1,14 @@
 /* Enforced killable worker; no main-thread fallback for untrusted expressions. */
 (function(root,factory){const api=factory(root);if(typeof module==='object'&&module.exports)module.exports=api;root.MimaCompatRegexIsolation=api;})(typeof window!=='undefined'?window:globalThis,function(root){
 'use strict';
-function fail(code,message){return Object.assign(new Error(message),{code});}
+function fail(code,message,details={}){return Object.assign(new Error(message),details,{code});}
 function resolveWorker(){
-  if(typeof window!=='undefined'&&typeof Worker!=='undefined'){if(root.location?.protocol==='file:')throw fail('E_WORKER_FILE_ORIGIN','本地 file:// 打开无法安全启动正则 Worker。请上传 Git 网页版并从 HTTPS 链接游玩；此次未执行正则，也未改动剧情。');if(typeof Worker!=='undefined')return new Worker(new URL('./compat-regex-worker.js?advanced=redesign-20261014-1',document.baseURI),{name:'mima-compat-regex'});}
+  if(typeof window!=='undefined'&&typeof Worker!=='undefined'){if(root.location?.protocol==='file:')throw fail('E_WORKER_FILE_ORIGIN','本地 file:// 打开无法安全启动正则 Worker。请上传 Git 网页版并从 HTTPS 链接游玩；此次未执行正则，也未改动剧情。');if(typeof Worker!=='undefined')return new Worker(new URL('./compat-regex-worker.js?advanced=redesign-20261014-1&r14=20261015-1',document.baseURI),{name:'mima-compat-regex'});}
   if(typeof require==='function'){const wt=require('node:worker_threads'),path=require('node:path');return new wt.Worker(path.join(__dirname,'compat-regex-worker.js'));}
   throw fail('E_REGEX_ISOLATION_UNAVAILABLE','此环境无可终止的 Worker，外来正则不能执行');
 }
 function apply(input,rules,phase,options={}){
-  return run([{input:String(input),phase,options}],rules,options).then(out=>{const item=out[0];if(!item.ok)throw fail(item.error.code,item.error.message);return item.result;});
+  return run([{input:String(input),phase,options}],rules,options).then(out=>{const item=out[0];if(!item.ok)throw fail(item.error.code,item.error.message,{...item.error,result:item.result});return item.result;});
 }
 function applyBatch(items,rules,options={}){return run(items,rules,options);}
 function run(items,rules,options={}){
@@ -24,7 +24,7 @@ function run(items,rules,options={}){
     if(typeof worker.addEventListener==='function'){worker.addEventListener('message',onMessage);worker.addEventListener('error',onError);}
     else{worker.on('message',onMessage);worker.on('error',onError);}
     if(options.signal?.aborted){onAbort();return;}options.signal?.addEventListener?.('abort',onAbort,{once:true});
-    worker.postMessage({batch:items.map(item=>({input:String(item.input),phase:item.phase,options:{isMarkdown:!!(item.options?.isMarkdown??options.isMarkdown),depth:item.options?.depth??options.depth??0,macroContext:item.options?.macroContext??options.macroContext??{}}})),rules});
+    worker.postMessage({batch:items.map(item=>({input:String(item.input),phase:item.phase,options:{isMarkdown:!!(item.options?.isMarkdown??options.isMarkdown),isPrompt:!!(item.options?.isPrompt??options.isPrompt),isEdit:!!(item.options?.isEdit??options.isEdit),depth:item.options?.depth??options.depth,macroContext:item.options?.macroContext??options.macroContext??{}}})),rules});
   });
 }
 return Object.freeze({apply,applyBatch});
