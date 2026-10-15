@@ -710,6 +710,11 @@ function bootstrap(){
  $('compat-composer')?.before(latest);
  $('compat-messages')?.addEventListener('scroll',()=>{const box=$('compat-messages');followLatest=box.scrollHeight-box.scrollTop-box.clientHeight<96;syncLatestButton();},{passive:true});
  document.addEventListener('visibilitychange',()=>{if(!document.hidden&&opened&&activeId){refreshMessages().catch(e=>messageFor(activeId,sessionGeneration,'恢复显示后状态刷新失败：'+e.message,'error'));}});
+ document.addEventListener('mima:manual-reply-restored',event=>{
+  const sessionId=event.detail?.sessionId,generation=sessionGeneration;
+  if(!opened||!sessionId||activeId!==sessionId)return;
+  Promise.resolve().then(async()=>{await refreshMessages();if(activeId!==sessionId||sessionGeneration!==generation)return;await refreshSessionList();}).catch(e=>messageFor(sessionId,generation,'回复已恢复，界面刷新失败：'+e.message,'error'));
+ });
  const actions={'compat-open':open,'compat-close':close,'compat-scan':doImport,'compat-save':commit,'compat-create':create,'compat-send':send,'compat-continue':continueReply,'compat-preview':inspectPreview,'compat-wi-save':saveWorldInfoScanDepth,'compat-export':exportCompat,'compat-export-both':exportBoth,'compat-restore-check':()=>restoreCompat(false),'compat-restore-apply':()=>restoreCompat(true),'compat-stscript-check':()=>manualSTscript(true),'compat-stscript-run':()=>manualSTscript(false),'compat-mvu-template-clear':clearMvuTemplate,'compat-mvu-template-custom-run':()=>selectMvuTemplate('当前剧情临时自定义模板',$('compat-mvu-template-custom').value)};for(const [id,fn]of Object.entries(actions))$(id)?.addEventListener('click',fn);$('compat-restore-file')?.addEventListener('change',()=>{inspectedBackup=null;});$('compat-file')?.addEventListener('change',doImport);$('compat-card-choice')?.addEventListener('change',refreshGreetingChoice);$('compat-input')?.addEventListener('input',()=>{});$('compat-manage-toggle')?.addEventListener('click',toggleManage);$('compat-audio')?.addEventListener('change',ev=>{const f=ev.target.files[0];if(f)nativeAudio(f);});$('compat-quick-status').textContent='选择 PNG、JSON 或 CHARX，即可查看人物并开始聊天。';}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',bootstrap,{once:true});else bootstrap();root.MimaCompatUI=Object.freeze({open,openWithFile,close});
 })(typeof window!=='undefined'?window:globalThis);

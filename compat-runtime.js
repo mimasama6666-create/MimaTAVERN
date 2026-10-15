@@ -3,6 +3,12 @@
 'use strict';const store=()=>root.MimaCompatStore;
 const error=(code,message)=>Object.assign(new Error(message),{code});const mvu=()=>root.MimaCompatMVU||(typeof module==='object'&&module.exports&&typeof require==='function'?require('./compat-mvu.js'):null);const words=s=>Array.isArray(s)?s:typeof s==='string'?s.split(',').map(x=>x.trim()).filter(Boolean):[];
 const hashKey=e=>String(e.uid??e.id??e.comment??e.name??'entry');
+const approvedReply=m=>root.MimaStandalone?.isManuallyRecoveredReply?.(m)===true;
+function recoveryMetadata(message,receipt){
+ const metadata=message.metadata||{},approval=receipt||metadata.manualRecovery;
+ return {...metadata,manualRecoveryIds:[...new Set([...(metadata.manualRecoveryIds||[]),approval.diagnosticId])],
+   manualRecovery:{...approval,contentFingerprint:root.MimaStandalone.manualReplyFingerprint(message)}};
+}
 const flags=['excludeRecursion','preventRecursion','delayUntilRecursion','sticky','cooldown','delay','group','groupOverride','groupWeight','useProbability','scanDepth'];
 function wiPosition(e){const ext=e.extensions||{};if(Number.isInteger(ext.position))return ext.position;if(Number.isInteger(e.position))return e.position;return e.position==='before_char'?0:e.position==='after_char'?1:null;}
 function unsupportedWI(e,settings={}){const ext=e.extensions||{},gaps=[];
@@ -266,7 +272,7 @@ function createEnvelope(session,resources,messages,userText,{skipRegex=false,wor
  const selected=resources.find(r=>r.kind==='character'),card=selected?.raw;
  if(!card)throw error('E_RESOURCE_SEMANTIC_GAP','本来源没有已选定角色');
  const name=card.nickname||card.name||'角色',u=session.userName||'玩家',ctx={char:name,user:u};
- const committed=messages.filter(m=>m.status==='committed'&&!(m.role==='assistant'&&root.MimaStandalone?.classifyStoryReply?.(m.canonicalContent)?.blocked));
+ const committed=messages.filter(m=>m.status==='committed'&&!(m.role==='assistant'&&!approvedReply(m)&&root.MimaStandalone?.classifyStoryReply?.(m.canonicalContent)?.blocked));
  const history=committed.map(m=>({role:m.role,content:m.canonicalContent}));
  const greeting=String((session.greetingIndex??0)===0?card.first_mes||'':(card.alternate_greetings||[])[(session.greetingIndex??0)-1]||'');
  const needsMvu=/<(?:initvar|UpdateVariable)\b/i.test(greeting)||resources.some(r=>r.kind==='variable_schema'||r.kind==='world_info'&&Object.values(r.raw?.entries||{}).some(e=>/\[?initvar\]?/i.test(String(e?.comment||e?.name||''))));
@@ -678,7 +684,7 @@ async function createEnvelopeAsync(session,resources,messages,userText,options={
   if(hasRegexWorldInfo){
     const card=resources.find(r=>r.kind==='character')?.raw;
     const name=card?.nickname||card?.name||'角色',user=session.userName||'玩家';
-    const history=messages.filter(m=>m.status==='committed'&&!(m.role==='assistant'&&root.MimaStandalone?.classifyStoryReply?.(m.canonicalContent)?.blocked)).map(m=>({role:m.role,content:m.canonicalContent}));
+    const history=messages.filter(m=>m.status==='committed'&&!(m.role==='assistant'&&!approvedReply(m)&&root.MimaStandalone?.classifyStoryReply?.(m.canonicalContent)?.blocked)).map(m=>({role:m.role,content:m.canonicalContent}));
     if(!root.MimaCompatWorldInfoIsolation?.evaluate)throw error('E_REGEX_ISOLATION_UNAVAILABLE','世界书包含正则关键词，但隔离组件未加载；不会跳过世界书继续生成');
     worldInfoOverride=await root.MimaCompatWorldInfoIsolation.evaluate(entries,[...history,...(options.assistantContinuation?[]:[{role:'user',content:userText}])],worldInfoSettings(session,name,user,userText),{signal:options.signal});
   }
@@ -721,13 +727,16 @@ async function beginTurn(sessionId,text){
     return{turnId,attemptId,sessionRevision:s.revision+1,msgId,sequence,text};
   });
 }
-async function finishTurn(sessionId,t,reply,code='',mvuResult=null){
+async function finishTurn(sessionId,t,reply,code='',mvuResult=null,recovery=null){
   return transition(sessionId,(s,{s:sessionStore,m,j})=>{
     const receipt={turnId:t.turnId,attemptId:t.attemptId,settlement:null};
     const jobRequest=j.get(t.turnId);
     jobRequest.onsuccess=()=>{
       const job=jobRequest.result;
-      if(!job||job.sessionId!==sessionId||job.attemptId!==t.attemptId||job.settlement!=='pending'||s.pendingTurnId!==t.turnId){
+      const admitted=job&&(recovery?
+        ['failed','aborted'].includes(job.settlement)&&!s.pendingTurnId&&s.revision===recovery.sessionRevision&&job.revision===recovery.jobRevision&&s.turnIndex===job.sequence/2+1:
+        job.settlement==='pending'&&s.pendingTurnId===t.turnId);
+      if(!job||job.sessionId!==sessionId||job.attemptId!==t.attemptId||!admitted){
         /* Do not abort the transaction solely because a fenced old response arrived: no writes occur. */
         return;
       }
@@ -736,11 +745,11 @@ async function finishTurn(sessionId,t,reply,code='',mvuResult=null){
       const msgRequest=m.get(job.msgId);
       msgRequest.onsuccess=()=>{
         const user=msgRequest.result;
-        if(!user||user.turnId!==t.turnId||!['pending','failed'].includes(user.status)){try{msgRequest.transaction.abort();}catch(_){}return;}
+        if(!user||user.sessionId!==sessionId||user.turnId!==t.turnId||!(recovery?['failed','aborted']:['pending','failed']).includes(user.status)){try{msgRequest.transaction.abort();}catch(_){}return;}
         receipt.settlement=status;
         m.put({...user,status,revision:(user.revision||0)+1,settledAt:new Date().toISOString()});
-        if(ok)m.add({id:'a_'+t.turnId,sessionId,turnId:t.turnId,role:'assistant',rawContent:reply,canonicalContent:reply,status:'committed',sequence:job.sequence+1,revision:1,createdAt:new Date().toISOString(),...(mvuResult?.active?{mvuStateAfter:mvuResult.state,mvuOperationCount:mvuResult.operations?.length||0}: {})});
-        j.put({...job,stage:ok?'CANONICAL_COMMITTED':status==='aborted'?'ABORTED':'FAILED_REQUEST',settlement:status,code,revision:job.revision+1,settledAt:new Date().toISOString()});
+        if(ok){const assistant={id:'a_'+t.turnId,sessionId,turnId:t.turnId,role:'assistant',rawContent:reply,canonicalContent:reply,status:'committed',sequence:job.sequence+1,revision:1,createdAt:new Date().toISOString(),...(mvuResult?.active?{mvuStateAfter:mvuResult.state,mvuOperationCount:mvuResult.operations?.length||0}: {})};if(recovery)assistant.metadata=recoveryMetadata(assistant,recovery.receipt);m.add(assistant);}
+        j.put({...job,stage:ok?'CANONICAL_COMMITTED':status==='aborted'?'ABORTED':'FAILED_REQUEST',settlement:status,code,revision:job.revision+1,settledAt:new Date().toISOString(),...(recovery?{manualRecovery:recovery.receipt,previousFailureCode:job.code}: {})});
         sessionStore.put({...s,pendingTurnId:null,revision:s.revision+1,lastSettledTurnId:t.turnId});
       };
     };
@@ -804,8 +813,8 @@ function notifyPlugins(sessionId,name,payload,eventId){
   if(root.console?.warn)root.console.warn('Mima compat plugin delivery failed', {sessionId,turnId:payload.turnId,stage:name,error:e.message});
  });
 }
-function compatDiagnostic(sessionId,turnId,action,options={}){
- const journal=root.MimaDiagnosticJournal,id=journal?.begin?.({sessionId,turnId,action});
+function compatDiagnostic(sessionId,turnId,action,options={},attemptId=''){
+ const journal=root.MimaDiagnosticJournal,id=journal?.begin?.({sessionId,turnId,action,attemptId});
  const resultMeta={};let envelope=null,candidate='';
  const emit=data=>{
   if(id&&journal?.event)try{Promise.resolve(journal.event(id,data)).catch(e=>root.console?.warn?.('兼容诊断日志保存失败',e?.message));}catch(e){root.console?.warn?.('兼容诊断日志保存失败',e?.message);}
@@ -819,10 +828,10 @@ function compatDiagnostic(sessionId,turnId,action,options={}){
  return {resultMeta,bind:value=>{envelope=value;},candidate:value=>{candidate=String(value||'');},
   modelOptions:continuation=>({resultMeta,onDiagnostic,messageSources:envelope?.messageSources||[],...(continuation?{continuation:true}:{})}),
   committed:()=>emit({type:'settlement',status:'committed',finishKind:resultMeta.finishKind,finishReason:resultMeta.finishReason}),
-  rejected:e=>emit({type:'settlement',status:e?.name==='AbortError'||e?.code==='E_TURN_ABORTED'?'aborted':e?.code==='E_CANONICAL_CONFLICT'?'conflict':'rejected',code:e?.code||'E_STORY_RUNTIME',message:e?.message||String(e),details:e?.details||'',httpStatus:e?.status||0,rawRejectedReply:e?.partialDraft||candidate,finishKind:resultMeta.finishKind,finishReason:resultMeta.finishReason})};
+  rejected:e=>emit({type:'settlement',status:e?.name==='AbortError'||e?.code==='E_TURN_ABORTED'?'aborted':e?.code==='E_CANONICAL_CONFLICT'?'conflict':'rejected',code:e?.code||'E_STORY_RUNTIME',message:e?.message||String(e),details:e?.details||'',httpStatus:e?.status||0,rawRejectedReply:e?.partialDraft||candidate,rawLimited:typeof e?.partialDraft==='string'&&e.partialDraft.length>=24000,finishKind:resultMeta.finishKind,finishReason:resultMeta.finishReason})};
 }
 async function dispatch(sessionId,t,options={}){
-  const diagnostic=compatDiagnostic(sessionId,t.turnId,'compat_send',options);
+  const diagnostic=compatDiagnostic(sessionId,t.turnId,'compat_send',options,t.attemptId);
   try{
     const session=await getSession(sessionId),msgs=await sessionMessages(sessionId),resources=await resourcesFor(session);
     const history=msgs.filter(m=>m.turnId!==t.turnId&&m.sequence<t.sequence),envelope=await createEnvelopeAsync(session,resources,history,t.text,options);
@@ -899,7 +908,7 @@ async function beginContinuation(sessionId,expected){
   return receipt;
  });
 }
-async function settleContinuation(sessionId,t,addition,reason='',mvuResult=null){
+async function settleContinuation(sessionId,t,addition,reason='',mvuResult=null,recovery=null){
  const db=await store().open();return new Promise((resolve,reject)=>{
   const tx=db.transaction(['compat_sessions','messages','events_jobs','sidecar_links'],'readwrite');
   const ses=tx.objectStore('compat_sessions'),m=tx.objectStore('messages'),jobs=tx.objectStore('events_jobs'),side=tx.objectStore('sidecar_links');
@@ -909,11 +918,14 @@ async function settleContinuation(sessionId,t,addition,reason='',mvuResult=null)
    const session=sq.result;if(!session){failure(error('E_STORE_UNVERIFIED','续写会话已消失'));return;}
    const jq=jobs.get(t.id);jq.onsuccess=()=>{
     const job=jq.result;
-    if(!job||job.kind!=='assistant_continuation'||job.sessionId!==sessionId||job.attemptId!==t.attemptId||job.settlement!=='pending'||session.pendingTurnId!==t.id)return;
+    const admitted=job&&(recovery?
+      ['failed','aborted'].includes(job.settlement)&&!session.pendingTurnId&&session.revision===recovery.sessionRevision&&job.revision===recovery.jobRevision&&session.turnIndex*2-1===job.sequence&&session.lastSettledTurnId===job.parentTurnId:
+      job.settlement==='pending'&&session.pendingTurnId===t.id);
+    if(!job||job.kind!=='assistant_continuation'||job.sessionId!==sessionId||job.attemptId!==t.attemptId||!admitted)return;
     const success=typeof addition==='string'&&addition.trim().length>0;
     const finish=()=>{
      const state=success?'committed':reason==='E_TURN_ABORTED'?'aborted':'failed';
-     jobs.put({...job,settlement:state,stage:success?'CONTINUATION_COMMITTED':'CONTINUATION_FAILED',code:success?'':reason||'E_API_EMPTY_REPLY',revision:job.revision+1,settledAt:new Date().toISOString()});
+     jobs.put({...job,settlement:state,stage:success?'CONTINUATION_COMMITTED':'CONTINUATION_FAILED',code:success?'':reason||'E_API_EMPTY_REPLY',revision:job.revision+1,settledAt:new Date().toISOString(),...(recovery?{manualRecovery:recovery.receipt,previousFailureCode:job.code}: {})});
      ses.put({...session,pendingTurnId:null,revision:session.revision+1,lastSettledTurnId:job.parentTurnId});
      result={settlement:state,id:job.id,parentTurnId:job.parentTurnId};
     };
@@ -922,13 +934,15 @@ async function settleContinuation(sessionId,t,addition,reason='',mvuResult=null)
      const old=aq.result;
      if(!old||old.sessionId!==sessionId||old.turnId!==job.parentTurnId||old.status!=='committed'||old.revision!==job.baseRevision||old.canonicalContent!==t.baseContent){failure(error('E_CANONICAL_CONFLICT','续写时原角色回复已改变，不允许覆盖'));return;}
      const append='\n'+addition;
-     side.add({id:'continuation_backup_'+job.id,sessionId,assistantId:old.id,parentTurnId:job.parentTurnId,originalContent:old.canonicalContent,originalRevision:old.revision,addedText:addition,revision:1,createdAt:new Date().toISOString(),...(mvuResult?.active?{mvuStateAfter:mvuResult.state}: {})});
+     side.add({id:'continuation_backup_'+job.id,sessionId,assistantId:old.id,parentTurnId:job.parentTurnId,originalContent:old.canonicalContent,originalRawContent:old.rawContent??old.canonicalContent,originalRevision:old.revision,addedText:addition,revision:1,createdAt:new Date().toISOString(),...(mvuResult?.active?{mvuStateAfter:mvuResult.state}: {})});
      const mvuPatch=mvuResult?.active?{
        mvuStateAfter:mvuResult.state,
        mvuOperationCount:(old.mvuOperationCount||0)+(mvuResult.operations?.length||0),
        mvuContinuationSegments:[...(old.mvuContinuationSegments||[]),{offset:old.canonicalContent.length+1,continuationId:job.id}]
      }:{};
-     m.put({...old,rawContent:String(old.rawContent??old.canonicalContent)+append,canonicalContent:old.canonicalContent+append,revision:old.revision+1,...mvuPatch});
+     const updated={...old,rawContent:String(old.rawContent??old.canonicalContent)+append,canonicalContent:old.canonicalContent+append,revision:old.revision+1,...mvuPatch};
+     if(recovery||approvedReply(old))updated.metadata=recoveryMetadata(updated,recovery?.receipt);
+     m.put(updated);
      finish();
     };
     aq.onerror=()=>failure(aq.error||error('E_STORE_UNVERIFIED','续写目标读取失败'));
@@ -951,7 +965,7 @@ async function continueAssistant(sessionId,options={}){
  if(envelope.gaps.length&&options.strictCompat===true&&!options.acceptGaps)throw error('E_RESOURCE_SEMANTIC_GAP','复杂规则需要先确认');
  const ticket=await beginContinuation(sessionId,{sessionRevision:session.revision,assistantRevision:latest.revision,assistantContent:latest.canonicalContent});
  if(!ticket.id||!ticket.attemptId)throw error('E_CANONICAL_CONFLICT','续写未获得完整权威票据');
- const diagnostic=compatDiagnostic(sessionId,ticket.id,'compat_continue',options);diagnostic.bind(envelope);
+ const diagnostic=compatDiagnostic(sessionId,ticket.id,'compat_continue',options,ticket.attemptId);diagnostic.bind(envelope);
  try{
   const cfg=root.MimaStandalone?.getApiConfig?.();if(!cfg)throw error('E_API_CONFIG','未配置原生 API');
   const reply=await root.MimaStandalone.callModelWithConfig(envelope.messages,cfg,cfg.temperature??0.85,options.signal,diagnostic.modelOptions(true));
@@ -979,6 +993,41 @@ async function continueAssistant(sessionId,options={}){
    }
   }catch(settle){e.settlementError=settle.message;}throw e;}
 }
+async function restoreRejectedReply(diagnosticId,{confirmed=false}={}){
+ if(confirmed!==true)throw error('E_REPLY_RECOVERY_CONFIRM','请先确认手动恢复正文。');
+ const record=await root.MimaDiagnosticJournal.recoveryCandidate(diagnosticId),sessionId=record.sessionId;
+ if(!['compat_send','compat_continue'].includes(record.action))throw error('E_REPLY_RECOVERY_OWNER','本诊断不属于酒馆兼容回合。');
+ const records=await readAtomicStores(['compat_sessions','messages','events_jobs'],sessionId),session=records.compat_sessions[0],job=records.events_jobs.find(x=>x.id===record.turnId);
+ if(!session||!job)throw error('E_REPLY_RECOVERY_STALE','原剧情或失败回合已不存在。');
+ if(job.settlement==='committed'&&job.manualRecovery?.diagnosticId===record.id)return {sessionId,messageId:job.assistantId||'a_'+job.id,alreadyRestored:true,action:record.action};
+ if(session.pendingTurnId||!['failed','aborted'].includes(job.settlement))throw error('E_REPLY_RECOVERY_STALE','这个回合已被重试、恢复或有新请求正在运行。');
+ if(record.attemptId?record.attemptId!==job.attemptId:
+   (job.attempt!==1||!Number.isFinite(Date.parse(job.settledAt))||record.createdAtMs<Date.parse(job.createdAt)||record.createdAtMs>Date.parse(job.settledAt)))
+   throw error('E_REPLY_RECOVERY_STALE','日志无法对应原尝试，未把旧回复写入新时间线。');
+ const continuation=job.kind==='assistant_continuation';
+ if(continuation!==(record.action==='compat_continue'))throw error('E_REPLY_RECOVERY_OWNER','诊断与原操作类型不一致。');
+ if(records.events_jobs.some(x=>x.id!==job.id&&x.sequence>=job.sequence&&String(x.createdAt||'')>=String(job.createdAt||'')))
+   throw error('E_REPLY_RECOVERY_STALE','原失败回合之后已有其他回合或续写操作，未覆盖当前剧情。');
+ const history=records.messages.filter(x=>x.sessionId===sessionId&&x.status==='committed'&&(continuation||x.sequence<job.sequence)).sort((a,b)=>a.sequence-b.sequence);
+ const resources=await resourcesFor(session),card=resources.find(x=>x.kind==='character')?.raw;
+ if(!card)throw error('E_RESOURCE_SEMANTIC_GAP','原角色资源已不存在，未恢复到其他角色。');
+ const greeting=String((session.greetingIndex??0)===0?card.first_mes||'':(card.alternate_greetings||[])[(session.greetingIndex??0)-1]||'');
+ const needsMvu=/<(?:initvar|UpdateVariable)\b/i.test(greeting)||resources.some(r=>r.kind==='variable_schema'||r.kind==='world_info'&&Object.values(r.raw?.entries||{}).some(e=>/\[?initvar\]?/i.test(String(e?.comment||e?.name||''))));
+ if(needsMvu&&!mvu())throw error('E_MVU_UNAVAILABLE','恢复仍需验证卡片变量，MVU 组件未加载。');
+ const initial=needsMvu?mvu().initial(resources,{greetingIndex:session.greetingIndex??0}):{state:null,gaps:[]};
+ if(initial.gaps?.some(x=>x.reason==='MVU_MULTIPLE_INITIAL_SOURCES_CONFLICT')||initial.state===null&&(/<initvar\b/i.test(greeting)||history.some(x=>x.mvuStateAfter!==undefined)))
+   throw error('E_MVU_HISTORY_CONFLICT','原变量状态无法验证，未丢弃变量强行恢复。');
+ const raw=String(record.rawRejectedReply);
+ root.MimaStandalone.validateStoryReply(raw,{manualRecovery:true,outputContract:session.outputContract});
+ const mvuResult=needsMvu?mvu().forReply(initial.state,history,raw):null;
+ const recovery={sessionRevision:session.revision,jobRevision:job.revision,receipt:{diagnosticId:record.id,attemptId:job.attemptId,action:record.action,restoredAt:new Date().toISOString(),providerFinishReason:record.finishReason||''}};
+ const old=continuation?records.messages.find(x=>x.id===job.assistantId):null;
+ const ticket=continuation?{id:job.id,attemptId:job.attemptId,baseContent:old?.canonicalContent}:{turnId:job.id,attemptId:job.attemptId};
+ const result=continuation?await settleContinuation(sessionId,ticket,raw,'',mvuResult,recovery):await finishTurn(sessionId,ticket,raw,'',mvuResult,recovery);
+ if(result.settlement!=='committed')throw error('E_CANONICAL_CONFLICT','恢复期间原剧情已变化，未重复插入或覆盖正文。');
+ announceSettlement(sessionId,{...job,settlement:'committed'},continuation?'continuation':'turn');
+ return {sessionId,messageId:job.assistantId||'a_'+job.id,alreadyRestored:false,action:record.action};
+}
 async function abortContinuation(sessionId,id,attemptId){
  const job=await store().get('events_jobs',id);
  if(!job||job.kind!=='assistant_continuation'||job.sessionId!==sessionId||job.attemptId!==attemptId||job.settlement!=='pending')throw error('E_CANONICAL_CONFLICT','续写已经变化或完成');
@@ -999,5 +1048,5 @@ async function displayMessages(sessionId){
   return items.map(m=>{const packet=byId.get(m.id);if(!packet)return{...m,displayView:inputFor(m)};return{...m,displayView:packet.result?.output??inputFor(m),displayTrace:packet.result?.trace||[],...(!packet.ok?{displayError:{...packet.error,rawRetained:true},displayErrors:packet.result?.errors||[packet.error]}:{})};});
 }
 async function currentMvuState(sessionId){const session=await getSession(sessionId),resources=await resourcesFor(session),items=await sessionMessages(sessionId);if(!mvu())throw error('E_MVU_UNAVAILABLE','MVU 状态组件未加载');const init=mvu().initial(resources,{greetingIndex:session.greetingIndex??0});return {...mvu().replay(init.state,items),gaps:init.gaps};}
-return Object.freeze({forkSession,currentMvuState,worldInfo,unsupportedWI,applyRegex,regexRules:readRegex,regexMacroContext,regexProjection,saveRegexSettings,macro,createEnvelope,createEnvelopeAsync,createSession,resolveCharacterSelection,getSession,sessionMessages,resourcesFor,mountResource,unmountResource,setPresetCreativeRole,resolveMedia,preview,send,continueAssistant,abortContinuation,retryTurn,recoverTurn,turnJournal,displayMessages,beginTurn,finishTurn});
+return Object.freeze({forkSession,currentMvuState,worldInfo,unsupportedWI,applyRegex,regexRules:readRegex,regexMacroContext,regexProjection,saveRegexSettings,macro,createEnvelope,createEnvelopeAsync,createSession,resolveCharacterSelection,getSession,sessionMessages,resourcesFor,mountResource,unmountResource,setPresetCreativeRole,resolveMedia,preview,send,continueAssistant,restoreRejectedReply,abortContinuation,retryTurn,recoverTurn,turnJournal,displayMessages,beginTurn,finishTurn});
 });

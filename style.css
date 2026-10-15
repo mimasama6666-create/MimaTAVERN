@@ -691,6 +691,8 @@ html[data-mima-theme="eink"] .novel-text-unit[open]>summary,html[data-mima-theme
 }
 
 /* Diagnostic viewer: scoped to the independent settings tab. */
+.diag-list-row{display:flex;flex-direction:column;gap:6px;min-width:0;max-width:100%}
+.diag-recover-button{align-self:flex-end;max-width:100%;white-space:normal;overflow-wrap:anywhere}
 .diag-list-item{display:block;width:100%;text-align:left;white-space:normal;overflow-wrap:anywhere;padding:9px 12px;font-size:.78rem;line-height:1.55}
 .diag-list-item[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft)}
 .diag-detail{margin-top:15px;padding:12px;overflow-wrap:anywhere}

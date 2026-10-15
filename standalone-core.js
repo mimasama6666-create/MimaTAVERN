@@ -28,6 +28,8 @@
 
   function fingerprint(data){const str=JSON.stringify(data);let h=2166136261;for(let i=0;i<str.length;i++){h^=str.charCodeAt(i);h=Math.imul(h,16777619);}return 'fnv1a32:'+((h>>>0).toString(16).padStart(8,'0'))+':'+str.length;}
   function memorySourceFingerprint(messages,count){return fingerprint((messages||[]).slice(0,count).map(m=>[m.id,m.role,m.content,m.rawContent,m.versions,m.isEdited,m.branchId]));}
+  function manualReplyFingerprint(m){return fingerprint([String(m.content??m.canonicalContent??''),String(m.rawContent??m.content??m.canonicalContent??'')]);}
+  function isManuallyRecoveredReply(m){return !!m?.metadata?.manualRecovery?.diagnosticId&&m.metadata.manualRecovery.contentFingerprint===manualReplyFingerprint(m);}
   function memorySourceValid(session,item){
     if(item.stale)return false;
     // A player's explicit manual text has its own human authority. It is not
@@ -394,7 +396,7 @@
     if(!m?.content)return null;
     // Preserve legacy evidence in canonical/version storage, but never replay
     // a positively identified provider refusal as character dialogue.
-    if(m.role==='assistant'&&classifyStoryReply(m.rawContent||m.content).blocked)return null;
+    if(m.role==='assistant'&&!isManuallyRecoveredReply(m)&&classifyStoryReply(m.rawContent||m.content).blocked)return null;
     const content=m.role==='user'?userMessagePromptContent(m,session):messagePromptContent(m,session);
     const role=['system','user','assistant'].includes(m.role)?m.role:'system';
     return {role,content,source:{kind:'canonical_history',sourceId:m.id,messageId:m.id,originalRole:m.role}};
@@ -2216,7 +2218,7 @@
   }
   function validateStoryReply(reply,meta={}){
     const result=classifyStoryReply(reply,meta);
-    if(result.blocked)throw new ApiError('E_API_REFUSAL_CONTENT','模型返回了拒绝声明，已阻止将其作为角色回复保存或归档。',{hint:'这是模型或网关返回的内容限制，不代表你请求了绘图。可以手动重试或检查模型服务；不会自动重复付费请求。',details:JSON.stringify({stage:'story_reply_admission',reason:result.reason,finishReason:String(meta.finishReason||'unknown'),receivedChars:String(reply||'').length})});
+    if(result.blocked&&meta.manualRecovery!==true)throw new ApiError('E_API_REFUSAL_CONTENT','模型返回了拒绝声明，已阻止将其作为角色回复保存或归档。',{hint:'这是模型或网关返回的内容限制，不代表你请求了绘图。可以检查坏回复并手动恢复；不会自动重复付费请求。',details:JSON.stringify({stage:'story_reply_admission',reason:result.reason,finishReason:String(meta.finishReason||'unknown'),receivedChars:String(reply||'').length})});
     if(meta.outputContract?.completeHtml===true)validateCompleteHtml(reply);
     return reply;
   }
@@ -2359,6 +2361,9 @@
     }
     // A memory job may have committed while Provider was generating. Rebase only
     // when the original story prefix has not changed. Never overwrite memory.
+    if(action==='continue'&&target&&isManuallyRecoveredReply(sourceBeforeReply.find(m=>m.id===target.id))){
+      const continued=session.messages.find(m=>m.id===target.id);continued.metadata.manualRecovery={...continued.metadata.manualRecovery,contentFingerprint:manualReplyFingerprint(continued)};
+    }
     const generatedMessages=clone(session.messages);let saved=null;
     for(let commitAttempt=0;commitAttempt<3;commitAttempt++){
       const persisted=normalizeState(await window.MimaLocalStore.loadState());
@@ -2391,6 +2396,41 @@
       throw e;
     }
   }
+  async function restoreRejectedReply(id,body={}){
+    if(body.confirmed!==true)throw new ApiError('E_REPLY_RECOVERY_CONFIRM','请先确认将已收到的文本手动恢复到原剧情。');
+    const record=await window.MimaDiagnosticJournal.recoveryCandidate(body.diagnosticId);
+    if(record.sessionId!==id||String(record.action||'').startsWith('compat_'))throw new ApiError('E_REPLY_RECOVERY_OWNER','诊断不属于这个原生剧情。');
+    const persisted=normalizeState(await window.MimaLocalStore.loadState()),session=persisted.sessions.find(s=>s.id===id);
+    if(!session)throw new ApiError('E_STORY_SESSION_MISSING','原剧情已删除，未重建或覆盖存档。');
+    const previous=session.messages.find(m=>m.metadata?.manualRecovery?.diagnosticId===record.id||arr(m.metadata?.manualRecoveryIds).includes(record.id));
+    if(previous)return {session,messageId:previous.id,alreadyRestored:true,action:record.action};
+    const pending=session.pendingGeneration;
+    if(!record.generationId||!pending||pending.id!==record.generationId||pending.attempt!==record.generationAttempt||pending.status!=='failed'||pending.action!==record.action)
+      throw new ApiError('E_REPLY_RECOVERY_STALE','原失败任务已被重试、替换或清理，未将旧回复写入新剧情。');
+    if(pending.canonicalFingerprint!==memorySourceFingerprint(session.messages,session.messages.length))
+      throw new ApiError('E_CANONICAL_CONFLICT','失败后剧情正文或版本已变化，未覆盖当前时间线。');
+    const raw=String(record.rawRejectedReply),action=pending.action;
+    validateStoryReply(raw,{manualRecovery:true,outputContract:session.promptSettings?.outputContract});
+    let target=pending.targetMessageId?session.messages.find(m=>m.id===pending.targetMessageId&&m.role==='assistant'):null;
+    if((action==='continue'||pending.targetMessageId)&&!target)throw new ApiError('E_REPLY_RECOVERY_TARGET','原回复目标已不存在，未覆盖其他消息。');
+    state=persisted;
+    if(target&&(action==='continue'||action==='regenerate')){
+      archiveVersion(target,'manual_recovery_before_'+action);
+      if(action==='continue'){
+        target.rawContent=String(target.rawContent??target.content)+'\n'+raw;target.content+='\n'+raw;
+      }else{target.rawContent=raw;target.content=raw;target.isEdited=false;}
+    }else{
+      if(!['send','regenerate','auto_advance'].includes(action))throw new ApiError('E_REPLY_RECOVERY_ACTION','这个操作类型不能恢复到剧情。');
+      target=makeMessage('assistant',raw,session,{source:'manual_diagnostic_recovery'});session.messages.push(target);
+    }
+    target.metadata={...(target.metadata||{}),generationSnapshot:action==='continue'?target.metadata?.generationSnapshot:pending.snapshot,
+      manualRecoveryIds:[...new Set([...arr(target.metadata?.manualRecoveryIds),record.id])],
+      manualRecovery:{diagnosticId:record.id,generationId:pending.id,attempt:pending.attempt,action,restoredAt:nowIso(),providerFinishReason:record.finishReason||'',contentFingerprint:manualReplyFingerprint(target)}};
+    target.renderedContent=applyRegexForSession(session,target.content,'display');target.tokenEstimate=estimateTokens(target.content);
+    // Explicit human action only: no Provider, retry or background summary.
+    const saved=await saveSession({...session,pendingGeneration:null,legacyMemoryQuarantined:true});
+    return {session:saved,messageId:target.id,alreadyRestored:false,action};
+  }
   async function editMessage(id,msgId,content,opts={}){const s=getSession(id);if(!s)throw new Error('未找到剧本');const i=s.messages.findIndex(m=>m.id===msgId);if(i<0)throw new Error('未找到消息');const msg=s.messages[i];archiveVersion(msg,'manual_edit');msg.content=String(content||'');msg.rawContent=msg.content;msg.renderedContent=msg.role==='assistant'?applyRegexForSession(s,msg.content,'display'):msg.content;if(msg.role==='user')msg.metadata={...(msg.metadata||{}),inputSemanticMode:inputSemanticMode(s),inputSemanticParserVersion:'1.1.7'};msg.isEdited=true;msg.editedAt=nowIso();msg.tokenEstimate=estimateTokens(msg.content);s.legacyMemoryQuarantined=true;if(opts.truncateAfter){const removed=s.messages.slice(i+1);if(removed.length){s.archivedBranches=arr(s.archivedBranches);s.archivedBranches.push({id:makeId('branch'),fromMessageId:msg.id,reason:'edit_truncate_after',archivedAt:nowIso(),messages:removed});s.messages=s.messages.slice(0,i+1);}}return saveSession(s);}
   async function restoreMessageVersion(id,msgId,versionIndex,body={}){
     const current=getSession(id);if(!current)throw new ApiError('E_STORY_SESSION_MISSING','未找到剧情 Session。');
@@ -2408,7 +2448,7 @@
     // Content-only old archives cannot inherit the active version's raw text
     // or generation snapshot. That would attribute a different request/source.
     const raw=typeof version.rawContent==='string'?version.rawContent:version.content;
-    if(msg.role==='assistant'){validateStoryReply(raw);validateStoryReply(version.content);}
+    if(msg.role==='assistant'){const manualRecovery=isManuallyRecoveredReply({...version,rawContent:raw});validateStoryReply(raw,{manualRecovery});validateStoryReply(version.content,{manualRecovery});}
     archiveVersion(msg,'version_restore');
     msg.content=version.content;msg.rawContent=raw;
     msg.renderedContent=typeof version.renderedContent==='string'?version.renderedContent:
@@ -2478,6 +2518,7 @@
       if(m&&method==='PATCH'){const s=getSession(m[1]);return s?ok(await saveSession({...s,...body,id:s.id,createdAt:s.createdAt})):fail('未找到剧本');}
       if(m&&method==='DELETE'){const before=state.sessions.length;state.sessions=state.sessions.filter(x=>x.id!==m[1]);await persist();return ok({deleted:state.sessions.length<before});}
       m=path.match(/^\/sessions\/([^/]+)\/chat$/);if(m&&method==='POST')return ok(await processStoryTurn(m[1],body?.text,body?.action||'send',signal,body?.temperature,{directorNote:body?.directorNote||'',targetMessageId:body?.targetMessageId||null,diagnosticTurnId:body?.diagnosticTurnId||'',regenerationContext:body?.regenerationContext||'original',retryParameters:body?.retryParameters==='current'?'current':'original'},progress));
+      m=path.match(/^\/sessions\/([^/]+)\/recover-reply$/);if(m&&method==='POST')return ok(await restoreRejectedReply(m[1],body||{}));
       m=path.match(/^\/sessions\/([^/]+)\/prompt-preview$/);if(m&&method==='POST')return ok(previewPrompt(m[1],body||{}));
       m=path.match(/^\/sessions\/([^/]+)\/opening$/);if(m&&method==='POST')return ok(await addOpening(m[1],body?.content||''));
       m=path.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)$/);if(m&&method==='PATCH')return ok(await editMessage(m[1],m[2],body?.content,{truncateAfter:!!body?.truncateAfter}));
@@ -2548,5 +2589,5 @@
   }
 
   window.MimaMemoryContracts=Object.freeze({normalizeManualMemory});
-  window.MimaStandalone={init,handle,runRecordedMemory,memorySourceFingerprint,getApiConfig,saveApiConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,validateStoryReply,classifyStoryReply,applyRegexForSession,resolveMacrosForSession,compileUserInputForPrompt,exportLibrary,importLibrary,validateLibrary,assemble,getLastUsage,getState:()=>clone(state)};
+  window.MimaStandalone={init,handle,runRecordedMemory,memorySourceFingerprint,manualReplyFingerprint,isManuallyRecoveredReply,getApiConfig,saveApiConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,validateStoryReply,classifyStoryReply,applyRegexForSession,resolveMacrosForSession,compileUserInputForPrompt,exportLibrary,importLibrary,validateLibrary,assemble,getLastUsage,getState:()=>clone(state)};
 })();

@@ -1301,6 +1301,48 @@ function renderDiagnosticsTab(box){
     };
     void refreshDiagnosticsView();
 }
+const diagnosticRecoveryBusy=new Set();
+async function recoverDiagnosticReply(diagnosticId){
+    if(diagnosticRecoveryBusy.has(diagnosticId))return;
+    diagnosticRecoveryBusy.add(diagnosticId);
+    let restored=false;
+    try{
+        const record=await MimaDiagnosticJournal.recoveryCandidate(diagnosticId);
+        if(!confirm('请先核对详情里的“未采纳的模型文本”。\n\n手动恢复会采用日志已保存的正文，不重新请求模型，不重跑输出正则；显示正则仍生效。\n发送将补回角色回复；重说将替换原目标并归档旧版本；续写将追加到原回复并保留旧版本。\n\n服务端的拦截或截断标记仍保留，手动恢复不保证内容完整。确定恢复到原剧情吗？'))return;
+        const selectedAtStart=currentSessionId,navigationAtStart=sessionNavigationEpoch;
+        let result;
+        if(String(record.action||'').startsWith('compat_')){
+            if(typeof window.MimaCompatRuntime?.restoreRejectedReply!=='function')throw new Error('酒馆兼容恢复组件未加载，请完整更新本版本。');
+            result=await MimaCompatRuntime.restoreRejectedReply(diagnosticId,{confirmed:true});
+        }else{
+            const response=await fetchStory('/sessions/'+encodeURIComponent(record.sessionId)+'/recover-reply','POST',{diagnosticId,confirmed:true});
+            if(!response.success)throw new Error(response.msg||'未恢复，原剧情保持不变。');
+            result=response.data;
+        }
+        restored=true;
+        let notice='';
+        try{await MimaDiagnosticJournal.event(diagnosticId,{type:'manual_recovery',messageId:result.messageId,action:result.action});}
+        catch(e){notice='；剧情已保存，但日志标记写入失败';console.error('手动恢复已提交，诊断标记未保存',e);}
+        try{
+            if(String(record.action||'').startsWith('compat_'))document.dispatchEvent(new CustomEvent('mima:manual-reply-restored',{detail:{sessionId:record.sessionId}}));
+            else{
+                if(currentSessionId===record.sessionId&&selectedAtStart===currentSessionId&&navigationAtStart===sessionNavigationEpoch){
+                    currentSessionData=result.session;refreshChatBox({scrollToBottom:false});
+                }
+                await refreshSessionSummaryList();
+            }
+        }catch(e){notice+='；界面刷新失败，请重新打开原剧情';console.error('手动恢复已提交，界面刷新失败',e);}
+        toast((result.alreadyRestored?'这条回复已经手动恢复，没有重复写入':'已手动恢复到原剧情，没有重新请求模型')+notice);
+    }catch(e){toast((restored?'回复已保存，后续操作失败：':'无法恢复：')+e.message);}
+    finally{diagnosticRecoveryBusy.delete(diagnosticId);if(settingsTab==='diagnostics')await refreshDiagnosticsView();}
+}
+function diagnosticRecoveryButton(record){
+    const b=document.createElement('button');b.type='button';b.className='ghost-btn diag-recover-button';
+    b.textContent=record.manualRecovery?'♻ 已手动恢复':diagnosticRecoveryBusy.has(record.id)?'正在恢复…':'♻ 手动恢复';
+    b.disabled=!!record.manualRecovery||diagnosticRecoveryBusy.has(record.id);
+    b.title='恢复已收到的文本，不重新请求模型；空文本、诊断被裁剪或原任务变化时会说明原因。';
+    b.onclick=()=>void recoverDiagnosticReply(record.id);return b;
+}
 async function refreshDiagnosticsView(){
     const epoch=settingsRenderEpoch,sessionId=diagnosticViewState.scope==='session'?currentSessionId:null;
     const root=qs('diag-list'),status=qs('diag-status'),detail=qs('diag-detail');
@@ -1323,7 +1365,9 @@ async function refreshDiagnosticsView(){
 
         b.textContent=`${label} · ${new Date(record.createdAt).toLocaleString()} · ${record.action||'send'} · ${record.model||'模型未请求'} · ${record.error?.code||record.finishReason||''}`;
         b.onclick=()=>{diagnosticViewState.selectedId=record.id;void refreshDiagnosticsView();};
-        root.appendChild(b);
+        const row=document.createElement('div');row.className='diag-list-row';row.appendChild(b);
+        if(['rejected','aborted','conflict'].includes(record.status))row.appendChild(diagnosticRecoveryButton(record));
+        root.appendChild(row);
     }
     if(!records.length)root.textContent='当前范围没有诊断记录。正常剧情可继续使用；只有真实生成操作才会产生记录。';
     const record=records.find(x=>x.id===diagnosticViewState.selectedId);
@@ -1341,6 +1385,12 @@ async function refreshDiagnosticsView(){
       ${record.requestTruncated?'<div class="row-sub">本轮请求超过日志单条上限，未保留完整正文。实际发送不受影响；本条不能作为完整 Prompt 证据。</div>':''}
       ${request?`<div class="row-sub">${request.messages.length} 条消息 · 模型 ${escapeHtml(request.model)} · stream=${request.stream} · max_tokens=${escapeHtml(request.max_tokens??'未设置')}</div><details><summary>展开实际 messages</summary><pre class="prompt-pre">${escapeHtml(fmt)}</pre></details>`:'<div class="row-sub">没有保存完整请求：可能在发送前失败，或超出日志容量上限。</div>'}
       ${record.error?`<h4>错误与拒绝/截断诊断</h4><pre class="prompt-pre">${escapeHtml(JSON.stringify(record.error,null,2))}</pre><h4>未采纳的模型文本（仅诊断）</h4><pre class="prompt-pre">${escapeHtml(record.rawRejectedReply||'没有可保存的失败正文。')}${record.rejectedReplyTruncated?'\n[诊断副本超过上限，后半段未保存]':''}</pre>`:'<div class="row-sub">本条没有失败正文；成功回复仅存于原有剧情，不在此复制第二份。</div>'}`;
+    if(['rejected','aborted','conflict'].includes(record.status)){
+        wrap.querySelector('.toolbar').appendChild(diagnosticRecoveryButton(record));
+        const note=document.createElement('p');note.className='helper';
+        note.textContent=record.manualRecovery?'这条文本已由你手动恢复。上面的原始错误与结束标记仍作为证据保留。':'确认误拦截后可手动恢复，不重新消耗模型额度。没有正文、日志副本已被裁剪，或原任务已被替换时，系统会说明无法恢复的原因。';
+        wrap.querySelector('.toolbar').after(note);
+    }
     detail.appendChild(wrap);
     qs('diag-delete-one').onclick=async()=>{
         if(!confirm('删除这条诊断记录？不会删除剧情消息。'))return;

@@ -3,7 +3,7 @@
 function create(panel,bridge){
  const runtime=()=>root.MimaCompatRuntime,store=()=>root.MimaCompatStore;
  const node=(tag,props={},parent)=>{const n=document.createElement(tag);for(const [key,value]of Object.entries(props)){if(key==='text')n.textContent=value;else if(key==='className')n.className=value;else if(key==='click')n.addEventListener('click',value);else n.setAttribute(key,value);}parent?.append(n);return n;};
- let generation=0,ownerId='',rules=[],editing=null,editorOwner=null;
+ let generation=0,ownerId='',rules=[],editing=null,editorOwner=null,saving=false;
  const owner=()=>bridge.owner(),same=ticket=>{const now=owner();return now.id===ticket.id&&now.generation===ticket.generation;};
  node('span',{className:'compat-eyebrow',text:'REGEX · 文字与界面'},panel);
  node('h3',{text:'正则规则'},panel);
@@ -35,11 +35,12 @@ function create(panel,bridge){
  const testButton=node('button',{id:'compat-regex-test-run',type:'button',text:'运行测试'},tester);
  const output=node('pre',{id:'compat-regex-test-output',role:'status',text:'测试结果会显示在这里。'},tester);
  function notify(text,error=false,ticket=owner()){if(!same(ticket))return;status.textContent=text;status.dataset.kind=error?'error':'info';bridge.notify?.(text,error,ticket);}
- const action=fn=>event=>{Promise.resolve().then(()=>fn(event)).catch(e=>notify((e.code||'E_REGEX_UI')+': '+e.message,true));};
+ const action=fn=>event=>{const ticket=owner();Promise.resolve().then(()=>fn(event)).catch(e=>notify((e.code||'E_REGEX_UI')+': '+e.message,true,ticket));};
  function readDraft(){
   return{scriptName:fields.name.value.trim()||'未命名规则',findRegex:fields.find.value,replaceString:fields.replace.value,trimStrings:fields.trim.value.split('\n').filter(x=>x!==''),placement:Object.entries(placement).filter(([,input])=>input.checked).map(([phase])=>Number(phase)),markdownOnly:fields.markdownOnly.checked,promptOnly:fields.promptOnly.checked,runOnEdit:fields.runOnEdit.checked,substituteRegex:Number(fields.substitute.value),minDepth:fields.min.value===''?null:Number(fields.min.value),maxDepth:fields.max.value===''?null:Number(fields.max.value),...(editing?.flags?{flags:editing.flags}:{})};
  }
  function edit(rule){
+  if(saving)return;
   if(editing&&!editor.hidden&&JSON.stringify(readDraft())!==JSON.stringify(editing.__draft)&&!root.confirm('打开另一条规则会替换当前未保存的编辑内容。继续吗？'))return;
   editing=rule;editorOwner=owner();editor.hidden=false;
   fields.name.value=rule.scriptName||'';fields.find.value=rule.findRegex||'';fields.replace.value=rule.replaceString||'';fields.trim.value=(rule.trimStrings||[]).join('\n');
@@ -53,16 +54,21 @@ function create(panel,bridge){
  file.addEventListener('change',action(async()=>{const selected=file.files[0],ticket=owner();if(!selected||!ticket.id)return;file.disabled=true;try{await bridge.importResource(selected,ticket);if(same(ticket))await refresh();}finally{file.disabled=false;file.value='';}}));
  createButton.addEventListener('click',()=>edit({scriptName:'新规则',findRegex:'',replaceString:'',trimStrings:[],placement:[2],markdownOnly:true,promptOnly:false,substituteRegex:0}));
  cancel.addEventListener('click',()=>{editor.hidden=true;});
- save.addEventListener('click',action(async()=>{const ticket=editorOwner;if(!ticket||!same(ticket))throw new Error('编辑时已切换故事，请重新选择规则');const draft=readDraft();save.disabled=true;
-  try{if(editing.__mimaRegexRef)await runtime().saveRegexSettings(ticket.id,{key:editing.__mimaRegexRef.key,rule:draft});
+ function setSaving(value){saving=value;save.disabled=value;createButton.disabled=value;file.disabled=value;testButton.disabled=value;
+  for(const input of form.querySelectorAll('input,textarea,select,fieldset'))input.disabled=value;
+  for(const button of list.querySelectorAll('[data-regex-edit]'))button.disabled=value;
+ }
+ save.addEventListener('click',action(async()=>{if(saving)return;const ticket=editorOwner;if(!ticket||!same(ticket))throw new Error('编辑时已切换故事，请重新选择规则');const target=editing,draft=readDraft();let savedTarget=target;setSaving(true);
+  try{if(target.__mimaRegexRef)await runtime().saveRegexSettings(ticket.id,{key:target.__mimaRegexRef.key,rule:draft});
    else{const receipt=await bridge.importResource(new File([JSON.stringify(draft,null,2)],draft.scriptName+'.json',{type:'application/json'}),ticket);
     if(!same(ticket))return;
     const session=await runtime().getSession(ticket.id),resources=await runtime().resourcesFor(session);if(!same(ticket))return;
     const imported=runtime().regexRules(resources,session).find(rule=>receipt.resourceIds.includes(rule.__mimaRegexRef.resourceId));
-    if(!imported)throw new Error('规则来源已保存，但没有取得当前故事的挂载引用；请从规则列表重新打开');editing=imported;
+    if(!imported)throw new Error('规则来源已保存，但没有取得当前故事的挂载引用；请从规则列表重新打开');savedTarget=imported;
    }
-   editing={...editing,...draft,__draft:draft};await changed(ticket);notify('规则已保存到当前故事，原始卡片和正文保留。',false,ticket);
-  }finally{save.disabled=false;}
+   if(!same(ticket))return;
+   editing={...savedTarget,...draft,__draft:draft};await changed(ticket);notify('规则已保存到当前故事，原始卡片和正文保留。',false,ticket);
+  }finally{setSaving(false);}
  }));
  testButton.addEventListener('click',action(async()=>{const ticket=editorOwner;if(!ticket||!same(ticket))throw new Error('测试所属的故事已经变化');testButton.disabled=true;
   try{const session=await runtime().getSession(ticket.id),resources=await runtime().resourcesFor(session),macroContext=await runtime().regexMacroContext(session,resources);if(!same(ticket))return;
@@ -84,7 +90,7 @@ function create(panel,bridge){
    node('p',{className:'compat-help',text:(rule.markdownOnly&&rule.promptOnly?'显示 + 发送':rule.markdownOnly?'仅显示':rule.promptOnly?'仅发送':'显示与发送的源副本')+' · '+(ref.overridden?'本故事覆盖':'沿用原规则')},row);
    const provenance=node('details',{},row);node('summary',{text:'查看来源与表达式'},provenance);node('small',{text:ref.path},provenance);node('pre',{text:rule.findRegex||'（无表达式）'},provenance);
    const controls=node('div',{className:'compat-tool-actions'},row);
-   node('button',{type:'button',text:'编辑',click:()=>edit(rule)},controls);
+   const editButton=node('button',{type:'button',text:'编辑','data-regex-edit':'',click:()=>edit(rule)},controls);editButton.disabled=saving;
    for(const [delta,text]of[[-1,'上移'],[1,'下移']]){const button=node('button',{type:'button',text,click:action(async()=>{const snapshot=owner(),order=rules.map(r=>r.__mimaRegexRef.key),other=index+delta;[order[index],order[other]]=[order[other],order[index]];await runtime().saveRegexSettings(snapshot.id,{order});await changed(snapshot);})},controls);button.disabled=index+delta<0||index+delta>=rules.length;}
    node('button',{type:'button',text:'导出 JSON',click:()=>{const value={...rule};delete value.__mimaRegexRef;const url=URL.createObjectURL(new Blob([JSON.stringify(value,null,2)],{type:'application/json'})),a=node('a',{href:url,download:(rule.scriptName||'regex').replace(/[\\/:*?"<>|]/g,'_')+'.json'},document.body);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);}},controls);
    if(ref.overridden)node('button',{type:'button',text:'恢复原规则',click:action(async()=>{const snapshot=owner();await runtime().saveRegexSettings(snapshot.id,{key:ref.key,reset:true});await changed(snapshot);})},controls);
