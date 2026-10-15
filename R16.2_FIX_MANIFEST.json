@@ -1,0 +1,35 @@
+{
+  "base": "咪嘛馆 R16.1 空回复解析精准补丁",
+  "tested": "离线假 Provider, syntax, 6 regression scripts",
+  "not_tested": [
+    "real Gemini gateway",
+    "iOS Safari visual/touch"
+  ],
+  "files": {
+    "standalone-core.js": {
+      "before_sha256": "9cfd038b97b28b999ece4ba206fba97aada18f01fa11576d0bb5269040203172",
+      "after_sha256": "7e4b2cce686353e58ad309692b1c4dc1c4b22336e3153fabac920dd34f529368",
+      "modified": true
+    },
+    "compat-runtime.js": {
+      "before_sha256": "a9c39432bdc5ab1a405da277a899450e4cea5d138bcc816f97db9ac3d6c020d8",
+      "after_sha256": "dac5232e64dac9a2ae385d4fb422c9dba4e55433d0ca530c839387a458f06107",
+      "modified": true
+    },
+    "app.js": {
+      "before_sha256": "53045a246abb08f18959b1efdced865d70a71c5fe1e46194ed91bd471a8fc7a1",
+      "after_sha256": "cbae9ada32c66898ed157534a0d2a66a463c16c3aa6120c38ef3580bf9b7443d",
+      "modified": true
+    },
+    "style.css": {
+      "before_sha256": "098c892bc723a0f7dee619e21b84867dde5ebf20be009dda89573b2c059672c1",
+      "after_sha256": "dad20bd5e57e55d28196e80577af506fa09f4c499f65128617550180977a6696",
+      "modified": true
+    },
+    "index.html": {
+      "before_sha256": "2e63bfa349c2d5f47f634c46f25c2763a4790dcb334d281f5aadd2576a52cda6",
+      "after_sha256": "ecaf9d7a12b9d06cd23d0a5d2a6a689094bfad5741ed456ed1d991445ca18b99",
+      "modified": true
+    }
+  }
+}

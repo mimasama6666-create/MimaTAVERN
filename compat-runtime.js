@@ -272,7 +272,7 @@ function createEnvelope(session,resources,messages,userText,{skipRegex=false,wor
  const selected=resources.find(r=>r.kind==='character'),card=selected?.raw;
  if(!card)throw error('E_RESOURCE_SEMANTIC_GAP','本来源没有已选定角色');
  const name=card.nickname||card.name||'角色',u=session.userName||'玩家',ctx={char:name,user:u};
- const committed=messages.filter(m=>m.status==='committed'&&!(m.role==='assistant'&&!approvedReply(m)&&root.MimaStandalone?.classifyStoryReply?.(m.canonicalContent)?.blocked));
+ const committed=messages.filter(m=>m.status==='committed'&&!(m.role==='assistant'&&!approvedReply(m)&&(m.metadata?.providerRefused===true||m.metadata?.providerFinishKind==='blocked'||['content_filter','safety','blocked','refusal'].includes(m.metadata?.providerFinishReason))));
  const history=committed.map(m=>({role:m.role,content:m.canonicalContent}));
  const greeting=String((session.greetingIndex??0)===0?card.first_mes||'':(card.alternate_greetings||[])[(session.greetingIndex??0)-1]||'');
  const needsMvu=/<(?:initvar|UpdateVariable)\b/i.test(greeting)||resources.some(r=>r.kind==='variable_schema'||r.kind==='world_info'&&Object.values(r.raw?.entries||{}).some(e=>/\[?initvar\]?/i.test(String(e?.comment||e?.name||''))));
@@ -692,7 +692,7 @@ async function createEnvelopeAsync(session,resources,messages,userText,options={
   if(hasRegexWorldInfo){
     const card=resources.find(r=>r.kind==='character')?.raw;
     const name=card?.nickname||card?.name||'角色',user=session.userName||'玩家';
-    const history=messages.filter(m=>m.status==='committed'&&!(m.role==='assistant'&&!approvedReply(m)&&root.MimaStandalone?.classifyStoryReply?.(m.canonicalContent)?.blocked)).map(m=>({role:m.role,content:m.canonicalContent}));
+    const history=messages.filter(m=>m.status==='committed'&&!(m.role==='assistant'&&!approvedReply(m)&&(m.metadata?.providerRefused===true||m.metadata?.providerFinishKind==='blocked'||['content_filter','safety','blocked','refusal'].includes(m.metadata?.providerFinishReason)))).map(m=>({role:m.role,content:m.canonicalContent}));
     if(!root.MimaCompatWorldInfoIsolation?.evaluate)throw error('E_REGEX_ISOLATION_UNAVAILABLE','世界书包含正则关键词，但隔离组件未加载；不会跳过世界书继续生成');
     worldInfoOverride=await root.MimaCompatWorldInfoIsolation.evaluate(entries,[...history,...(options.assistantContinuation?[]:[{role:'user',content:userText}])],worldInfoSettings(session,name,user,userText),{signal:options.signal});
   }

@@ -714,3 +714,18 @@ html[data-mima-theme="eink"] .novel-text-unit[open]>summary,html[data-mima-theme
 .appearance-preview-stage.is-collapsed{height:36px;display:block}.appearance-preview-stage.is-collapsed>:not(.appearance-preview-toggle){display:none}
 #resume-editor{position:fixed;right:14px;bottom:max(14px,env(safe-area-inset-bottom));z-index:1300;padding:10px 16px;border-radius:20px;background:var(--panel-solid);color:var(--text);border:1px solid var(--line);box-shadow:var(--shadow)}
 @media(max-height:480px){.modal-head{padding:8px 13px}.modal-head h2{font-size:1.05rem;margin:4px 0}.modal-head .eyebrow{font-size:.6rem}.editor-actions{padding:7px 12px}.settings-tabs{padding-top:5px;padding-bottom:5px}.appearance-preview-stage{height:100px}}
+
+
+/* R16.2: The footer is a max-content grid row. An unbounded error could grow
+   beyond the visual viewport and push close/retry/send controls off-screen.
+   Keep controls visible, scroll only the evidence area, preserve full text. */
+.composer-shell{min-height:0;max-height:min(72dvh,calc(100dvh - 88px));overflow-y:auto;overscroll-behavior:contain}
+.generation-panel.error{display:flex;flex-direction:column;min-height:0;max-height:min(38dvh,320px)}
+.generation-panel.error .generation-head,
+.generation-panel.error .generation-track,
+.generation-panel.error .generation-actions{flex:none}
+.generation-panel.error .generation-head{z-index:1}
+.generation-panel.error .generation-detail{min-height:0;min-width:0;flex:1 1 auto;overflow-y:auto;overscroll-behavior:contain;overflow-wrap:anywhere;white-space:pre-wrap}
+.generation-panel.error .generation-detail pre{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;max-width:100%;overflow:auto}
+.generation-panel.error .generation-detail details{max-width:100%}
+.generation-panel.error .generation-actions{max-width:100%;overflow-x:auto;flex-wrap:wrap}

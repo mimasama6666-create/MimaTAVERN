@@ -1511,7 +1511,13 @@ function showGenerationError(err,action=currentGenerationAction,fromRestore=fals
     if(!fromRestore&&currentSessionId)generationFailures.set(currentSessionId,lastGenerationFailure);
     panel.classList.remove('hidden','done');panel.classList.add('error');bar.style.width='100%';
     pct.textContent=info.status?`HTTP（状态码） ${info.status}`:'ERROR（错误）';label.textContent=`生成失败 · ${info.code}`;
-    detail.textContent=`${info.message}\n可能原因：${info.hint}${info.details?`\n诊断：${info.details}`:''}`;
+    detail.textContent=`${info.message}\n可能原因：${info.hint}`;
+    if(info.details){
+        const evidence=document.createElement('details'),caption=document.createElement('summary'),content=document.createElement('pre');
+        caption.textContent='展开完整错误诊断（不影响关闭和重试）';
+        content.textContent=info.details;content.className='generation-error-diagnostic';
+        evidence.append(caption,content);detail.appendChild(evidence);
+    }
     if(info.partialDraft){
         const evidence=document.createElement('details'),caption=document.createElement('summary'),content=document.createElement('pre');
         caption.textContent='查看本轮未完成片段（仅诊断，未写入剧情或记忆）';

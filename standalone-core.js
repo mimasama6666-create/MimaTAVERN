@@ -396,7 +396,13 @@
     if(!m?.content)return null;
     // Preserve legacy evidence in canonical/version storage, but never replay
     // a positively identified provider refusal as character dialogue.
-    if(m.role==='assistant'&&!isManuallyRecoveredReply(m)&&classifyStoryReply(m.rawContent||m.content).blocked)return null;
+    // Never silently erase previously committed canonical dialogue based on a
+    // context-free text regex. Only independently verified provider terminal
+    // metadata may quarantine an old turn; explicit manual recovery wins.
+    const evidence=m.metadata||{};
+    if(m.role==='assistant'&&!isManuallyRecoveredReply(m)&&
+      (evidence.providerRefused===true||evidence.providerFinishKind==='blocked'||
+       ['content_filter','safety','blocked','prohibited_content','refusal'].includes(evidence.providerFinishReason)))return null;
     const content=m.role==='user'?userMessagePromptContent(m,session):messagePromptContent(m,session);
     const role=['system','user','assistant'].includes(m.role)?m.role:'system';
     return {role,content,source:{kind:'canonical_history',sourceId:m.id,messageId:m.id,originalRole:m.role}};
@@ -701,10 +707,15 @@
     if(typeof v==='string')return v;
     if(Array.isArray(v))return v.map(contentPiece).join('');
     if(v&&typeof v==='object'){
+      // Gemini-style nested content can be carried inside an OpenAI-compatible
+      // message.content. Its thought parts must not become visible story text.
+      if(v.thought===true||v.type==='reasoning'||v.type==='thinking')return '';
       if(typeof v.text==='string')return v.text;
       if(typeof v.content==='string')return v.content;
       if(typeof v.output_text==='string')return v.output_text;
       if(Array.isArray(v.content))return v.content.map(contentPiece).join('');
+      if(Array.isArray(v.parts))return v.parts.map(contentPiece).join('');
+      if(v.content&&typeof v.content==='object')return contentPiece(v.content);
     }
     return'';
   }
@@ -958,7 +969,19 @@
     try{options.onDiagnostic?.({type:'provider_result',finishKind:ending.kind,finishReason:ending.reason,responseChars:reply.length});}catch(e){console.error('诊断事件回调失败',e);}
     if(options.resultMeta){options.resultMeta.finishReason=ending.reason;options.resultMeta.finishKind=ending.kind;options.resultMeta.refused=!!data?.choices?.[0]?.message?.refusal;options.resultMeta.usage=data?.usage||null;options.resultMeta.requestId=requestId;}
     if(!(options.allowIncompleteDraft===true&&ending.kind==='truncated'))try{assertFinishState({finishKind:ending.kind,finishReason:ending.reason},reply.length)}catch(e){e.partialDraft=reply.slice(0,24000);throw e;}
-    if(!reply)throw new ApiError('E_API_EMPTY_REPLY','API 请求成功，但模型返回了空白正文。',{status:res.status,details:diagnostic({errorSource:'response_body',httpStatus:res.status,contentType,finishReason:data?.choices?.[0]?.finish_reason||'unknown',responseShape:Object.keys(data||{}).slice(0,20),messageShape:Object.keys(data?.choices?.[0]?.message||{}).slice(0,20),visibleChars:0})});
+    if(!reply){
+      const msg=data?.choices?.[0]?.message||{},rawContent=msg.content;
+      const contentKind=rawContent===null?'null':Array.isArray(rawContent)?'array':typeof rawContent;
+      const u=data?.usage||{},parts=Array.isArray(rawContent?.parts)?rawContent.parts:Array.isArray(rawContent)?rawContent:[];
+      throw new ApiError('E_API_EMPTY_REPLY','API 请求成功，但没有可见角色正文；已保护原剧情。',{status:res.status,details:diagnostic({
+        errorSource:'response_body',httpStatus:res.status,contentType,finishReason:ending.reason,
+        responseShape:Object.keys(data||{}).slice(0,20),messageShape:Object.keys(msg).slice(0,20),
+        responseContentKind:contentKind,responseContentKeys:rawContent&&typeof rawContent==='object'&&!Array.isArray(rawContent)?Object.keys(rawContent).slice(0,15):[],
+        responsePartCount:parts.length,responsePartTypes:parts.slice(0,12).map(p=>String(p?.type||typeof p)),
+        completionTokens:finiteUsageNumber(u.completion_tokens,u.output_tokens,u.candidatesTokenCount),
+        thinkingTokens:finiteUsageNumber(u.completion_tokens_details?.reasoning_tokens,u.thoughtsTokenCount,u.reasoning_tokens),
+        visibleChars:0})});
+    }
     emitProgress(options.onProgress,{phase:'received',percent:90,receivedChars:reply.length,detail:`正文接收完成 · ${reply.length} 字符`});
     return reply;
   }
@@ -2207,13 +2230,23 @@
     // third person rather than saying 'I cannot'. Require opening provider
     // voice AND a technical refusal act; dialogue mid-scene is not enough.
     const front=start.slice(0,180).replace(/^[\s*#—-]+/,'');
-    const thirdParty=/^(?:该|此|本|前一条|上一条|你(?:的)?|您(?:的)?)(?:次|条)?(?:请求|提示词|内容|消息|问题)[^\n]{0,90}(?:因|由于|涉及|包含|触及|违反|不符合|无法|不能|被)/.test(front);
+    const thirdParty=/^(?:该|此|本|这|前一条|上一条|你(?:的)?|您(?:的)?)(?:次|条)?(?:请求|提示词|内容|消息|问题)[^\n]{0,90}(?:因|由于|涉及|包含|触及|违反|不符合|无法|不能|被)/.test(front);
     const explicitBlock=/(?:无法(?:继续)?(?:生成|处理|提供|响应)|不能(?:继续)?(?:生成|提供|处理)|已?(?:被)?(?:拒绝|拦截|阻止)|不(?:予|会)提供|平台安全(?:规范|政策|标准|限制)禁止|违反(?:了)?(?:平台)?(?:安全|内容)(?:政策|规范|准则))/i.test(evidence);
     const providerSafety=/(?:平台|系统|模型|服务商|安全|内容|政策|规范|审核|拦截|限制|request|policy|safety|guidelines)/i.test(evidence);
     const engGateway=/^(?:the (?:previous|last|current|given|above)?\s*(?:request|prompt|content)|this (?:request|content)|your (?:request|prompt))[^\n]{0,110}(?:violat|involv|cannot|can't|prohibit|disallow|not allow|blocked)/i.test(front);
     const engBlocked=/(?:cannot (?:be )?(?:fulfilled|generated|processed)|cannot comply|(?:was|has been|is) (?:blocked|refused)|(?:violates|against) (?:the )?(?:safety|content) (?:policy|guidelines))/i.test(evidence);
     const japanese=/^(?:申し訳|すみません|AIとして|人工知能として)/i.test(start)&&/(?:AI|言語モデル|安全ポリシー|ガイドライン|コンテンツポリシー)/i.test(evidence)&&/(?:対応|生成|提供|お手伝い)(?:することが)?できません|お応えできません/.test(evidence);
-    if((english&&(englishPolicy||englishStrong))||(chinese&&(chinesePolicy||chineseStrong))||(thirdParty&&explicitBlock&&providerSafety)||(engGateway&&engBlocked)||japanese)return {blocked:true,reason:'provider_plaintext_refusal'};
+    // A character, fictional AI or stage performer may say 'I cannot generate'
+    // inside a complete scene. Text alone is not evidence of the speaker's origin.
+    // Keep protocol-level refusal/finish signals authoritative (checked above).
+    const fictionalNarration=/(?:[。！？.!?][\s\S]{0,100}(?:她|他|它|机器人|演员|女孩|少年|角色)[^。！？.!?\n]{0,70}(?:说完|说道|说着|回答|低语|转身|望向|走向|关闭|放下|按下|抬起|笑了|哭了))/.test(evidence);
+    if(fictionalNarration)return {blocked:false,reason:'in_scene_narration'};
+    // Previously '无法生成/不能参与/不能继续' alone satisfied chinesePolicy,
+    // and chineseStrong counted ordinary fictional '角色扮演/故事' as evidence.
+    // Neither establishes a provider refusal. Require technical attribution.
+    const chineseProviderAttribution=/(?:安全(?:政策|准则|规则|标准)|内容政策|平台(?:政策|规定|安全)|(?:作为|身为)(?:一个|一名)?(?:ai|人工智能|语言模型)|我(?:必须|只能)拒绝(?:这|该|您|你)|(?:不符合|违反)(?:平台|服务|内容|安全)|(?:露骨(?:色情)?|色情|性描写)内容|(?:请求|提示词)因(?:内容|安全)审核)/i.test(evidence);
+    const chineseExplicitRequest=/^(?:很?抱歉|对不起|我(?:无法|不能|不可以))[^\n]{0,110}(?:您|你的|该|此|这)(?:次|条)?(?:请求|提示词)[^\n]{0,70}(?:无法|不能|拒绝|不予|不符合|涉及|违反)/.test(start);
+    if((english&&(englishPolicy||englishStrong))||(chinese&&((chinesePolicy||chineseStrong)&&chineseProviderAttribution||chineseExplicitRequest))||(thirdParty&&explicitBlock&&providerSafety)||(engGateway&&engBlocked)||japanese)return {blocked:true,reason:'provider_plaintext_refusal'};
     return {blocked:false,reason:''};
   }
   function validateStoryReply(reply,meta={}){
@@ -2343,7 +2376,8 @@
     // Hard invariant: never persist a blank assistant message.
     if(!text(replyRaw))throw new ApiError('E_API_EMPTY_REPLY','模型返回空白正文，已阻止写入剧情。');
     const reply=applyRegexForSession(session,replyRaw,'output');
-    diagnosticCandidate=reply;
+    // Keep the complete original provider text for manual recovery if an output
+    // regex erases/mangles it. The transformed text is not the raw reply.
     // Output regex is a second admission boundary: it must not turn an
     // accepted provider response into an empty or provider-voice refusal.
     validateStoryReply(reply,admissionMeta);

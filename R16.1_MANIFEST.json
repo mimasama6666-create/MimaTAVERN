@@ -75,7 +75,7 @@
     "examples/快捷回复_R16_可选.json": "a7e20780dc5ff3802fcfb9ced16ca6abe47f982acc28b0f91abc0c6b3fa8209d",
     "font-manager.js": "f27fa30f2ee01bd1a6905fb1999c114abd5e26a4c2dbb6720d0dc6a964df3e40",
     "history-search.js": "be74b1340cec7b39e26fb8aa73f61e48bbe32c8df1f565456f5dd9b6b8b558d4",
-    "index.html": "5a9acf531b0f66c043ecf2bc831e72042dea119b85e6a7c9d6c361ec3fbf7d2e",
+    "index.html": "2e63bfa349c2d5f47f634c46f25c2763a4790dcb334d281f5aadd2576a52cda6",
     "local-store.js": "8a4cdd98c7cf02d9b4ee91a6e32d83d069a2ab954e64aba175e9172000a43403",
     "novel-engine.js": "d0aadd1b1f03aea0890cace75f76b984c834bd71d22964f125c53b1d71f6bfe0",
     "novel-memory.js": "fc4f871845f35a44e75045ee321d72acd7aafbaa622df548d13abd4187d2aca3",
@@ -91,7 +91,7 @@
     "png-resource-inspector.js": "5fd3584ce870abf972a75e5e304b418ce53d7c3beeb6418a2ed823edf729b27e",
     "regex-engine.js": "9003888c8a929fe67e6ad61d0f259a2422d41726c243b2a34ed3ad0c202fcb32",
     "sha256-browser.js": "2f9e1d13c44e2e27785a63e963348689512168d1d0c24891c27d47ebc4c1242f",
-    "standalone-core.js": "f3d00ea1f5b3a87ce83e4fec989bf06192a3315072166ecce9f5350d04084581",
+    "standalone-core.js": "9cfd038b97b28b999ece4ba206fba97aada18f01fa11576d0bb5269040203172",
     "style.css": "098c892bc723a0f7dee619e21b84867dde5ebf20be009dda89573b2c059672c1",
     "tests/smoke-compat-rework-turn.js": "e1cdd2085446332ed3e77aa8510bb837e6450d9ac0e907504aff799536d3a92a",
     "tests/smoke-r11-1-refusal-admission.js": "9bcca7da8e6195ad7c8b204cab3edefcdd8322064ee24ac8d6b9f1e80eff8fb4",
@@ -114,7 +114,9 @@
     "vendor/author-LICENSE-zod.txt": "a159a31226ee8a2f68c26b3e4903dd4e7336900ea5426c6f5f5ff96bbe8701f9",
     "vendor/author-libraries-data.js": "833e539b712ac3d18dab9308e043af58d02b9f279688306fcce676b3f89e7430",
     "vendor/marked-17.0.5.umd.js": "0db7abc826b5ac76f6ed11951ae34074ba50438ce6ea8d52889203779e5cbbad",
-    "vendor/marked-LICENSE.md": "8e3a3f82f59a60958f56ca08f445647c32a4733dc7ca6c2c46f6eb898471ab9c"
+    "vendor/marked-LICENSE.md": "8e3a3f82f59a60958f56ca08f445647c32a4733dc7ca6c2c46f6eb898471ab9c",
+    "tests/smoke-r16-content-parts-compat.js": "ed0ceffa6b58e6e9363b284cdf35a3367ea64385b5dc0f665df95061503c0723",
+    "README_R16.1_空回复结构兼容与诊断补丁_20261016.md": "6b25dc8cc75c50c4cb7135122479d9a8b0145a93241a8aa7faacadb5219c7bb7"
   },
   "rollbackFiles": [
     "tavern/author-frame.html",
@@ -123,5 +125,19 @@
     "tavern/compat-runtime.js",
     "tavern/compat-ui.js",
     "tavern/index.html"
-  ]
+  ],
+  "overlay20261016": {
+    "base": "R16.1 complete coverage",
+    "changed": [
+      "standalone-core.js",
+      "index.html"
+    ],
+    "added": [
+      "tests/smoke-r16-content-parts-compat.js",
+      "README_R16.1_空回复结构兼容与诊断补丁_20261016.md"
+    ],
+    "validated": "Offline fake-response adapter regression; live upstream not tested",
+    "realGeminiApiReliabilityVerified": false,
+    "scope": "structured content.parts visibility and response-empty diagnostic telemetry; no request format change"
+  }
 }
