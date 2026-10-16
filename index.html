@@ -36,6 +36,7 @@
     <div id="session-list" class="session-list"></div>
     <div class="drawer-footer">
         <button class="ghost-btn" onclick="openSettings('api')">🔌 API（接口）设置</button>
+        <button class="ghost-btn" onclick="MimaThemeAtelier.open();closeDrawer()">🎨 主题工坊</button>
         <div class="standalone-note">Standalone（独立版） · 数据仅保存在本机浏览器</div>
     </div>
 </aside>
@@ -60,6 +61,7 @@
       <button onclick="openSettings('roles');MimaR6Nav.close()">🤍 管理角色资料（高级）</button>
       <button onclick="openSettings('worldbook');MimaR6Nav.close()">📚 世界书</button>
       <button onclick="openSettings('memory');MimaR6Nav.close()">🧠 剧情记忆</button>
+      <button onclick="MimaThemeAtelier.open();MimaR6Nav.close()">🎨 可视化主题工坊</button>
     </nav>
 
     <div id="context-ribbon" class="context-ribbon hidden"></div>
@@ -279,5 +281,7 @@
 <script src="./ux-r6.js?v=r6-20261012"></script>
 <script src="./ux-r7.js?v=r7-20261012"></script>
 <script src="./ui-layout.js?v=r13"></script>
+<script src="./atelier/atelier-core.js?v=20261016-r1"></script>
+<script src="./atelier/atelier-ui.js?v=20261016-r1"></script>
 </body>
 </html>
