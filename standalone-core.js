@@ -75,7 +75,7 @@
 
   function normalizeMemoryVerification(v={}){
     // Canonical provenance records never store arbitrary model instructions.
-    const status=['extractive_verified','human_confirmed','source_bounded','legacy_unverified'].includes(v?.status)?v.status:'legacy_unverified';
+    const status=['extractive_verified','human_confirmed','source_bounded','legacy_unverified','model_generated'].includes(v?.status)?v.status:'legacy_unverified';
     return {status,stage:String(v?.stage||'').slice(0,100),
       citations:arr(v?.citations).slice(0,100).map(c=>({messageId:String(c.messageId||''),role:String(c.role||''),start:Math.max(0,Number(c.start)||0),end:Math.max(0,Number(c.end)||0),quote:String(c.quote||'').slice(0,4000)})).filter(c=>c.messageId&&c.end>=c.start)};
   }
@@ -84,7 +84,7 @@
     return {
       id:m.id||makeId('factmem'), startRound, endRound, content:text(m.content),
       createdAt:m.createdAt||nowIso(), updatedAt:m.updatedAt||m.createdAt||nowIso(),
-      source:text(m.source||'manual_fact_summary'), targetChars:clampInt(m.targetChars,80,4000,360),
+      source:text(m.source||'manual_fact_summary'), targetChars:clampInt(m.targetChars,80,12000,1800),
       temperature:clampTemp(m.temperature??0.35), sourceMessageCount:Math.max(0,Number(m.sourceMessageCount)||0), sourceCount:Math.max(0,Number(m.sourceCount)||0),sourceFingerprint:String(m.sourceFingerprint||''),
       // Do not add empty fields to legacy facts: facts-derived cores hash the
       // normalized records, so a harmless schema extension must not stale them.
@@ -105,7 +105,8 @@
         injectCore:input.settings?.injectCore!==false,
         injectFacts:input.settings?.injectFacts!==false,
         factInjectionLimit:clampInt(input.settings?.factInjectionLimit,1,100,12),
-        summaryTemperature:clampTemp(input.settings?.summaryTemperature??0.35)
+        summaryTemperature:clampTemp(input.settings?.summaryTemperature??0.35),
+        memoryModel:String(input.settings?.memoryModel||'').trim().slice(0,240)
       }
     };
   }
@@ -366,19 +367,19 @@
     if(session.promptSettings?.pinnedFactsEnabled!==false&&session.pinnedFacts?.length)add('pinned_facts',`【Pinned Facts】\n${session.pinnedFacts.map(x=>`- ${x}`).join('\n')}`);
     if(options.excludeRollingSummary!==true&&session.promptSettings?.summaryEnabled!==false&&(!session.rollingSourceFingerprint?!(session.legacyMemoryQuarantined||session.promptLineageProjection):session.rollingSourceCount>0&&session.messages.length>=session.rollingSourceCount&&memorySourceFingerprint(session.messages,session.rollingSourceCount)===session.rollingSourceFingerprint)&&(session.rollingSummary||session.summary||session.longSummary))add('story_summary',`【剧情摘要 / Rolling Summary】\n${session.rollingSummary||session.summary||session.longSummary}`);
     const memory=normalizeManualMemory(session.manualMemory||{});const memoryTrace=[];
-    const coreValid=memorySourceValid(session,memory.core)&&(memory.core.source!=='facts'||!memory.core.sourceFactsHash||fingerprint(memory.facts)===memory.core.sourceFactsHash);
+    const coreValid=memorySourceValid(session,memory.core);
     memoryTrace.push({kind:'core',verification:memory.core.verification.status,sourceCount:memory.core.sourceCount,source:memory.core.source,chars:memory.core.content.length,injected:!!(memory.settings.injectCore&&memory.core.content&&coreValid),reason:!coreValid?'stale_source':!memory.settings.injectCore?'disabled':memory.core.content?'included':'empty'});
     if(memory.settings.injectCore&&memory.core.content&&coreValid){
       const trust=memory.core.verification.status;
-      const label=trust==='human_confirmed'?'玩家亲自确认':trust==='extractive_verified'?'已逐字核对原文':trust==='source_bounded'?'来自原文的有界意译，尚非独立证实事实':'未核实旧资料，仅供剧情参考';
-      add('manual_core_memory',`【核心记忆 / Core Memory】【可信等级：${label}】\n${memory.core.content}`);
+      const label=trust==='human_confirmed'?'玩家手工编辑':'AI总结（可编辑）';
+      add('manual_core_memory',`【核心记忆 / Core Memory】【来源：${label}】\n${memory.core.content}`);
     }
     if(memory.settings.injectFacts&&memory.facts.length){
       const selected=memory.facts.filter(f=>memorySourceValid(session,f)).sort((a,b)=>Number(a.endRound||0)-Number(b.endRound||0)||String(a.updatedAt||'').localeCompare(String(b.updatedAt||''))).slice(-memory.settings.factInjectionLimit);
       memoryTrace.push(...memory.facts.map(f=>({kind:'fact',verification:f.verification.status,id:f.id,sourceCount:f.sourceCount,startRound:f.startRound,endRound:f.endRound,chars:f.content.length,injected:selected.some(x=>x.id===f.id),reason:!memorySourceValid(session,f)?'stale_source':selected.some(x=>x.id===f.id)?'included':'injection_limit'})));
       if(selected.length)add('manual_fact_memories',`【事实记忆 / Fact Memories】\n${selected.map(x=>{
         const trust=x.verification.status;
-        const label=trust==='human_confirmed'?'玩家确认':trust==='extractive_verified'?'原文摘录已校验':trust==='source_bounded'?'有界意译待逐条核实':'未核实旧资料';
+        const label=trust==='human_confirmed'?'玩家手工编辑':'AI总结（可编辑）';
         return `【第 ${x.startRound}–${x.endRound} 轮 · ${label}】\n${x.content}`;
       }).join('\n\n')}`);
     }
@@ -1154,63 +1155,13 @@
   // Bind each fact part to the exact model-visible characters and their
   // canonical message offsets. A >28k-character utterance can straddle parts;
   // validating both parts against the entire round falsely expands authority.
-  function factSourcePartScopes(sourceText,chunks,rangeScope,rangeMessages,session){
-    if(chunks.length===1)return [rangeScope];
-    const visible=String(sourceText||''),spans=[];
-    let cursor=0;
-    const ctx=macroContext(session);
-    for(const m of rangeMessages){
-      const body=m.role==='user'?compileUserInputForPrompt(session,m.content,inputSemanticMode(session,m)):resolveMacrosForSession(session,m.content);
-      const actor=m.role==='user'?ctx.userName+'（玩家输入语义）：\n':ctx.charName+'：';
-      const match=actor+body;
-      const at=visible.indexOf(match,cursor);
-      if(at<0)throw new ApiError('E_MEMORY_SOURCE_SCOPE_UNVERIFIED','事实分片未能对应原始剧情，已停止提交；原文未修改。');
-      const originalIndex=session.messages.findIndex(x=>x.id===m.id);
-      if(originalIndex<0)throw new ApiError('E_MEMORY_SOURCE_SCOPE_UNVERIFIED','事实分片引用的剧情消息已丢失。');
-      spans.push({messageIndex:originalIndex,messageId:m.id,role:m.role,start:at+actor.length,end:at+match.length,body});
-      cursor=at+match.length;
-    }
-    let searchAt=0;
-    return chunks.map((chunk,i)=>{
-      const start=visible.indexOf(chunk,searchAt);
-      if(start<0)throw new ApiError('E_MEMORY_SOURCE_SCOPE_UNVERIFIED','事实分片文本与原始生成材料不一致。');
-      const end=start+chunk.length;searchAt=end;
-      const parts=spans.flatMap(span=>{
-        const lo=Math.max(start,span.start),hi=Math.min(end,span.end);
-        if(hi<=lo)return [];
-        const partText=visible.slice(lo,hi),localStart=lo-span.start;
-        // Only exact canonical substrings can become a verified source.
-        // Macro/regex transformations without a raw anchor are review-only.
-        const canonical=session.messages[span.messageIndex];
-        const raw=String(canonical?.rawContent||canonical?.content||'');
-        const candidateOffset=raw===span.body?localStart:raw.indexOf(partText);
-        const at=raw!==span.body&&candidateOffset>=0&&raw.indexOf(partText,candidateOffset+1)>=0?-1:candidateOffset;
-        return [{messageId:span.messageId,messageIndex:span.messageIndex,role:span.role,
-          startChar:localStart,endChar:localStart+partText.length,sourceStart:at,
-          exactRawAnchor:at>=0,text:partText}];
-      });
-      if(!parts.length)throw new ApiError('E_MEMORY_SOURCE_SCOPE_UNVERIFIED',`事实分片 ${i+1} 无可核对的剧情正文。`);
-      return {...rangeScope,sourceStartIndex:Math.min(...parts.map(x=>x.messageIndex)),
-        sourceEndExclusive:Math.max(...parts.map(x=>x.messageIndex))+1,
-        sourceParts:parts.map(({text,...part})=>part),
-        sourceRecordFragments:parts};
-    });
-  }
-  // A fixed 360-character instruction is physically inconsistent with a
-  // promise to preserve every independent event in a ten-round range. Plan a
-  // soft output length from canonical events, never from fabricated summaries.
-  // This changes only the Provider request; the stored user preference remains
-  // intact, and the original source + mandatory coverage checks stay in force.
   function factOutputPlan(messages,requested){
-    const records=arr(messages).filter(m=>m.role==='user'||m.role==='assistant');
-    const clauses=records.reduce((n,m)=>n+String(m.rawContent||m.content||'').split(/[。！？；;\n]+/)
-      .filter(t=>t.trim()).length,0);
-    const advised=Math.min(12000,Math.max(requested,clauses*46));
-    return {requestedChars:requested,advisedChars:advised,canonicalClauses:clauses,sourceMessageCount:records.length};
+    // Desired size is a soft goal. The model may exceed it to retain details.
+    return {requestedChars:requested,advisedChars:requested,sourceMessageCount:arr(messages).length};
   }
   async function summarizeFactText(sourceText,targetChars,temp,signal,progress,label='事实记忆',job=null,rangeTag='fact',rangeScope=null,rangeMessages=[],sourceSession=null){
     const chunks=splitTextBlocks(sourceText,28000),partials=[];
-    const partScopes=job&&sourceSession?factSourcePartScopes(sourceText,chunks,rangeScope,rangeMessages,sourceSession):chunks.map(()=>rangeScope);
+    const partScopes=chunks.map(()=>rangeScope);
     for(let i=0;i<chunks.length;i++){
       emitProgress(progress,{phase:'memory_fact',percent:12+Math.round(((i+.25)/chunks.length)*62),detail:`${label} · 正在总结 ${i+1}/${chunks.length}`});
       const prompt=[
@@ -1254,9 +1205,11 @@
     const store=window.MimaLocalStore;
     const snapshot=getSession(id);if(!snapshot)throw new ApiError('E_STORY_SESSION_MISSING','剧情已不存在');
     if(typeof store?.beginMemoryJob!=='function')return kind==='core'?generateCoreMemory(id,opts,signal,progress):kind==='facts'?generateFactMemories(id,opts,signal,progress):refreshSummary(snapshot,opts.temperature,signal,progress);
-    const original=normalizeSession(clone(snapshot));if(kind==='rolling'&&!summaryNeeded(original))return original;let job=null,heartbeat=null;
+    const original=normalizeSession(clone(snapshot));if(kind==='rolling'&&!summaryNeeded(original))return original;
+    opts={...opts,model:String(opts.model??original.manualMemory.settings.memoryModel??'').trim()};
+    let job=null,heartbeat=null;
     try{
-      const cfg=getApiConfig();const configSignature=fingerprint([cfg.apiBase,cfg.chatEndpoint,cfg.model,cfg.sendTemperature,cfg.maxTokens,cfg.stream]);
+      const cfg=getApiConfig();const configSignature=fingerprint([cfg.apiBase,cfg.chatEndpoint,opts.model||cfg.model,cfg.sendTemperature,cfg.maxTokens,cfg.stream]);
       const sourceFingerprint=memorySourceFingerprint(original.messages,original.messages.length);
       const targetBaseline=kind==='rolling'?JSON.stringify([original.rollingSummary||'',original.lastSummarizedIndex||0]):JSON.stringify(kind==='core'?normalizeManualMemory(original.manualMemory).core:normalizeManualMemory(original.manualMemory).facts);
       const sourceHash=fingerprint([sourceFingerprint,kind==='core'&&opts.source==='facts'?original.manualMemory.facts:null,kind==='rolling'?original.rollingSummary:null]);
@@ -1280,553 +1233,41 @@
     // Merge persisted current state, not the stale pre-request snapshot.
     state=normalizeState(committed);return getSession(job.sessionId);
   }
-  // Verification of a quote is NOT verification of a model's interpretation.
-  // Only extractive statements actually present in the supplied source can
-  // acquire verified status without a human decision. Abstractive narratives
-  // remain durable journal candidates, never canonical facts by default.
-  // A source-memory record is NOT a story utterance. It carries an explicit
-  // provenance chain; only human-approved or original-quote-verified facts may
-  // act as sources for a downstream core memory. Legacy/stale facts stay in the
-  // Store and remain visible for review but never acquire authority by copying.
+  // Reuse saved fact text for core summary without lexical content judgment.
+  // The only remaining fence is a changed/deleted canonical source record.
   function trustedFactForCore(session,fact){
-    if(!fact||fact.stale===true||!memorySourceValid(session,fact))return false;
-    const verification=fact.verification||{};
-    if(verification.status==='human_confirmed'){
-      // An explicit human confirmation is itself an authority. Where it has
-      // source citations, those references must still match the current history.
-      return !arr(verification.citations).length||arr(verification.citations).every(c=>{
-        const m=arr(session.messages).find(m=>m.id===c.messageId);
-        const body=String(m?.rawContent||m?.content||'');
-        return !!m&&body.slice(c.start,c.end)===c.quote;
-      });
-    }
-    // A normal, bounded abstraction is not verbatim, but it can still be a
-    // validated derived view. Recheck the original turn range now instead of
-    // silently treating every automatically verified fact as untrusted.
-    // Existing legacy/migrated records do not inherit trust from their label.
-    if(verification.status==='source_bounded'){
-      if(!fact.sourceCount||!fact.sourceFingerprint||!arr(verification.citations).length)return false;
-      const data=storyRoundData(session);
-      const selected=[...(fact.startRound===1?data.opening:[]),
-        ...data.rounds.filter(r=>r.index>=fact.startRound&&r.index<=fact.endRound).flatMap(r=>r.messages)];
-      if(!selected.length||!sourceEventLedger(selected,fact.content).complete)return false;
-      return verification.citations.every(c=>{
-        const m=arr(session.messages).find(m=>m.id===c.messageId);
-        const body=String(m?.rawContent||m?.content||'');
-        return !!m&&body.slice(c.start,c.end)===c.quote;
-      });
-    }
-    if(verification.status!=='extractive_verified'||!arr(verification.citations).length)return false;
-    return verification.citations.every(c=>{
-      const m=arr(session.messages).find(m=>m.id===c.messageId);
-      const body=String(m?.rawContent||m?.content||'');
-      return !!m&&body.slice(c.start,c.end)===c.quote;
-    });
+    // Owner controls content. Do not silently exclude a saved fact for its wording.
+    return !!fact?.content&&memorySourceValid(session,fact);
   }
-  // R9: verify source-derived event units, not the presence of an entire
-  // utterance in an abbreviated summary. This is a conservative, deterministic
-  // *bounded* abstraction verifier, NOT a semantic truth oracle. A source
-  // citation alone never counts as event coverage. Unsupported/ambiguous
-  // interpretations remain reviewable, with the existing journal and cursor.
-  function memoryEventKey(text){
-    return String(text||'').replace(/[\s\p{P}\p{S}]/gu,'').toLowerCase();
-  }
-  function chineseCount(n){
-    if(n<1||n>999)return String(n);
-    const digit='零一二三四五六七八九';
-    if(n<10)return digit[n];
-    if(n<20)return '十'+(n===10?'':digit[n%10]);
-    if(n<100)return digit[Math.floor(n/10)]+'十'+(n%10?digit[n%10]:'');
-    return digit[Math.floor(n/100)]+'百'+(n%100?(n%100<10?'零':'')+chineseCount(n%100):'');
-  }
-  function eventFrameFlags(t){
-    t=String(t||'');
-    return {
-      neg:/(?:没有|并未|未曾|不曾|否认|绝非|并不|不是|不会|拒绝|无意)/.test(t),
-      rumor:/(?:谣言|造谣|传闻|据说|听说|声称|未经证实|尚未证实|没有确证)/.test(t),
-      conditional:/(?:假设|假如|如果|倘若|可能|或许|猜测|怀疑|似乎)/.test(t),
-      dream:/(?:梦见|梦中|梦里|幻想|想象)/.test(t)
-    };
-  }
-  function eventActionGuard(source,summary){
-    // High-impact changes require a matching source action family. Every
-    // asserted group must already occur in the canonical material; shared
-    // names/objects or made-up citations cannot make a reversal permissible.
-    const families=[['谋杀','杀害','杀死','杀人','杀'],['营救','救出','拯救','救'],['偷走','偷窃','盗窃','窃取','偷'],['背叛'],['绑架'],['纵火','放火'],['烧毁','焚毁','烧掉'],['摧毁','毁灭','毁掉'],['伤害','攻击','打伤'],['死亡','死去','遇难'],['怀孕'],['离婚'],['结婚'],['欺骗','骗'],['拒绝'],['同意','答应'],['承诺','许诺','约定','契约'],['原谅'],['复活'],['自杀'],['伪造'],['掉包'],['失踪']];
-    return families.every(group=>!group.some(w=>summary.includes(w))||group.some(w=>source.includes(w)));
-  }
-  // R10: event-unit coverage must bind *each* canonical event to a particular
-  // summary claim. Shared words, an action anywhere in the summary, or citations
-  // alone do not prove that two people/objects/locations received the same fate.
-  function sourceEventLedger(records,summary){
-    const covered=[],missing=[],groups=new Map();
-    const source=arr(records).filter(m=>['user','assistant','memory_source'].includes(m.role)&&String(m.rawContent||m.content||'').trim());
-    const normalize=memoryEventKey;
-    const grams=(v,n)=>{v=normalize(v);const out=new Set();for(let i=0;i<=v.length-n;i++)out.add(v.slice(i,i+n));return out;};
-    const claims=String(summary||'').split(/[。！？；;\n，,]+/).map(x=>x.trim()).filter(Boolean);
-    const normalizedSummary=normalize(summary);
-    const exactClaims=new Set(claims.map(normalize));
-    const highImpact=['杀死','杀害','谋杀','击败','营救','救出','偷走','盗窃','背叛','烧毁','毁灭','打伤','攻击','拒绝','同意','答应','承诺','约定','原谅','复活','失踪','死亡','死去','伪造','绑架','离婚','结婚','否认'];
-    const hasImpact=t=>highImpact.some(w=>t.includes(w));
-    // Consent is a *local* semantic family, not an interchangeable substring.
-    // It may match different surface verbs only after polarity, actor and
-    // recipient checks succeed on the same canonical source clause.
-    const consentWords=['答应','同意'];
-    const consentEquivalent=(a,b)=>consentWords.some(w=>a.includes(w))&&consentWords.some(w=>b.includes(w));
-    const matchedAction=(original,claim,verb)=>verb==='答应'||verb==='同意'
-      ?consentWords.find(w=>claim.includes(w))||'':claim.includes(verb)?verb:'';
-    // Split true independent sentences; never mistake multiple messages sharing
-    // one template for a single event. Preserve offsets for audit/review.
-    for(let i=0;i<source.length;i++){
-      const m=source[i],body=String(m.rawContent||m.content||'');
-      const parts=[...body.matchAll(/[^。！？；;\n]+[。！？；;\n]?/g)];
-      for(const match of parts){
-        const part=match[0].trim(),norm=normalize(part);
-        if(!norm)continue; // "同意" and "拒绝" are meaningful events, not noise.
-        const template=norm.replace(/第[0-9一二三四五六七八九十百千]+(天|封|条|轮|日|次)/g,'第#$1');
-        const flags=eventFrameFlags(part),key=template+'|'+JSON.stringify(flags);
-        if(!groups.has(key))groups.set(key,{template,body:part,normalized:norm,flags,members:[],numbers:[],varied:false});
-        const group=groups.get(key);
-        const numbers=[...norm.matchAll(/第([0-9]+)(天|封|条|轮|日|次)/g)].map(x=>Number(x[1]));
-        group.members.push({record:m,part,index:m.messageIndex??i,offset:match.index||0});
-        if(numbers.length)group.numbers.push(numbers[0]);
-        if(norm!==group.normalized)group.varied=true;
-      }
+  // Content accuracy is owner-editable. This gate validates transport/format only;
+  // lexical similarity, omission, paraphrase and source citations never veto a memory.
+  function validateMemoryCandidate(messages,candidate,stage,finishReason='unknown'){
+    const original=String(candidate??'').trim();
+    const fence=original.match(/^```(?:json|text|txt|md|markdown)?[ \t]*\r?\n([\s\S]*?)\r?\n?```[ \t]*$/i);
+    let memory=(fence?fence[1]:original).trim();
+    const reject=(reason)=>{throw new ApiError('E_MEMORY_OUTPUT_INVALID','模型没有返回可保存的完整记忆正文；旧记忆保持不变。',
+      {details:JSON.stringify({stage,reason,finishReason,chars:memory.length})});};
+    if(['length','max_tokens','content_filter','safety','prohibited_content'].includes(String(finishReason).toLowerCase()))reject('provider_truncated_or_filtered');
+    if(!memory||/^(?:\.{3,}|[.…]{2,}|null|undefined|n\/?a|todo|placeholder)$/i.test(memory))reject('empty_or_placeholder');
+    if(/^```/.test(memory))reject('unfinished_fenced_block');
+    if(memory.startsWith('{')){
+      let json;try{json=JSON.parse(memory);}catch{reject('malformed_json');}
+      if(!json||typeof json.memory!=='string')reject('unsupported_json');
+      memory=json.memory.trim();
     }
-    const list=[...groups.values()];
-    // Extract the discriminating span between near-identical source events.
-    // E.g. 艾琳杀死了[甲]方 vs 艾琳杀死了[乙]方; both MUST be accounted for.
-    // This is not a semantic theorem: uncertain cases stay reviewable.
-    function contrast(a,b){
-      const x=a.normalized,y=b.normalized;
-      if(x===y)return '';
-      let start=0;while(start<Math.min(x.length,y.length)&&x[start]===y[start])start++;
-      let end=0;while(end<x.length-start&&end<y.length-start&&x[x.length-1-end]===y[y.length-1-end])end++;
-      const diff=x.slice(start,x.length-end);
-      // A common object suffix is not evidence that two DIFFERENT actor/action
-      // events share a single replaceable object slot. Requiring the entire
-      // different actor+verb string verbatim prevents faithful paraphrases
-      // of separate events mentioning the same box/person. Subject and verb
-      // are instead checked by the local action/actor guards below.
-      if(start<3&&(hasImpact(a.body)||hasImpact(b.body)))return '';
-      const common=Math.min(start+end,Math.min(x.length,y.length));
-      return diff&&common>=Math.max(3,Math.floor(Math.min(x.length,y.length)*0.48))?diff:'';
-    }
-    function preciseNumber(count,unit='次'){
-      return new RegExp('(?:连续|共计|累计|历时|总共|共|合计|前后|一连|整整|重复|先后|发生|做了)?[^。；\\n]{0,3}(?:'+count+'|'+chineseCount(count)+')'+unit).test(summary);
-    }
-    const eventIdentityAnchors=original=>[...String(original).matchAll(/第\d+(?:天|日|轮|次|条|封)|(?:地图碎片|物品|钥匙|线索|卷轴|档案)\d+/g)].map(x=>normalize(x[0]));
-    function eventSlotsPreserved(original,claim,isOrdinalSeries){
-      // Actor/object/place assertions are checked against THIS clause; an
-      // invented victim must not pass only because actor/action words overlap.
-      // Unknown word orders are left for review, not called verified.
-      if(isOrdinalSeries)return true; // Quantified canonical ordinal ranges.
-      const src=normalize(original),dst=normalize(claim);
-      // Event predicates are not interchangeable just because the actor and
-      // object overlap. A lexical-only score previously equated getting and
-      // losing the same item, or picking it up and borrowing it. Keep this a
-      // local, per-claim check; unsupported novel paraphrases go to review.
-      const actionFamilies=[
-        ['拿到','拿到了','获得','取得','得到','捡到','拾到','找到了','找到'],
-        ['遗失','失去','丢失','丢掉','扔掉','抛弃'],
-        ['借走','借到','借了','借取'],
-        ['交给','交予','递给','送给','赠给','归还'],
-        ['偷走','盗走','偷窃','盗窃'],
-        ['藏起','藏了','藏在','躲藏'],
-        ['躲在','躲进','藏身于'],
-        ['发现','看见','看到','目击'],
-        ['关闭','关上','关掉'],
-        ['打开','开启','开启了'],
-        ['拿起','捡起','举起'],
-        ['放进','放入','放到','摆进','置于']
-      ];
-      const actionClass=t=>actionFamilies.findIndex(group=>group.some(w=>t.includes(w)));
-      const originalClass=actionClass(src),claimClass=actionClass(dst);
-      if(originalClass>=0&&claimClass!==originalClass)return false;
-      if(originalClass<0&&claimClass>=0)return false;
-      // Distinguish narrative locations attached to ordinary predicates.
-      // "躲在柜子里" and "躲在花园里" must not share a factual source.
-      const hideLoc=src.match(/(?:躲在|躲进|藏身于)([^，。；;]{2,14})/);
-      if(hideLoc&&!dst.includes(hideLoc[1]))return false;
-      // A numbered story turn or a numbered unique object is an identity
-      // anchor, not interchangeable vocabulary. N-grams from 2..3000 other
-      // events cannot prove the missing '第0条/物品0' event. For genuine ordinal
-      // series the count/range check above is the only permitted compression.
-      const identities=eventIdentityAnchors(original);
-      if(identities.some(anchor=>!dst.includes(anchor)))return false;
-      const verbs=['杀死','杀害','谋杀','击败','营救','救出','偷走','背叛','绑架','烧毁','放火','拒绝','同意','答应','承诺','约定','原谅','放进','放到','放入','送回','交给','归还','交出','偷窃','摧毁','毁掉','打伤','攻击','关闭','打开','获得','失去','目击',
-        '拿到','找到','发现','看到','看见','得到','取得','捡到'];
-      const verb=verbs.find(w=>src.includes(w));
-      if(!verb)return true;
-      const at=src.indexOf(verb),after=src.slice(at+verb.length).replace(/^[了过掉得将把向给]/,'');
-      // For a short unambiguous object, the actual object MUST occur locally.
-      // Compound objects are separate assertions; they all need grounding.
-      const object=after.split(/(?:然后|随后|接着|因此|因为|于是|同时|并且)/)[0];
-      if(object&&object.length<=14){
-        const items=object.split(/(?:和|与|以及|及)/).filter(t=>t.length>=2);
-        // A source location phrase may be moved ahead of the action in a
-        // faithful summary: “约定在港口见面” → “在港口约定见面”. The location
-        // AND the remaining event must still appear in this same claim.
-        const reorderedLocation=(item)=>{
-          const match=item.match(/^在(.{2,8}?)(见面|会合|等待|交谈|碰头)$/);
-          return !!match&&dst.includes('在'+match[1])&&dst.includes(match[2]);
-        };
-        if(items.length&&!items.every(t=>dst.includes(t)||reorderedLocation(t)))return false;
-      }
-      // The candidate must not introduce an additional object into the SAME
-      // action claim (e.g. source 甲方 -> claim 甲方和乙方). Check nouns after
-      // the matched action rather than relying on global n-gram overlap.
-      const claimVerb=matchedAction(original,claim,verb);
-      if(hasImpact(original)&&claimVerb){
-        const candidateTail=dst.slice(dst.indexOf(claimVerb)+claimVerb.length)
-          .replace(/^[了过掉得将把向给]/,'')
-          .replace(/(?:共计|累计|总共|共|先后|连续|各|整整)?[0-9一二三四五六七八九十百]+(?:次|回|遍|天|条|封)$/, '');
-        const claimedObjects=candidateTail.split(/(?:和|与|以及|及)/).filter(v=>v.length>=2);
-        if(claimedObjects.length&&!claimedObjects.every(v=>src.includes(v)))return false;
-      }
-      const location=src.match(/在([^，。]{2,12}?)(?=击败|杀死|杀害|攻击|拒绝|偷走|放火)/);
-      if(location&&!dst.includes(location[1]))return false;
-      const prefix=src.slice(0,at).replace(/^(?:第[0-9一二三四五六七八九十百千]+[天日轮次])/, '').replace(/[了将把]/g,'');
-      // A location belongs to THIS actor's event, not an unrelated clause.
-      // Word order may change (actor 在 place verb / actor verb 在 place),
-      // but silently replacing a place must not become a verified fact.
-      // Likewise “把/将” are particles, not part of the actor name.
-      const withoutObjectMarkers=t=>t.replace(/[把将]/g,'');
-      const placePrefix=prefix.match(/^(.{2,12}?)在([^在]{2,12})$/);
-      if(placePrefix){
-        if(!withoutObjectMarkers(dst).includes(withoutObjectMarkers(placePrefix[1]))||
-           !dst.includes(placePrefix[2]))return false;
-      }else if(prefix&&prefix.length>=2&&prefix.length<=12&&
-         !withoutObjectMarkers(dst).includes(withoutObjectMarkers(prefix))&&
-         !withoutObjectMarkers(dst).includes(withoutObjectMarkers(src.slice(0,at))))return false;
-      return true;
-    }
-    // Index identity-bearing claims once. A split source sentence containing
-    // a unique '第N条/物品N' anchor otherwise scans up to 3000 unrelated
-    // clauses before finding its own evidence (or proving it is missing).
-    const identityClaimIndex=new Map();
-    for(const claim of claims)for(const anchor of eventIdentityAnchors(claim)){
-      if(!identityClaimIndex.has(anchor))identityClaimIndex.set(anchor,[]);
-      identityClaimIndex.get(anchor).push(claim);
-    }
-    for(const group of list){
-      const original=group.members.map(x=>x.part).join('\n');
-      const allFlags=group.flags;
-      const bi=grams(group.body,2),tri=grams(group.body,3);
-      // A literal complete source event already contains every discriminating
-      // span belonging to that event. Comparing it pairwise with N other
-      // events produces O(N²) work without strengthening its proof. Keep the
-      // original contrast test for genuinely abstractive/paraphrased claims.
-      const literalInFull=normalizedSummary.includes(group.normalized);
-      // First fail fast on missing immutable identities. Otherwise a single
-      // absent numbered event among 3000 forces a quadratic contrast/claim
-      // search even though its canonical ordinal cannot occur in any proof.
-      const anchors=eventIdentityAnchors(group.body);
-      const missingIdentity=!group.varied&&anchors.some(anchor=>!normalizedSummary.includes(anchor));
-      const candidateClaims=!group.varied&&anchors.length?arr(identityClaimIndex.get(anchors[0])).filter(c=>anchors.every(a=>normalize(c).includes(a))):null;
-      const differences=(literalInFull||missingIdentity)?[]:list.filter(other=>other!==group).map(other=>contrast(group,other)).filter(Boolean);
-      let quantityOK=true;
-      if(group.varied){
-        const nums=[...new Set(group.numbers)].sort((a,b)=>a-b),n=nums.length;
-        const consecutive=n===group.members.length&&nums.every((v,i)=>v===nums[0]+i);
-        const units=[...new Set([...group.body.matchAll(/第[0-9一二三四五六七八九十百千]+(天|封|条|轮|日|次)/g)].map(x=>x[1]))];
-        const countWords=String(n)+'|'+chineseCount(n);
-        const explicit=units.some(unit=>new RegExp('(?:连续|共计|累计|历时|总共|共|合计|前后|一连|整整)[^。；\\n]{0,5}(?:'+countWords+')'+unit).test(summary));
-        const first=nums[0],last=nums[nums.length-1];
-        const range=units.some(unit=>new RegExp('第(?:'+first+'|'+chineseCount(first)+')(?:'+unit+')?(?:至|到|—|～|~|-)(?:第)?(?:'+last+'|'+chineseCount(last)+')'+unit).test(summary));
-        // Explicitly preserving EVERY distinct ordinal source clause is at
-        // least as strong as a counted range. Never require the model to
-        // collapse 25 verbatim numbered events into one lossy series claim.
-        const allMembersQuoted=group.members.every(member=>normalizedSummary.includes(normalize(member.part)));
-        quantityOK=allMembersQuoted||(consecutive&&n>1&&(explicit||range));
-      }else if(group.members.length>1){
-        const n=group.members.length,exact=(normalizedSummary.split(group.normalized).length-1)>=n;
-        // Identical canonical messages carry the SAME event text, not n
-        // independently discriminable ordinal events. A literal full-source
-        // quotation may cover their repeated evidence without inventing a
-        // numeric occurrence count. Paraphrases still need an explicit count,
-        // and ordinal/actor-differentiated events use the varied branch above.
-        // Never grant this exemption to a near-match or a partially quoted event.
-        // Byte-for-byte identical, unnumbered neutral messages may be a
-        // retransmission of the SAME state; never fabricate n distinct events.
-        // Explicit day/ordinal/action identities remain distinct in the
-        // varied-series branch, and consequential actions require counts.
-        const literalDuplicate=!hasImpact(group.body)&&group.members.every(member=>normalize(member.part)===group.normalized)&&
-          normalizedSummary.includes(group.normalized);
-        quantityOK=exact||literalDuplicate||['次','回','遍'].some(u=>preciseNumber(n,u));
-      }
-      // A verbatim canonical utterance may contain commas that the candidate
-      // clause splitter treats as separate clauses. Test the whole summary
-      // ONLY when it literally contains the whole original event; otherwise
-      // each paraphrased claim must satisfy the existing local checks.
-      // Exact, standalone source clauses already satisfy the original local
-      // polarity/action/actor/contrast checks. Preserve the full conservative
-      // scan for anything shortened, rephrased or joined across clauses.
-      // A literal whole source clause containing commas may be split into
-      // several candidate claims. The byte-identical citation is stronger
-      // evidence than the per-claim index and must not be rejected just
-      // because ordinal and object anchors appear on different sides of ',' .
-      const exactOriginalQuoted=group.members.every(member=>String(summary).includes(member.part));
-      const supports=!missingIdentity&&(exactOriginalQuoted||(!group.varied&&group.members.length===1&&exactClaims.has(group.normalized))|| (candidateClaims??(group.varied?[summary]:literalInFull?[...claims,summary]:claims)).some(claim=>{
-        const text=normalize(claim),cbi=grams(text,2),ctri=grams(text,3);
-        const direct=text.includes(group.normalized);
-        const overlap=bi.size>0&&[...bi].filter(g=>cbi.has(g)).length/bi.size>=0.40&&[...tri].filter(g=>ctri.has(g)).length>=2;
-        const brief=group.normalized.length<4&&text.includes(group.normalized);
-        const flags=eventFrameFlags(claim);
-        const framing=Object.keys(allFlags).every(k=>!allFlags[k]||flags[k]);
-        const notContradicted=Object.keys(flags).every(k=>!flags[k]||allFlags[k]);
-        const actionOK=eventActionGuard(group.body,claim) &&
-          (!hasImpact(group.body)||hasImpact(claim) &&
-            (highImpact.some(w=>group.body.includes(w)&&claim.includes(w))||consentEquivalent(group.body,claim)));
-        // A contrast is anchored to THIS claim, not to unrelated words elsewhere
-        // in the candidate. Grouping can compress *ordinals*, not actual actors.
-        const distinguish=differences.every(diff=>text.includes(diff));
-        const slots=eventSlotsPreserved(group.body,claim,group.varied);
-        return (direct||overlap||brief)&&framing&&notContradicted&&actionOK&&distinguish&&slots;
-      }));
-      const ok=quantityOK&&supports;
-      for(const item of group.members){
-        const m=item.record,entry={messageId:m.id,index:item.index,eventId:String(m.id)+':'+item.offset,offset:item.offset,
-          sourceFingerprint:fingerprint([m.id,m.role,m.rawContent,m.content,m.versions]),anchor:item.part.slice(0,120),
-          proof:ok?(group.varied?'bounded_ordinal_series':group.members.length>1?'counted_repeat':'local_event_claim'):null};
-        (ok?covered:missing).push(entry);
-      }
-    }
-    const allText=source.map(m=>String(m.rawContent||m.content||'')).join('\n');
-    const sourceBi=grams(allText,2),sourceTri=grams(allText,3),normalizedSource=normalize(allText);
-    // Bigram overlap against all of History is not proof of a particular
-    // actor/action/object. A fabricated high-impact clause can otherwise borrow
-    // its verb from one event and its nouns from others. For paraphrased risky
-    // claims, require a compatible LOCAL canonical event, not global overlap.
-    const sourceClauses=source.flatMap(m=>String(m.rawContent||m.content||'')
-      .split(/[。！？；;\n]+/).map(x=>x.trim()).filter(Boolean));
-    const riskyClaimSupported=claim=>sourceClauses.some(original=>{
-      if(!highImpact.some(w=>claim.includes(w)&&original.includes(w))&&!consentEquivalent(original,claim))return false;
-      const src=normalize(original),dst=normalize(claim);
-      const sBi=grams(src,2),sTri=grams(src,3),dBi=grams(dst,2),dTri=grams(dst,3);
-      if(!sBi.size||[...sBi].filter(g=>dBi.has(g)).length/sBi.size<0.4||![...sTri].some(g=>dTri.has(g)))return false;
-      const sourceFlags=eventFrameFlags(original),claimFlags=eventFrameFlags(claim);
-      if(!Object.keys(sourceFlags).every(k=>sourceFlags[k]===claimFlags[k]))return false;
-      return eventActionGuard(original,claim)&&eventSlotsPreserved(original,claim,false);
-    });
-    const grounded=claims.length>0&&claims.every(claim=>{
-      const token=normalize(claim),bi=grams(token,2),tri=grams(token,3);
-      if(normalizedSource.includes(token))return true;
-      if(token.length<4)return false;
-      const lexical=[...bi].filter(g=>sourceBi.has(g)).length/Math.max(1,bi.size)>=0.29&&[...tri].some(g=>sourceTri.has(g));
-      return lexical&&(!hasImpact(claim)||riskyClaimSupported(claim));
-    });
-    const safe=source.length>0&&grounded&&eventActionGuard(allText,summary)&&
-      Object.keys(eventFrameFlags(summary)).every(k=>!eventFrameFlags(summary)[k]||eventFrameFlags(allText)[k]);
-    if(!safe)missing.push(...covered.splice(0));
-    return {complete:source.length>0&&covered.length+missing.length>0&&missing.length===0,
-      covered,missing,expected:covered.length+missing.length,units:list.length,contract:'r10_canonical_event_claims'};
-  }
-  function validateRollingCoverage(session,start,end,summary,job,stage){
-    // A rolling result REPLACES the previous summary. Checking only new messages
-    // would permit erasing every older verified event while advancing the cursor.
-    // Revalidate the canonical prefix that the replacement claims to cover.
-    // Never treat the previous model-written summary as historical evidence.
-    const coveredStart=0;
-    const source=arr(session.messages).slice(coveredStart,end).map((m,i)=>({...m,messageIndex:coveredStart+i}));
-    const proof=sourceEventLedger(source,summary);
-    return {...proof,range:[coveredStart,end],newRange:[start,end],stage};
-  }
-  function validateMemoryCandidate(messages,candidate,stage,finishReason='unknown',requiresSourceLink=false,sourceRecords=[]){
-    const originalRaw=String(candidate||'').trim();
-    const fenced=originalRaw.match(/^```([a-zA-Z0-9_-]*)[ \t]*\r?\n([\s\S]*?)\r?\n?```[ \t]*$/);
-    const fenceTag=fenced?.[1]?.toLowerCase()||'';
-    const raw=fenced&&['','json','text','txt','plaintext','md','markdown'].includes(fenceTag)?fenced[2].trim():originalRaw;
-    // Present the extracted summary rather than requiring users to edit raw JSON.
-    let memory=raw,formal=false,evidence=[];
-    // Verify against immutable canonical source fragments when available, not
-    // the prompt wrapper: it can contain instructions, and the player-only
-    // filter misses genuine assistant-origin evidence. Never cite prompt text
-    // as proof that a story event actually occurred.
-    const source=sourceRecords.length
-      ?sourceRecords.filter(m=>m.role!=='memory_source'||m.trustedStatus).map(m=>String(m.rawContent||m.content||'')).join('\n')
-      :messages.filter(m=>m.role==='user').map(m=>String(m.content||'')).join('\n');
-    const invalid=(reason,review=false)=>{const issue=new ApiError(review?'E_MEMORY_NEEDS_REVIEW':'E_MEMORY_OUTPUT_INVALID',
-      review?'摘要包含无法由原文逐字验证的叙述，已作为候选保留，未写入长期记忆。':'记忆候选未通过来源与输出契约校验，旧记忆已保留。',{
-      details:JSON.stringify({stage,reason,chars:raw.length,finishReason,formatValidated:true,sourceVerified:!review,factVerified:false}),
-      hint:review?'请在记忆任务记录中查看待核查候选；核对原始剧情后可通过手工编辑记忆明确采纳。':'请检查记忆任务阶段诊断；无效输出不能进入长期记忆。'});
-      issue.candidateForReview=review?memory:null;issue.validationReason=reason;throw issue;};
-    if(!raw||/^(?:\.{3,}|[.…]{2,}|null|undefined|n\/?a|todo|placeholder)$/i.test(raw))invalid('placeholder');
-    if(/^(?:system|developer|assistant)\s*:/i.test(raw)||/\[im_start\]|<\|im_start\|>|<!--\s*(system|developer)/i.test(raw))invalid('control_plane');
-    if(['length','max_tokens','content_filter'].includes(String(finishReason).toLowerCase()))invalid('truncated_or_filtered');
-    if(raw.startsWith('```'))invalid('unsupported_fenced_output');
-    if(fenceTag==='json'&&!raw.startsWith('{'))invalid('malformed_structured_output');
-    if(raw.startsWith('{')){
-      let parsed;try{parsed=JSON.parse(raw);}
-      catch{invalid('malformed_structured_output');}
-      if(!parsed||typeof parsed!=='object'||Array.isArray(parsed)||typeof parsed.memory!=='string')invalid('structured_schema');
-      memory=parsed.memory.trim();formal=true;evidence=Array.isArray(parsed.evidence)?parsed.evidence:[];
-      if(!evidence.length||!evidence.every(e=>typeof e?.quote==='string'&&e.quote.trim().length>=3&&source.includes(e.quote.trim())))invalid('evidence_not_in_source');
-    }
-    if(!memory||/^(?:\.{3,}|null|n\/?a|todo|placeholder)$/i.test(memory))invalid('empty_memory');
-    // Time words in an unanchored paraphrase must not become canonical facts.
-    if(sourceRecords.length&&!['rolling_part_'].some(x=>stage.startsWith(x))&&/(?:昨天|前天|大前天|今天|明天|刚才|昨晚|昨日|今日)/.test(memory)&&!/(?:昨天|前天|大前天|今天|明天|刚才|昨晚|昨日|今日)/.test(source))invalid('relative_time_not_in_source',true);
-    const standaloneRefusal=/^(?:i(?:'| a)?m sorry[,!. ]*(?:but )?(?:i (?:can(?:not|'t)|am unable)|as an ai)|i can(?:not|'t) (?:assist|help|comply)|as an ai (?:language )?model|对不起[，, ]*(?:我无法|我不能|作为)|抱歉[，, ]*(?:我无法|我不能|作为)|很抱歉[，, ]*(?:我无法|我不能|作为))/i;
-    if(standaloneRefusal.test(memory)&&!(/(?:说道|回答|告诉|表示|原话|台词|说[:：]|said|replied|quoted|“|「)/i.test(memory)&&source.includes(memory)))invalid('provider_refusal');
-    if(standaloneRefusal.test(memory)&&!source.includes(memory))invalid('provider_refusal');
-    // Punctuation and whitespace may vary, but actors, tense, negations,
-    // identity and commitments may not be invented via a two-character match.
-    const normalized=t=>String(t).replace(/[\s\p{P}\p{S}]/gu,'').toLowerCase();
-    const quoteParts=formal?evidence.map(e=>e.quote.trim()):[source];
-    const verifiable=quoteParts.some(q=>normalized(q).includes(normalized(memory))) ||
-      (formal&&evidence.length>1&&normalized(evidence.map(e=>e.quote).join('')).includes(normalized(memory)));
-    // Source-backed normal summary mode: the model selects original utterances,
-    // while its *paraphrase* is never silently promoted to a factual authority.
-    // Cross-message paraphrases may be used as a proposal only if a conservative
-    // lexical guard finds no new event/polarity/epistemic assertion; canonical
-    // memory stores the cited source text, not the unverifiable paraphrase.
-    let groundedQuotes=null;
-    if(!verifiable&&formal&&sourceRecords.length&&evidence.length){
-      const linked=evidence.map(e=>{
-        const quote=e.quote.trim();
-        return sourceRecords.find(m=>(m.role!=='memory_source'||m.trustedStatus)&&
-          String(m.rawContent||m.content||'').trim()===quote);
-      });
-      if(linked.every(Boolean)){
-        const base=evidence.map(e=>e.quote.trim()).join('');
-        const grams=t=>{const chars=normalized(t);return Array.from({length:Math.max(0,chars.length-1)},(_,i)=>chars.slice(i,i+2));};
-        const baseGrams=new Set(grams(base));const candidateGrams=grams(memory);
-        const lexicalCoverage=candidateGrams.filter(g=>baseGrams.has(g)).length/Math.max(1,candidateGrams.length);
-        const dangerWords=['据说','听说','传闻','谣言','声称','否认','误会','假设','假如','如果','或许','可能','梦见','梦里','想象','似乎','并未','没有','不是','不曾','未曾'];
-        const newRisk=dangerWords.some(w=>memory.includes(w)&&!base.includes(w));
-        const omittedRisk=dangerWords.some(w=>base.includes(w)&&!memory.includes(w));
-        const sourceNeg=/[未不](?:曾|会|要|是|能|再|敢|想|知道|相信|答应|同意|承认|背叛|偷|杀|做)/g;
-        const negatives=t=>[...t.matchAll(sourceNeg)].map(x=>x[0]);
-        const bNeg=negatives(base.replace(/不相互/g,'不')),mNeg=negatives(memory.replace(/不相互/g,'不'));
-        const polarityChanged=bNeg.some(w=>!mNeg.some(x=>x===w))||mNeg.some(w=>!bNeg.includes(w));
-        // Reject new high-impact actions even when generic actors and objects
-        // overlap; the canonical projection must not launder unsupported claims.
-        const actionGroups=[['杀','谋杀','杀害'],['伤害','打伤','攻击'],['救','营救'],['偷','盗窃','偷窃'],['欺骗','骗'],['背叛'],['抢','抢夺'],['放火','纵火'],['绑架'],['怀孕'],['结婚'],['离婚'],['死亡','死去'],['原谅'],['拒绝'],['同意'],['承诺','许诺','约定','契约']];
-        const unsupportedAction=actionGroups.some(group=>group.some(w=>memory.includes(w))&&!group.some(w=>base.includes(w)));
-        // Require substantial direct overlap; synonyms without a provable
-        // source phrase remain pending human review, rather than guessed true.
-        if(lexicalCoverage>=0.32&&!newRisk&&!omittedRisk&&!polarityChanged&&!unsupportedAction){
-          groundedQuotes=linked.map((src,i)=>`【${src.role==='user'?'玩家':src.role==='assistant'?'角色':'剧情原文'}】${evidence[i].quote.trim()}`);
-        }
-      }
-    }
-    // Preserve faithful, source-bounded natural compression as natural text.
-    // This independent proof scans all canonical source messages, not merely
-    // the two citations selected by the provider. It never upgrades a source-
-    // bounded interpretation into an extractively verified historical fact.
-    const semanticProof=sourceRecords.length&&sourceEventLedger(sourceRecords,memory);
-    const bounded=!!semanticProof?.complete;
-    // A fact stage promises exhaustive coverage of its fenced source range.
-    // Merely copying one true, whole source message must NOT let an incomplete
-    // fact range commit. Core is selective; rolling final keeps its separate
-    // coverage / one bounded repair path below.
-    // Oversized utterances can be split mid-sentence. A fragment-stage
-    // quotation is provisional, never a canonical fact: the mandatory
-    // full-range fact_merge validates EVERY original event before commit.
-    // An unsplit fact range must satisfy coverage at this stage directly.
-    const provisionalFragment=stage.startsWith('fact_')&&/_part_\d+$/.test(stage)&&
-      sourceRecords.length>0&&sourceRecords.every(m=>Number.isInteger(m.sourceOriginalOffset))&&verifiable;
-    if(stage.startsWith('fact_')&&sourceRecords.length&&!bounded&&!provisionalFragment)
-      invalid('fact_range_events_missing',true);
-    // Core is selective, unlike exhaustive fact/rolling ranges. A structured
-    // core candidate may paraphrase only its *explicitly cited* canonical
-    // utterances. Resolve each quote to a complete, currently valid record,
-    // then run the exact same local event/polarity/object proof on that set.
-    // Never use unrelated History to fill gaps in an invented core claim.
-    let selectiveProof=null;
-    if(!verifiable&&!bounded&&formal&&stage.startsWith('core_')&&evidence.length&&sourceRecords.length){
-      const cited=evidence.map(({quote})=>sourceRecords.find(m=>
-        (m.role!=='memory_source'||m.trustedStatus)&&
-        String(m.rawContent||m.content||'').trim()===quote.trim()));
-      if(cited.every(Boolean))selectiveProof=sourceEventLedger(cited,memory);
-    }
-    const locallyBounded=!!selectiveProof?.complete;
-    if(!verifiable&&!bounded&&!locallyBounded&&!groundedQuotes)invalid(formal?'unsupported_abstractive_claim':'plain_text_requires_review',true);
-    if(!verifiable&&!bounded&&!locallyBounded&&groundedQuotes)memory=groundedQuotes.join('\n');
-    // An instruction string is not an event source. Resolve actual canonical
-    // message IDs and exact byte offsets before reporting evidence as verified.
-    const provenance=[];
-    const citations=formal?evidence.map(x=>x.quote.trim()):[memory];
-    for(const quote of citations){
-      const linked=sourceRecords.flatMap(m=>{
-        const raw=String(m.rawContent||m.content||'');const offset=raw.indexOf(quote);
-        return offset<0?[]:[{messageId:m.id,role:m.role,start:offset+(m.sourceOriginalOffset||0),end:offset+(m.sourceOriginalOffset||0)+quote.length,quote}];
-      });
-      if(sourceRecords.length&&!linked.length&&!bounded&&!locallyBounded)invalid('evidence_not_in_original_messages',true);
-      provenance.push(...linked);
-    }
-    if(bounded&&!provenance.length){
-      // Multi-utterance verbatim summaries can be verifiable as a WHOLE, but
-      // cannot occur within any ONE message. Anchor their proven coverage to
-      // each canonical fragment rather than falsely reporting no provenance.
-      // The audit trail comes from canonical source records, never the
-      // provider's selectively cited first/last examples. Bound each anchor
-      // to a real source offset without copying massive original messages
-      // into the memory metadata; the unchanged History retains full text.
-      provenance.length=0;
-      for(const m of sourceRecords){
-        const body=String(m.rawContent||m.content||'');
-        const quote=body.slice(0,120);
-        if(quote)provenance.push({messageId:m.id,role:m.role,start:m.sourceOriginalOffset||0,end:(m.sourceOriginalOffset||0)+quote.length,quote});
-      }
-    }
-    if(sourceRecords.length&&!provenance.length)invalid('no_message_provenance',true);
-    // A fact-range summary promises coverage of its entire selected range.
-    // A core memory is explicitly selective: choosing one true early event is
-    // not evidence that other events were lost. Applying the fact completeness
-    // heuristic to core_final_* incorrectly rejects legitimate core extracts
-    // once the story has enough turns (R11.17 smoke-seventh benchmark).
-    // Rolling and fact completeness are still checked on their own scopes.
-    if(stage.startsWith('fact_')&&sourceRecords.length>=12){
-      const unique=sourceRecords.filter(m=>['user','assistant'].includes(m.role));
-      const distinct=new Set(unique.map(m=>String(m.rawContent||m.content||'').trim())).size;
-      const citedIds=new Set(provenance.map(x=>x.messageId));
-      const earlyIds=new Set(unique.slice(0,Math.max(2,Math.floor(unique.length/5))).map(m=>m.id));
-      if(distinct>=6&&citedIds.size>0&&citedIds.size<=2&&[...citedIds].every(id=>earlyIds.has(id)))
-        invalid('suspicious_first_round_only',true);
-    }
-    // Provenance proves that words appeared, not that a rumored, denied or
-    // hypothetical event happened. Only a complete source utterance can pass
-    // automatic extractive mode. Partial quotations and rephrasings require
-    // a reviewable human decision. No claim is promoted solely by its overlap.
-    if(sourceRecords.length&&!bounded&&!locallyBounded){
-      const supported=provenance.some(p=>{
-        const src=sourceRecords.find(m=>m.id===p.messageId);
-        const content=String(src?.rawContent||src?.content||'').trim();
-        return (normalized(content)===normalized(memory)||!!groundedQuotes&&evidence.some(e=>normalized(e.quote)===normalized(content))) && (p.role!=='memory_source'||!!src?.trustedStatus);
-      });
-      if(!supported)invalid('claim_not_whole_source_utterance',true);
-    }
-    return {memory,contract:bounded&&!verifiable?'bounded_source_events':locallyBounded?'selective_bounded_source_events':groundedQuotes?'source_quote_projection':formal?'extractive_json':'extractive_plain_text',evidenceCount:evidence.length,
-      provenance,semanticCoverage:bounded||locallyBounded?{unitCount:(bounded?semanticProof:selectiveProof).units,coveredCount:(bounded?semanticProof:selectiveProof).covered.length,
-        sourceFingerprint:fingerprint((bounded?semanticProof:selectiveProof).covered.map(x=>x.sourceFingerprint))}:null,
-      verification:{format:'valid',source:sourceRecords.length?'message_offsets':'prompt_extract_only',fact:(bounded&&!verifiable)||locallyBounded?'bounded_source':'extractive',stage}};
+    if(!memory||memory.length>250000)reject('empty_or_oversized');
+    if(/^\s*(?:<\|im_start\|>|\[im_start\]|(?:system|developer)\s*:)/i.test(memory))reject('control_plane_response');
+    // A sentence that resembles a provider refusal might be a literal plot
+    // quotation. The API protocol already reports actual refusal/filter flags;
+    // do not judge a memory by a text-prefix classifier.
+    return {memory,contract:'owner_editable_summary',evidenceCount:0,provenance:[],verification:{format:'valid',source:'model_summary',fact:'model_generated',stage}};
   }
   async function memoryModel(messages,temp,signal,job,stage){
     const activeSession=job?getSession(job.sessionId):null;
     const stageScope=job?.stageScopes?.[stage];
-    const fromFacts=job?.kind==='core'&&job.options?.source==='facts';
-    const sourceRecords=job&&!fromFacts?(stageScope?.sourceRecordFragments?
-      stageScope.sourceRecordFragments.map(fragment=>{
-        const original=activeSession?.messages?.[fragment.messageIndex];
-        const raw=String(original?.rawContent||original?.content||'');
-        if(!original||original.id!==fragment.messageId||fragment.sourceStart<0||
-           raw.slice(fragment.sourceStart,fragment.sourceStart+fragment.text.length)!==fragment.text)
-          throw new ApiError('E_MEMORY_SOURCE_SCOPE_UNVERIFIED','事实分片没有可验证的原文锚点，不能作为事实来源。');
-        return {...original,content:fragment.text,rawContent:fragment.text,sourceOriginalOffset:fragment.sourceStart};
-      }):(activeSession?.messages||[]).slice(stageScope?.sourceStartIndex??0,stageScope?.sourceEndExclusive??job.sourceCount??0)):[];
-    if(fromFacts){
-      for(const fact of activeSession?.manualMemory?.facts||[]){
-        if(!trustedFactForCore(activeSession,fact))continue;
-        sourceRecords.push({id:'fact:'+fact.id,role:'memory_source',content:fact.content,
-          trustedStatus:fact.verification.status,upstreamCitations:fact.verification.citations,
-          upstreamSourceFingerprint:fact.sourceFingerprint,upstreamSourceCount:fact.sourceCount});
-      }
-      // The model sees the same trusted list as the source verifier. Its
-      // citations are still lineage hints, not independent raw-story quotes.
-      if(job)job.upstreamFactCitations=sourceRecords.flatMap(r=>arr(r.upstreamCitations));
-      if(!sourceRecords.length)throw new ApiError('E_MEMORY_NO_VERIFIED_FACTS','现有事实记忆尚无可核验的有效来源，不能自动升级为核心记忆。',{hint:'请逐条核查来源并人工确认所需事实；原有事实均保留。'});
-    }
+    // Model responses are authored summaries; source fidelity is steered in
+    // the prompt and owner edits, not decided by another brittle text matcher.
+    const sourceRecords=[];
     // A human-approved stage is durable only for an identical source/config
     // and the precisely fenced message range. It does not settle the final job.
     if(job?.humanApprovedStages&&Object.hasOwn(job.humanApprovedStages,stage)){
@@ -1856,9 +1297,9 @@
     await checkpoint(job,stage+'_request');const started=Date.now(),meta={};
     try{
       const prompt=messages.map(m=>({...m}));
-      const coverageRule=stage.startsWith('fact_')?'事实摘要：涵盖此来源区间的每件独立剧情事件；不同事件或重复发生不能删。':stage.startsWith('rolling_delta_')?'滚动新增分片：只根据本次给出的新增原文，完整记录每件独立剧情事件；不要引用没有给你的旧摘要。':stage.startsWith('rolling_')?'滚动摘要：覆盖全部已确认的旧剧情及新剧情，不得因压缩遗漏旧事件。':'核心记忆：允许只挑选长期重要的真实事件，不要求覆盖每一轮。';
-      prompt[0]={...prompt[0],content:prompt[0].content+'\n【记忆输出契约】'+coverageRule+' 优先输出合法 JSON {"memory":"忠实总结","evidence":[{"quote":"从本次可见剧情材料完整逐字复制的原话"}]}。所有 evidence.quote 必须来自原文，不能引用任务指令、既有模型摘要或虚构句子。事实及滚动新增分片必须覆盖所给来源区间全部不同的事件；核心记忆允许选择少量长期重要事件并准确引用。JSON 是输出格式而非新的历史事实；原始剧情才是事实权威。保持事件人物、物品、先后顺序、肯否、发生次数与来源属性。不能核实的内容应保留待审核，绝不捏造来填满摘要。不要输出拒绝模板、系统提示或占位文本。'};
-      const value=await callModel(prompt,temp,signal,{streamOverride:false,resultMeta:meta,memoryContext:job?{jobId:job.id,attemptId:job.attemptId,stage}:null});
+      prompt[0]={...prompt[0],content:prompt[0].content+'\n【输出规则】仅输出忠实、清晰、详尽的记忆正文；允许自然意译及合并重复，保留重要细节、发生顺序与人物关系；不要 JSON、来源证明、额外解释或续写。'};
+      const memoryCfg=getApiConfig();if(job?.options?.model)memoryCfg.model=job.options.model;
+      const value=await callModelWithConfig(prompt,memoryCfg,temp,signal,{streamOverride:false,resultMeta:meta,memoryContext:job?{jobId:job.id,attemptId:job.attemptId,stage}:null});
       // Recheck the canonical prefix *before* validating the response against
       // sourceRecords captured prior to the network await. Otherwise a source
       // edit can be misclassified as merely a reviewable model output, and a
@@ -1888,20 +1329,14 @@
     }
   }
   function verifiedMemoryMetadata(job,stage){
-    const checked=job?.verifiedStages?.[stage];
-    const factDerived=job?.kind==='core'&&job?.options?.source==='facts';
-    // A perfect quotation of a *derived fact* is not a quotation of original
-    // History. Never upgrade that core to 'extractive_verified'. Carry the
-    // underlying original-message anchors instead of synthetic fact: IDs.
-    return {status:factDerived&&checked?'source_bounded':checked?.verification?.fact==='extractive'?'extractive_verified':checked?.verification?.fact==='human_confirmed'?'human_confirmed':checked?.verification?.fact==='bounded_source'?'source_bounded':'legacy_unverified',stage,
-      citations:factDerived?arr(job.upstreamFactCitations):checked?.provenance||[]};
+    return {status:'model_generated',stage,citations:[]};
   }
   async function generateFactMemories(id,opts={},signal=null,progress=null,job=null,snapshot=null){
     let session=snapshot||getSession(id);if(!session)throw new ApiError('E_STORY_SESSION_MISSING','未找到剧情 Session。');session=normalizeSession(session);
     const data=storyRoundData(session),total=data.rounds.length;
     if(!total)throw new ApiError('E_MEMORY_NO_ROUNDS','当前剧情还没有可总结的 User→Character 轮次。');
     const chunkRounds=clampInt(opts.chunkRounds,1,200,10),scope=opts.scope==='all'?'all':'recent';
-    const recentRounds=clampInt(opts.recentRounds,1,100000,total),targetChars=clampInt(opts.targetChars,80,4000,360),temp=clampTemp(opts.temperature??0.35);
+    const recentRounds=clampInt(opts.recentRounds,1,100000,total),targetChars=clampInt(opts.targetChars,80,12000,1800),temp=clampTemp(opts.temperature??0.35);
     const start=scope==='all'?1:Math.max(1,total-recentRounds+1),ranges=[];
     for(let a=start;a<=total;a+=chunkRounds)ranges.push([a,Math.min(total,a+chunkRounds-1)]);
     const generated=[];
@@ -1947,7 +1382,7 @@
       // the model while memoryModel discarded untrusted facts as evidence.
       const facts=memory.facts.filter(f=>trustedFactForCore(session,f))
         .sort((a,b)=>a.startRound-b.startRound||a.endRound-b.endRound);
-      if(!facts.length)throw new ApiError('E_MEMORY_NO_VERIFIED_FACTS','事实记忆尚未通过来源复核，无法据此生成核心记忆。',{hint:'可从剧情原文生成核心记忆，或先审核有争议的事实；旧记忆不会被删除。'});
+      if(!facts.length)throw new ApiError('E_MEMORY_SOURCE_STALE','现有事实记忆的原始剧情来源已被修改，请检查记忆内容。');
       source=facts.map(x=>`【第 ${x.startRound}–${x.endRound} 轮】\n${x.content}`).join('\n\n');sourceFactCount=facts.length;
     }else{
       if(!data.rounds.length&&!data.opening.length)throw new ApiError('E_MEMORY_NO_CONTEXT','当前剧情还没有可总结的正文。');
@@ -1996,6 +1431,70 @@
     }
     session.manualMemory=memory;return await saveSession(session);
   }
+  function memoryFactSignature(facts){return fingerprint(arr(facts));}
+  async function editFactMemory(id,factId,content){
+    const session=getSession(id);if(!session)throw new ApiError('E_STORY_SESSION_MISSING','剧情已不存在');
+    const memory=normalizeManualMemory(session.manualMemory),idx=memory.facts.findIndex(f=>f.id===factId);
+    if(idx<0)throw new ApiError('E_MEMORY_FACT_MISSING','记忆已被删除，请刷新');
+    const body=String(content??'').trim();if(!body||body.length>250000)throw new ApiError('E_MEMORY_FACT_INVALID','记忆正文为空或过长');
+    memory.facts[idx]=normalizeFactMemory({...memory.facts[idx],content:body,source:'manual',sourceCount:0,sourceFingerprint:'',
+      sourceMessageIds:[],sourceHash:'',updatedAt:nowIso(),verification:{status:'human_confirmed',stage:'owner_fact_edit',citations:[]}});
+    session.manualMemory=memory;return await saveSession(session);
+  }
+  async function previewFactMerge(id,opts={},signal=null,progress=null){
+    const session=getSession(id);if(!session)throw new ApiError('E_STORY_SESSION_MISSING','剧情已不存在');
+    const memory=normalizeManualMemory(session.manualMemory),ids=arr(opts.factIds).map(String),unique=[...new Set(ids)];
+    if(unique.length<2||unique.length!==ids.length)throw new ApiError('E_MEMORY_MERGE_SELECTION','至少选择两条不同的事实记忆');
+    const facts=unique.map(key=>memory.facts.find(f=>f.id===key));
+    if(facts.some(f=>!f))throw new ApiError('E_MEMORY_MERGE_SOURCE_CHANGED','选中的记忆已变化，请刷新');
+    facts.sort((a,b)=>a.startRound-b.startRound||a.endRound-b.endRound);
+    const temperature=clampTemp(opts.temperature??memory.settings.summaryTemperature),targetChars=clampInt(opts.targetChars,100,250000,6000);
+    const cfg=getApiConfig(),model=String((opts.model??memory.settings.memoryModel)||'').trim();if(model)cfg.model=model;
+    // Batch on saved memory boundaries; a second pass cannot see source data
+    // that was never passed to the model. Always keep originals until approval.
+    const slices=[],maxPartChars=16000;let part='';
+    for(const fact of facts){
+      const entry=`【原事实记忆 ${fact.id} · 第${fact.startRound}–${fact.endRound}轮】\n${fact.content}\n`;
+      if(part&&part.length+entry.length>maxPartChars){slices.push(part);part='';}
+      if(entry.length>maxPartChars){if(part){slices.push(part);part='';}slices.push(...splitTextBlocks(entry,maxPartChars));}
+      else part+=entry+'\n';
+    }
+    if(part)slices.push(part);
+    const pieces=[];
+    for(let i=0;i<slices.length;i++){
+      assertMemoryTaskActive(signal);
+      emitProgress(progress,{phase:'memory_merge',percent:5+Math.round(70*i/Math.max(1,slices.length)),detail:`整理事实记忆 ${i+1}/${slices.length}`});
+      const txt=await callModelWithConfig([{role:'system',content:'你是咪嘛馆的长期事实记忆整理助手。忠实保留人物、时间顺序、具体经历、对话与细节，不续写，不增加事实。只输出整理后的正文。'},
+        {role:'user',content:`请合并下面的事实记忆，消除冗余描述，但保留不同轮次实际重复发生的事件。允许内容详细，目标约${targetChars}字，内容准确优先。\n${slices[i]}`}],cfg,temperature,signal,{streamOverride:false});
+      pieces.push(validateMemoryCandidate([],txt,'fact_merge_part_'+i).memory);
+    }
+    let output=pieces[0];
+    if(pieces.length>1){
+      // Second-pass merge only if intermediary material fits the configured
+      // context. Otherwise concatenate all checked parts without silently dropping.
+      const source=pieces.map((x,i)=>`【第${i+1}部分】\n${x}`).join('\n\n');
+      if(source.length<=16000){
+        output=validateMemoryCandidate([],await callModelWithConfig([{role:'system',content:'把以下多个事实记忆分片合成一份按时间顺序的完整记忆。不要遗漏不同事件；不得杜撰。只输出正文。'},
+          {role:'user',content:`${source}\n\n合并重复描述并保留全部独立事件，目标约${targetChars}字；如内容过多可超出字数。`}],cfg,temperature,signal,{streamOverride:false}),'fact_merge_final').memory;
+      }else output=source;
+    }
+    assertMemoryTaskActive(signal);
+    emitProgress(progress,{phase:'memory_merge_preview',percent:100,detail:'合并候选已生成，原记忆尚未变更'});
+    return {content:output,selectedIds:facts.map(f=>f.id),sourceSignature:memoryFactSignature(memory.facts),
+      sourceHistoryFingerprint:memorySourceFingerprint(session.messages,session.messages.length),
+      sourceHistoryCount:session.messages.length,startRound:Math.min(...facts.map(f=>f.startRound)),endRound:Math.max(...facts.map(f=>f.endRound)),
+      targetChars,temperature,model:cfg.model};
+  }
+  async function commitFactMerge(id,body){
+    if(typeof window.MimaLocalStore?.commitFactMerge!=='function')throw new ApiError('E_MEMORY_MERGE_STORE_UNAVAILABLE','合并事务不可用；旧记忆保持不变');
+    const stateRecord=await window.MimaLocalStore.commitFactMerge(id,body);
+    state=normalizeState(stateRecord);return getSession(id);
+  }
+  async function undoFactMerge(id){
+    if(typeof window.MimaLocalStore?.undoFactMerge!=='function')throw new ApiError('E_MEMORY_MERGE_STORE_UNAVAILABLE','合并撤销不可用');
+    const stateRecord=await window.MimaLocalStore.undoFactMerge(id);
+    state=normalizeState(stateRecord);return getSession(id);
+  }
   async function deleteCoreMemory(id){let session=getSession(id);if(!session)throw new ApiError('E_STORY_SESSION_MISSING','未找到剧情 Session。');session=normalizeSession(session);const memory=normalizeManualMemory(session.manualMemory||{});memory.core=normalizeManualMemory({}).core;session.manualMemory=memory;return saveSession(session);}
   async function deleteFactMemory(id,factId=''){let session=getSession(id);if(!session)throw new ApiError('E_STORY_SESSION_MISSING','未找到剧情 Session。');session=normalizeSession(session);const memory=normalizeManualMemory(session.manualMemory||{});memory.facts=factId?memory.facts.filter(x=>x.id!==factId):[];session.manualMemory=memory;return saveSession(session);}
 
@@ -2025,23 +1524,6 @@
   // cannot claim the entire original message as its input/source authority.
   // Anchor only the exact model-visible slices back to canonical raw bytes;
   // transformed/unanchorable spans stay unverified rather than becoming facts.
-  function rollingPartScope(session,part){
-    const parts=arr(part.parts).map(piece=>{
-      const msg=session.messages[piece.messageIndex];
-      if(!msg||msg.id!==piece.messageId)
-        throw new ApiError('E_MEMORY_SOURCE_SCOPE_UNVERIFIED','滚动分片来源消息已变化，拒绝继续写入。');
-      const shown=msg.role==='user'?compileUserInputForPrompt(session,msg.content,inputSemanticMode(session,msg)):resolveMacrosForSession(session,msg.content);
-      const text=shown.slice(piece.startChar,piece.endChar);
-      const raw=String(msg.rawContent||msg.content||'');
-      const candidateOffset=shown===raw?piece.startChar:raw.indexOf(text);
-      const at=shown!==raw&&candidateOffset>=0&&raw.indexOf(text,candidateOffset+1)>=0?-1:candidateOffset;
-      if(!text||at<0||raw.slice(at,at+text.length)!==text)
-        throw new ApiError('E_MEMORY_SOURCE_SCOPE_UNVERIFIED','滚动分片内容无法与原始剧情定位，旧摘要与游标均保留。');
-      return {messageId:piece.messageId,messageIndex:piece.messageIndex,sourceStart:at,text};
-    });
-    return {sourceStartIndex:part.sourceStartIndex,sourceEndExclusive:part.sourceEndExclusive,
-      sourceParts:part.parts,sourceRecordFragments:parts};
-  }
   function summaryNeeded(session,{automatic=false}={}){
     const limit=Math.max(18,Number(session.promptSettings?.recentMessageLimit||34)-4);
     const end=(session.messages||[]).length-limit;
@@ -2077,7 +1559,7 @@
         // Part stages remain scoped to their own individual source fragments.
         const all={sourceStartIndex:0,sourceEndExclusive:unsummarizedEnd};
         job.stageScopes.rolling_summary=all;job.stageScopes.rolling_merge=all;
-        sourceParts.forEach((p,i)=>job.stageScopes['rolling_part_'+i]=rollingPartScope(session,p));
+        sourceParts.forEach((p,i)=>job.stageScopes['rolling_part_'+i]={sourceStartIndex:p.sourceStartIndex,sourceEndExclusive:p.sourceEndExclusive});
         await checkpoint(job,'rolling_source_plan',{sourceStartIndex:start,sourceEndExclusive:unsummarizedEnd,partCount:sourceChunks.length,
           sourceCoverageHash:memorySourceFingerprint(msgs.slice(start,unsummarizedEnd),unsummarizedEnd-start),
           messageIds:msgs.slice(start,unsummarizedEnd).map(m=>m.id)});
@@ -2091,82 +1573,22 @@
           pieces.push(await memoryModel([{role:'system',content:'你是独立剧情档案助手，只总结下列单个原文分片，不新增事实。'+MEMORY_TIME_CONTRACT},
             {role:'user',content:`【旧剧情原文分片 ${i+1}/${sourceChunks.length}】\n${sourceChunks[i]}\n请给出本分片中发生的事件和对应人物关系。`}],Math.min(clampTemp(temp),0.6),signal,job,'rolling_part_'+i));
         }
-        // The previous model-written scalar can be expensive to rewrite and
-        // may drop genuine old events on every update. If exact append of the
-        // already vetted pieces passes the SAME full canonical ledger, use the
-        // deterministic composition and avoid a lossy second Provider pass.
-        // This is never a fallback around verification: if any event fails,
-        // keep the original model merge + review semantics below.
-        const losslessCandidate=[session.rollingSummary||'',...pieces].filter(Boolean).join('\n');
-        let composed=null;
-        if(job&&session.rollingSummary&&losslessCandidate){
-          const sourceRecords=msgs.slice(0,unsummarizedEnd);
-          if(sourceEventLedger(sourceRecords,losslessCandidate).complete){
-            try{composed=validateMemoryCandidate([],losslessCandidate,'rolling_merge','verified_source_concatenation',true,sourceRecords);}
-            catch(e){await checkpoint(job,'rolling_concat_rejected',{code:e.code||'E_ROLLING_CONCAT',reason:e.validationReason||'validation_failed'});}
-          }
-        }
-        if(composed){
-          summary=composed.memory;
-          job.verifiedStages=job.verifiedStages||{};
-          job.verifiedStages.rolling_merge=composed;
-          await checkpoint(job,'rolling_merge_received',{outputContract:composed.contract,mode:'canonical_verified_concatenation',
-            chars:summary.length,coveredSourceEnd:unsummarizedEnd,
-            ...(summary.length<=20000?{output:summary}:{candidateOversize:true})});
+        // Do not send a possibly huge second-pass prompt simply to satisfy
+        // word-overlap verification. When the full intermediate transcript fits,
+        // let the memory model organize it; otherwise retain every part, in order.
+        const assembled=[session.rollingSummary||'',...pieces].filter(Boolean).join('\n\n');
+        if(assembled.length>16000){
+          summary=assembled;
+          if(job)(job.verifiedStages||(job.verifiedStages={})).rolling_merge={memory:summary,verification:{fact:'model_generated'},provenance:[]};
+          await checkpoint(job,'rolling_merge_received',{mode:'preserve_all_parts',chars:summary.length});
         }else{
-          summary=await memoryModel([{role:'system',content:'你是独立剧情档案助手。根据旧摘要和已逐段确认的来源摘要合并，严格保持事实来源，不续写。'+MEMORY_TIME_CONTRACT},
-            {role:'user',content:`【已有长期摘要】\n${session.rollingSummary||'(无)'}\n\n【已校验的分片摘要】\n${pieces.map((x,i)=>`【${i+1}】${x}`).join('\n\n')}\n\n合并事件、关系与未解伏笔。${rollingLengthInstruction}`}],Math.min(clampTemp(temp),0.6),signal,job,'rolling_merge');
+          summary=await memoryModel([{role:'system',content:'你是独立剧情档案整理助手。根据旧摘要和所有新增分片，忠实合并长期剧情，不续写或杜撰。'+MEMORY_TIME_CONTRACT},
+            {role:'user',content:`【已存在的长期摘要和新增剧情摘要】\n${assembled}\n\n请合并重复描述，保留重要事件顺序、人物关系、持续状态及未解决事项；若细节较多允许超出目标字数。`}],Math.min(clampTemp(temp),0.6),signal,job,'rolling_merge');
         }
       }
-      // Stage success and valid quotations do not prove that a final merged
-      // summary covers the actual source events. Never advance the canonical
-      // cursor until independently checking the merged text against originals.
-      // Journal the exact missing message IDs for bounded manual continuation;
-      // a pending review does not delete, compact or overwrite any History.
-      if(job){
-        const finalStage=sourceChunks.length===1?'rolling_summary':'rolling_merge';
-        let coverage=validateRollingCoverage(session,start,unsummarizedEnd,summary,job,finalStage);
-        // Normal compact summaries sometimes miss one or two important events.
-        // Allow one bounded, separately validated repair pass, never a blind
-        // retry or an unbounded re-send of the full History. Leave the cursor
-        // intact if a large omission or exhausted budget requires user review.
-        if(!coverage.complete&&coverage.missing.length<=12&&coverage.missing.length*4<=coverage.expected){
-          const excerpts=coverage.missing.map(x=>{
-            const msg=msgs[x.index],raw=String(msg?.rawContent||msg?.content||'');
-            return `【${x.messageId} · 原文索引 ${x.index}】${raw}`;
-          }).join('\n');
-          if(excerpts.length<=9000&&summary.length+excerpts.length<=16000){
-            const repairStage=finalStage+'_repair_1';
-            job.stageScopes[repairStage]={sourceStartIndex:0,sourceEndExclusive:unsummarizedEnd};
-            await checkpoint(job,'rolling_coverage_repair_planned',{missingIds:coverage.missing.map(x=>x.messageId),sourceStartIndex:start,sourceEndExclusive:unsummarizedEnd});
-            const repair=await memoryModel([
-              {role:'system',content:'你是剧情档案核对员。只从下面遗漏的原文复制需要补录的关键原话；不得加入新事实。JSON memory 附准确 evidence.quote。'},
-              {role:'user',content:`【已有已核对摘要】\n${summary}\n\n【必须补录的旧剧情原文】\n${excerpts}\n\n仅补充遗漏事件，保留人物和因果，不改写已经确认的摘要。`}
-            ],Math.min(clampTemp(temp),0.6),signal,job,repairStage);
-            const amended=summary+'\n'+repair;
-            const originalProof=job.verifiedStages[finalStage];
-            job.verifiedStages[finalStage]={...originalProof,provenance:[...arr(originalProof?.provenance),...arr(job.verifiedStages[repairStage]?.provenance)]};
-            const verified=validateRollingCoverage(session,start,unsummarizedEnd,amended,job,finalStage);
-            if(verified.missing.length<coverage.missing.length){summary=amended;coverage=verified;}
-            else job.verifiedStages[finalStage]=originalProof;
-            await checkpoint(job,'rolling_coverage_repair_checked',{coveredCount:coverage.covered.length,missingCount:coverage.missing.length,missingIds:coverage.missing.map(x=>x.messageId)});
-          }
-        }
-        await checkpoint(job,'rolling_final_coverage',{expected:coverage.expected,newSourceRange:[start,unsummarizedEnd],coveredCount:coverage.covered.length,
-          missingCount:coverage.missing.length,coveredIds:coverage.covered.map(x=>x.messageId),
-          missing:coverage.missing.slice(0,400),range:coverage.range,sourceFingerprint:job.sourceFingerprint});
-        if(!coverage.complete){
-          await checkpoint(job,finalStage+'_needs_review',{candidate:summary,reason:'rolling_final_events_missing',
-            sourceStartIndex:start,sourceEndExclusive:unsummarizedEnd,
-            sourceCoverageHash:memorySourceFingerprint(msgs.slice(start,unsummarizedEnd),unsummarizedEnd-start),
-            messageIds:msgs.slice(start,unsummarizedEnd).map(m=>m.id),
-            missingCount:coverage.missing.length,missing:coverage.missing.slice(0,400)});
-          const e=new ApiError('E_MEMORY_NEEDS_REVIEW','最终合并遗漏了有来源的剧情事件，原文和摘要游标未修改，已保存待核对候选。',{
-            details:JSON.stringify({stage:finalStage,reason:'rolling_final_events_missing',covered:coverage.covered.length,expected:coverage.expected,missing:coverage.missing.slice(0,25).map(x=>x.messageId)}),
-            hint:'请在记忆审核中核查遗漏的消息，补齐摘要后明确采纳，或保留原始剧情重试。'});
-          e.candidateForReview=summary;throw e;
-        }
-      }
+      // Cursor moves only after every source part and the final summary have
+      // completed successfully; semantic compression is owner-editable.
+      await checkpoint(job,'rolling_parts_complete',{partCount:sourceChunks.length,sourceEndExclusive:unsummarizedEnd});
       session.rollingSummary=summary;session.summary=summary;session.rollingVerification=verifiedMemoryMetadata(job,sourceChunks.length===1?'rolling_summary':'rolling_merge');session.lastSummarizedIndex=unsummarizedEnd;session.rollingSourceCount=unsummarizedEnd;session.rollingSourceFingerprint=memorySourceFingerprint(session.messages,unsummarizedEnd);
       emitProgress(progress,{phase:'summary_done',percent:28,detail:'旧剧情摘要已更新。'});
       return job?await storeMemoryResult(job,original,{rollingSummary:summary,summary,rollingVerification:session.rollingVerification,lastSummarizedIndex:unsummarizedEnd,rollingSourceCount:unsummarizedEnd,rollingSourceFingerprint:session.rollingSourceFingerprint}):await saveSession(session);
@@ -2174,7 +1596,8 @@
   }
   const rollingInFlight=new Set();
   async function resumeExpiredRollingJobs(){
-    const store=window.MimaLocalStore,configs=getApiConfig();if(!configs.model||!configs.apiBase)return;
+    const store=window.MimaLocalStore,configs=getApiConfig();if(!configs.apiBase)return;
+    if(!configs.model&&!state.sessions.some(s=>normalizeManualMemory(s.manualMemory).settings.memoryModel))return;
     for(const session of state.sessions){
       const job=await store.getMemoryJob(session.id,'rolling');
       if(!job||job.status!=='running'||Number(job.leaseUntilEpoch||0)>Date.now()||Number(job.recoveryCount||0)>=3)continue;
@@ -2190,9 +1613,9 @@
     if(rollingInFlight.has(id)||!getSession(id)||!summaryNeeded(getSession(id),{automatic:true}))return;rollingInFlight.add(id);
     setTimeout(async()=>{try{
       const job=await window.MimaLocalStore?.getMemoryJob?.(id,'rolling');
-      // Explicit human review owns this candidate. Normal chats must not
-      // repeatedly regenerate it, block Direct Reply, or steal the review.
-      if(job?.status==='needs_review')return;
+      // Legacy `needs_review` was produced by the retired semantic gate. It
+      // must not permanently stop automatic rolling summaries. Restart a new
+      // attempt using the canonical source; beginMemoryJob fences any live job.
       await runRecordedMemory('rolling',id,{temperature:temp},null,null);
     }catch(e){if(e.code!=='E_MEMORY_JOB_PENDING')console.warn('Rolling summary background debt', {sessionId:id,code:e.code||'E_MEMORY_BACKGROUND',stage:'rolling',settlementError:e.settlementError||''});}
     finally{rollingInFlight.delete(id);}},0);
@@ -2562,8 +1985,12 @@
       m=path.match(/^\/sessions\/([^/]+)\/memory\/core$/);if(m&&method==='POST')return ok(await runRecordedMemory('core',m[1],body||{},signal,progress));
       if(m&&method==='DELETE')return ok(await deleteCoreMemory(m[1]));
       m=path.match(/^\/sessions\/([^/]+)\/memory\/rolling$/);if(m&&method==='POST'){const result=await window.MimaLocalStore.updateRollingMemory(m[1],body?.action||'revoke');await init();return ok(getSession(m[1])||result);}
+      m=path.match(/^\/sessions\/([^/]+)\/memory\/facts\/merge-preview$/);if(m&&method==='POST')return ok(await previewFactMerge(m[1],body||{},signal,progress));
+      m=path.match(/^\/sessions\/([^/]+)\/memory\/facts\/merge-commit$/);if(m&&method==='POST')return ok(await commitFactMerge(m[1],body||{}));
+      m=path.match(/^\/sessions\/([^/]+)\/memory\/facts\/merge-undo$/);if(m&&method==='POST')return ok(await undoFactMerge(m[1]));
       m=path.match(/^\/sessions\/([^/]+)\/memory\/facts$/);if(m&&method==='POST')return ok(await runRecordedMemory('facts',m[1],body||{},signal,progress));
       if(m&&method==='DELETE')return ok(await deleteFactMemory(m[1]));
+      m=path.match(/^\/sessions\/([^/]+)\/memory\/facts\/([^/]+)$/);if(m&&method==='PATCH')return ok(await editFactMemory(m[1],m[2],body?.content));
       m=path.match(/^\/sessions\/([^/]+)\/memory\/facts\/([^/]+)$/);if(m&&method==='DELETE')return ok(await deleteFactMemory(m[1],m[2]));
 
       if(path==='/masks'&&method==='GET')return ok(state.masks);
@@ -2623,5 +2050,5 @@
   }
 
   window.MimaMemoryContracts=Object.freeze({normalizeManualMemory});
-  window.MimaStandalone={init,handle,runRecordedMemory,memorySourceFingerprint,manualReplyFingerprint,isManuallyRecoveredReply,getApiConfig,saveApiConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,validateStoryReply,classifyStoryReply,applyRegexForSession,resolveMacrosForSession,compileUserInputForPrompt,exportLibrary,importLibrary,validateLibrary,assemble,getLastUsage,getState:()=>clone(state)};
+  window.MimaStandalone={init,handle,runRecordedMemory,memorySourceFingerprint,memoryFactSignature,manualReplyFingerprint,isManuallyRecoveredReply,getApiConfig,saveApiConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,validateStoryReply,classifyStoryReply,applyRegexForSession,resolveMacrosForSession,compileUserInputForPrompt,exportLibrary,importLibrary,validateLibrary,assemble,getLastUsage,getState:()=>clone(state)};
 })();

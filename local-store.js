@@ -439,7 +439,7 @@
       if(old?.status==='running'&&Number(old.recoveryCount||0)>=3)throw new Error('E_MEMORY_RECOVERY_LIMIT: 连续恢复已达到上限，请检查后台任务错误记录并人工操作');
       const sameSource=old?.sourceHash===sourceHash&&old?.configSignature===configSignature&&JSON.stringify(old?.options)===JSON.stringify(options);
       const resumeCandidates={},humanApprovedStages={};
-      if(sameSource&&['running','failed','interrupted','aborted','needs_review'].includes(old?.status)){
+      if(sameSource&&['running','failed','interrupted','aborted'].includes(old?.status)){
         for(const candidate of old.checkpoints||[]){
           if(typeof candidate.output==='string'&&candidate.stage.endsWith('_received'))resumeCandidates[candidate.stage.slice(0,-9)]=candidate.output;
           if(typeof candidate.output==='string'&&candidate.stage.startsWith('human_')&&candidate.stage.endsWith('_accepted')){
@@ -453,7 +453,7 @@
         id:recovering?old.id:`mem_${Date.now()}_${Math.random().toString(36).slice(2)}`,
         attemptId:`a_${Date.now()}_${Math.random().toString(36).slice(2)}`,sessionId,kind,options,sourceHash,sourceCount,
         status:'running',stage:recovering?'recovered_pending':'prepared',startedAt:recovering?old.startedAt:now,updatedAt:now,
-        checkpoints:sameSource&&['running','failed','interrupted','aborted','needs_review'].includes(old?.status)?(old.checkpoints||[]):[],revision:(old?.revision||0)+1,
+        checkpoints:sameSource&&['running','failed','interrupted','aborted'].includes(old?.status)?(old.checkpoints||[]):[],revision:(old?.revision||0)+1,
         leaseUntilEpoch:Date.now()+MEMORY_LEASE_MS,recoveryCount:recovering?(Number(old.recoveryCount||0)+1):0,
         recoveredFromAttemptId:recovering?old.attemptId:null};
       kv.put(job,jobKey(sessionId,kind));return job;
@@ -669,5 +669,70 @@
       kv.put(next,jobKey(sessionId,kind));return next;
     });
   }
-  window.MimaLocalStore={updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,clearSettingsSnapshot,getMemoryJob,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
+  // Two-phase manual fact consolidation: AI preview performs no writes.
+  // Approval and one-step undo are canonical IDB transactions, never whole
+  // stale-state saves. No History/Persona/core memory is replaced.
+  const factMergeUndoKey=sessionId=>`memory_fact_merge_undo:${sessionId}`;
+  async function commitFactMerge(sessionId,body){
+    const db=await openDb();return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE);let issue,result;
+      const fail=m=>{issue=new Error(m);tx.abort();};
+      const sr=kv.get(STATE_KEY);sr.onerror=()=>fail('E_MEMORY_MERGE_STATE_READ');
+      sr.onsuccess=()=>{
+        const canonical=sr.result;
+        if(!isCanonicalStateRecord(canonical)){fail('E_MEMORY_STORE_UNVERIFIED');return;}
+        const idx=canonical.sessions.findIndex(x=>x?.id===sessionId);if(idx<0){fail('E_STORY_SESSION_MISSING');return;}
+        const session=canonical.sessions[idx],contract=window.MimaMemoryContracts,impl=window.MimaStandalone;
+        if(!contract?.normalizeManualMemory||!impl?.memoryFactSignature||!impl?.memorySourceFingerprint){fail('E_MEMORY_MERGE_CONTRACT_UNAVAILABLE');return;}
+        const manual=contract.normalizeManualMemory(session.manualMemory||{}),facts=manual.facts;
+        const selectedIds=Array.isArray(body?.selectedIds)?body.selectedIds:[],chosen=new Set(selectedIds);
+        const content=String(body?.content??'').trim();
+        if(chosen.size<2||chosen.size!==selectedIds.length||selectedIds.some(id=>typeof id!=='string')||
+           !content||content.length>250000){fail('E_MEMORY_MERGE_INVALID');return;}
+        if(impl.memoryFactSignature(facts)!==body.sourceSignature){fail('E_MEMORY_MERGE_SOURCE_CHANGED');return;}
+        const count=Number(body.sourceHistoryCount);
+        if(!Number.isInteger(count)||count<0||session.messages.length<count||
+          impl.memorySourceFingerprint(session.messages,count)!==body.sourceHistoryFingerprint){fail('E_MEMORY_MERGE_HISTORY_CHANGED');return;}
+        const selected=facts.filter(f=>chosen.has(f.id));
+        if(selected.length!==chosen.size){fail('E_MEMORY_MERGE_SELECTION_CHANGED');return;}
+        const startRound=Math.min(...selected.map(x=>x.startRound)),endRound=Math.max(...selected.map(x=>x.endRound));
+        const stamp=new Date().toISOString(),id=`factmerge_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+        const merged={id,startRound,endRound,content,source:'manual_fact_merge',createdAt:stamp,updatedAt:stamp,
+          targetChars:Math.min(4000,Math.max(80,Number(body.targetChars)||content.length)),temperature:Number(body.temperature)||.35,
+          sourceCount:count,sourceFingerprint:body.sourceHistoryFingerprint,verification:{status:'model_generated',stage:'owner_approved_merge',citations:[]}};
+        const nextFacts=contract.normalizeManualMemory({facts:facts.filter(f=>!chosen.has(f.id)).concat(merged)}).facts.sort((a,b)=>a.startRound-b.startRound||a.endRound-b.endRound);
+        const next={...session,manualMemory:{...manual,facts:nextFacts},recordRevision:(Number(session.recordRevision)||0)+1,updatedAt:stamp};
+        const sessions=canonical.sessions.slice();sessions[idx]=next;
+        result={...canonical,sessions,storeRevision:(Number(canonical.storeRevision)||0)+1,savedAt:stamp};
+        kv.put(result,STATE_KEY);
+        kv.put({sessionId,mergedId:id,originalFacts:facts,afterSignature:impl.memoryFactSignature(nextFacts),
+          selectedIds,createdAt:stamp},factMergeUndoKey(sessionId));
+      };
+      tx.oncomplete=()=>{db.close();resolve(result);};tx.onabort=()=>{db.close();reject(issue||tx.error||new Error('E_MEMORY_MERGE_ABORTED'));};
+    });
+  }
+  async function undoFactMerge(sessionId){
+    const db=await openDb();return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE);let issue,result;
+      const fail=m=>{issue=new Error(m);tx.abort();};
+      const undoReq=kv.get(factMergeUndoKey(sessionId));undoReq.onerror=()=>fail('E_MEMORY_MERGE_UNDO_READ');
+      undoReq.onsuccess=()=>{
+        const undo=undoReq.result;if(!undo){fail('E_MEMORY_MERGE_UNDO_UNAVAILABLE');return;}
+        const sr=kv.get(STATE_KEY);sr.onerror=()=>fail('E_MEMORY_MERGE_STATE_READ');
+        sr.onsuccess=()=>{
+          const current=sr.result,impl=window.MimaStandalone,contract=window.MimaMemoryContracts;
+          if(!isCanonicalStateRecord(current)||!impl?.memoryFactSignature||!contract?.normalizeManualMemory){fail('E_MEMORY_STORE_UNVERIFIED');return;}
+          const idx=current.sessions.findIndex(s=>s?.id===sessionId);if(idx<0){fail('E_STORY_SESSION_MISSING');return;}
+          const session=current.sessions[idx],manual=contract.normalizeManualMemory(session.manualMemory||{});
+          if(impl.memoryFactSignature(manual.facts)!==undo.afterSignature){fail('E_MEMORY_MERGE_UNDO_CONFLICT');return;}
+          const updated={...session,manualMemory:{...manual,facts:undo.originalFacts},recordRevision:(Number(session.recordRevision)||0)+1,updatedAt:new Date().toISOString()};
+          const sessions=current.sessions.slice();sessions[idx]=updated;
+          result={...current,sessions,storeRevision:(Number(current.storeRevision)||0)+1,savedAt:new Date().toISOString()};
+          kv.put(result,STATE_KEY);kv.delete(factMergeUndoKey(sessionId));
+        };
+      };
+      tx.oncomplete=()=>{db.close();resolve(result);};tx.onabort=()=>{db.close();reject(issue||tx.error||new Error('E_MEMORY_MERGE_UNDO_ABORTED'));};
+    });
+  }
+  window.MimaLocalStore={commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,clearSettingsSnapshot,getMemoryJob,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
 })();

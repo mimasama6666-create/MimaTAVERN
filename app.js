@@ -23,6 +23,8 @@ let pngResourceBusy = false;
 let fontRecords = [];
 let memoryGenerating = false;
 let memoryTask = null; // UI-independent, single owner for story-memory requests.
+let memoryMergeDraft = null; // in-memory preview, never canonical until owner confirms
+let memoryFactEditId = null;
 let liveStreamState = null;
 let deferredGenerationProgress = null;
 let lastGenerationFailure = null;
@@ -683,12 +685,15 @@ async function saveContextSettings(){
 
 function memoryStore(){
     const m=currentSessionData?.manualMemory||{};
-    return {core:m.core||{content:'',source:'context',targetChars:1000,temperature:.35},facts:arr(m.facts),settings:{injectCore:m.settings?.injectCore!==false,injectFacts:m.settings?.injectFacts!==false,factInjectionLimit:Number(m.settings?.factInjectionLimit||12),summaryTemperature:Number(m.settings?.summaryTemperature??.35)}};
+    return {core:m.core||{content:'',source:'context',targetChars:1000,temperature:.35},facts:arr(m.facts),settings:{injectCore:m.settings?.injectCore!==false,injectFacts:m.settings?.injectFacts!==false,factInjectionLimit:Number(m.settings?.factInjectionLimit||12),summaryTemperature:Number(m.settings?.summaryTemperature??.35),memoryModel:String(m.settings?.memoryModel||'')}};
 }
 function storyRoundCount(){return arr(currentSessionData?.messages).filter(m=>m?.role==='user').length}
 function memoryDateLabel(v){if(!v)return'尚未生成';try{return new Date(v).toLocaleString('zh-CN',{hour12:false})}catch(_){return String(v)}}
 function memorySourceLabel(v){return v==='facts'?'事实记忆':v==='manual'?'手工编辑':'剧情原文'}
 function renderMemoryTab(box){
+    // Preserve an owner's unsubmitted edits when refreshes rerender the modal.
+    const liveDraft=qs('memory-merge-result');
+    if(memoryMergeDraft?.sessionId===currentSessionId&&liveDraft)memoryMergeDraft.content=liveDraft.value;
     const mem=memoryStore(),core=mem.core||{},facts=mem.facts.slice().sort((a,b)=>Number(a.startRound||0)-Number(b.startRound||0)||Number(a.endRound||0)-Number(b.endRound||0));
     const rounds=storyRoundCount(),temp=Math.max(.1,Math.min(2,Number(mem.settings.summaryTemperature??core.temperature??.35)||.35));
     const overlapCount=facts.reduce((n,f,i)=>n+facts.slice(0,i).filter(prev=>Number(prev.startRound)<=Number(f.endRound)&&Number(f.startRound)<=Number(prev.endRound)).length,0);
@@ -697,18 +702,20 @@ function renderMemoryTab(box){
     const memoryWarnings=[
       ...(overlapCount?[`检测到 ${overlapCount} 组事实记忆轮次范围重叠，可能造成重复注入；旧记忆没有自动删除。`]:[]),
       ...(coreBehind?[`当前核心记忆只涵盖生成时的 ${core.sourceRoundCount} 轮，新增的 ${rounds-Number(core.sourceRoundCount)} 轮尚未压缩进核心记忆。`]:[]),
+      ...(core.source==='facts'&&core.sourceFactsHash&&core.sourceFactsHash!==MimaStandalone.memoryFactSignature(facts)?[`核心记忆生成后事实列表已变化；旧核心记忆仍可注入，需要时可手动重新生成。`]:[]),
       ...(facts.length&&latestFactRound<rounds?[`事实记忆目前最多覆盖到第 ${latestFactRound} 轮，之后的轮次尚未总结。`]:[])
     ];
-    const factCards=facts.length?facts.map(f=>`<div class="memory-card"><div class="memory-card-head"><div><strong>第 ${Number(f.startRound||0)}–${Number(f.endRound||0)} 轮</strong><div class="entry-meta">${escapeHtml(memoryDateLabel(f.updatedAt||f.createdAt))} · 约 ${Number(f.targetChars||0)||'—'} 字 · T=${Number(f.temperature??.35).toFixed(2)}</div></div><button class="tool-mini" onclick="deleteFactMemory('${escapeHtml(f.id)}')">删除</button></div><div class="memory-text">${escapeHtml(f.content||'')}</div></div>`).join(''):'<div class="memory-empty">还没有事实记忆。可以按 10 / 25 轮一段开始总结猫。</div>';
+    const factCards=facts.length?facts.map(f=>`<div class="memory-card"><div class="memory-card-head"><div><label class="check-row"><input class="memory-merge-select" type="checkbox" data-fact-id="${escapeHtml(f.id)}" checked> <strong>第 ${Number(f.startRound||0)}–${Number(f.endRound||0)} 轮</strong></label><div class="entry-meta">${escapeHtml(memoryDateLabel(f.updatedAt||f.createdAt))} · 约 ${Number(f.targetChars||0)||'—'} 字 · T=${Number(f.temperature??.35).toFixed(2)}</div></div><div class="toolbar"><button class="tool-mini" onclick="startFactMemoryEdit(${escapeHtml(JSON.stringify(f.id))})">编辑</button><button class="tool-mini" onclick="deleteFactMemory(${escapeHtml(JSON.stringify(f.id))})">删除</button></div></div>${memoryFactEditId===f.id?`<textarea id="fact-edit-${escapeHtml(f.id)}" class="field textarea tall">${escapeHtml(f.content||'')}</textarea><div class="toolbar"><button class="primary-btn" onclick="saveFactMemoryEdit(${escapeHtml(JSON.stringify(f.id))})">保存修改</button><button class="ghost-btn" onclick="cancelFactMemoryEdit()">取消</button></div>`:`<div class="memory-text">${escapeHtml(f.content||'')}</div>`}</div>`).join(''):'<div class="memory-empty">还没有事实记忆。可以按 10 / 25 轮一段开始总结猫。</div>';
+    const preview=memoryMergeDraft?.sessionId===currentSessionId?`<div class="memory-card" id="memory-merge-preview"><h4>🧩 AI 二次合并候选 · 原记忆还在</h4><p class="helper">已选择 ${memoryMergeDraft.selectedIds.length} 条 · 第 ${memoryMergeDraft.startRound}–${memoryMergeDraft.endRound} 轮。可先编辑内容，再确认替换；不确认就绝不改动旧记忆。</p><textarea class="field textarea tall" id="memory-merge-result" rows="14">${escapeHtml(memoryMergeDraft.content||'')}</textarea><div class="toolbar"><button type="button" class="primary-btn" onclick="confirmFactMemoryMerge()">确认合并并保存</button><button type="button" class="ghost-btn" onclick="cancelFactMemoryMerge()">放弃候选，保留原记忆</button></div></div>`:'';
     box.innerHTML=`
-    <section class="settings-section memory-overview"><h3>🗃️ 手动记忆总结</h3><p class="helper">调用当前 API / Model（模型）整理这个 Session（剧情会话）的长期记忆。这里的“1 轮”= 一次 User 发言 + 随后的角色回复；角色开场白会作为第 1 轮之前的前置信息纳入摘要，但不会单独占一轮。</p><div class="memory-stats"><div class="stat-card"><div class="stat-num">${rounds}</div><div class="stat-label">当前剧情轮数</div></div><div class="stat-card"><div class="stat-num">${facts.length}</div><div class="stat-label">事实记忆片段</div></div><div class="stat-card"><div class="stat-num">${core.content?'✓':'—'}</div><div class="stat-label">核心记忆</div></div></div>
-    ${memoryWarnings.length?`<p class="helper" role="status">⚠ ${memoryWarnings.map(escapeHtml).join('　')}</p>`:''}<div class="form-grid memory-global-grid"><div><label class="form-label">Summary Temperature（总结温度）</label><input id="memory-temp" class="field" type="number" min="0.1" max="2" step="0.05" value="${temp.toFixed(2)}"><div class="row-sub">只影响手动记忆总结，不会改你正常跑剧情的温度；若 API 页关闭“发送 Temperature”，则接口不会收到温度参数。</div></div><div><label class="form-label">后续剧情注入</label><label class="check-row"><input id="memory-inject-core" type="checkbox" ${mem.settings.injectCore?'checked':''}> 注入核心记忆</label><label class="check-row"><input id="memory-inject-facts" type="checkbox" ${mem.settings.injectFacts?'checked':''}> 注入事实记忆</label></div><div><label class="form-label">最多注入最近几段事实记忆</label><input id="memory-inject-limit" class="field" type="number" min="1" max="100" value="${Math.max(1,Math.min(100,Number(mem.settings.factInjectionLimit||12)))}"></div></div>
+    <section class="settings-section memory-overview"><h3>🗃️ 手动记忆总结</h3><p class="helper">使用当前 API 配置与所选记忆模型整理这个 Session（剧情会话）的长期记忆。这里的“1 轮”= 一次 User 发言 + 随后的角色回复；角色开场白会作为第 1 轮之前的前置信息纳入摘要，但不会单独占一轮。</p><div class="memory-stats"><div class="stat-card"><div class="stat-num">${rounds}</div><div class="stat-label">当前剧情轮数</div></div><div class="stat-card"><div class="stat-num">${facts.length}</div><div class="stat-label">事实记忆片段</div></div><div class="stat-card"><div class="stat-num">${core.content?'✓':'—'}</div><div class="stat-label">核心记忆</div></div></div>
+    ${memoryWarnings.length?`<p class="helper" role="status">⚠ ${memoryWarnings.map(escapeHtml).join('　')}</p>`:''}<div class="form-grid memory-global-grid"><div><label class="form-label">Summary Temperature（总结温度）</label><input id="memory-temp" class="field" type="number" min="0.1" max="2" step="0.05" value="${temp.toFixed(2)}"><div class="row-sub">独立于剧情温度；若 API 关闭发送温度则请求不会带温度。</div></div><div class="form-full"><label class="form-label">记忆模型（留空沿用剧情模型）</label><div class="inline-field-row"><select id="memory-model-list" class="field" onchange="selectMemoryModel()"><option value="">沿用剧情模型</option>${mem.settings.memoryModel?`<option selected value="${escapeHtml(mem.settings.memoryModel)}">${escapeHtml(mem.settings.memoryModel)}</option>`:''}</select><button class="ghost-btn" type="button" onclick="loadMemoryModels()">拉取模型</button></div><input id="memory-model" class="field" value="${escapeHtml(mem.settings.memoryModel)}" placeholder="留空沿用剧情模型，也可手填模型 ID"><div class="row-sub">核心、事实、手动合并及后台滚动摘要共用独立记忆模型，具体请求绑定当次模型；不会改 API 页的剧情模型。</div></div><div><label class="form-label">后续剧情注入</label><label class="check-row"><input id="memory-inject-core" type="checkbox" ${mem.settings.injectCore?'checked':''}> 注入核心记忆</label><label class="check-row"><input id="memory-inject-facts" type="checkbox" ${mem.settings.injectFacts?'checked':''}> 注入事实记忆</label></div><div><label class="form-label">最多注入最近几段事实记忆</label><input id="memory-inject-limit" class="field" type="number" min="1" max="100" value="${Math.max(1,Math.min(100,Number(mem.settings.factInjectionLimit||12)))}"></div></div>
     <div class="toolbar"><button class="ghost-btn" onclick="saveMemorySettings()" >保存记忆设置</button></div><div id="memory-progress" class="memory-progress ${memoryTask?.sessionId===currentSessionId?'':'hidden'}"><div class="memory-progress-head"><span id="memory-progress-label">正在调用 LLM（大语言模型）…</span><span id="memory-progress-percent">0%</span></div><div class="memory-progress-track"><div id="memory-progress-bar" class="memory-progress-bar"></div></div><div id="memory-progress-detail" class="row-sub"></div><button class="tool-mini" onclick="stopMemorySummary()">停止总结</button></div></section>
 
     <section class="settings-section"><h3>💎 核心记忆</h3><p class="helper">不是流水账。它会从第一轮开始提炼真正影响长期剧情的东西，尤其优先保存关系转变、承诺/约定、重要选择及后果、持续状态变化和未解决事项。也可以直接用已经生成的事实记忆再压缩一次。</p><div class="form-grid"><div><label class="form-label">总结来源</label><select id="core-memory-source" class="field"><option value="context" ${core.source!=='facts'?'selected':''}>从第一轮剧情原文开始总结</option><option value="facts" ${core.source==='facts'?'selected':''}>根据事实记忆总结核心记忆</option></select></div><div><label class="form-label">目标字数</label><input id="core-memory-target" class="field" type="number" min="100" max="12000" step="100" value="${Number(core.targetChars||1000)}"><div class="memory-quick-targets"><button class="tool-mini" onclick="setCoreMemoryTarget(500)">500</button><button class="tool-mini" onclick="setCoreMemoryTarget(1000)">1000</button><button class="tool-mini" onclick="setCoreMemoryTarget(2000)">2000</button></div></div><div class="form-full"><label class="form-label">核心记忆正文 · ${escapeHtml(memorySourceLabel(core.source))} · ${escapeHtml(memoryDateLabel(core.updatedAt))}</label><textarea id="core-memory-content" class="field textarea tall" placeholder="生成后会显示在这里，也可以手工修订。">${escapeHtml(core.content||'')}</textarea></div></div><div class="toolbar"><button class="primary-btn memory-action" onclick="generateCoreMemory()" ${memoryGenerating?'disabled':''}>✨ 生成 / 重做核心记忆</button><button class="ghost-btn" onclick="saveCoreMemoryEdit()" >保存手工修改</button>${core.content?'<button class="danger-btn" onclick="clearCoreMemory()" '+(memoryGenerating?'disabled':'')+'>清空核心记忆</button>':''}</div></section>
 
     <section class="settings-section"><h3>🕰️ 滚动剧情摘要（可撤销）</h3><p class="helper">只影响模型收到的旧剧情摘要，不会删除原始 History。错误摘要可撤销并从第一条重新总结；撤销前的版本暂存供恢复。正在运行的总结任务不能抢占。</p><div class="row-sub">已总结至消息索引 ${Number(currentSessionData?.lastSummarizedIndex||0)}；旧摘要备份 ${Array.isArray(currentSessionData?.rollingArchive)?currentSessionData.rollingArchive.length:0} 份</div><details><summary>查看当前滚动摘要</summary><pre class="memory-review-source">${escapeHtml(currentSessionData?.rollingSummary||currentSessionData?.summary||'(尚未生成)')}</pre></details><div class="toolbar"><button type="button" class="danger-btn" onclick="revokeRollingMemory()" ${memoryGenerating?'disabled':''}>撤销错误滚动摘要（保留原文）</button>${currentSessionData?.rollingArchive?.length?`<button type="button" class="ghost-btn" onclick="restoreRollingMemory()" ${memoryGenerating?'disabled':''}>恢复上一份摘要</button>`:''}</div></section>
-    <section class="settings-section"><h3>🧾 事实记忆</h3><p class="helper">按固定轮数把剧情浓缩成小段事实档案，只写“发生了什么”，不做文学赏析、不乱补设定。最近 X 轮适合日常增量补记；从头到尾适合重建整本事实档案。</p><div class="form-grid"><div><label class="form-label">每 X 轮总结一段</label><input id="fact-memory-chunk" class="field" type="number" min="1" max="200" value="10"></div><div><label class="form-label">每段目标字数</label><input id="fact-memory-target" class="field" type="number" min="80" max="4000" step="20" value="360"></div><div><label class="form-label">总结范围</label><select id="fact-memory-scope" class="field" onchange="syncFactMemoryScope()"><option value="recent" selected>只总结最近 X 轮</option><option value="all">从头到尾全部总结</option></select></div><div id="fact-memory-recent-wrap"><label class="form-label">最近多少轮</label><input id="fact-memory-recent" class="field" type="number" min="1" max="100000" value="25"></div><div class="form-full" id="fact-memory-replace-wrap"><label class="check-row"><input id="fact-memory-replace" type="checkbox"> 从头到尾完成后，用新事实记忆整体顶掉旧事实记忆</label><div class="row-sub">只在“从头到尾”模式生效。生成过程中如果 API 失败，旧记忆不会被提前删除。</div></div></div><div class="toolbar"><button class="primary-btn memory-action" onclick="generateFactMemories()" ${memoryGenerating?'disabled':''}>🧠 开始事实总结</button>${facts.length?'<button class="danger-btn" onclick="clearAllFactMemories()" '+(memoryGenerating?'disabled':'')+'>清空全部事实记忆</button>':''}</div><div class="memory-list">${factCards}</div></section>`;
+    <section class="settings-section"><h3>🧾 事实记忆</h3><p class="helper">把剧情按轮次忠实整理为详细的小段记忆。事件、具体行为、重要对话和关系变化尽量保留；不强制字面审判。已有内容可随时编辑、删除、手动合并。</p><div class="form-grid"><div><label class="form-label">每 X 轮总结一段</label><input id="fact-memory-chunk" class="field" type="number" min="1" max="200" value="10"></div><div><label class="form-label">每段目标字数</label><input id="fact-memory-target" class="field" type="number" min="80" max="12000" step="20" value="1800"></div><div><label class="form-label">总结范围</label><select id="fact-memory-scope" class="field" onchange="syncFactMemoryScope()"><option value="recent" selected>只总结最近 X 轮</option><option value="all">从头到尾全部总结</option></select></div><div id="fact-memory-recent-wrap"><label class="form-label">最近多少轮</label><input id="fact-memory-recent" class="field" type="number" min="1" max="100000" value="25"></div><div class="form-full" id="fact-memory-replace-wrap"><label class="check-row"><input id="fact-memory-replace" type="checkbox"> 从头到尾完成后，用新事实记忆整体顶掉旧事实记忆</label><div class="row-sub">只在“从头到尾”模式生效。生成过程中如果 API 失败，旧记忆不会被提前删除。</div></div></div><div class="toolbar"><button class="primary-btn memory-action" onclick="generateFactMemories()" ${memoryGenerating?'disabled':''}>🧠 开始事实总结</button>${facts.length?'<button class="danger-btn" onclick="clearAllFactMemories()" '+(memoryGenerating?'disabled':'')+'>清空全部事实记忆</button>':''}</div><div class="memory-card"><h4>🧩 AI 二次合并事实记忆</h4><p class="helper">勾选下方需要合并的事实记忆（可一次合并 100 条以上），生成候选后手动检查或修改；确认前旧记忆完全不变。</p><label class="form-label">合并后目标字数（软目标，保留细节优先）</label><input class="field" type="number" id="memory-merge-target" min="100" max="250000" value="6000"><div class="toolbar"><button type="button" class="primary-btn" onclick="previewFactMemoryMerge()" ${memoryGenerating||facts.length<2?'disabled':''}>AI 合并已选记忆（仅预览）</button><button type="button" class="ghost-btn" onclick="toggleMergeFactSelection(true)">全选</button><button type="button" class="ghost-btn" onclick="toggleMergeFactSelection(false)">取消全选</button>${facts.length?'<button type="button" class="ghost-btn" onclick="undoFactMemoryMerge()">撤销上一次合并</button>':''}</div></div>${preview}<div class="memory-list">${factCards}</div></section>`;
     syncFactMemoryScope();
     paintMemoryProgress();
     refreshDurableMemoryJobs().catch(e=>console.error('Memory journal UI:',e));
@@ -744,13 +751,13 @@ function paintMemoryProgress(){
             if(bar)bar.style.width=`${n}%`;
             if(pct)pct.textContent=`${Math.round(n)}%`;
             if(detail)detail.textContent=payload.detail||'正在准备总结…';
-            if(label)label.textContent=task.controller.signal.aborted?'正在停止总结…':payload.phase==='done'?'正在确认保存…':`${task.kind==='core'?'核心记忆':'事实记忆'} · 运行中`;
+            if(label)label.textContent=task.controller.signal.aborted?'正在停止总结…':payload.phase==='done'?'正在确认保存…':`${task.kind==='core'?'核心记忆':task.kind==='merge'?'事实合并':'事实记忆'} · 运行中`;
         }
     }
     const floating=memoryFloatingElement();floating.classList.toggle('hidden',!task);
     if(task){
         const detail=task.progress?.detail||'正在准备材料…';
-        qs('memory-task-floating-text').textContent=`🧠 ${task.kind==='core'?'核心记忆':'事实记忆'} · ${task.sessionTitle} · ${task.controller.signal.aborted?'正在停止…':detail}`;
+        qs('memory-task-floating-text').textContent=`🧠 ${task.kind==='core'?'核心记忆':task.kind==='merge'?'事实合并':'事实记忆'} · ${task.sessionTitle} · ${task.controller.signal.aborted?'正在停止…':detail}`;
     }
 }
 function handleMemoryProgress(payload={}){
@@ -767,50 +774,24 @@ async function refreshDurableMemoryJobs(){
     const sessionId=currentSessionId;const rows=[];
     for(const kind of ['core','facts','rolling']){
         try{const job=await MimaLocalStore.getMemoryJob(sessionId,kind);
-            if(job&&job.status!=='committed'&&job.status!=='skipped'&&job.status!=='rejected')rows.push(job);
+            if(job&&!['committed','skipped','rejected','discarded'].includes(job.status))rows.push(job);
         }catch(e){host.textContent='记忆任务记录读取失败，禁止当作空任务：'+e.message;return;}
     }
     if(currentSessionId!==sessionId||settingsTab!=='memory')return;
     host.replaceChildren();
     for(const job of rows){const line=document.createElement('div');line.className='entry-card';
-        const label=document.createElement('div');label.textContent=`${job.kind} · ${job.status==='running'?'当前页面状态不确定（刷新后需核实）':job.status==='needs_review'?'待人工核对':job.status==='interrupted'?'分片已核对，等待完成剩余总结':job.status} · ${job.stage} · ${job.code||''}`;line.appendChild(label);
+        const label=document.createElement('div');label.textContent=`${job.kind} · ${job.status==='running'?'当前页面状态不确定（刷新后需核实）':job.status==='needs_review'?'旧版待复核候选，可废弃后重新总结':job.status==='interrupted'?'分片已核对，等待完成剩余总结':job.status} · ${job.stage} · ${job.code||''}`;line.appendChild(label);
         const btn=document.createElement('button');btn.className='tool-mini';btn.textContent=job.status==='running'&&Number(job.leaseUntilEpoch||0)>Date.now()?'其他窗口可能仍运行（查看状态）':'安全恢复 / 重试原任务';
         btn.onclick=()=>resumeMemoryJob(job.kind,job.id);line.appendChild(btn);
         const discard=document.createElement('button');discard.type='button';discard.className='tool-mini';discard.textContent='废弃错误候选（保留任务记录）';
         discard.onclick=()=>discardMemoryCandidate(job);line.appendChild(discard);
-        // A factual claim that cannot be proven from original messages is
-        // durable *review material*, not an automatically trusted memory.
-        const pending=[...(job.checkpoints||[])].reverse().find(c=>c.stage?.endsWith('_needs_review')&&typeof c.candidate==='string'&&
-            !(job.checkpoints||[]).some(x=>x.stage==='human_'+c.stage.replace(/_needs_review$/,'')+'_accepted'||x.stage==='human_'+c.stage.replace(/_needs_review$/,'')+'_rejected'));
-        if(pending){
-            const notice=document.createElement('p');notice.className='helper';notice.textContent=`待人工核查候选 · ${pending.reason||'事实未验证'} · 尚未注入剧情`;
-            const missing=Array.isArray(pending.missing)?pending.missing:[];
-            if(pending.reason==='rolling_final_events_missing'){
-                const warning=document.createElement('p');warning.className='helper';
-                warning.textContent=`重要：最终合并未能证明覆盖 ${pending.missingCount||missing.length} 条原始剧情。当前摘要游标没有推进；这不是完成的总结。确认前须补齐遗漏或明确核对原文。`;
-                line.appendChild(warning);
-                const omissions=document.createElement('details');const omitTitle=document.createElement('summary');
-                omitTitle.textContent='查看未覆盖的消息来源与索引';omissions.appendChild(omitTitle);
-                const omitBody=document.createElement('pre');omitBody.className='memory-review-source';
-                omitBody.textContent=missing.map(x=>`${x.index} [${x.messageId}] ${x.anchor||''}`).join('\n\n')||'已在任务日志记录遗漏详情';
-                omissions.appendChild(omitBody);line.appendChild(omissions);
-            }
-            const preview=document.createElement('textarea');preview.className='field textarea';preview.rows=5;preview.value=pending.candidate;
-            const provenance=document.createElement('details');
-            const title=document.createElement('summary');title.textContent='查看本次总结来源（核对人物、否定、传言与时序）';provenance.append(title);
-            const original=document.createElement('pre');original.className='memory-review-source';
-            const messages=(currentSessionData?.messages||[]).slice(pending.sourceStartIndex??0,pending.sourceEndExclusive??job.sourceCount??0);
-            // No source truncation or deletion: this collapsible pane is scrollable.
-            original.textContent=messages.map(m=>`${m.role==='user'?'玩家':m.role==='assistant'?'角色':m.role} [${m.id}]：${m.rawContent||m.content||''}`).join('\n\n');
-            provenance.append(original);
-            const approved=document.createElement('label');approved.className='check-row';
-            const checkbox=document.createElement('input');checkbox.type='checkbox';approved.append(checkbox,document.createTextNode(' 已逐条核对原始剧情；修正了传闻、否认、假设、人物归属和不实推断'));
-            const controls=document.createElement('div');controls.className='toolbar';
-            const accept=document.createElement('button');accept.type='button';accept.className='primary-btn';accept.textContent='确认并保存这份记忆';
-            accept.onclick=()=>reviewPendingMemory(job,'accept',preview.value,checkbox.checked);
-            const reject=document.createElement('button');reject.type='button';reject.className='ghost-btn';reject.textContent='驳回候选，保留旧记忆';
-            reject.onclick=()=>reviewPendingMemory(job,'reject','',true);
-            controls.append(accept,reject);line.append(notice,preview,provenance,approved,controls);
+        // Old journal candidates remain diagnostic history. The former
+        // compulsory factual review UI is retired; the owner edits canonical
+        // memories directly or retries a technically failed original job.
+        if(job.status==='needs_review'){
+            const note=document.createElement('p');note.className='helper';
+            note.textContent='旧版语义审核留下的候选未入库。可废弃旧任务并重新总结；不再要求逐条核对原文。';
+            line.appendChild(note);
         }
         host.appendChild(line);
     }
@@ -833,19 +814,6 @@ async function restoreRollingMemory(){
     const res=await fetchStory(`/sessions/${currentSessionId}/memory/rolling`,'POST',{action:'restore'});
     if(res.success){currentSessionData=res.data;toast('已恢复上一份滚动摘要。');renderMemoryTab(qs('settings-content'));}
     else toast(res.msg||'恢复失败');
-}
-async function reviewPendingMemory(job,action,text,approved){
-    if(action==='accept'&&!approved)return toast('请先核对来源，再勾选确认。');
-    const sessionId=currentSessionId;
-    try{
-        const reviewResult=await MimaLocalStore.reviewMemoryCandidate(sessionId,job.kind,job.id,action,text);
-        await MimaStandalone.init();
-        if(currentSessionId===sessionId){const latest=await fetchStory(`/sessions/${sessionId}`,'GET');if(latest.success)currentSessionData=latest.data;}
-        if(isSettingsOpen()&&settingsTab==='memory')renderMemoryTab(qs('settings-content'));
-        toast(action!=='accept'?'已驳回候选，旧记忆保留。':reviewResult.status==='committed'?
-            '完整记忆已根据人工确认入库；原文未更改。':
-            '局部分片已确认，尚未覆盖完整剧情。请点击“安全恢复 / 重试原任务”继续剩余分片。');
-    }catch(e){console.error('memory review failed',{sessionId,jobId:job.id,kind:job.kind,code:e.code||e.message});toast('核查未提交：'+e.message+'。请刷新任务状态。');}
 }
 async function resumeMemoryJob(kind,jobId){
     try{if(memoryTask)return toast('本页面仍有正在运行的记忆任务，先停止并等待结算。');
@@ -880,7 +848,7 @@ async function saveMemorySettings(){
     if(limit===null)return null;
     const temperature=validatedSettingNumber('memory-temp','记忆总结温度',0.1,2,false);
     if(temperature===null)return null;
-    const requested={injectCore:!!qs('memory-inject-core')?.checked,injectFacts:!!qs('memory-inject-facts')?.checked,factInjectionLimit:limit,summaryTemperature:temperature};
+    const requested={injectCore:!!qs('memory-inject-core')?.checked,injectFacts:!!qs('memory-inject-facts')?.checked,factInjectionLimit:limit,summaryTemperature:temperature,memoryModel:qs('memory-model')?.value.trim()||''};
     const targetSessionId=currentSessionId;
     const res=await fetchStory(`/sessions/${targetSessionId}/memory`,'PATCH',{settings:requested});
     if(!res.success){toast(res.msg||'保存失败');return null;}
@@ -941,16 +909,79 @@ async function runMemorySummary(kind,sessionId,options){
 }
 async function generateCoreMemory(){
     if(memoryGenerating)return toast('当前已有一个记忆任务；剧情生成不受限制。');
-    const sessionId=currentSessionId,source=qs('core-memory-source')?.value||'context',targetChars=Number(qs('core-memory-target')?.value||1000),temperature=getMemoryTemperature();
+    const sessionId=currentSessionId,source=qs('core-memory-source')?.value||'context',targetChars=Number(qs('core-memory-target')?.value||1000),temperature=getMemoryTemperature(),model=qs('memory-model')?.value.trim()||'';
     if(source==='facts'&&!memoryStore().facts.length)return toast('还没有事实记忆，请先生成事实记忆。');
-    await runMemorySummary('core',sessionId,{source,targetChars,temperature});
+    await runMemorySummary('core',sessionId,{source,targetChars,temperature,model});
 }
 async function generateFactMemories(){
     if(memoryGenerating)return toast('当前已有一个记忆任务；剧情生成不受限制。');
-    const sessionId=currentSessionId,scope=qs('fact-memory-scope')?.value||'recent',chunkRounds=Number(qs('fact-memory-chunk')?.value||10),recentRounds=Number(qs('fact-memory-recent')?.value||25),targetChars=Number(qs('fact-memory-target')?.value||360),temperature=getMemoryTemperature(),replaceExisting=scope==='all'&&!!qs('fact-memory-replace')?.checked;
+    const sessionId=currentSessionId,scope=qs('fact-memory-scope')?.value||'recent',chunkRounds=Number(qs('fact-memory-chunk')?.value||10),recentRounds=Number(qs('fact-memory-recent')?.value||25),targetChars=Number(qs('fact-memory-target')?.value||360),temperature=getMemoryTemperature(),model=qs('memory-model')?.value.trim()||'',replaceExisting=scope==='all'&&!!qs('fact-memory-replace')?.checked;
     if(!storyRoundCount())return toast('当前还没有可以总结的剧情轮次。');
     if(replaceExisting&&!confirm('这次“从头到尾”总结全部成功后，会用新事实记忆整体替换旧事实记忆。继续吗？'))return;
-    await runMemorySummary('facts',sessionId,{scope,chunkRounds,recentRounds,targetChars,temperature,replaceExisting});
+    await runMemorySummary('facts',sessionId,{scope,chunkRounds,recentRounds,targetChars,temperature,model,replaceExisting});
+}
+async function loadMemoryModels(){
+    const select=qs('memory-model-list'),input=qs('memory-model');if(!select||!input)return;
+    const previous=input.value.trim();
+    try{
+        const models=await MimaStandalone.listModels();
+        if(!select.isConnected)return;
+        select.replaceChildren();const follow=document.createElement('option');follow.value='';follow.textContent='沿用剧情模型';select.appendChild(follow);
+        for(const id of models){const option=document.createElement('option');option.value=id;option.textContent=id;select.appendChild(option);}
+        if(previous&&!models.includes(previous)){const option=document.createElement('option');option.value=previous;option.textContent=previous+' · 手动';select.appendChild(option);}
+        select.value=previous;toast(`已取得 ${models.length} 个模型，选择后请保存记忆设置。`);
+    }catch(e){toast('记忆模型列表读取失败：'+(e?.message||e));}
+}
+function selectMemoryModel(){const select=qs('memory-model-list'),field=qs('memory-model');if(select&&field)field.value=select.value;}
+function startFactMemoryEdit(id){memoryFactEditId=id;renderMemoryTab(qs('settings-content'));}
+function cancelFactMemoryEdit(){memoryFactEditId=null;renderMemoryTab(qs('settings-content'));}
+async function saveFactMemoryEdit(id){
+    if(memoryGenerating)return toast('有记忆任务正在运行，请等待结束。');
+    const sessionId=currentSessionId,content=qs('fact-edit-'+id)?.value||'';
+    if(!content.trim())return toast('正文不能留空，可以使用删除按钮');
+    const res=await fetchStory(`/sessions/${sessionId}/memory/facts/${encodeURIComponent(id)}`,'PATCH',{content});
+    if(!res.success)return toast(res.msg||'保存失败');
+    if(currentSessionId===sessionId){currentSessionData=res.data;memoryFactEditId=null;renderMemoryTab(qs('settings-content'));}
+    toast('事实记忆已按手工编辑保存');
+}
+function toggleMergeFactSelection(enabled){qsa('.memory-merge-select',qs('settings-content')).forEach(x=>{x.checked=enabled;});}
+async function previewFactMemoryMerge(){
+    if(memoryGenerating)return toast('另一个记忆任务尚未结束');
+    const sessionId=currentSessionId,selectedIds=qsa('.memory-merge-select',qs('settings-content')).filter(x=>x.checked).map(x=>x.dataset.factId);
+    if(selectedIds.length<2)return toast('请勾选至少两条事实记忆');
+    const targetChars=validatedSettingNumber('memory-merge-target','合并目标字数',100,250000);
+    if(targetChars===null)return;
+    const temperature=getMemoryTemperature(),model=qs('memory-model')?.value.trim()||'';
+    const task={kind:'merge',sessionId,sessionTitle:currentSessionData?.title||'当前剧情',controller:new AbortController(),progress:{percent:2,detail:'正在准备合并候选…'}};
+    memoryTask=task;memoryGenerating=true;paintMemoryProgress();
+    try{
+      const res=await fetchStory(`/sessions/${sessionId}/memory/facts/merge-preview`,'POST',{factIds:selectedIds,targetChars,temperature,model},false,handleMemoryProgress,task.controller.signal);
+      if(!res.success){toast(res.aborted?'已停止合并，旧记忆未改动':res.msg||res.code||'合并候选生成失败');return;}
+      memoryMergeDraft={...res.data,sessionId};
+      if(currentSessionId===sessionId&&isSettingsOpen()&&settingsTab==='memory')renderMemoryTab(qs('settings-content'));
+      toast('合并候选已生成！旧事实记忆仍完整保留，请检查后决定是否保存。');
+    }catch(e){toast('合并候选生成失败：'+(e?.message||e));}
+    finally{if(memoryTask===task){memoryTask=null;memoryGenerating=false;paintMemoryProgress();if(currentSessionId===sessionId&&isSettingsOpen()&&settingsTab==='memory')renderMemoryTab(qs('settings-content'));}}
+}
+function cancelFactMemoryMerge(){memoryMergeDraft=null;renderMemoryTab(qs('settings-content'));toast('已放弃合并候选，原记忆未改变');}
+async function confirmFactMemoryMerge(){
+    if(memoryGenerating)return toast('请先等待记忆任务结束');
+    const draft=memoryMergeDraft;if(!draft||draft.sessionId!==currentSessionId)return toast('没有可提交的合并候选');
+    const content=qs('memory-merge-result')?.value.trim()||'';if(!content)return toast('合并正文为空，请编辑后保存');
+    if(!confirm(`将 ${draft.selectedIds.length} 条事实记忆替换为一条合并记忆？原文 History 不变，并可撤销上一次合并。`))return;
+    const sessionId=draft.sessionId;
+    const res=await fetchStory(`/sessions/${sessionId}/memory/facts/merge-commit`,'POST',{...draft,content});
+    if(!res.success)return toast('合并未提交；旧事实记忆仍在：'+(res.msg||res.code||'错误'));
+    if(currentSessionId===sessionId){currentSessionData=res.data;memoryMergeDraft=null;renderMemoryTab(qs('settings-content'));}
+    toast('合并已保存，旧记忆已备份，可撤销最近一次合并');
+}
+async function undoFactMemoryMerge(){
+    if(memoryGenerating)return toast('有记忆任务正在运行');
+    if(!confirm('撤销最近一次手动事实合并？若合并后事实列表已有其他修改，会拒绝覆盖。'))return;
+    const sessionId=currentSessionId,res=await fetchStory(`/sessions/${sessionId}/memory/facts/merge-undo`,'POST',{});
+    if(!res.success)return toast('未撤销：'+(res.msg||res.code||'无可撤销记录'));
+    if(currentSessionId===sessionId){currentSessionData=res.data;memoryMergeDraft=null;renderMemoryTab(qs('settings-content'));}
+    toast('已恢复合并前的全部事实记忆，原始剧情未修改');
 }
 async function clearCoreMemory(){if(!confirm('清空当前核心记忆？剧情原文不会受影响。'))return;const res=await fetchStory(`/sessions/${currentSessionId}/memory/core`,'DELETE');if(res.success){currentSessionData=res.data;toast('核心记忆已清空');renderMemoryTab(qs('settings-content'))}else toast(res.msg||'清空失败')}
 async function deleteFactMemory(id){if(!confirm('删除这一段事实记忆？'))return;const res=await fetchStory(`/sessions/${currentSessionId}/memory/facts/${id}`,'DELETE');if(res.success){currentSessionData=res.data;renderMemoryTab(qs('settings-content'))}else toast(res.msg||'删除失败')}
@@ -1771,7 +1802,7 @@ function restoreLegacyFont(){
 }
 
 // Expose inline handlers
-Object.assign(window,{goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,choosePngResourceInspection,playInspectedPngInCompat,savePngSelectedResources,exportPngInspection,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,clearCoreMemory,deleteFactMemory,clearAllFactMemories,revokeRollingMemory,restoreRollingMemory,discardMemoryCandidate,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,syncTemperature,updateStoryTypography,resetStoryTypography,setAppearancePreviewSurface,setBuiltInTheme,dismissGenerationPanel,retryFailedGeneration,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,regenerateCurrentMsg,continueMsg,autoAdvance,restoreMessageVersion,stopGeneration});
+Object.assign(window,{goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,choosePngResourceInspection,playInspectedPngInCompat,savePngSelectedResources,exportPngInspection,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,loadMemoryModels,selectMemoryModel,startFactMemoryEdit,cancelFactMemoryEdit,saveFactMemoryEdit,toggleMergeFactSelection,previewFactMemoryMerge,cancelFactMemoryMerge,confirmFactMemoryMerge,undoFactMemoryMerge,clearCoreMemory,deleteFactMemory,clearAllFactMemories,revokeRollingMemory,restoreRollingMemory,discardMemoryCandidate,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,syncTemperature,updateStoryTypography,resetStoryTypography,setAppearancePreviewSurface,setBuiltInTheme,dismissGenerationPanel,retryFailedGeneration,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,regenerateCurrentMsg,continueMsg,autoAdvance,restoreMessageVersion,stopGeneration});
 
 
 window.MimaTavernBridge={
