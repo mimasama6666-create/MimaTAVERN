@@ -365,21 +365,43 @@
     if(session.loadedCharMaskId)add('character_persona',formatMask(enabledMask(session.loadedCharMaskId),'character'),{sourceId:session.loadedCharMaskId,resourceId:session.loadedCharMaskId});
     add('worldbook_middle',joinWb(middle,'System Middle'),{sourceId:middle.map(x=>x.entry.id).join(','),resourceId:middle.map(x=>x.book.id).join(',')});
     if(session.promptSettings?.pinnedFactsEnabled!==false&&session.pinnedFacts?.length)add('pinned_facts',`【Pinned Facts】\n${session.pinnedFacts.map(x=>`- ${x}`).join('\n')}`);
-    if(options.excludeRollingSummary!==true&&session.promptSettings?.summaryEnabled!==false&&(!session.rollingSourceFingerprint?!(session.legacyMemoryQuarantined||session.promptLineageProjection):session.rollingSourceCount>0&&session.messages.length>=session.rollingSourceCount&&memorySourceFingerprint(session.messages,session.rollingSourceCount)===session.rollingSourceFingerprint)&&(session.rollingSummary||session.summary||session.longSummary))add('story_summary',`【剧情摘要 / Rolling Summary】\n${session.rollingSummary||session.summary||session.longSummary}`);
-    const memory=normalizeManualMemory(session.manualMemory||{});const memoryTrace=[];
-    const coreValid=memorySourceValid(session,memory.core);
-    memoryTrace.push({kind:'core',verification:memory.core.verification.status,sourceCount:memory.core.sourceCount,source:memory.core.source,chars:memory.core.content.length,injected:!!(memory.settings.injectCore&&memory.core.content&&coreValid),reason:!coreValid?'stale_source':!memory.settings.injectCore?'disabled':memory.core.content?'included':'empty'});
-    if(memory.settings.injectCore&&memory.core.content&&coreValid){
-      const trust=memory.core.verification.status;
-      const label=trust==='human_confirmed'?'玩家手工编辑':'AI总结（可编辑）';
+    // Canonical, forward-moving chat must inject the memories that the owner
+    // saved and enabled. Source fingerprints are diagnostics for revision drift,
+    // NOT an authority to silently erase the owner's memory from the request.
+    // A historical regeneration is different: its prefix must not read memory
+    // derived from turns which have not happened in that replayed timeline.
+    const replay=session.promptLineageProjection===true;
+    const memory=normalizeManualMemory(session.manualMemory||{}),memoryTrace=[];
+    const rollingText=session.rollingSummary||session.summary||session.longSummary;
+    const rollingSourceCurrent=!session.rollingSourceFingerprint
+      ?!(session.legacyMemoryQuarantined||replay)
+      :session.rollingSourceCount>0&&session.messages.length>=session.rollingSourceCount&&memorySourceFingerprint(session.messages,session.rollingSourceCount)===session.rollingSourceFingerprint;
+    const rollingIncluded=options.excludeRollingSummary!==true&&session.promptSettings?.summaryEnabled!==false&&!!rollingText&&(!replay||rollingSourceCurrent);
+    memoryTrace.push({kind:'rolling',chars:rollingText.length,injected:rollingIncluded,sourceCurrent:rollingSourceCurrent,
+      reason:options.excludeRollingSummary===true?'explicit_exclusion':session.promptSettings?.summaryEnabled===false?'disabled':!rollingText?'empty':replay&&!rollingSourceCurrent?'historical_replay_boundary':rollingSourceCurrent?'included':'source_changed_included'});
+    if(rollingIncluded)add('story_summary',`【剧情摘要 / Rolling Summary】\n${rollingText}`);
+    const coreSourceCurrent=memorySourceValid(session,memory.core);
+    const coreIncluded=!!(memory.settings.injectCore&&memory.core.content&&(!replay||coreSourceCurrent));
+    memoryTrace.push({kind:'core',verification:memory.core.verification.status,sourceCount:memory.core.sourceCount,
+      source:memory.core.source,sourceCurrent:coreSourceCurrent,chars:memory.core.content.length,injected:coreIncluded,
+      reason:!memory.settings.injectCore?'disabled':!memory.core.content?'empty':replay&&!coreSourceCurrent?'historical_replay_boundary':coreSourceCurrent?'included':'source_changed_included'});
+    if(coreIncluded){
+      const label=memory.core.verification.status==='human_confirmed'?'玩家手工编辑':'AI总结（可编辑）';
       add('manual_core_memory',`【核心记忆 / Core Memory】【来源：${label}】\n${memory.core.content}`);
     }
-    if(memory.settings.injectFacts&&memory.facts.length){
-      const selected=memory.facts.filter(f=>memorySourceValid(session,f)).sort((a,b)=>Number(a.endRound||0)-Number(b.endRound||0)||String(a.updatedAt||'').localeCompare(String(b.updatedAt||''))).slice(-memory.settings.factInjectionLimit);
-      memoryTrace.push(...memory.facts.map(f=>({kind:'fact',verification:f.verification.status,id:f.id,sourceCount:f.sourceCount,startRound:f.startRound,endRound:f.endRound,chars:f.content.length,injected:selected.some(x=>x.id===f.id),reason:!memorySourceValid(session,f)?'stale_source':selected.some(x=>x.id===f.id)?'included':'injection_limit'})));
+    if(memory.facts.length){
+      const eligible=memory.facts.filter(f=>!replay||memorySourceValid(session,f))
+        .sort((a,b)=>Number(a.endRound||0)-Number(b.endRound||0)||String(a.updatedAt||'').localeCompare(String(b.updatedAt||'')));
+      const selected=memory.settings.injectFacts?eligible.slice(-memory.settings.factInjectionLimit):[];
+      const selectedIds=new Set(selected.map(f=>f.id));
+      memoryTrace.push(...memory.facts.map(f=>{
+        const current=memorySourceValid(session,f),injected=selectedIds.has(f.id);
+        return {kind:'fact',verification:f.verification.status,id:f.id,sourceCount:f.sourceCount,startRound:f.startRound,
+          endRound:f.endRound,sourceCurrent:current,chars:f.content.length,injected,
+          reason:!memory.settings.injectFacts?'disabled':replay&&!current?'historical_replay_boundary':!injected?'injection_limit':current?'included':'source_changed_included'};
+      }));
       if(selected.length)add('manual_fact_memories',`【事实记忆 / Fact Memories】\n${selected.map(x=>{
-        const trust=x.verification.status;
-        const label=trust==='human_confirmed'?'玩家手工编辑':'AI总结（可编辑）';
+        const label=x.verification.status==='human_confirmed'?'玩家手工编辑':'AI总结（可编辑）';
         return `【第 ${x.startRound}–${x.endRound} 轮 · ${label}】\n${x.content}`;
       }).join('\n\n')}`);
     }
@@ -511,7 +533,7 @@
     const promptCap=promptBudget(),visibleHistory=session.messages.filter(m=>m.role!=='director');
     const limit=Math.max(6,Number(session.promptSettings?.recentMessageLimit||34));
     const depthOnly=matched.filter(x=>Number(x.entry.depth||0)>0);
-    let sys=buildSystemPrompt(session,{...options,excludeRollingSummary:true},matched);
+    let sys=buildSystemPrompt(session,options,matched);
     let recentRaw=visibleHistory.slice(),projectedAway=[],estimatedBase=null;
     // Reserve a margin for JSON encoding, message roles, and protocol overhead.
     // Context estimates are intentionally marked as estimates in the Inspector.
@@ -543,9 +565,8 @@
         // rescanning all 3000 turns on every discard.
         estimatedBase=baseTokens(recentRaw,sys);
         while(estimatedBase>promptCap.usable){if(!discardOldestCompleteTurn())throw new ApiError('E_CONTEXT_BUDGET_BASE','最新原始剧情超过已配置窗口，已保留本地 History。');}
-        // Use a trusted-source rolling summary only when original history has
-        // actually been left out of this particular provider request.
-        sys=buildSystemPrompt(session,options,matched);
+        // The summary was already included before raw-history budgeting; do
+        // not rebuild or silently change memory while trimming source turns.
         estimatedBase=baseTokens(recentRaw,sys);
         while(estimatedBase>promptCap.usable){if(!discardOldestCompleteTurn()){
           throw new ApiError('E_CONTEXT_BUDGET_BASE','旧剧情摘要及当前必需材料超过已配置窗口。已保留完整原始存档，未发送。',{
@@ -609,7 +630,7 @@
       // Legacy systemPreview remains for existing clients, but must not be labeled
       // as actual system-role content in the GUI.
       actualSystemRole:'system',userMaterialRole:null,messageSources,
-      rollingTrace:{sourceCount:session.rollingSourceCount||0,valid:summaryValid,coverage:trace},
+      rollingTrace:{sourceCount:session.rollingSourceCount||0,valid:summaryValid,injected:sys.memoryTrace.some(x=>x.kind==='rolling'&&x.injected),coverage:trace},
       matchedWorldbookEntries:matched.map(({book,entry,activation:a})=>({bookId:book.id,bookName:book.name,entryId:entry.id,entryName:entry.name,depth:entry.depth,position:entry.position,priority:entry.priority,reason:a.reason,hits:a.hits||[],secondaryHits:a.secondaryHits||[]})),
       skippedWorldbookEntries:[...activation.skipped,...budgeted.dropped].map(({book,entry,activation:a})=>({bookId:book.id,bookName:book.name,entryId:entry.id,entryName:entry.name,reason:a.reason,neededChars:a.neededChars||0,remainingChars:a.remainingChars??null})),
       depthInjections:depthApplied.debug,systemPreview:header,actualSystemPreview:header,messagePreview:messages.map((m,index)=>({index,role:m.role,content:m.content}))}};
@@ -1233,12 +1254,11 @@
     // Merge persisted current state, not the stale pre-request snapshot.
     state=normalizeState(committed);return getSession(job.sessionId);
   }
-  // Reuse saved fact text for core summary without lexical content judgment.
-  // The only remaining fence is a changed/deleted canonical source record.
-  function trustedFactForCore(session,fact){
-    // Owner controls content. Do not silently exclude a saved fact for its wording.
-    return !!fact?.content&&memorySourceValid(session,fact);
-  }
+  // A saved fact remains the owner's editable memory even when its source
+  // History was subsequently regenerated or edited. Rebuilding core from facts
+  // must use the SAME admitted fact set as forward-chat injection, not silently
+  // reject entries using an obsolete source fingerprint.
+  function trustedFactForCore(session,fact){return !!fact?.content;}
   // Content accuracy is owner-editable. This gate validates transport/format only;
   // lexical similarity, omission, paraphrase and source citations never veto a memory.
   function validateMemoryCandidate(messages,candidate,stage,finishReason='unknown'){
@@ -1377,9 +1397,8 @@
     const data=storyRoundData(session);let source='',sourceFactCount=0;
     if(sourceType==='facts'){
       if(!memory.facts.length)throw new ApiError('E_MEMORY_NO_FACTS','还没有事实记忆可用于生成核心记忆。',{hint:'请先在“事实记忆”里生成至少一段摘要。'});
-      // Only the facts admitted by the very same canonical-source validator
-      // may enter the Provider payload. Previously *all* facts were sent to
-      // the model while memoryModel discarded untrusted facts as evidence.
+      // Owner-saved facts are admissible input even if earlier plot turns were
+      // revised. Source drift is diagnostic metadata, not a content veto.
       const facts=memory.facts.filter(f=>trustedFactForCore(session,f))
         .sort((a,b)=>a.startRound-b.startRound||a.endRound-b.endRound);
       if(!facts.length)throw new ApiError('E_MEMORY_SOURCE_STALE','现有事实记忆的原始剧情来源已被修改，请检查记忆内容。');
@@ -1701,6 +1720,10 @@
   }
   async function processStoryTurn(id,userText,action='send',signal,temp=.85,options={},progress=null){
     const preparationStartedAt=Date.now();
+    // Never assemble from an old in-memory UI snapshot when another tab or
+    // independent memory job has already committed to canonical IndexedDB.
+    // A failed read is NOT an empty memory store and must abort this request.
+    state=normalizeState(await window.MimaLocalStore.loadState());
     let session=getSession(id);
     if(!session)throw new ApiError('E_STORY_SESSION_MISSING','剧本档案丢失猫！',{hint:'本地剧情 Session（剧情会话）不存在或已被删除，请重新打开剧情。'});
     session=normalizeSession(session);
@@ -1976,7 +1999,7 @@
       if(m&&method==='DELETE'){const before=state.sessions.length;state.sessions=state.sessions.filter(x=>x.id!==m[1]);await persist();return ok({deleted:state.sessions.length<before});}
       m=path.match(/^\/sessions\/([^/]+)\/chat$/);if(m&&method==='POST')return ok(await processStoryTurn(m[1],body?.text,body?.action||'send',signal,body?.temperature,{directorNote:body?.directorNote||'',targetMessageId:body?.targetMessageId||null,diagnosticTurnId:body?.diagnosticTurnId||'',regenerationContext:body?.regenerationContext||'original',retryParameters:body?.retryParameters==='current'?'current':'original'},progress));
       m=path.match(/^\/sessions\/([^/]+)\/recover-reply$/);if(m&&method==='POST')return ok(await restoreRejectedReply(m[1],body||{}));
-      m=path.match(/^\/sessions\/([^/]+)\/prompt-preview$/);if(m&&method==='POST')return ok(previewPrompt(m[1],body||{}));
+      m=path.match(/^\/sessions\/([^/]+)\/prompt-preview$/);if(m&&method==='POST'){state=normalizeState(await window.MimaLocalStore.loadState());return ok(previewPrompt(m[1],body||{}));}
       m=path.match(/^\/sessions\/([^/]+)\/opening$/);if(m&&method==='POST')return ok(await addOpening(m[1],body?.content||''));
       m=path.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)$/);if(m&&method==='PATCH')return ok(await editMessage(m[1],m[2],body?.content,{truncateAfter:!!body?.truncateAfter}));
       if(m&&method==='DELETE')return ok(await deleteMessage(m[1],m[2]));

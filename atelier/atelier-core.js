@@ -48,23 +48,23 @@ function patternCSS(p){
   default:return null;
   }
 }
-function patternLayers(pats,part){const a=(pats||[]).filter(p=>p.enabled!==false&&p.type!=='none'&&patternCSS(p));return a.flatMap(p=>{const x=patternCSS(p);return x[part]?[x[part]]:part==='size'?['auto']:[]});}
+function patternLayers(pats,part){const a=(pats||[]).filter(p=>p.enabled!==false&&p.type!=='none'&&patternCSS(p));return a.flatMap(p=>{const x=patternCSS(p);if(part==='position')return [`${clamp(p.offsetX??0,-500,500)}px ${clamp(p.offsetY??0,-500,500)}px`];return x[part]?[x[part]]:part==='size'?['auto']:[]});}
 function styleRules(s0,pattern=[],key=''){const s={...DEFAULT,...s0},bg=rgba(s.fill,s.alpha),bd=rgba(s.borderColor,s.borderAlpha);
-  let images=patternLayers(pattern,'image'),sizes=patternLayers(pattern,'size');
+  let images=patternLayers(pattern,'image'),sizes=patternLayers(pattern,'size'),positions=patternLayers(pattern,'position');
   let gradientImage='';if(s.gradient!=='none'){const to=rgba(s.gradientTo,s.alpha);const gradient=s.gradient==='radial'?`radial-gradient(circle at 28% 20%,${to},${bg})`:s.gradient==='conic'?`conic-gradient(from ${clamp(s.angle,0,360)}deg,${bg},${to},${bg})`:`linear-gradient(${clamp(s.angle,0,360)}deg,${to},${bg})`;gradientImage=gradient;}
   if(s.image){
-    if(s.imageOpacity<100){images.push(`linear-gradient(${rgba(s.fill,100-clamp(s.imageOpacity,0,100))},${rgba(s.fill,100-clamp(s.imageOpacity,0,100))})`);sizes.push('cover');}
-    if(s.maskOpacity>0){images.push(`linear-gradient(${rgba(s.maskColor,s.maskOpacity)},${rgba(s.maskColor,s.maskOpacity)})`);sizes.push('cover');}
-    images.push(`url("${String(s.image).replace(/["\\]/g,'')}")`);sizes.push('cover');
+    if(s.imageOpacity<100){images.push(`linear-gradient(${rgba(s.fill,100-clamp(s.imageOpacity,0,100))},${rgba(s.fill,100-clamp(s.imageOpacity,0,100))})`);sizes.push('cover');positions.push('0 0');}
+    if(s.maskOpacity>0){images.push(`linear-gradient(${rgba(s.maskColor,s.maskOpacity)},${rgba(s.maskColor,s.maskOpacity)})`);sizes.push('cover');positions.push('0 0');}
+    images.push(`url("${String(s.image).replace(/["\\]/g,'')}")`);sizes.push('cover');positions.push('center center');
   }
-  if(gradientImage){images.push(gradientImage);sizes.push('auto');}
+  if(gradientImage){images.push(gradientImage);sizes.push('auto');positions.push('0 0');}
   const dark=rgba('#000000',Math.min(50,clamp(s.shadow,0,50)*1.6));const light=rgba('#ffffff',clamp(s.shadow,0,50)*1.8);
   let shadow=s.shadow?`0 ${clamp(s.shadowY,0,30)}px ${clamp(s.shadow,0,50)*1.5}px ${dark}`:'none';
   if(s.material==='neo')shadow=`${clamp(s.shadowY,0,30)}px ${clamp(s.shadow,0,50)}px ${clamp(s.shadow,0,50)*1.6}px ${dark},-${clamp(s.shadowY,0,30)}px -${clamp(s.shadow,0,50)}px ${clamp(s.shadow,0,50)*1.6}px ${light}`;
   if((s.material==='skeuo'||s.material==='aqua')&&shadow==='none')shadow='inset 0 1px 1px rgba(255,255,255,.01)';
   if(s.material==='skeuo'||s.material==='aqua')shadow+=`,inset 0 2px 3px rgba(255,255,255,.65),inset 0 -3px 5px rgba(0,0,0,.13)`;
   if(s.material==='brutal')shadow=`${clamp(s.shadow,0,50)/2}px ${clamp(s.shadow,0,50)/2}px 0 ${rgba('#111111',80)}`;
-  const rules=[`background-color:${bg}`,images.length?`background-image:${images.join(',')}`:'background-image:none',images.length?`background-size:${sizes.join(',')}`:'',`border:${clamp(s.border,0,20)}px solid ${bd}`,`border-width:${['borderTop','borderRight','borderBottom','borderLeft'].map(k=>clamp(s[k]<0?s.border:s[k],0,20)+'px').join(' ')}`,s.paddingX>=0&&key!=='shell'?`padding-left:${clamp(s.paddingX,0,80)}px;padding-right:${clamp(s.paddingX,0,80)}px`:'',s.paddingY>=0&&key!=='shell'?`padding-top:${clamp(s.paddingY,0,80)}px;padding-bottom:${clamp(s.paddingY,0,80)}px`:'',`border-radius:${clamp(s.radius,0,100)}px`,`box-shadow:${shadow}`,s.blur>0?`backdrop-filter:blur(${clamp(s.blur,0,60)}px)`:'backdrop-filter:none',s.blur>0?`-webkit-backdrop-filter:blur(${clamp(s.blur,0,60)}px)`:'-webkit-backdrop-filter:none',`color:${hex(s.ink)}`,`font-size:${clamp(s.fontSize,8,38)}px`,s.fontFamily&&s.fontFamily!=='inherit'?`font-family:${/^MimaAtelierFont_[A-Za-z0-9]+$/.test(s.fontFamily)?'"'+s.fontFamily+'"':(['system-ui','serif','monospace'].includes(s.fontFamily)?s.fontFamily:'inherit')}`:'',s.stroke>0?`-webkit-text-stroke:${clamp(s.stroke,0,4)}px ${hex(s.strokeColor)}`:'',s.textShadow?`text-shadow:0 1px ${clamp(s.textShadow,0,20)}px ${rgba(s.strokeColor,75)}`:'text-shadow:none'];
+  const rules=[`background-color:${bg}`,images.length?`background-image:${images.join(',')}`:'background-image:none',images.length?`background-size:${sizes.join(',')}`:'',images.length?`background-position:${positions.join(',')}`:'',`border:${clamp(s.border,0,20)}px solid ${bd}`,`border-width:${['borderTop','borderRight','borderBottom','borderLeft'].map(k=>clamp(s[k]<0?s.border:s[k],0,20)+'px').join(' ')}`,s.paddingX>=0&&key!=='shell'?`padding-left:${clamp(s.paddingX,0,80)}px;padding-right:${clamp(s.paddingX,0,80)}px`:'',s.paddingY>=0&&key!=='shell'?`padding-top:${clamp(s.paddingY,0,80)}px;padding-bottom:${clamp(s.paddingY,0,80)}px`:'',`border-radius:${clamp(s.radius,0,100)}px`,`box-shadow:${shadow}`,s.blur>0?`backdrop-filter:blur(${clamp(s.blur,0,60)}px)`:'backdrop-filter:none',s.blur>0?`-webkit-backdrop-filter:blur(${clamp(s.blur,0,60)}px)`:'-webkit-backdrop-filter:none',`color:${hex(s.ink)}`,`font-size:${clamp(s.fontSize,8,38)}px`,s.fontFamily&&s.fontFamily!=='inherit'?`font-family:${/^MimaAtelierFont_[A-Za-z0-9]+$/.test(s.fontFamily)?'"'+s.fontFamily+'"':(['system-ui','serif','monospace'].includes(s.fontFamily)?s.fontFamily:'inherit')}`:'',s.stroke>0?`-webkit-text-stroke:${clamp(s.stroke,0,4)}px ${hex(s.strokeColor)}`:'',s.textShadow?`text-shadow:0 1px ${clamp(s.textShadow,0,20)}px ${rgba(s.strokeColor,75)}`:'text-shadow:none'];
   if(s.shape==='pill')rules.push('border-radius:999px');
   if(s.shape==='hexagon')rules.push('clip-path:polygon(17% 0,83% 0,100% 50%,83% 100%,17% 100%,0 50%)');
   if(s.shape==='ticket')rules.push('clip-path:polygon(0 0,100% 0,100% 36%,94% 50%,100% 64%,100% 100%,0 100%,0 64%,6% 50%,0 36%)');
@@ -89,15 +89,15 @@ function baseTheme(id='liquid-frost'){
  elements.secondary={...base,fill:'#ffffff',alpha:55};
  elements.field={...base,fill:'#ffffff',alpha:78,blur:3};
  elements.message={...base,fill:'#ffffff',alpha:24,border:0,blur:0,shadow:0};
- return {id:uid(),name:`${name} · 自定义`,format:'mima-atl-project',schema:1,template:id,elements,patterns:[],stickers:[],fonts:[],favorites:[],variants:{},extraCss:'',createdAt:Date.now(),updatedAt:Date.now()};
+ return {id:uid(),name:`${name} · 自定义`,format:'mima-atl-project',schema:1,template:id,elements,patterns:[],stickers:[],fonts:[],favorites:[],variants:{},extraCss:'',draftVersion:0,createdAt:Date.now(),updatedAt:Date.now()};
 }
-function normalized(raw){if(!raw||raw.format!=='mima-atl-project'||raw.schema!==1||!raw.elements||typeof raw.elements!=='object')throw new Error('不支持或损坏的主题工程格式');const obj=baseTheme(raw.template||'minimal-clear');obj.id=String(raw.id||uid());obj.name=safeName(raw.name);obj.createdAt=Number(raw.createdAt)||Date.now();obj.updatedAt=Number(raw.updatedAt)||Date.now();for(const k of Object.keys(TARGETS)){if(raw.elements[k]&&typeof raw.elements[k]==='object'){
+function normalized(raw){if(!raw||raw.format!=='mima-atl-project'||raw.schema!==1||!raw.elements||typeof raw.elements!=='object')throw new Error('不支持或损坏的主题工程格式');const obj=baseTheme(raw.template||'minimal-clear');obj.id=String(raw.id||uid());obj.name=safeName(raw.name);obj.createdAt=Number(raw.createdAt)||Date.now();obj.updatedAt=Number(raw.updatedAt)||Date.now();obj.draftVersion=Math.max(0,Number(raw.draftVersion)||0);for(const k of Object.keys(TARGETS)){if(raw.elements[k]&&typeof raw.elements[k]==='object'){
  const e={...obj.elements[k]};for(const field of Object.keys(DEFAULT))if(Object.prototype.hasOwnProperty.call(raw.elements[k],field)){
  const v=raw.elements[k][field];e[field]=typeof DEFAULT[field]==='number'?clamp(v,-10000,10000):typeof v==='string'?v.slice(0,250):DEFAULT[field];
  } e.fill=hex(e.fill);e.ink=hex(e.ink);e.borderColor=hex(e.borderColor);e.strokeColor=hex(e.strokeColor);e.gradientTo=hex(e.gradientTo);e.maskColor=hex(e.maskColor);e.image=validImage(raw.elements[k].image)?raw.elements[k].image:'';obj.elements[k]=e;}}
  obj.fonts=Array.isArray(raw.fonts)?raw.fonts.slice(0,20).filter(x=>/^data:(font\/(woff2?|ttf|otf)|application\/(font-woff|x-font-ttf|x-font-opentype|octet-stream));base64,[A-Za-z0-9+/=]+$/.test(x?.src||'')&&x.src.length<12*1024*1024&&/^MimaAtelierFont_[A-Za-z0-9]+$/.test(x.family||'')).map(x=>({family:x.family,name:safeName(x.name),format:String(x.format||'woff2').replace(/[^a-z0-9]/gi,'').slice(0,6),src:x.src})):[];
  for(const key of Object.keys(TARGETS))if(!['inherit','system-ui','serif','monospace'].includes(obj.elements[key].fontFamily)&&!obj.fonts.some(x=>x.family===obj.elements[key].fontFamily))obj.elements[key].fontFamily='inherit';
- obj.patterns=Array.isArray(raw.patterns)?raw.patterns.slice(0,60).filter(x=>TARGETS[x.target]&&PATTERNS.includes(x.type)).map(x=>({id:String(x.id||uid()),target:x.target,type:x.type,color:hex(x.color),opacity:clamp(x.opacity,0,100),size:clamp(x.size,5,160),weight:clamp(x.weight,.5,25),angle:clamp(x.angle,0,360),enabled:x.enabled!==false})):[];
+ obj.patterns=Array.isArray(raw.patterns)?raw.patterns.slice(0,60).filter(x=>TARGETS[x.target]&&PATTERNS.includes(x.type)).map(x=>({id:String(x.id||uid()),target:x.target,type:x.type,color:hex(x.color),opacity:clamp(x.opacity,0,100),size:clamp(x.size,5,160),weight:clamp(x.weight,.5,25),angle:clamp(x.angle,0,360),offsetX:clamp(x.offsetX??0,-500,500),offsetY:clamp(x.offsetY??0,-500,500),enabled:x.enabled!==false})):[];
  obj.stickers=Array.isArray(raw.stickers)?raw.stickers.slice(0,40).filter(x=>validImage(x.src)&&TARGETS[x.anchor||'shell']).map(x=>({id:String(x.id||uid()),name:safeName(x.name),src:x.src,anchor:x.anchor||'shell',x:clamp(x.x,-150,250),y:clamp(x.y,-150,250),width:clamp(x.width,4,200),rotate:clamp(x.rotate,-360,360),opacity:clamp(x.opacity,0,100),hidden:!!x.hidden})):[];
  obj.extraCss=String(raw.extraCss||'').slice(0,100000);
  obj.favorites=Array.isArray(raw.favorites)?raw.favorites.slice(0,40).filter(x=>x&&typeof x.name==='string'&&x.style&&typeof x.style==='object').map(x=>({id:String(x.id||uid()),name:safeName(x.name),style:{...obj.elements.button,...Object.fromEntries(Object.keys(DEFAULT).filter(k=>Object.hasOwn(x.style,k)).map(k=>[k,x.style[k]]))}})):[];
@@ -154,7 +154,21 @@ let lastPosition=0;const observer=new MutationObserver(()=>{if(decor){const now=
 window.addEventListener('DOMContentLoaded',()=>{observer.observe(document.body,{childList:true,subtree:true});});
 async function saveHistory(key,project){await putMany([[key,normalized(project)]]);}
 async function latestHistory(id){const found=(await keys()).filter(k=>String(k).startsWith('history:'+id+':')).sort();return found.length?await get(found[found.length-1]):null;}
-async function saveDraft(project){const p=normalized(project);p.updatedAt=Date.now();await putMany([['project:'+p.id,p]]);return p;}
+async function saveDraft(project){
+ const p=normalized(project),expected=p.draftVersion||0,db=await getDB();
+ return new Promise((resolve,reject)=>{
+  const tx=db.transaction(STORE,'readwrite'),store=tx.objectStore(STORE),request=store.get('project:'+p.id);let failure=null;
+  request.onsuccess=()=>{
+   const old=request.result;
+   if((old?.draftVersion||0)!==expected){failure=new Error('此主题已被另一个页面修改。请保存当前工程 JSON 备份后重新载入，避免覆盖新修改。');tx.abort();return;}
+   p.draftVersion=expected+1;p.updatedAt=Math.max(Date.now(),(old?.updatedAt||0)+1);
+   store.put(p,'project:'+p.id);store.put({id:p.id,updatedAt:p.updatedAt},'lastEdited');
+  };
+  request.onerror=()=>{failure=request.error;tx.abort()};
+  tx.oncomplete=()=>resolve(p);tx.onabort=()=>reject(failure||tx.error||Error('草稿保存已取消'));
+  tx.onerror=()=>{failure=tx.error};
+ });
+}
 async function listProjects(){return (await keys()).filter(k=>String(k).startsWith('project:')).map(k=>String(k).slice(8));}
 async function apply(project){await ready;const p=normalized(project);const css=compile(p);if(!bypass()&&typeof CSSStyleSheet!=='undefined'&&CSSStyleSheet.prototype.replaceSync){const x=new CSSStyleSheet();x.replaceSync(css);}const was=applied?clone(applied):null;const previous=active||{id:null,version:0};const next={id:p.id,version:(previous.version||0)+1,releaseKey:'release:'+p.id+':'+((previous.version||0)+1),updatedAt:Date.now()};
  // Save theme and active pointer in one canonical transaction. Never report success before actual visual activation.
