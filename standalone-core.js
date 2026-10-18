@@ -104,7 +104,13 @@
       settings:{
         injectCore:input.settings?.injectCore!==false,
         injectFacts:input.settings?.injectFacts!==false,
-        factInjectionLimit:clampInt(input.settings?.factInjectionLimit,1,100,12),
+        // 0 explicitly means all eligible facts; no artificial 100-item ceiling.
+        // Existing saved positive limits retain their exact meaning.
+        factInjectionLimit:clampInt(input.settings?.factInjectionLimit,0,Number.MAX_SAFE_INTEGER,12),
+        factChunkRounds:clampInt(input.settings?.factChunkRounds,1,200,10),
+        factTargetChars:clampInt(input.settings?.factTargetChars,80,12000,1800),
+        factScope:input.settings?.factScope==='all'?'all':'recent',
+        factRecentRounds:clampInt(input.settings?.factRecentRounds,1,100000,25),
         summaryTemperature:clampTemp(input.settings?.summaryTemperature??0.35),
         memoryModel:String(input.settings?.memoryModel||'').trim().slice(0,240)
       }
@@ -392,7 +398,7 @@
     if(memory.facts.length){
       const eligible=memory.facts.filter(f=>!replay||memorySourceValid(session,f))
         .sort((a,b)=>Number(a.endRound||0)-Number(b.endRound||0)||String(a.updatedAt||'').localeCompare(String(b.updatedAt||'')));
-      const selected=memory.settings.injectFacts?eligible.slice(-memory.settings.factInjectionLimit):[];
+      const selected=memory.settings.injectFacts?(memory.settings.factInjectionLimit===0?eligible:eligible.slice(-memory.settings.factInjectionLimit)):[];
       const selectedIds=new Set(selected.map(f=>f.id));
       memoryTrace.push(...memory.facts.map(f=>{
         const current=memorySourceValid(session,f),injected=selectedIds.has(f.id);
@@ -649,7 +655,7 @@
   }
   function apiErrorHint(code,status,message=''){
     const m=String(message||'');
-    if(status===400&&/(?:prompt_rejected|blocked by upstream content policy|content[_ -]?filter|prohibited.use.policy)/i.test(m))return '接口明确报告内容政策拦截。本轮请求已被服务端拒绝，原始请求与剧情已保留，不会自动重复计费。';
+    if(status===400&&/(?:prompt_rejected|prompt[_ -]?blocked|prohibited[_ -]?content|blocked by upstream content policy|content[_ -]?filter|prohibited.use.policy)/i.test(m))return '接口明确报告内容政策拦截。本轮请求已被服务端拒绝，原始请求与剧情已保留，不会自动重复计费。';
     if(code==='E_API_CONFIG')return '请检查 API Base URL（基础地址）、模型名和高级端点设置。';
     if(code==='E_API_NETWORK_CORS')return '浏览器没有拿到可读取的响应。常见原因是 CORS（跨域）被 API 服务拦截、域名不可达、HTTPS 证书异常或网络中断。';
     if(code==='E_API_BAD_JSON')return '接口返回了网页、网关文本或其他非 JSON 内容。通常是 API 地址填错、反代报错，或服务端没有按 OpenAI-compatible 格式响应。';
@@ -927,7 +933,11 @@
     }
     const body=makeApiBody(messages,cfg,temperature,options),serializationStartedAt=Date.now();
     const requestJson=JSON.stringify(body),requestBytes=new TextEncoder().encode(requestJson).byteLength;
-    const requestId=makeId('req'),diag={requestId,jobId:options.memoryContext?.jobId||null,attemptId:options.memoryContext?.attemptId||null,stage:options.memoryContext?.stage||'story',model:body.model,endpointOrigin:(()=>{try{return new URL(chat).origin}catch{return 'unknown'}})(),requestFields:Object.keys(body).sort(),messageCount:body.messages.length,temperaturePresent:Object.hasOwn(body,'temperature'),maxTokens:body.max_tokens||null,stream:streamEnabled,requestBytes,serializationElapsedMs:Date.now()-serializationStartedAt,
+    // Record an immutable payload fingerprint and the exact message-role/size
+    // shape at the network boundary. NEVER store raw story text or credentials.
+    // Repeating a failed stage can now prove whether the same body was sent.
+    const payloadShape=Array.isArray(body.messages)?body.messages.map(m=>({role:String(m.role||''),chars:typeof m.content==='string'?m.content.length:null})):[];
+    const requestId=makeId('req'),diag={requestId,jobId:options.memoryContext?.jobId||null,attemptId:options.memoryContext?.attemptId||null,stage:options.memoryContext?.stage||'story',model:body.model,endpointOrigin:(()=>{try{return new URL(chat).origin}catch{return 'unknown'}})(),requestFields:Object.keys(body).sort(),messageCount:body.messages.length,messageShape:payloadShape,requestFingerprint:fingerprint(requestJson),temperaturePresent:Object.hasOwn(body,'temperature'),maxTokens:body.max_tokens||null,stream:streamEnabled,requestBytes,serializationElapsedMs:Date.now()-serializationStartedAt,
       generationId:options.storyContext?.generationId||null,generationAttempt:options.storyContext?.generationAttempt||null,preparationElapsedMs:options.storyContext?.preparationElapsedMs??null};
     const diagnostic=extra=>JSON.stringify({...diag,...extra});
     // Exact body.messages at the fetch boundary. Credentials, auth headers and
@@ -953,15 +963,22 @@
     try{options.onDiagnostic?.({type:'transport_response',...responseTiming});}catch(e){console.error('诊断事件回调失败；真实响应继续解析',e);}
     if(!res.ok){
       const responseBodyStartedAt=Date.now();
-      let data={};try{data=await (res.clone?res.clone():res).json()}catch(_){}
+      let data={},responseKind='json',plainError='';
+      // Some OpenAI-compatible gateways return text/plain, an error string,
+      // or {error:{status,reason}} instead of {error:{message,code}}.
+      // Preserve the provider's actual error classification, not a fake 400.
+      try{
+        const errorText=await res.text();
+        try{data=JSON.parse(errorText);}catch(_){responseKind='text';plainError=errorText.slice(0,320);}
+      }catch(_){responseKind='unreadable';}
       const err=data?.error&&typeof data.error==='object'?data.error:{};
       const field=value=>typeof value==='string'||typeof value==='number'?String(value).slice(0,200):null;
-      const message=err.message||data?.message||`API 请求失败 HTTP ${res.status}`;
+      const message=err.message||data?.message||(typeof data?.error==='string'?data.error:null)||(typeof data==='string'?data:null)||plainError||`API 请求失败 HTTP ${res.status}`;
       const messageRequestId=typeof message==='string'?message.match(/\(request id:\s*([A-Za-z0-9_.:-]{1,200})\)\s*$/i)?.[1]:null;
-      const providerError={type:field(err.type),code:field(err.code),param:field(err.param),requestId:safeId(err.request_id||data?.request_id||messageRequestId)};
+      const providerError={type:field(err.type),code:field(err.code||err.status||data?.code),reason:field(err.reason||err.status||data?.reason),param:field(err.param),requestId:safeId(err.request_id||data?.request_id||messageRequestId)};
       const problem=httpApiError(res.status,message);
       if(err.code==='model_not_found'&&/No available channel for model/i.test(String(message)))problem.hint='中转报告当前模型在该分组下没有可用渠道。请中转管理员按上游 request id 核查模型映射与渠道状态；连续重试同一路由无法修复渠道配置。';
-      problem.details=diagnostic({errorSource:'http',...responseTiming,providerError,responseBodyElapsedMs:Date.now()-responseBodyStartedAt,responseShape:Object.keys(data||{}).slice(0,20)});throw problem;
+      problem.details=diagnostic({errorSource:'http',...responseTiming,providerError,responseKind,responseBodyElapsedMs:Date.now()-responseBodyStartedAt,responseShape:data&&typeof data==='object'?Object.keys(data).slice(0,20):[]});throw problem;
     }
     const contentType=String(res.headers?.get?.('content-type')||'').toLowerCase();
     if(streamEnabled&&!/application\/json/i.test(contentType)){
