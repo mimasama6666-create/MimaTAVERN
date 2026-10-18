@@ -1479,7 +1479,7 @@ function renderLiveStreamText(){
     const rendered=MimaStandalone.applyRegexForSession?MimaStandalone.applyRegexForSession(st.owner.sessionId,raw,'display'):raw;
     const allowHtml=currentSessionData?.renderMode==='safe_html';
     st.contentNode.className=`msg-content tavern-story-content live-stream-content${allowHtml?' safe-html-content':''}`;
-    st.contentNode.innerHTML='';appendRenderedContent(st.contentNode,rendered,allowHtml);
+    st.contentNode.innerHTML='';appendRenderedContent(st.contentNode,rendered,allowHtml,true);
     const box=qs('story-chat-box');if(box&&st.followTail!==false)box.scrollTop=box.scrollHeight;
     updateStoryFollowButton();
 }
@@ -1649,7 +1649,7 @@ function autoResizeInput(){const el=qs('story-input');el.style.height='auto';el.
 
 function refreshChatBox(options={}){const box=qs('story-chat-box'),renderedSessionId=currentSessionId,renderedEpoch=sessionNavigationEpoch;box.innerHTML='';if(!currentSessionData||!currentSessionData.messages?.length){box.innerHTML=`<div class="empty-state"><div class="empty-icon">${currentChar()?'🤍':'🍷'}</div><h2>${escapeHtml(currentChar()?.name||'这个宇宙还是空的')}</h2><p>${currentChar()?.firstMessage?'角色卡里有开场白，可以在角色设置中插入。':'写下第一句话，剧情从这里开始。'}</p><button class="ghost-btn" onclick="MimaCompatUI.open()">🎴 或者用酒馆角色卡开始聊天</button></div>`;return}currentSessionData.messages.forEach(renderMessageToUI);requestAnimationFrame(()=>{if(renderedSessionId!==currentSessionId||renderedEpoch!==sessionNavigationEpoch)return;if(Number.isFinite(Number(options.scrollTop)))box.scrollTop=Number(options.scrollTop);else if(options.scrollToBottom!==false)box.scrollTop=box.scrollHeight})}
 function renderPendingUserMessage(text){const box=qs('story-chat-box');if(!box)return;const div=document.createElement('article');div.className='message user-msg pending-user-message';div.dataset.msgId='pending_'+Date.now();const header=document.createElement('div');header.className='msg-header';header.textContent=`${currentUser()?.name||'你'} · 正在提交`;const content=document.createElement('div');content.className='msg-content tavern-story-content';appendRenderedContent(content,cleanCorruptText(text),false);div.append(header,content);box.appendChild(div);box.scrollTop=box.scrollHeight}
-function renderMessageToUI(msg){const box=qs('story-chat-box');const role=msg.role||'system';const div=document.createElement('article');div.className=`message ${role}-msg`;div.dataset.msgId=msg.id||'';const header=document.createElement('div');header.className='msg-header';const roleName=role==='user'?(currentUser()?.name||'你'):(role==='assistant'?(currentChar()?.name||(currentSessionData?.mode==='sandalphon'?'圣德芬':'角色')):'系统');header.textContent=`${roleName}${msg.isEdited?' · 已编辑':''}${msg.versions?.length?` · ${msg.versions.length} 个旧版本`:''}`;div.appendChild(header);const content=document.createElement('div');const allowHtml=role==='assistant'&&currentSessionData?.renderMode==='safe_html';content.className=`msg-content tavern-story-content${allowHtml?' safe-html-content':''}`;const displayText=role==='assistant'&&MimaStandalone.applyRegexForSession?MimaStandalone.applyRegexForSession(currentSessionId,msg.content||'','display'):msg.content||'';appendRenderedContent(content,cleanCorruptText(displayText),allowHtml);div.appendChild(content);if(role==='user'||role==='assistant'){const tools=document.createElement('div');tools.className='msg-tools';tools.append(makeToolButton('编辑',()=>openMessageEditor(msg,false)),makeToolButton('从这里分支',()=>openMessageEditor(msg,true)),makeToolButton('删除',()=>deleteStoryMessage(msg),true));if(role==='assistant'&&msg.versions?.length)tools.append(makeToolButton('看旧版本',()=>showVersions(msg)));div.appendChild(tools)}box.appendChild(div)}
+function renderMessageToUI(msg){const box=qs('story-chat-box');const role=msg.role||'system';const div=document.createElement('article');div.className=`message ${role}-msg`;div.dataset.msgId=msg.id||'';const header=document.createElement('div');header.className='msg-header';const roleName=role==='user'?(currentUser()?.name||'你'):(role==='assistant'?(currentChar()?.name||(currentSessionData?.mode==='sandalphon'?'圣德芬':'角色')):'系统');header.textContent=`${roleName}${msg.isEdited?' · 已编辑':''}${msg.versions?.length?` · ${msg.versions.length} 个旧版本`:''}`;div.appendChild(header);const content=document.createElement('div');const allowHtml=role==='assistant'&&currentSessionData?.renderMode==='safe_html';content.className=`msg-content tavern-story-content${allowHtml?' safe-html-content':''}`;const displayText=role==='assistant'&&MimaStandalone.applyRegexForSession?MimaStandalone.applyRegexForSession(currentSessionId,msg.content||'','display'):msg.content||'';appendRenderedContent(content,cleanCorruptText(displayText),allowHtml,role==='assistant');div.appendChild(content);if(role==='user'||role==='assistant'){const tools=document.createElement('div');tools.className='msg-tools';tools.append(makeToolButton('编辑',()=>openMessageEditor(msg,false)),makeToolButton('从这里分支',()=>openMessageEditor(msg,true)),makeToolButton('删除',()=>deleteStoryMessage(msg),true));if(role==='assistant'&&msg.versions?.length)tools.append(makeToolButton('看旧版本',()=>showVersions(msg)));div.appendChild(tools)}box.appendChild(div)}
 function makeToolButton(text,fn,danger=false){const b=document.createElement('button');b.className=`tool-mini${danger?' danger':''}`;b.textContent=text;b.onclick=fn;return b}
 function openMessageEditor(msg,truncateAfter=false){editorState={type:'message',msg,truncateAfter};qs('editor-title').textContent=truncateAfter?'编辑并从这里建立新时间线':'编辑消息';qs('editor-eyebrow').textContent='STORY MESSAGE（剧情消息）';qs('editor-body').innerHTML=`<label class="form-label">消息内容</label><textarea id="message-edit-content" class="field textarea tall">${escapeHtml(msg.content||'')}</textarea>${truncateAfter?'<p class="helper">保存后，这条消息之后的旧剧情会进入 archivedBranches（归档分支），不会直接丢失。</p>':'<p class="helper">如果这是角色错误输出，也可以直接删除这一条；删除只影响当前剧情历史，不会删除角色卡、预设或其他资料库。</p>'}`;setupEditorButtons(truncateAfter?null:()=>deleteStoryMessage(msg),saveMessageEditor);qs('editor-modal').classList.remove('hidden')}
 async function saveMessageEditor(){const {msg,truncateAfter}=editorState;const res=await fetchStory(`/sessions/${currentSessionId}/messages/${msg.id}`,'PATCH',{content:qs('message-edit-content').value,truncateAfter});if(res.success){currentSessionData=res.data;closeEditor();refreshChatBox();if(truncateAfter&&msg.role==='user'&&confirm('现在从这条玩家消息重新生成后续吗？'))await triggerChat('','regenerate')}else toast(res.msg||'编辑失败')}
@@ -1687,10 +1687,25 @@ async function restoreMessageVersion(index){
     if(currentSessionId===edit.sessionId){currentSessionData=res.data;closeEditor();refreshChatBox();}
     await refreshSessionSummaryList();toast('版本已恢复，原当前版本也已归档。');
 }
-function appendProseText(parent,text){
+let storyInlineMarkdownErrorLogged=false;
+function appendProseText(parent,text,inlineMarkdown=false){
     const raw=String(text??'').replace(/\r\n?/g,'\n');if(!raw.trim())return;
     const chunks=raw.split(/\n{2,}/);
-    chunks.forEach(chunk=>{if(!chunk.trim())return;const p=document.createElement('div');p.className='story-prose story-paragraph';p.textContent=chunk.trim();parent.appendChild(p)});
+    chunks.forEach(chunk=>{
+        if(!chunk.trim())return;
+        const p=document.createElement('div');p.className='story-prose story-paragraph';
+        const prose=chunk.trim();
+        if(inlineMarkdown){
+            try{
+                if(typeof window.MimaCompatMarkdown?.renderStoryInline!=='function')throw new Error('Markdown 正文渲染模块未加载');
+                window.MimaCompatMarkdown.renderStoryInline(p,prose);
+            }catch(error){
+                if(!storyInlineMarkdownErrorLogged){console.error('咪嘛馆正文 Markdown 渲染失败，保留原文展示',error);storyInlineMarkdownErrorLogged=true;}
+                p.textContent=prose;
+            }
+        }else p.textContent=prose;
+        parent.appendChild(p);
+    });
 }
 function parseBondMeterPercent(text){
     const raw=String(text||'').replace(/\s+/g,' ').trim();
@@ -1733,11 +1748,11 @@ function hydrateSafeHtmlDynamicMeters(root){
         fill.style.setProperty('width',safeValue,'important');
     }
 }
-function appendSafeHtmlWithProse(node,text){
+function appendSafeHtmlWithProse(node,text,inlineMarkdown=false){
     const template=document.createElement('template');template.innerHTML=sanitizeAllowedHtml(text||'');
     hydrateSafeHtmlDynamicMeters(template.content);
     let prose='';
-    const flush=()=>{if(prose.trim())appendProseText(node,prose);prose=''};
+    const flush=()=>{if(prose.trim())appendProseText(node,prose,inlineMarkdown);prose=''};
     for(const child of [...template.content.childNodes]){
         if(child.nodeType===Node.TEXT_NODE){prose+=child.nodeValue||'';continue}
         if(child.nodeType===Node.ELEMENT_NODE&&child.tagName==='BR'){prose+='\n';continue}
@@ -1745,7 +1760,7 @@ function appendSafeHtmlWithProse(node,text){
     }
     flush();
 }
-function appendRenderedContent(node,text,allowHtml=false){if(allowHtml){appendSafeHtmlWithProse(node,text);return}appendProseText(node,text)}
+function appendRenderedContent(node,text,allowHtml=false,inlineMarkdown=false){if(allowHtml){appendSafeHtmlWithProse(node,text,inlineMarkdown);return}appendProseText(node,text,inlineMarkdown)}
 function sanitizeSafeInlineStyle(styleText){
     const kept=[];
     for(const declaration of String(styleText||'').split(';')){

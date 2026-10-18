@@ -17,5 +17,27 @@ function render(target,value){
  }
  for(const child of template.content.childNodes)append(child,fragment);target.replaceChildren(fragment);target.classList.add('compat-markdown');
 }
-root.MimaCompatMarkdown=Object.freeze({html,render,version:'marked-17.0.5'});
+// Native story prose: only interpret asterisk emphasis, preserving other literal
+// Markdown/HTML syntax. Never put model output into innerHTML on this path.
+function renderStoryInline(target,value){
+ const source=String(value??'');
+ if(!source.includes('*')){target.textContent=source;return;}
+ if(!root.marked?.Lexer?.lexInline)throw Object.assign(new Error('Markdown 行内解析组件未加载'),{code:'E_MARKDOWN_UNAVAILABLE'});
+ const tokens=root.marked.Lexer.lexInline(source),fragment=document.createDocumentFragment();
+ function appendTokens(items,parent){
+  for(const token of items){
+   if((token.type==='em'||token.type==='strong')&&token.raw?.startsWith('*')){
+    const node=document.createElement(token.type==='em'?'em':'strong');
+    appendTokens(token.tokens||[],node);parent.appendChild(node);
+   }else if(token.type==='escape'){
+    parent.appendChild(document.createTextNode(token.text||''));
+   }else{
+    // HTML, links, images, code and underscores retain their original text.
+    parent.appendChild(document.createTextNode(token.raw??token.text??''));
+   }
+  }
+ }
+ appendTokens(tokens,fragment);target.replaceChildren(fragment);
+}
+root.MimaCompatMarkdown=Object.freeze({html,render,renderStoryInline,version:'marked-17.0.5'});
 })(typeof window!=='undefined'?window:globalThis);
