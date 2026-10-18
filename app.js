@@ -256,6 +256,7 @@ async function openSession(id, close=true){
     const switched=currentSessionId!==id;
     if(switched)preserveComposerDraft(currentSessionId);
     currentSessionId=id;currentSessionData=res.data;
+    window.MimaChatWallpaper?.onSession?.(id);
     if(close)closeDrawer();refreshHeader();refreshChatBox();
     if(switched){restoreComposerDraft(id);}else{preserveComposerDraft(id);}
     restoreGenerationView();
@@ -315,14 +316,14 @@ async function refreshMemoryDebtRibbon(sessionId){
     let pending=[],loadError=null;
     try{
         const jobs=await Promise.all(['rolling','facts','core'].map(k=>MimaLocalStore.getMemoryJob(sessionId,k)));
-        pending=jobs.filter(job=>job&&['needs_review','interrupted'].includes(job.status));
+        pending=jobs.filter(job=>job&&['needs_review','interrupted','failed','aborted'].includes(job.status));
     }catch(e){loadError=e;}
     if(generation!==memoryRibbonGeneration||sessionId!==currentSessionId)return;
     if(!loadError&&!pending.length)return;
     const ribbon=qs('context-ribbon');if(!ribbon)return;
     ribbon.classList.remove('hidden');
     const status=document.createElement('span');
-    status.textContent=loadError?' · 剧情记忆状态无法读取，请检查任务记录。':` · 剧情记忆有 ${pending.length} 项待核对，原始剧情已保留。`;
+    status.textContent=loadError?' · 剧情记忆状态无法读取，请检查任务记录。':` · 剧情记忆有 ${pending.length} 项失败或待恢复任务，原始剧情已保留。`;
     ribbon.appendChild(status);
     const open=document.createElement('button');open.type='button';open.className='tool-mini';open.textContent='查看记忆';
     open.addEventListener('click',()=>openSettings('memory'));ribbon.appendChild(open);
@@ -788,6 +789,33 @@ function handleMemoryProgress(payload={}){
     memoryTask.progress={...memoryTask.progress,...payload,percent:Math.max(prev,Number(payload.percent)||0)};
     paintMemoryProgress();
 }
+// Read-only owner diagnostics; never duplicate prompt text, API keys or the canonical history.
+function memoryJobDiagnostic(job){
+    const checks=Array.isArray(job?.checkpoints)?job.checkpoints:[];
+    const failures=checks.filter(p=>/_error$/.test(p.stage||''));
+    const latest=failures[failures.length-1]||{};
+    let transport={};try{if(typeof latest.details==='string')transport=JSON.parse(latest.details);}catch(_){}
+    const output={
+        task:{id:job.id,kind:job.kind,status:job.status,stage:job.stage,code:job.code||latest.errorCode||'',startedAt:job.startedAt,updatedAt:job.updatedAt,attemptId:job.attemptId,sourceCount:job.sourceCount,sourceHash:job.sourceHash},
+        request:{model:transport.model||job.options?.model||'(沿用当时剧情模型)',httpStatus:Number(latest.httpStatus||transport.httpStatus)||0,endpointOrigin:transport.endpointOrigin||'',requestId:transport.requestId||'',providerRequestId:transport.providerRequestId||transport.providerError?.requestId||'',requestBytes:transport.requestBytes||null,stage:transport.stage||latest.stage||job.stage,requestFields:transport.requestFields||[],providerError:transport.providerError||null},
+        lastError:{stage:latest.stage||'',time:latest.time||'',code:latest.errorCode||job.code||'',message:latest.errorMessage||'',hint:latest.hint||'',details:latest.details||''},
+        checkpoints:checks.slice(-35).map(p=>({stage:p.stage,time:p.time,errorCode:p.errorCode,elapsedMs:p.elapsedMs,chars:p.chars,partCount:p.partCount,finishReason:p.finishReason}))
+    };
+    return output;
+}
+function showMemoryJobDetails(job,root){
+    if(!root)return;
+    root.replaceChildren();
+    const data=memoryJobDiagnostic(job);
+    const summary=document.createElement('p');summary.className='helper';
+    summary.textContent=`${data.task.kind} · ${data.task.status} · ${data.lastError.code||'无错误码'} · HTTP ${data.request.httpStatus||'未收到响应'} · ${data.request.model}`;
+    const pre=document.createElement('pre');pre.className='memory-review-source';pre.style.cssText='white-space:pre-wrap;word-break:break-word;max-height:40vh;overflow:auto;user-select:text';
+    pre.textContent=JSON.stringify(data,null,2);
+    const buttons=document.createElement('div');buttons.className='toolbar';
+    const copy=document.createElement('button');copy.type='button';copy.className='tool-mini';copy.textContent='复制诊断';copy.onclick=()=>{if(!navigator.clipboard?.writeText)return toast('当前浏览器不支持直接复制，请长按选取诊断文字');navigator.clipboard.writeText(pre.textContent).then(()=>toast('已复制记忆任务诊断')).catch(()=>toast('复制失败，请长按选取诊断文字'));};
+    const dl=document.createElement('button');dl.type='button';dl.className='tool-mini';dl.textContent='导出诊断 JSON';dl.onclick=()=>downloadJson(`memory-diagnostic-${data.task.kind}-${Date.now()}.json`,data);
+    buttons.append(copy,dl);root.append(summary,buttons,pre);
+}
 async function refreshDurableMemoryJobs(){
     if(!currentSessionId||settingsTab!=='memory')return;
     const host=qs('memory-job-debts')||document.createElement('div');host.id='memory-job-debts';
@@ -795,26 +823,32 @@ async function refreshDurableMemoryJobs(){
     const sessionId=currentSessionId;const rows=[];
     for(const kind of ['core','facts','rolling']){
         try{const job=await MimaLocalStore.getMemoryJob(sessionId,kind);
-            if(job&&!['committed','skipped','rejected','discarded'].includes(job.status))rows.push(job);
+            if(job)rows.push(job);
         }catch(e){host.textContent='记忆任务记录读取失败，禁止当作空任务：'+e.message;return;}
     }
     if(currentSessionId!==sessionId||settingsTab!=='memory')return;
     host.replaceChildren();
-    for(const job of rows){const line=document.createElement('div');line.className='entry-card';
-        const label=document.createElement('div');label.textContent=`${job.kind} · ${job.status==='running'?'当前页面状态不确定（刷新后需核实）':job.status==='needs_review'?'旧版待复核候选，可废弃后重新总结':job.status==='interrupted'?'分片已核对，等待完成剩余总结':job.status} · ${job.stage} · ${job.code||''}`;line.appendChild(label);
-        const btn=document.createElement('button');btn.className='tool-mini';btn.textContent=job.status==='running'&&Number(job.leaseUntilEpoch||0)>Date.now()?'其他窗口可能仍运行（查看状态）':'安全恢复 / 重试原任务';
-        btn.onclick=()=>resumeMemoryJob(job.kind,job.id);line.appendChild(btn);
-        const discard=document.createElement('button');discard.type='button';discard.className='tool-mini';discard.textContent='废弃错误候选（保留任务记录）';
-        discard.onclick=()=>discardMemoryCandidate(job);line.appendChild(discard);
-        // Old journal candidates remain diagnostic history. The former
-        // compulsory factual review UI is retired; the owner edits canonical
-        // memories directly or retries a technically failed original job.
-        if(job.status==='needs_review'){
-            const note=document.createElement('p');note.className='helper';
-            note.textContent='旧版语义审核留下的候选未入库。可废弃旧任务并重新总结；不再要求逐条核对原文。';
-            line.appendChild(note);
+    const title=document.createElement('h4');title.textContent='记忆任务诊断与安全恢复';host.appendChild(title);
+    const intro=document.createElement('p');intro.className='helper';intro.textContent='显示核心、事实、滚动记忆的最近一次任务，包括失败和成功记录。HTTP 400 拦截并没有产生可恢复的总结文本；查看详情可确认失败阶段和所用模型。所有失败任务不会修改原始剧情及已保存的旧记忆。';host.appendChild(intro);
+    if(!rows.length){const empty=document.createElement('p');empty.className='helper';empty.textContent='当前会话没有持久化的记忆任务记录。';host.appendChild(empty);return;}
+    for(const job of rows){
+        const line=document.createElement('div');line.className='entry-card';
+        const label=document.createElement('div');label.textContent=`${job.kind} · ${job.status} · ${job.stage} · ${job.code||''}`;line.appendChild(label);
+        const actions=document.createElement('div');actions.className='toolbar';
+        const detail=document.createElement('button');detail.type='button';detail.className='tool-mini';detail.textContent='查看详细错误 / 请求摘要';
+        const pane=document.createElement('div');pane.hidden=true;detail.onclick=()=>{pane.hidden=!pane.hidden;if(!pane.hidden)showMemoryJobDetails(job,pane);};actions.appendChild(detail);
+        const recoverable=['failed','interrupted','aborted','needs_review','running'].includes(job.status);
+        if(recoverable){
+            const btn=document.createElement('button');btn.className='tool-mini';btn.textContent=job.status==='running'&&Number(job.leaseUntilEpoch||0)>Date.now()?'其他窗口可能仍运行（查看状态）':'按原任务参数安全恢复';
+            btn.onclick=()=>resumeMemoryJob(job.kind,job.id);actions.appendChild(btn);
+            if(job.kind!=='rolling'){
+                const fresh=document.createElement('button');fresh.type='button';fresh.className='tool-mini';fresh.textContent='使用当前设置新建总结';
+                fresh.onclick=()=>{if(memoryTask)return toast('请等待当前任务结算再开启新任务');if(job.kind==='core')generateCoreMemory();else generateFactMemories();};actions.appendChild(fresh);
+            }
+            const discard=document.createElement('button');discard.type='button';discard.className='tool-mini';discard.textContent='废弃失败候选（保留任务记录）';
+            discard.onclick=()=>discardMemoryCandidate(job);actions.appendChild(discard);
         }
-        host.appendChild(line);
+        line.append(actions,pane);host.appendChild(line);
     }
 }
 async function discardMemoryCandidate(job){
@@ -909,8 +943,11 @@ async function runMemorySummary(kind,sessionId,options){
                 toast('摘要候选需要核对来源；它并非 API 故障，也没有写入长期记忆。请在下方任务记录中审核或驳回。');
                 await refreshDurableMemoryJobs().catch(console.error);return;
             }
-            console.error('记忆总结失败',{sessionId,kind,code:res.code,details:res.details});
-            toast(`记忆总结失败：${res.msg||res.code||'未知错误'}`);return;
+            console.error('记忆总结失败',{sessionId,kind,code:res.code,status:res.status,details:res.details,message:res.msg});
+            const summary=res.code==='E_API_HTTP_400'&&/blocked|prohibited|content policy|prompt_blocked/i.test(String(res.msg||''))
+                ?'HTTP 400 · 接口拒绝提交本次记忆请求'
+                :`${res.code||'E_MEMORY_FAILED'} · ${String(res.msg||'未知原因').slice(0,90)}`;
+            toast(`记忆总结失败：${summary}。详情与恢复入口在下方「记忆任务诊断」。`);return;
         }
         // Late replies must not switch the user's current session or reopen a closed modal.
         if(currentSessionId===sessionId){
@@ -1144,7 +1181,7 @@ ${typographyControlHtml('字间距','letterSpacing',-.04,.18,.005,typo.letterSpa
 ${typographyControlHtml('首行缩进','firstLineIndent',0,4,.25,typo.firstLineIndent,'em')}
 </div><div class="typography-indent-hint"><span>中文小说推荐：<strong>2em</strong>（约两个汉字宽）</span><div class="typography-quick-buttons"><button class="tool-mini" onclick="updateStoryTypography('firstLineIndent',0)">0</button><button class="tool-mini" onclick="updateStoryTypography('firstLineIndent',1)">1em</button><button class="tool-mini" onclick="updateStoryTypography('firstLineIndent',2)">2em</button><button class="tool-mini" onclick="updateStoryTypography('firstLineIndent',3)">3em</button></div></div><div class="toolbar typography-actions"><button class="ghost-btn" onclick="resetStoryTypography()">恢复默认排版</button></div></section>
 <section class="settings-section"><h3>兼容旧版 URL（链接）字体</h3><p class="helper">旧功能保留。如果某个字体只能用网页链接，也仍然可以加载。</p><div class="form-grid"><div><label class="form-label">字体 URL（链接）</label><input id="legacy-font-url" class="field" value="${escapeHtml(localStorage.getItem(LEGACY_FONT_URL_KEY)||'')}"></div><div><label class="form-label">Font Family（字体族名）</label><input id="legacy-font-family" class="field" value="${escapeHtml(localStorage.getItem(LEGACY_FONT_FAMILY_KEY)||'')}"></div><div class="form-full"><button class="ghost-btn" onclick="applyLegacyUrlFont()">应用 URL（链接）字体</button></div></div></section>
-<section class="settings-section"><h3>🪄 CSS Preset Library（CSS 预设库）</h3><p class="helper">支持直接粘贴或导入<strong>纯 CSS</strong>，不需要手动包 &lt;style&gt;。CSS 可以只美化模型输出的自定义 HTML，也可以覆盖剧情区域，或选择“咪嘛馆全局”直接二改整个 UI（界面）。模型输出本身仍经过 Safe HTML sanitizer（安全 HTML 清洗器），不会执行 &lt;script&gt; / &lt;style&gt;。</p><div class="toolbar css-default-tools"><button class="primary-btn" onclick="openCssPresetEditor()">＋ 新建 CSS（样式）</button><button class="ghost-btn" onclick="chooseCssImport()">⇧ 导入 .css（样式文件）</button><button class="ghost-btn" onclick="copyDefaultCss()">⧉ 一键复制默认 CSS（样式）</button><button class="ghost-btn" onclick="exportDefaultCss()">⇩ 导出默认 CSS（样式）</button><button class="ghost-btn" onclick="forkDefaultCss()">✦ 默认 CSS 二改</button><button class="ghost-btn" onclick="MimaAssistantStudio.open('css')">✦ CSS 美化助手</button><button class="danger-btn" onclick="emergencyDisableCss()">🚑 临时禁用自定义 CSS（样式）</button></div><div class="row-sub css-scope-note">Scope（作用域）：自定义 HTML / Chat / Novel / Assistant / 咪嘛馆全局。Novel 与 Assistant 使用稳定公开 selector；全局 CSS 仍拥有最高覆盖能力。</div><div class="row-sub" style="margin:8px 0 12px">当前聊天：${currentCssPreset()?escapeHtml(currentCssPreset().name):'未挂载'} · ${currentSessionData?.customCssEnabled===false?'已禁用':'已启用'}</div><div class="toolbar">${currentSessionData?.customCssId?'<button class="ghost-btn" onclick="unapplyCss()">取消应用</button>':''}${currentSessionData?.customCssId&&currentSessionData?.customCssEnabled===false?'<button class="ghost-btn" onclick="reenableCss()">重新启用</button>':''}</div><button class="ghost-btn" onclick="unapplyGlobalCssPreset()">取消全局 CSS</button>${mimaLibraryToolbar('css',cssPresets)}<div id="css-preset-list" class="card-grid css-preset-grid" style="margin-top:12px"></div></section>
+${window.MimaChatWallpaper?.markup?.()||''}<section class="settings-section"><h3>🪄 CSS Preset Library（CSS 预设库）</h3><p class="helper">支持直接粘贴或导入<strong>纯 CSS</strong>，不需要手动包 &lt;style&gt;。CSS 可以只美化模型输出的自定义 HTML，也可以覆盖剧情区域，或选择“咪嘛馆全局”直接二改整个 UI（界面）。模型输出本身仍经过 Safe HTML sanitizer（安全 HTML 清洗器），不会执行 &lt;script&gt; / &lt;style&gt;。</p><div class="toolbar css-default-tools"><button class="primary-btn" onclick="openCssPresetEditor()">＋ 新建 CSS（样式）</button><button class="ghost-btn" onclick="chooseCssImport()">⇧ 导入 .css（样式文件）</button><button class="ghost-btn" onclick="copyDefaultCss()">⧉ 一键复制默认 CSS（样式）</button><button class="ghost-btn" onclick="exportDefaultCss()">⇩ 导出默认 CSS（样式）</button><button class="ghost-btn" onclick="forkDefaultCss()">✦ 默认 CSS 二改</button><button class="ghost-btn" onclick="MimaAssistantStudio.open('css')">✦ CSS 美化助手</button><button class="danger-btn" onclick="emergencyDisableCss()">🚑 临时禁用自定义 CSS（样式）</button></div><div class="toolbar"><button class="ghost-btn" onclick="stopAtelierAndRestoreCss()">一键停用工坊并恢复原 CSS</button></div><div class="row-sub css-scope-note">Scope（作用域）：自定义 HTML / Chat / Novel / Assistant / 咪嘛馆全局。Novel 与 Assistant 使用稳定公开 selector；全局 CSS 仍拥有最高覆盖能力。</div><div class="row-sub" style="margin:8px 0 12px">当前聊天：${currentCssPreset()?escapeHtml(currentCssPreset().name):'未挂载'} · ${currentSessionData?.customCssEnabled===false?'已禁用':'已启用'}</div><div class="toolbar">${currentSessionData?.customCssId?'<button class="ghost-btn" onclick="unapplyCss()">取消应用</button>':''}${currentSessionData?.customCssId&&currentSessionData?.customCssEnabled===false?'<button class="ghost-btn" onclick="reenableCss()">重新启用</button>':''}</div><button class="ghost-btn" onclick="unapplyGlobalCssPreset()">取消全局 CSS</button>${mimaLibraryToolbar('css',cssPresets)}<div id="css-preset-list" class="card-grid css-preset-grid" style="margin-top:12px"></div></section>
 <section class="settings-section"><h3>显示</h3><label class="check-row"><input id="render-html-setting" type="checkbox" ${currentSessionData?.renderMode==='safe_html'?'checked':''} onchange="toggleSafeHtml(this.checked)"> 允许 Safe HTML（安全 HTML）状态栏渲染</label><p class="helper">开启后会保留正文原有换行与空格，并支持 &lt;system&gt;、&lt;details&gt;、&lt;summary&gt;、区块、表格等安全结构，方便 CSS 状态栏直接生效。</p></section>`;qs('font-ui-select').value=ui;qs('font-story-select').value=story;const root=qs('font-list');if(fontReadError){root.textContent='字体库读取失败，原字体和选择均未更改：'+(fontReadError.message||String(fontReadError));}else if(!fontRecords.length)root.innerHTML='<div class="row-sub">还没有本地字体。</div>';if(!fontReadError)fontRecords.forEach(f=>{const r=document.createElement('div');r.className='font-row';r.innerHTML=`<div class="row-main"><div class="row-title" style="font-family:'${escapeHtml(f.family)}'">Aa　${escapeHtml(f.family)}</div><div class="row-sub">${escapeHtml(f.name)} · ${formatBytes(f.size)}</div></div><button class="danger-btn" onclick="deleteLocalFont('${f.id}')">删除</button>`;root.appendChild(r)});renderCssPresetLibrary(qs('css-preset-list'));syncStoryTypographyControls(typo)}
 function typographyControlHtml(label,key,min,max,step,value,unit){return `<div class="typography-control"><div class="typography-control-head"><label class="form-label" for="typo-${key}-range">${label}</label><span id="typo-${key}-value" class="value-pill">${storyTypoDisplay(key,value)}</span></div><div class="typography-control-row"><input id="typo-${key}-range" class="typography-range" type="range" min="${min}" max="${max}" step="${step}" value="${value}" oninput="updateStoryTypography('${key}',this.value)"><input id="typo-${key}-number" class="field typography-number" type="number" inputmode="decimal" min="${min}" max="${max}" step="${step}" value="${value}" onchange="updateStoryTypography('${key}',this.value)"><span class="typography-unit">${unit}</span></div></div>`}
 async function setBuiltInTheme(theme){const res=await fetchStory('/theme','PATCH',{theme});if(!res.success)return toast(res.msg||'主题切换失败');MimaThemeEngine?.apply?.(res.data);if(settingsTab==='appearance')renderAppearanceTab(qs('settings-content'));toast(`主题已切换为 ${theme}`)}
@@ -1192,24 +1229,52 @@ function scopeCssWithBrowserParser(css,scope){
 }
 function compileCustomCss(preset,targetSurface=null){if(!preset?.css)return'';const clean=stripEmbeddedStyleTags(preset.css);if(preset.scope==='app'||preset.surface==='global'&&preset.scope==='app')return clean;const surface=targetSurface||preset.surface||(preset.scope==='novel'?'novel':preset.scope==='assistant'?'assistant':'chat');if(surface==='novel')return scopeCssWithBrowserParser(clean,'.novel-studio-root');if(surface==='assistant')return scopeCssWithBrowserParser(clean,'.assistant-studio-panel');const scope=preset.scope==='global'?'#story-chat-box.tavern-story-scope':'.tavern-story-content';return scopeCssWithBrowserParser(clean,scope)}
 function ensureGlobalCssStyle(){let tag=qs('mima-global-css-style');if(!tag){tag=document.createElement('style');tag.id='mima-global-css-style';document.head.appendChild(tag)}return tag}
+let cssPaintEpoch=0;
 function applyCustomCss(){
-  const tag=ensureCustomCssStyle(),globalTag=ensureGlobalCssStyle(),preset=currentCssPreset();
+  const generation=++cssPaintEpoch,tag=ensureCustomCssStyle(),globalTag=ensureGlobalCssStyle(),preset=currentCssPreset();
   const safeCssBypass=new URLSearchParams(location.search).get('noCss')==='1';
-  try{tag.textContent=safeCssBypass||!currentSessionData||currentSessionData.customCssEnabled===false||!preset?'':compileCustomCss(preset);}catch(e){tag.textContent='';console.error('Scoped CSS 已拒绝无效规则',e);toast(`CSS 作用域解析失败：${e.message}`)}
   const setting=MimaStandalone.getState?.().themeSettings||{},globalPreset=cssPresets.find(x=>x.id===setting.globalCssPresetId&&x.scope==='app');
-  globalTag.textContent=safeCssBypass||setting.globalCssEnabled===false||!globalPreset?'':compileCustomCss(globalPreset);
+  // A six-megabyte legacy CSS must not be parsed merely to hide it under an exclusive Atelier theme.
+  if(!safeCssBypass&&window.MimaAtelierCore?.getPresentationMode?.()==='atelier-only'){
+    tag.textContent='';globalTag.textContent='';window.MimaAtelierCore.releaseAssets('library-session');window.MimaAtelierCore.releaseAssets('library-global');window.MimaAtelierCore.reaffirm();return;
+  }
+  const sessionPreset=!safeCssBypass&&currentSessionData?.customCssEnabled!==false?preset:null;
+  const appPreset=!safeCssBypass&&setting.globalCssEnabled!==false?globalPreset:null;
+  const libraryStyle=[{tag,p:sessionPreset},{tag:globalTag,p:appPreset}];
+  // New lightweight Atelier CSS references an immutable project snapshot. CSS and assets become visible together.
+  for(const item of libraryStyle){const {tag:element,p}=item;
+    if(!p){element.textContent='';window.MimaAtelierCore?.releaseAssets?.(element.id==='mima-global-css-style'?'library-global':'library-session');continue;}
+    if(p.atelierReleaseKey){
+      element.textContent='';
+      const engine=window.MimaAtelierCore;
+      if(!engine?.resolveLibraryCss){console.warn('[CSS library] Atelier asset bridge not ready',p.id);continue;}
+      engine.resolveLibraryCss(p,element.id==='mima-global-css-style'?'library-global':'library-session').then(result=>{
+        if(generation!==cssPaintEpoch){result.discard();return;}
+        try{element.textContent=compileCustomCss({...p,css:result.css});result.accept();engine.reaffirm();}
+        catch(e){result.discard();console.error('[CSS library] asset style application failed',e);toast('工坊预设资源应用失败：'+e.message);}
+      }).catch(e=>{if(generation!==cssPaintEpoch)return;console.error('[CSS library] preserved unresolved project',p.id,e);toast('工坊预设资源读取失败（原数据未更改）：'+e.message);});
+    }else {
+      window.MimaAtelierCore?.releaseAssets?.(element.id==='mima-global-css-style'?'library-global':'library-session');
+      try{element.textContent=compileCustomCss(p);}catch(e){element.textContent='';console.error('Scoped CSS 已拒绝无效规则',e);toast(`CSS 作用域解析失败：${e.message}`);}
+    }
+  }
   window.MimaAtelierCore?.reaffirm?.();
 }
-async function applyGlobalCssPreset(id){const preset=cssPresets.find(x=>x.id===id&&x.scope==='app');if(!preset)return toast('只能全局应用咪嘛馆全局范围 CSS');const r=await fetchStory('/theme','PATCH',{globalCssPresetId:id,globalCssEnabled:true});if(!r.success)return toast(r.msg||'全局 CSS 挂载失败');applyCustomCss();renderCssPresetLibrary(qs('css-preset-list'));toast('已全局应用 CSS：聊天、小说、设置与助手均可受其覆盖')}
+window.addEventListener('mima-atelier-presentation-change',()=>applyCustomCss());
+window.addEventListener('load',()=>{window.MimaAtelierCore?.ready?.then(()=>applyCustomCss()).catch(e=>console.error('[CSS library] Atelier readiness',e));});
+async function selectLegacyCssAppearance(action){const core=window.MimaAtelierCore;const prev=core?.getApplied?.();if(prev)await core.unapply();try{return await action();}catch(e){if(prev){try{await core.apply(prev);}catch(recovery){console.error('[Appearance] cannot restore previous active theme',recovery);toast('普通 CSS 应用失败且工坊恢复失败，原数据均保留：'+recovery.message)}}throw e;}}
+async function stopAtelierAndRestoreCss(){try{await window.MimaAtelierCore?.unapply?.();applyCustomCss();toast('工坊外观已停用，普通 CSS 已恢复（无数据删除）');if(settingsTab==='appearance')renderAppearanceTab(qs('settings-content'));}catch(e){toast('停用工坊失败：'+e.message)}}
+async function applyGlobalCssPreset(id){const preset=cssPresets.find(x=>x.id===id&&x.scope==='app');if(!preset)return toast('只能全局应用咪嘛馆全局范围 CSS');try{await selectLegacyCssAppearance(async()=>{const r=await fetchStory('/theme','PATCH',{globalCssPresetId:id,globalCssEnabled:true});if(!r.success)throw Error(r.msg||'全局 CSS 挂载失败')});}catch(e){return toast('切换到普通 CSS 失败：'+e.message)}applyCustomCss();renderCssPresetLibrary(qs('css-preset-list'));toast('已切换为普通全局 CSS（工坊暂已停用，工程保留）')}
 async function unapplyGlobalCssPreset(){const r=await fetchStory('/theme','PATCH',{globalCssPresetId:null,globalCssEnabled:false});if(!r.success)return toast(r.msg||'取消失败');applyCustomCss();renderCssPresetLibrary(qs('css-preset-list'));toast('已禁用全局 CSS')}
 function cssScopeLabel(scope){return scope==='app'?'咪嘛馆全局 Scope（作用域）':scope==='novel'?'Novel Studio（小说工作区）':scope==='assistant'?'Assistant Studio（助手工作区）':scope==='global'?'剧情面板级 Scope（作用域）':'自定义 HTML 内容级 Scope（作用域）'}
 function renderCssPresetLibrary(root){if(!root)return;const active=currentSessionData?.customCssId,globalId=MimaStandalone.getState?.().themeSettings?.globalCssPresetId;
  const list=mimaVisibleResources('css',cssPresets);root.innerHTML='';if(!list.length){root.innerHTML='<div class="row-sub">当前筛选下没有 CSS 预设。</div>';return;}
- list.sort((a,b)=>Number(!!b.favorite)-Number(!!a.favorite)||String(a.name).localeCompare(String(b.name),'zh')).forEach(p=>{const global=p.scope==='app',mounted=global?p.id===globalId:p.id===active;const row=document.createElement('div');row.className=`library-card ${mounted?'mounted':''}`;row.innerHTML=`<div class="card-title"><span>${escapeHtml(p.name)}</span>${mounted?`<span class="tag">${global?'全局挂载':'当前 Session'}</span>`:''}</div><div class="card-desc">${escapeHtml(p.category||'未分类')} · ${cssScopeLabel(p.scope)} · ${String(p.css||'').length} 字符</div><div class="card-actions"><button class="${mounted?'primary-btn':'ghost-btn'}" onclick="${global?'applyGlobalCssPreset':'applyCssPreset'}('${p.id}')">${global?'应用到全局':mounted?'重新启用':'应用到聊天'}</button><button class="ghost-btn" onclick="mimaToggleFavorite('css','${p.id}')">${p.favorite?'★ 已收藏':'☆ 收藏'}</button><button class="ghost-btn" onclick="openCssPresetEditor('${p.id}')">编辑</button><button class="ghost-btn" onclick="duplicateCssPreset('${p.id}')">复制</button><button class="ghost-btn" onclick="exportCssPreset('${p.id}')">导出</button></div>`;root.appendChild(row);});
+ list.sort((a,b)=>Number(!!b.favorite)-Number(!!a.favorite)||String(a.name).localeCompare(String(b.name),'zh')).forEach(p=>{const global=p.scope==='app',mounted=global?p.id===globalId:p.id===active;const row=document.createElement('div');row.className=`library-card ${mounted?'mounted':''}`;row.innerHTML=`<div class="card-title"><span>${escapeHtml(p.name)}</span>${mounted?`<span class="tag">${global?'全局挂载':'当前 Session'}</span>`:''}</div><div class="card-desc">${escapeHtml(p.category||'未分类')} · ${cssScopeLabel(p.scope)} · ${String(p.css||'').length} 字符</div><div class="card-actions"><button class="${mounted?'primary-btn':'ghost-btn'}" onclick="${global?'applyGlobalCssPreset':'applyCssPreset'}('${p.id}')">${global?'应用到全局':mounted?'重新启用':'应用到聊天'}</button><button class="ghost-btn" onclick="mimaToggleFavorite('css','${p.id}')">${p.favorite?'★ 已收藏':'☆ 收藏'}</button><button class="ghost-btn" onclick="openCssPresetEditor('${p.id}')">编辑</button>${String(p.css||'').length>200000&&mounted?`<button class="danger-btn" onclick="${global?'unapplyGlobalCssPreset':'unapplyCss'}()">停用大型 CSS</button>`:''}<button class="ghost-btn" onclick="duplicateCssPreset('${p.id}')">复制</button><button class="ghost-btn" onclick="exportCssPreset('${p.id}')">导出</button></div>`;root.appendChild(row);});
 }
-function openCssPresetEditor(id=null){const p=id?cssPresets.find(x=>x.id===id):{name:'',css:'',scope:'story'};editorState={type:'css-preset',id};qs('editor-title').textContent=id?`编辑 CSS · ${p?.name||''}`:'新建 CSS Preset（CSS 预设）';qs('editor-eyebrow').textContent='CSS PRESET（CSS 预设）';qs('editor-body').innerHTML=`<div class="form-grid"><div class="form-full"><label class="form-label">名称</label><input id="css-pre-name" class="field" value="${escapeHtml(p?.name||'')}"></div><div class="form-full"><label class="form-label">分类</label><input id="css-pre-category" class="field" value="${escapeHtml(p?.category||'未分类')}"></div><div class="form-full"><label class="form-label">Scope（作用域）</label><select id="css-pre-scope" class="field"><option value="story" ${p?.scope==='story'||!p?.scope?'selected':''}>自定义 HTML / 剧情内容（最安全）</option><option value="global" ${p?.scope==='global'?'selected':''}>剧情聊天区域</option><option value="app" ${p?.scope==='app'?'selected':''}>咪嘛馆全局 UI + HTML（全局二改）</option><option value="novel" ${p?.scope==='novel'?'selected':''}>Novel Studio（小说）</option><option value="assistant" ${p?.scope==='assistant'?'selected':''}>Assistant Studio（助手）</option></select><div class="row-sub">“咪嘛馆全局”会按原样应用 CSS，可修改顶栏、设置中心、输入框和剧情 HTML；若样式把 UI 隐藏，请重新打开页面后在外观里点“🚑 临时禁用”；极端情况下可在网址末尾加 <code>?noCss=1</code> 进入 CSS 安全模式。</div></div><div class="form-full"><label class="form-label">CSS（样式）</label><textarea id="css-pre-code" class="field textarea tall css-code-editor" spellcheck="false" placeholder="/* 直接写 CSS，不用 <style> */&#10;system, .status-card { padding: 12px; border-radius: 16px; }">${escapeHtml(p?.css||'')}</textarea></div></div>`;setupEditorButtons(id?()=>deleteCssPreset(id):null,saveCssPresetEditor);qs('editor-modal').classList.remove('hidden')}
-async function saveCssPresetEditor(){const wantedScope=qs('css-pre-scope').value;const body={name:qs('css-pre-name').value.trim()||'未命名 CSS（样式）',category:(qs('css-pre-category').value||'未分类').trim().slice(0,60),scope:['story','global','app','novel','assistant'].includes(wantedScope)?wantedScope:'story',surface:wantedScope==='novel'?'novel':wantedScope==='assistant'?'assistant':wantedScope==='app'?'global':'chat',css:stripEmbeddedStyleTags(qs('css-pre-code').value)};const res=await fetchStory(editorState.id?`/css-presets/${editorState.id}`:'/css-presets',editorState.id?'PATCH':'POST',body);if(!res.success)return toast(res.msg||'保存 CSS 失败');const saved=res.data;closeEditor();await loadAll();applyCustomCss();openSettings('appearance');toast(`CSS Preset（CSS 预设）「${saved.name}」已保存`)}
-async function applyCssPreset(id){if(!cssPresets.some(x=>x.id===id))return;if(!await patchCurrent({customCssId:id,customCssEnabled:true},true))return;applyCustomCss();if(settingsTab==='appearance')renderAppearanceTab(qs('settings-content'));toast('CSS（样式）已应用到当前 Session（剧情会话）')}
+function openCssPresetEditor(id=null){const p=id?cssPresets.find(x=>x.id===id):{name:'',css:'',scope:'story'};const giant=String(p?.css||'').length>200000;editorState={type:'css-preset',id,giant,loaded:!giant};qs('editor-title').textContent=id?`编辑 CSS · ${p?.name||''}`:'新建 CSS Preset（CSS 预设）';qs('editor-eyebrow').textContent='CSS PRESET（CSS 预设）';qs('editor-body').innerHTML=`<div class="form-grid"><div class="form-full"><label class="form-label">名称</label><input id="css-pre-name" class="field" value="${escapeHtml(p?.name||'')}"></div><div class="form-full"><label class="form-label">分类</label><input id="css-pre-category" class="field" value="${escapeHtml(p?.category||'未分类')}"></div><div class="form-full"><label class="form-label">Scope（作用域）</label><select id="css-pre-scope" class="field"><option value="story" ${p?.scope==='story'||!p?.scope?'selected':''}>自定义 HTML / 剧情内容（最安全）</option><option value="global" ${p?.scope==='global'?'selected':''}>剧情聊天区域</option><option value="app" ${p?.scope==='app'?'selected':''}>咪嘛馆全局 UI + HTML（全局二改）</option><option value="novel" ${p?.scope==='novel'?'selected':''}>Novel Studio（小说）</option><option value="assistant" ${p?.scope==='assistant'?'selected':''}>Assistant Studio（助手）</option></select><div class="row-sub">“咪嘛馆全局”会按原样应用 CSS，可修改顶栏、设置中心、输入框和剧情 HTML；若样式把 UI 隐藏，请重新打开页面后在外观里点“🚑 临时禁用”；极端情况下可在网址末尾加 <code>?noCss=1</code> 进入 CSS 安全模式。</div></div><div class="form-full">${giant?`<div class="row-sub" style="padding:12px;border:1px solid currentColor">这个 CSS 有 ${String(p.css).length.toLocaleString()} 字符，暂不加载到编辑框以免卡住手机。原始内容已保留。<button type="button" class="ghost-btn" onclick="mimaLoadLargeCssForEdit()">确认后加载巨型 CSS</button></div>`:''}<label class="form-label">CSS（样式）</label><textarea id="css-pre-code" class="field textarea tall css-code-editor" spellcheck="false" placeholder="/* 直接写 CSS，不用 <style> */&#10;system, .status-card { padding: 12px; border-radius: 16px; }">${giant?'':escapeHtml(p?.css||'')}</textarea></div></div>`;setupEditorButtons(id?()=>deleteCssPreset(id):null,saveCssPresetEditor);qs('editor-modal').classList.remove('hidden')}
+function mimaLoadLargeCssForEdit(){if(editorState?.type!=='css-preset'||!editorState.giant)return;const p=cssPresets.find(x=>x.id===editorState.id);if(!p)return toast('原始 CSS 已不存在；未改变任何数据');if(!confirm(`确定加载 ${String(p.css).length.toLocaleString()} 字符 CSS？低内存手机可能卡顿。`))return;qs('css-pre-code').value=p.css;editorState.loaded=true;}
+async function saveCssPresetEditor(){if(editorState?.giant&&!editorState.loaded)return toast('巨型 CSS 尚未加载，不能覆盖原记录。请先确认加载或直接关闭。');const wantedScope=qs('css-pre-scope').value;const body={name:qs('css-pre-name').value.trim()||'未命名 CSS（样式）',category:(qs('css-pre-category').value||'未分类').trim().slice(0,60),scope:['story','global','app','novel','assistant'].includes(wantedScope)?wantedScope:'story',surface:wantedScope==='novel'?'novel':wantedScope==='assistant'?'assistant':wantedScope==='app'?'global':'chat',css:stripEmbeddedStyleTags(qs('css-pre-code').value),atelierReleaseKey:''};const res=await fetchStory(editorState.id?`/css-presets/${editorState.id}`:'/css-presets',editorState.id?'PATCH':'POST',body);if(!res.success)return toast(res.msg||'保存 CSS 失败');const saved=res.data;closeEditor();await loadAll();applyCustomCss();openSettings('appearance');toast(`CSS Preset（CSS 预设）「${saved.name}」已保存`)}
+async function applyCssPreset(id){if(!cssPresets.some(x=>x.id===id))return;try{await selectLegacyCssAppearance(async()=>{if(!await patchCurrent({customCssId:id,customCssEnabled:true},true))throw Error('剧情 CSS 设置未保存')});}catch(e){return toast('切换到普通 CSS 失败：'+e.message)}applyCustomCss();if(settingsTab==='appearance')renderAppearanceTab(qs('settings-content'));toast('已切换到当前剧情 CSS（工坊停止叠加，工程未删除）')}
 async function unapplyCss(){if(!await patchCurrent({customCssId:null,customCssEnabled:false},true))return;applyCustomCss();if(settingsTab==='appearance')renderAppearanceTab(qs('settings-content'));toast('当前 Session（剧情会话）已取消 CSS（样式）')}
 async function emergencyDisableCss(){window.MimaAtelierCore?.disabled?.();await patchCurrent({customCssEnabled:false},true);ensureCustomCssStyle().textContent='';ensureGlobalCssStyle().textContent='';fetchStory('/theme','PATCH',{globalCssEnabled:false}).then(()=>applyCustomCss());if(settingsTab==='appearance')renderAppearanceTab(qs('settings-content'));toast('🚑 自定义 CSS（样式）已临时禁用')}
 async function reenableCss(){if(!currentSessionData?.customCssId)return toast('当前 Session（剧情会话）没有挂载 CSS（样式）');if(!await patchCurrent({customCssEnabled:true},true))return;applyCustomCss();if(settingsTab==='appearance')renderAppearanceTab(qs('settings-content'))}
@@ -1841,7 +1906,7 @@ function restoreLegacyFont(){
 }
 
 // Expose inline handlers
-Object.assign(window,{mimaFilterLibrary,mimaToggleFavorite,goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,choosePngResourceInspection,playInspectedPngInCompat,savePngSelectedResources,exportPngInspection,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,loadMemoryModels,selectMemoryModel,startFactMemoryEdit,cancelFactMemoryEdit,saveFactMemoryEdit,toggleMergeFactSelection,previewFactMemoryMerge,cancelFactMemoryMerge,confirmFactMemoryMerge,undoFactMemoryMerge,clearCoreMemory,deleteFactMemory,clearAllFactMemories,revokeRollingMemory,restoreRollingMemory,discardMemoryCandidate,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,syncTemperature,updateStoryTypography,resetStoryTypography,setAppearancePreviewSurface,setBuiltInTheme,dismissGenerationPanel,retryFailedGeneration,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,regenerateCurrentMsg,continueMsg,autoAdvance,restoreMessageVersion,stopGeneration});
+Object.assign(window,{mimaFilterLibrary,mimaToggleFavorite,goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,choosePngResourceInspection,playInspectedPngInCompat,savePngSelectedResources,exportPngInspection,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,loadMemoryModels,selectMemoryModel,startFactMemoryEdit,cancelFactMemoryEdit,saveFactMemoryEdit,toggleMergeFactSelection,previewFactMemoryMerge,cancelFactMemoryMerge,confirmFactMemoryMerge,undoFactMemoryMerge,clearCoreMemory,deleteFactMemory,clearAllFactMemories,revokeRollingMemory,restoreRollingMemory,discardMemoryCandidate,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,mimaLoadLargeCssForEdit,stopAtelierAndRestoreCss,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,syncTemperature,updateStoryTypography,resetStoryTypography,setAppearancePreviewSurface,setBuiltInTheme,dismissGenerationPanel,retryFailedGeneration,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,regenerateCurrentMsg,continueMsg,autoAdvance,restoreMessageVersion,stopGeneration});
 
 
 window.MimaTavernBridge={

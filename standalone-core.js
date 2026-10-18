@@ -163,7 +163,7 @@
     const legacyScope=['story','global','app'].includes(p.scope)?p.scope:(['novel','assistant','chat'].includes(p.scope)?p.scope:'story');
     const inferredSurface=legacyScope==='app'?'global':(legacyScope==='novel'?'novel':(legacyScope==='assistant'?'assistant':'chat'));
     const surface=['global','chat','novel','assistant'].includes(p.surface)?p.surface:inferredSurface;
-    return { id:p.id || makeId('css'), name:text(p.name || '未命名 CSS'), css:String(p.css || ''), scope:legacyScope, surface, category:text(p.category||'未分类').slice(0,60), favorite:!!p.favorite, createdAt, updatedAt:p.updatedAt || createdAt };
+    return { id:p.id || makeId('css'), name:text(p.name || '未命名 CSS'), css:String(p.css || ''), scope:legacyScope, surface, category:text(p.category||'未分类').slice(0,60), favorite:!!p.favorite, atelierReleaseKey:/^css-release:[a-zA-Z0-9:_-]{1,180}$/.test(String(p.atelierReleaseKey||''))?p.atelierReleaseKey:'', createdAt, updatedAt:p.updatedAt || createdAt };
   }
 
   function normalizeWorldbookEntry(e = {}) {
@@ -1345,7 +1345,7 @@
         messageIds:part.map(x=>x.id),sourceParts:stageScope?.sourceParts||[],
         candidate:e.candidateForReview.slice(0,25000),reason:e.validationReason||'fact_unverified',
         formatStatus:'valid',quoteStatus:'unverified',factStatus:'pending_human_review'});}
-      await checkpoint(job,stage+'_error',{errorCode:e.code||e.name||'E_UNKNOWN',httpStatus:e.status||0,details:String(e.details||'').slice(0,1500),elapsedMs:Date.now()-started});throw e;
+      try{await checkpoint(job,stage+'_error',{errorCode:e.code||e.name||'E_UNKNOWN',httpStatus:e.status||0,errorMessage:String(e.message||'').slice(0,2200),hint:String(e.hint||'').slice(0,800),details:String(e.details||'').slice(0,5000),elapsedMs:Date.now()-started});}catch(journalError){e.details=[String(e.details||''),`memoryJournalError: ${journalError.code||journalError.message||String(journalError)}`].filter(Boolean).join('\n');}throw e;
     }
   }
   function verifiedMemoryMetadata(job,stage){

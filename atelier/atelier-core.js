@@ -23,6 +23,8 @@ const STYLES=[
   ['galgame','日系 Galgame','glass','#e7dcf1','#a78abb'],['kawaii','Kawaii 可爱贴纸','clay','#ffe4ef','#ef92b1'],['aurora','Aurora 极光','glass','#d1dee9','#a08ccd'],['scrapbook','Paper Scrapbook','skeuo','#eddfc9','#a68a72']
 ];
 const REGION_KEYS=Object.keys(TARGETS);
+// Presentation authority is separate from canonical CSS mounting. No legacy preset is deleted.
+const PRESENTATION=['atelier-only','legacy-only','mix-legacy','mix-atelier'];
 const defaultRegions=()=>Object.fromEntries(REGION_KEYS.map(k=>[k,k!=='status']));
 const PATTERNS=['dots','grid','stripes','diagonal','checker','waves','rings','radial','diamond','cross','halftone','none'];
 const clone=x=>JSON.parse(JSON.stringify(x));
@@ -75,14 +77,14 @@ function atlasEffect(s){
  default:return null;
  }
 }
-function styleRules(s0,pattern=[],key=''){const s={...DEFAULT,...s0},bg=rgba(s.fill,s.alpha),bd=rgba(s.borderColor,s.borderAlpha);
+function styleRules(s0,pattern=[],key='',options={}){const s={...DEFAULT,...s0},bg=rgba(s.fill,s.alpha),bd=rgba(s.borderColor,s.borderAlpha);
   const structural=['topbar','composer','panel','status'].includes(key),prose=key==='message',shapeSafe=['button','secondary'].includes(key);
   let images=patternLayers(pattern,'image'),sizes=patternLayers(pattern,'size'),positions=patternLayers(pattern,'position');const effect=atlasEffect(s);if(effect){const layerCount=effect.image.split(/,(?=\s*(?:radial-gradient|linear-gradient|repeating-|conic-gradient))/).length;images.push(effect.image);sizes.push(effect.size);positions.push('0 0');}
   let gradientImage='';if(s.gradient!=='none'){const to=rgba(s.gradientTo,s.alpha);const gradient=s.gradient==='radial'?`radial-gradient(circle at 28% 20%,${to},${bg})`:s.gradient==='conic'?`conic-gradient(from ${clamp(s.angle,0,360)}deg,${bg},${to},${bg})`:`linear-gradient(${clamp(s.angle,0,360)}deg,${to},${bg})`;gradientImage=gradient;}
   if(s.image){
     if(s.imageOpacity<100){images.push(`linear-gradient(${rgba(s.fill,100-clamp(s.imageOpacity,0,100))},${rgba(s.fill,100-clamp(s.imageOpacity,0,100))})`);sizes.push('cover');positions.push('0 0');}
     if(s.maskOpacity>0){images.push(`linear-gradient(${rgba(s.maskColor,s.maskOpacity)},${rgba(s.maskColor,s.maskOpacity)})`);sizes.push('cover');positions.push('0 0');}
-    images.push(`url("${String(s.image).replace(/["\\]/g,'')}")`);sizes.push('cover');positions.push(`${clamp(s.imagePosX,0,100)}% ${clamp(s.imagePosY,0,100)}%`);
+    const imageUrl=options.assetUrl?options.assetUrl(s.image,'image'):s.image; if(imageUrl)images.push(`url("${String(imageUrl).replace(/["\\]/g,'')}")`);sizes.push('cover');positions.push(`${clamp(s.imagePosX,0,100)}% ${clamp(s.imagePosY,0,100)}%`);
   }
   if(gradientImage){images.push(gradientImage);sizes.push('auto');positions.push('0 0');}
   const dark=rgba('#000000',Math.min(50,clamp(s.shadow,0,50)*1.6));const light=rgba('#ffffff',clamp(s.shadow,0,50)*1.8);
@@ -91,9 +93,9 @@ function styleRules(s0,pattern=[],key=''){const s={...DEFAULT,...s0},bg=rgba(s.f
   if((s.material==='skeuo'||s.material==='aqua')&&shadow==='none')shadow='inset 0 1px 1px rgba(255,255,255,.01)';
   if(s.material==='skeuo'||s.material==='aqua')shadow+=`,inset 0 2px 3px rgba(255,255,255,.65),inset 0 -3px 5px rgba(0,0,0,.13)`;
   if(s.material==='brutal')shadow=`${clamp(s.shadow,0,50)/2}px ${clamp(s.shadow,0,50)/2}px 0 ${rgba('#111111',80)}`;
-  const rules=[`background-color:${bg}`,images.length?`background-image:${images.join(',')}`:'background-image:none',images.length?`background-size:${sizes.join(',')}`:'',images.length?`background-position:${positions.join(',')}`:'',`border:${clamp(s.border,0,20)}px solid ${bd}`,`border-width:${['borderTop','borderRight','borderBottom','borderLeft'].map(k=>clamp(s[k]<0?s.border:s[k],0,20)+'px').join(' ')}`,s.paddingX>=0&&key!=='shell'?`padding-left:${clamp(s.paddingX,0,80)}px;padding-right:${clamp(s.paddingX,0,80)}px`:'',s.paddingY>=0&&key!=='shell'?`padding-top:${clamp(s.paddingY,0,80)}px;padding-bottom:${clamp(s.paddingY,0,80)}px`:'',`border-radius:${clamp(s.radius,0,100)}px`,`box-shadow:${shadow}`,s.blur>0?`backdrop-filter:blur(${clamp(s.blur,0,60)}px) saturate(${s.material==='aqua'?'1.35':'1.18'})`:'backdrop-filter:none',s.blur>0?`-webkit-backdrop-filter:blur(${clamp(s.blur,0,60)}px) saturate(${s.material==='aqua'?'1.35':'1.18'})`:'-webkit-backdrop-filter:none',(!prose?`color:${hex(s.ink)}`:''),(!structural&&!prose?`font-size:${clamp(s.fontSize,8,38)}px`:''),s.fontFamily&&s.fontFamily!=='inherit'?`font-family:${/^MimaAtelierFont_[A-Za-z0-9]+$/.test(s.fontFamily)?'"'+s.fontFamily+'"':(['system-ui','serif','monospace'].includes(s.fontFamily)?s.fontFamily:'inherit')}`:'',!structural&&!prose&&s.stroke>0?`-webkit-text-stroke:${clamp(s.stroke,0,4)}px ${hex(s.strokeColor)}`:'',!structural&&!prose&&s.textShadow?`text-shadow:0 1px ${clamp(s.textShadow,0,20)}px ${rgba(s.strokeColor,75)}`:''];
+  const rules=[`background-color:${bg}`,images.length?`background-image:${images.join(',')}`:'background-image:none',images.length?`background-size:${sizes.join(',')}`:'',images.length?`background-position:${positions.join(',')}`:'',`border:${clamp(s.border,0,20)}px solid ${bd}`,`border-width:${['borderTop','borderRight','borderBottom','borderLeft'].map(k=>clamp(s[k]<0?s.border:s[k],0,20)+'px').join(' ')}`,s.paddingX>=0&&key!=='shell'?`padding-left:${clamp(s.paddingX,0,80)}px;padding-right:${clamp(s.paddingX,0,80)}px`:'',s.paddingY>=0&&key!=='shell'?`padding-top:${clamp(s.paddingY,0,80)}px;padding-bottom:${clamp(s.paddingY,0,80)}px`:'',`border-radius:${clamp(s.radius,0,100)}px`,`box-shadow:${shadow}`,s.blur>0?`backdrop-filter:blur(${clamp(s.blur,0,60)}px) saturate(${s.material==='aqua'?'1.35':'1.18'})`:'backdrop-filter:none',s.blur>0?`-webkit-backdrop-filter:blur(${clamp(s.blur,0,60)}px) saturate(${s.material==='aqua'?'1.35':'1.18'})`:'-webkit-backdrop-filter:none',(!prose||options.proseTypography?`color:${hex(s.ink)}`:''),(!structural&&(!prose||options.proseTypography)?`font-size:${clamp(s.fontSize,8,38)}px`:''),s.fontFamily&&s.fontFamily!=='inherit'?`font-family:${/^MimaAtelierFont_[A-Za-z0-9]+$/.test(s.fontFamily)?'"'+s.fontFamily+'"':(['system-ui','serif','monospace'].includes(s.fontFamily)?s.fontFamily:'inherit')}`:'',!structural&&!prose&&s.stroke>0?`-webkit-text-stroke:${clamp(s.stroke,0,4)}px ${hex(s.strokeColor)}`:'',!structural&&!prose&&s.textShadow?`text-shadow:0 1px ${clamp(s.textShadow,0,20)}px ${rgba(s.strokeColor,75)}`:''];
   if(s.material==='glass' || s.material==='aqua'){rules.push(`background-clip:padding-box`); if(s.blur>0)rules.push(`box-shadow:${shadow==='none'?'0 3px 15px rgba(10,15,25,.10)':shadow},inset 0 1px 0 rgba(255,255,255,.28)`);}
-  if(prose){ // The font, margins, line-height and safe-HTML status descendants remain authored by the story renderer.
+  if(prose&&!options.proseTypography){ // The font, margins, line-height and safe-HTML status descendants remain authored by the story renderer.
     const omit=/^(?:font-|color:|text-shadow|animation:|-webkit-text-stroke)/;for(let i=rules.length-1;i>=0;i--)if(omit.test(rules[i]))rules.splice(i,1);
   }
   if(s.shape==='pill')rules.push('border-radius:999px');
@@ -120,9 +122,9 @@ function baseTheme(id='liquid-frost'){
  elements.secondary={...base,fill:'#ffffff',alpha:55};
  elements.field={...base,fill:'#ffffff',alpha:78,blur:3};
  elements.message={...base,fill:'#ffffff',alpha:kind==='glass'?58:kind==='aqua'?62:24,border:kind==='glass'||kind==='aqua'?1:0,blur:kind==='glass'?14:kind==='aqua'?10:0,shadow:0};
- return {id:uid(),name:`${name} · 自定义`,format:'mima-atl-project',schema:1,template:id,originPreset:'',layoutRecipe:'story',cssPriority:'legacy-first',regions:defaultRegions(),nightMode:'app',elements,patterns:[],stickers:[],fonts:[],favorites:[],variants:{},extraCss:'',draftVersion:0,createdAt:Date.now(),updatedAt:Date.now()};
+ return {id:uid(),name:`${name} · 自定义`,format:'mima-atl-project',schema:1,template:id,originPreset:'',layoutRecipe:'story',cssPriority:'atelier-only',regions:defaultRegions(),proseTypography:false,nightMode:'app',elements,patterns:[],stickers:[],fonts:[],favorites:[],variants:{},extraCss:'',draftVersion:0,createdAt:Date.now(),updatedAt:Date.now()};
 }
-function normalized(raw){if(!raw||raw.format!=='mima-atl-project'||raw.schema!==1||!raw.elements||typeof raw.elements!=='object')throw new Error('不支持或损坏的主题工程格式');const obj=baseTheme(raw.template||'minimal-clear');obj.id=String(raw.id||uid());obj.name=safeName(raw.name);obj.originPreset=/^[a-z][a-z0-9-]{0,100}$/.test(String(raw.originPreset||''))?String(raw.originPreset):'';obj.layoutRecipe=/^[a-z][a-z0-9-]{0,80}$/.test(String(raw.layoutRecipe||''))?String(raw.layoutRecipe):'story';obj.cssPriority=['legacy-first','regions-first'].includes(raw.cssPriority)?raw.cssPriority:'legacy-first';obj.nightMode=['app','system','light','dark'].includes(raw.nightMode)?raw.nightMode:'app';obj.regions=defaultRegions();if(raw.regions&&typeof raw.regions==='object')for(const k of REGION_KEYS)if(Object.prototype.hasOwnProperty.call(raw.regions,k))obj.regions[k]=raw.regions[k]===true;obj.createdAt=Number(raw.createdAt)||Date.now();obj.updatedAt=Number(raw.updatedAt)||Date.now();obj.draftVersion=Math.max(0,Number(raw.draftVersion)||0);obj.linkedCssId=/^css[-_a-zA-Z0-9]+$/.test(String(raw.linkedCssId||''))?String(raw.linkedCssId):'';for(const k of Object.keys(TARGETS)){if(raw.elements[k]&&typeof raw.elements[k]==='object'){
+function normalized(raw){if(!raw||raw.format!=='mima-atl-project'||raw.schema!==1||!raw.elements||typeof raw.elements!=='object')throw new Error('不支持或损坏的主题工程格式');const obj=baseTheme(raw.template||'minimal-clear');obj.id=String(raw.id||uid());obj.name=safeName(raw.name);obj.originPreset=/^[a-z][a-z0-9-]{0,100}$/.test(String(raw.originPreset||''))?String(raw.originPreset):'';obj.layoutRecipe=/^[a-z][a-z0-9-]{0,80}$/.test(String(raw.layoutRecipe||''))?String(raw.layoutRecipe):'story';obj.cssPriority=PRESENTATION.includes(raw.cssPriority)?raw.cssPriority:raw.cssPriority==='regions-first'?'mix-atelier':raw.cssPriority==='legacy-first'?'atelier-only':'atelier-only';obj.proseTypography=raw.proseTypography===true;obj.nightMode=['app','system','light','dark'].includes(raw.nightMode)?raw.nightMode:'app';obj.regions=defaultRegions();if(raw.regions&&typeof raw.regions==='object')for(const k of REGION_KEYS)if(Object.prototype.hasOwnProperty.call(raw.regions,k))obj.regions[k]=raw.regions[k]===true;obj.createdAt=Number(raw.createdAt)||Date.now();obj.updatedAt=Number(raw.updatedAt)||Date.now();obj.draftVersion=Math.max(0,Number(raw.draftVersion)||0);obj.linkedCssId=/^css[-_a-zA-Z0-9]+$/.test(String(raw.linkedCssId||''))?String(raw.linkedCssId):'';for(const k of Object.keys(TARGETS)){if(raw.elements[k]&&typeof raw.elements[k]==='object'){
  const e={...obj.elements[k]};for(const field of Object.keys(DEFAULT))if(Object.prototype.hasOwnProperty.call(raw.elements[k],field)){
  const v=raw.elements[k][field];e[field]=typeof DEFAULT[field]==='number'?clamp(v,-10000,10000):typeof v==='string'?v.slice(0,250):DEFAULT[field];
  } e.fill=hex(e.fill);e.ink=hex(e.ink);e.borderColor=hex(e.borderColor);e.strokeColor=hex(e.strokeColor);e.gradientTo=hex(e.gradientTo);e.maskColor=hex(e.maskColor);e.image=validImage(raw.elements[k].image)?raw.elements[k].image:'';obj.elements[k]=e;}}
@@ -179,14 +181,17 @@ function atlasLayout(project,scope,mode){
  }
  return css;
 }
-function compile(project,mode='live'){
- const scope=mode==='preview'?'[data-atl-preview]':project.cssPriority==='legacy-first'?':where(html[data-mima-atelier-active])':'html[data-mima-atelier-active]';let result=`/* MIMA Theme Atelier | ${safeName(project.name)} | self contained CSS */\n`;
- for(const font of project.fonts||[])if(/^MimaAtelierFont_[A-Za-z0-9]+$/.test(font.family))result+=`@font-face{font-family:"${font.family}";src:url("${font.src}") format("${font.format}");font-display:swap;}\n`;
+function compile(project,mode='live',options={}){
+ const standalone=mode==='standalone'||mode==='portable';const scope=mode==='preview'?'[data-atl-preview]':standalone?'html':'html[data-mima-atelier-active]';
+ const assetUrl=options.assetUrl||((src)=>options.assetMode==='omit'?'':src);
+ let result=`/* MIMA Theme Atelier | ${safeName(project.name)} | generated stylesheet */\n`;
+ if(!options.skipFonts)for(const font of project.fonts||[])if(/^MimaAtelierFont_[A-Za-z0-9]+$/.test(font.family)){const src=assetUrl(font.src,'font',font);if(src)result+=`@font-face{font-family:"${font.family}";src:url("${src}") format("${font.format}");font-display:swap;}\n`;}
  for(const [key,target] of Object.entries(TARGETS)){
  if(project.regions?.[key]===false)continue;
- const rules=styleRules(project.elements[key],project.patterns.filter(p=>p.target===key),key);
- const selectors=(mode==='preview'?target.preview:target.real).split(',').map(x=>mode==='preview'?`${scope} ${x.trim()}`:project.cssPriority==='legacy-first'?`${scope} :where(${x.trim()})`:key==='shell'?`${scope} body`:`${scope} ${x.trim()}`).join(',');
+ const rules=styleRules(project.elements[key],project.patterns.filter(p=>p.target===key),key,{assetUrl,proseTypography:project.proseTypography===true});
+ const selectors=(mode==='preview'?target.preview:target.real).split(',').map(x=>mode==='preview'?`${scope} ${x.trim()}`:key==='shell'?`${scope} body`:`${scope} ${x.trim()}`).join(',');
  result+=`${selectors}{${rules}}\n`;
+ if(mode!=='preview'&&key==='message'&&project.proseTypography===true)result+=`${scope} .app-shell .message .msg-content.tavern-story-content:not(.safe-html-content) .story-paragraph{color:${hex(project.elements.message.ink)};font-size:${clamp(project.elements.message.fontSize,8,38)}px;${project.elements.message.fontFamily&&project.elements.message.fontFamily!=='inherit'?`font-family:${['system-ui','serif','monospace'].includes(project.elements.message.fontFamily)?project.elements.message.fontFamily:'\"'+project.elements.message.fontFamily+'\"'};`:''}}\n`;
  const orn=project.elements[key]?.ornament;
  if((key==='button'||key==='secondary')&&['double','dotted','cream','inset'].includes(orn)){
   const borderColor=orn==='cream'?'rgba(255,255,255,.82)':rgba(project.elements[key].borderColor,80);
@@ -200,13 +205,13 @@ function compile(project,mode='live'){
  }
  result+=`@keyframes mima-atl-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}\n@keyframes mima-atl-glow{from{filter:brightness(.95)}to{filter:brightness(1.15)}}\n@media(prefers-reduced-motion:reduce){${scope} *{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}\n`;
  // Extra CSS is an explicit advanced user-authored layer; it does not need to be parseable back into visual parameters.
- if(mode==='live'&&project.variants?.night&&project.nightMode!=='light'){const alt={...project,elements:project.variants.night.elements,patterns:project.variants.night.patterns,extraCss:'',variants:{},nightMode:'light'};let night=compile(alt,'live');
+ if((mode==='live'||standalone)&&project.variants?.night&&project.nightMode!=='light'){const alt={...project,elements:project.variants.night.elements,patterns:project.variants.night.patterns,extraCss:'',variants:{},nightMode:'light'};let night=compile(alt,mode,{...options,skipFonts:true});
   if(project.nightMode==='system')result+=`\n@media (prefers-color-scheme:dark){\n${night}\n}\n`;
   else if(project.nightMode==='dark')result+=`\n${night}\n`;
-  else {const nightScope=project.cssPriority==='legacy-first'?':where(html[data-mima-atelier-active][data-mima-theme="midnight"])':'html[data-mima-atelier-active][data-mima-theme="midnight"]';night=night.replaceAll(scope,nightScope);result+=`\n${night}\n`;}
+  else {const nightScope=standalone?'html[data-mima-theme="midnight"]':'html[data-mima-atelier-active][data-mima-theme="midnight"]';night=night.replaceAll(scope,nightScope);result+=`\n${night}\n`;}
  }
  result+=atlasLayout(project,scope,mode);
- if(mode==='live'&&project.extraCss)result+=`\n/* Advanced authored CSS, untouched */\n${project.extraCss}\n`;
+ if((mode==='live'||standalone)&&project.extraCss)result+=`\n/* Advanced authored CSS, untouched */\n${project.extraCss}\n`;
  return result;
 }
 function dbOpen(){return new Promise((resolve,reject)=>{const q=indexedDB.open(DB,VERSION);q.onupgradeneeded=()=>{if(!q.result.objectStoreNames.contains(STORE))q.result.createObjectStore(STORE)};q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error||new Error('数据库打开失败'));q.onblocked=()=>reject(new Error('主题数据库被其他页面阻塞'));});}
@@ -214,18 +219,39 @@ let dbPromise=null;function getDB(){return dbPromise||(dbPromise=dbOpen().catch(
 async function get(key){const db=await getDB();return new Promise((resolve,reject)=>{const t=db.transaction(STORE,'readonly'),r=t.objectStore(STORE).get(key);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);t.onerror=()=>reject(t.error);});}
 async function putMany(entries,expected=null){const db=await getDB();return new Promise((resolve,reject)=>{const t=db.transaction(STORE,'readwrite'),s=t.objectStore(STORE);let failure=null; if(expected!==null){const q=s.get('active');q.onsuccess=()=>{const old=q.result||null;if((old?.version||0)!==expected){failure=new Error('其他窗口已更新当前主题，请重新打开后再应用。');t.abort();return;}entries.forEach(([k,v])=>s.put(v,k));};q.onerror=()=>{failure=q.error;t.abort();};}else entries.forEach(([k,v])=>s.put(v,k));t.oncomplete=()=>resolve();t.onabort=()=>reject(failure||t.error||new Error('事务取消'));t.onerror=()=>{failure=t.error};});}
 async function keys(){const db=await getDB();return new Promise((resolve,reject)=>{const t=db.transaction(STORE,'readonly'),q=t.objectStore(STORE).getAllKeys();q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);t.onerror=()=>reject(t.error)});}
+// Compact runtime resource URLs. Canonical project data remains untouched for old-version compatibility.
+const assetPool=new Map(),assetOwners=new Map();
+function makeAssetURL(src){const comma=src.indexOf(',');if(comma<0||!/^data:(?:image\/|font\/|application\/)/.test(src))throw Error('主题素材格式无效');
+ const raw=atob(src.slice(comma+1)),chunks=[];for(let i=0;i<raw.length;i+=65536){const slice=raw.slice(i,i+65536),bytes=new Uint8Array(slice.length);for(let j=0;j<slice.length;j++)bytes[j]=slice.charCodeAt(j);chunks.push(bytes)}
+ return URL.createObjectURL(new Blob(chunks,{type:(/^data:([^;,]+)/.exec(src)||[])[1]||'application/octet-stream'}));}
+function prepareAssets(project,owner){const used=new Set();return {used,url(src){if(!src||!/^data:/.test(src))return src;let entry=assetPool.get(src);if(!entry){entry=makeAssetURL(src);assetPool.set(src,entry);}used.add(src);return entry;},owner};}
+function commitAssetOwner(owner,used){assetOwners.set(owner,used);for(const [src,url] of assetPool){if(![...assetOwners.values()].some(set=>set.has(src))){URL.revokeObjectURL(url);assetPool.delete(src);}}}
+function releaseAssets(owner){commitAssetOwner(owner,new Set());}
+function compiledWithAssets(p,mode,owner){const t=prepareAssets(p,owner);const css=compile(p,mode,{assetUrl:t.url});return {css,used:t.used};}
+function previewCss(project){const data=compiledWithAssets(project,'preview','preview');commitAssetOwner('preview',data.used);return data.css;}
 let active=null,applied=null,style=null,decor=null,channel=null,initialized=false,ready=null;
 function bypass(){return new URLSearchParams(location.search).get('noCss')==='1'||sessionStorage.getItem('mima-atl-safe-disabled')==='1';}
 function ensureStyle(){if(!style){style=document.getElementById('mima-atelier-runtime-style');if(!style){style=document.createElement('style');style.id='mima-atelier-runtime-style';document.head.appendChild(style);}}return style;}
 function removeDecor(){if(decor){decor.remove();decor=null}}
 function drawDecor(project){removeDecor();if(!project?.stickers?.length||bypass())return;decor=document.createElement('div');decor.id='mima-atelier-decor-root';decor.style.cssText='position:fixed;inset:0;z-index:25;pointer-events:none;overflow:visible';document.body.appendChild(decor);project.stickers.filter(s=>!s.hidden).forEach(s=>{const el=document.createElement('img');el.src=s.src;el.alt='';el.dataset.atlSticker=s.id;el.style.cssText=`position:fixed;max-width:none;pointer-events:none;user-select:none;opacity:${clamp(s.opacity,0,100)/100};transform:translate(-50%,-50%) rotate(${s.rotate}deg);`;decor.appendChild(el)});positionDecor();}
 function positionDecor(){if(!decor||!applied)return;const rectAll={left:0,top:0,width:innerWidth,height:innerHeight};for(const sticker of applied.stickers){const el=Array.from(decor.children).find(x=>x.dataset.atlSticker===sticker.id);if(!el)continue;const t=TARGETS[sticker.anchor];const target=(t?.real||'').split(',')[0];const r=sticker.anchor==='shell'?rectAll:(document.querySelector(target)?.getBoundingClientRect()||null);if(!r){el.style.display='none';continue;}el.style.display='';el.style.left=(r.left+r.width*sticker.x/100)+'px';el.style.top=(r.top+r.height*sticker.y/100)+'px';el.style.width=(r.width*sticker.width/100)+'px';}}
-function syncPriority(){if(!style?.isConnected)return;const first=applied?.cssPriority==='legacy-first';const legacy=['mima-custom-css-style','mima-global-css-style'].map(id=>document.getElementById(id)).filter(el=>el?.parentNode===document.head).sort((a,b)=>(a.compareDocumentPosition(b)&Node.DOCUMENT_POSITION_FOLLOWING)?-1:1)[0];if(first&&legacy)document.head.insertBefore(style,legacy);else document.head.appendChild(style);}
-function activate(project){if(bypass()){ensureStyle().textContent='';document.documentElement.removeAttribute('data-mima-atelier-active');removeDecor();applied=null;return;}
- const css=compile(project);if(typeof CSSStyleSheet!=='undefined'&&CSSStyleSheet.prototype.replaceSync){const sheet=new CSSStyleSheet();sheet.replaceSync(css);}
- ensureStyle().textContent=css;document.documentElement.setAttribute('data-mima-atelier-active','1');applied=clone(project);syncPriority();drawDecor(applied);
+const pausedStyles=new Map();
+function syncPriority(){if(!style?.isConnected)return;
+ const mode=applied?.cssPriority||'atelier-only',legacy=['mima-custom-css-style','mima-global-css-style'].map(id=>document.getElementById(id)).filter(Boolean);
+ const pause=!!applied&&mode==='atelier-only';
+ for(const el of legacy){if(pause){if(!pausedStyles.has(el))pausedStyles.set(el,el.getAttribute('media'));el.setAttribute('media','not all');}else if(pausedStyles.has(el)){const prior=pausedStyles.get(el);if(prior===null)el.removeAttribute('media');else el.setAttribute('media',prior);pausedStyles.delete(el);}}
+ for(const [el,prior] of pausedStyles){if(!legacy.includes(el)){if(prior===null)el.removeAttribute('media');else el.setAttribute('media',prior);pausedStyles.delete(el);}}
+ const after=mode==='mix-atelier'||mode==='atelier-only';
+ if(after)document.head.appendChild(style);
+ else {const first=legacy.find(el=>el.parentNode===document.head);if(first)document.head.insertBefore(style,first);else document.head.appendChild(style);}
+ style.media=mode==='legacy-only'?'not all':'';
 }
-function deactivate(){ensureStyle().textContent='';document.documentElement.removeAttribute('data-mima-atelier-active');applied=null;removeDecor();}
+function activate(project){if(bypass()){deactivate();return;}
+ const result=compiledWithAssets(project,'live','atelier');
+ try{ensureStyle().textContent=result.css;document.documentElement.setAttribute('data-mima-atelier-active','1');applied=clone(project);commitAssetOwner('atelier',result.used);syncPriority();if(applied.cssPriority==='legacy-only')removeDecor();else drawDecor(applied);window.dispatchEvent(new Event('mima-atelier-presentation-change'));}
+ catch(e){for(const [src,url] of assetPool)if(![...assetOwners.values()].some(set=>set.has(src))){URL.revokeObjectURL(url);assetPool.delete(src)}throw e;}
+}
+function deactivate(){ensureStyle().textContent='';ensureStyle().media='';document.documentElement.removeAttribute('data-mima-atelier-active');applied=null;removeDecor();releaseAssets('atelier');syncPriority();window.dispatchEvent(new Event('mima-atelier-presentation-change'));}
 function disabled(){sessionStorage.setItem('mima-atl-safe-disabled','1');deactivate();}
 function reaffirm(){syncPriority();}
 async function initialize(){if(initialized)return;initialized=true;try{active=await get('active')||{id:null,version:0};if(active.id&&!bypass()){const p=await get(active.releaseKey||('release:'+active.id+':'+active.version));if(!p)throw Error('激活版本的固定快照不存在；保留原始界面且不覆盖任何资料');activate(normalized(p));} if(typeof BroadcastChannel!=='undefined'){channel=new BroadcastChannel(DB);channel.onmessage=async e=>{if(e.data?.kind==='activated'){try{const a=await get('active');if(!a||a.version<=(active?.version||0))return;const p=a.id?await get(a.releaseKey||('release:'+a.id+':'+a.version)):null;if(a.id&&!p)throw new Error('跨窗口主题内容丢失');if(p&&!bypass())activate(normalized(p));else deactivate();active=a;}catch(err){console.error('[Theme Atelier] cross-tab sync',err)}}};}}
@@ -256,14 +282,24 @@ async function listProjects(){return (await keys()).filter(k=>String(k).startsWi
 async function saveManual(project){const p=normalized(project);const key='manual:'+uid();await putMany([[key,{...p,manualSavedAt:Date.now()}]]);return key;}
 async function listManual(){const ks=(await keys()).filter(k=>String(k).startsWith('manual:'));return Promise.all(ks.map(async k=>({key:k,project:await get(k)})));}
 async function forkDraft(raw){const p=normalized({...raw,id:uid(),draftVersion:0,linkedCssId:'',updatedAt:Date.now()});return saveDraft(p);}
-function exportPresetCss(project){const p=normalized(project);p.cssPriority='regions-first';const css=compile(p);const stickers=p.stickers?.length?`/* NOTE: ${p.stickers.length} dynamic stickers require the Atelier decoration DOM and are not reproducible in plain CSS. */\n`:'';return `/* MIMA ATELIER standalone CSS preset: user-enabled only; local style scopes; no automatic mounting. */\n`+stickers+css.replaceAll('html[data-mima-atelier-active]','html');}
+function exportPresetCss(project,embedded=false){const p=normalized(project);const css=compile(p,'standalone',embedded?{}:{assetMode:'omit'});const media=(p.fonts.length+Object.values(p.elements).filter(e=>e.image).length);const notice=embedded?'Embedded media: this export may be large.':media?`LIGHT CSS: ${media} embedded images/fonts are resolved from the linked Atelier project when mounted inside MIMA. For independent portable use, export the complete ZIP with assets.`:'No external assets.';return `/* MIMA ATELIER standalone CSS preset. ${notice} Dynamic stickers require Atelier. */\n`+css;}
 
-async function apply(project){await ready;const p=normalized(project);const css=compile(p);if(!bypass()&&typeof CSSStyleSheet!=='undefined'&&CSSStyleSheet.prototype.replaceSync){const x=new CSSStyleSheet();x.replaceSync(css);}const was=applied?clone(applied):null;const previous=active||{id:null,version:0};const next={id:p.id,version:(previous.version||0)+1,releaseKey:'release:'+p.id+':'+((previous.version||0)+1),updatedAt:Date.now()};
+async function apply(project){await ready;const p=normalized(project);const was=applied?clone(applied):null;const previous=active||{id:null,version:0};const next={id:p.id,version:(previous.version||0)+1,releaseKey:'release:'+p.id+':'+((previous.version||0)+1),updatedAt:Date.now()};
  // Save theme and active pointer in one canonical transaction. Never report success before actual visual activation.
  await putMany([['project:'+p.id,p],[next.releaseKey,p],['active',next]],previous.version||0);
  try{if(!bypass())activate(p);else deactivate();active=next;channel?.postMessage({kind:'activated'});return next;}
  catch(e){console.error('[Theme Atelier] activation after durable commit failed',e);try{if(was&&!bypass())activate(was);else deactivate();await putMany([['active',{...previous,version:next.version+1}]],next.version);active={...previous,version:next.version+1};channel?.postMessage({kind:'activated'});}catch(recoveryError){console.error('[Theme Atelier] rollback failed',recoveryError)}throw e;}
 }
 async function unapply(){await ready;const previous=active||{id:null,version:0},next={id:null,version:previous.version+1,updatedAt:Date.now()};await putMany([['active',next]],previous.version);deactivate();active=next;channel?.postMessage({kind:'activated'});}
-window.MimaAtelierCore={TARGETS,DEFAULT,STYLES,PATTERNS,baseTheme,normalized,clone,clamp,hex,esc,rgba,uid,patternCSS,compile,get,saveDraft,apply,unapply,disabled,reaffirm,bypass,ready,_historySave:saveHistory,_historyLatest:latestHistory,listProjects,saveManual,listManual,forkDraft,exportPresetCss,getActive:()=>clone(active||{id:null,version:0}),getApplied:()=>applied&&clone(applied),positionDecor};
+async function resolveLibraryCss(preset,owner='library-global'){if(!preset?.atelierReleaseKey)return preset?.css||'';
+ const p=await get(preset.atelierReleaseKey);if(!p)throw Error('工坊 CSS 引用的独立资源快照不存在，原 CSS 预设未被修改');
+ const checked=normalized(p),compiled=compiledWithAssets(checked,'standalone',owner);
+ // Don't overwrite the active CSS assets until a caller has accepted the stylesheet.
+ return {css:compiled.css,accept:()=>commitAssetOwner(owner,compiled.used),discard:()=>{for(const [src,url] of assetPool)if(![...assetOwners.values()].some(set=>set.has(src))){URL.revokeObjectURL(url);assetPool.delete(src);}}};
+}
+function portableBundle(project){const files={},seen=new Map();let n=0;
+ const css=compile(normalized(project),'portable',{assetUrl(src,kind,font){if(!src?.startsWith('data:'))return src;let p=seen.get(src);if(!p){const ext=kind==='font'?(font?.format||'woff2'):/^data:image\/([^;]+)/.exec(src)?.[1]||'png';p=`assets/asset_${++n}.${String(ext).replace(/[^a-z0-9]/gi,'')}`;const raw=atob(src.slice(src.indexOf(',')+1));const bytes=new Uint8Array(raw.length);for(let i=0;i<raw.length;i++)bytes[i]=raw.charCodeAt(i);files[p]=bytes;seen.set(src,p);}return p;}});
+ return {css,files};}
+window.addEventListener('pagehide',()=>{for(const owner of assetOwners.keys())releaseAssets(owner);});
+window.MimaAtelierCore={TARGETS,DEFAULT,STYLES,PATTERNS,baseTheme,normalized,clone,clamp,hex,esc,rgba,uid,patternCSS,compile,get,saveDraft,apply,unapply,disabled,reaffirm,bypass,ready,_historySave:saveHistory,_historyLatest:latestHistory,listProjects,saveManual,listManual,forkDraft,exportPresetCss,resolveLibraryCss,releaseAssets,portableBundle,previewCss,getActive:()=>clone(active||{id:null,version:0}),getApplied:()=>applied&&clone(applied),getPresentationMode:()=>applied?.cssPriority||'',positionDecor};
 })();
