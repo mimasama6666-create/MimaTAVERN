@@ -154,7 +154,7 @@
   function normalizePreset(p = {}) {
     const createdAt = p.createdAt || nowIso();
     return { id: p.id || makeId('preset'), name: text(p.name || '未命名预设'), type: text(p.type || 'style'),
-      description: text(p.description), content: text(p.content), priority: Number.isFinite(Number(p.priority)) ? Number(p.priority) : 50,
+      description: text(p.description), content: text(p.content), category:text(p.category||'未分类').slice(0,60), favorite:!!p.favorite, priority: Number.isFinite(Number(p.priority)) ? Number(p.priority) : 50,
       enabled: p.enabled !== false, createdAt, updatedAt: p.updatedAt || createdAt };
   }
 
@@ -163,7 +163,7 @@
     const legacyScope=['story','global','app'].includes(p.scope)?p.scope:(['novel','assistant','chat'].includes(p.scope)?p.scope:'story');
     const inferredSurface=legacyScope==='app'?'global':(legacyScope==='novel'?'novel':(legacyScope==='assistant'?'assistant':'chat'));
     const surface=['global','chat','novel','assistant'].includes(p.surface)?p.surface:inferredSurface;
-    return { id:p.id || makeId('css'), name:text(p.name || '未命名 CSS'), css:String(p.css || ''), scope:legacyScope, surface, createdAt, updatedAt:p.updatedAt || createdAt };
+    return { id:p.id || makeId('css'), name:text(p.name || '未命名 CSS'), css:String(p.css || ''), scope:legacyScope, surface, category:text(p.category||'未分类').slice(0,60), favorite:!!p.favorite, createdAt, updatedAt:p.updatedAt || createdAt };
   }
 
   function normalizeWorldbookEntry(e = {}) {
@@ -187,7 +187,7 @@
   function normalizeWorldbook(w = {}) {
     const createdAt = w.createdAt || nowIso();
     return { id: w.id || makeId('wb'), name: text(w.name || '未命名世界书'), description: text(w.description),
-      enabled: w.enabled !== false, entries: arr(w.entries).map(normalizeWorldbookEntry), tags: list(w.tags),
+      enabled: w.enabled !== false, entries: arr(w.entries).map(normalizeWorldbookEntry), tags: list(w.tags), category:text(w.category||'未分类').slice(0,60), favorite:!!w.favorite,
       createdAt, updatedAt: w.updatedAt || createdAt };
   }
 

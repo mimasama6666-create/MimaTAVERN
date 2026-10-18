@@ -729,3 +729,7 @@ html[data-mima-theme="eink"] .novel-text-unit[open]>summary,html[data-mima-theme
 .generation-panel.error .generation-detail pre{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;max-width:100%;overflow:auto}
 .generation-panel.error .generation-detail details{max-width:100%}
 .generation-panel.error .generation-actions{max-width:100%;overflow-x:auto;flex-wrap:wrap}
+
+/* Resource library filters R3: purely presentational, no effect on resource mounting. */
+.mima-library-filters{display:flex;flex-wrap:wrap;align-items:center;gap:9px;margin:12px 0}.mima-library-filters>.field{width:auto;max-width:100%;flex:1 1 150px;min-width:115px}.mima-library-filters>.check-row{white-space:nowrap;padding:7px 3px;margin:0;font-size:13px}
+@media(max-width:440px){.mima-library-filters>.field{flex-basis:100%;width:100%}.mima-library-filters>.check-row{width:100%}}
