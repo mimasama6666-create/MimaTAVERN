@@ -63,6 +63,7 @@
       recentMessageLimit: clampInt(input.recentMessageLimit, 6, 200, 34),
       worldbookBudgetChars: clampInt(input.worldbookBudgetChars, 1000, 1000000, 16000),
       summaryEnabled: input.summaryEnabled !== false,
+      historyHtmlMode: input.historyHtmlMode==='raw'?'raw':'semantic',
       pinnedFactsEnabled: input.pinnedFactsEnabled !== false,
       showInjectionLabels: input.showInjectionLabels !== false,
       summaryTriggerMessages: clampInt(input.summaryTriggerMessages, 12, 200, 28),
@@ -311,7 +312,20 @@
   }
   function activeRegexPacks(session){return arr(session?.regexPackIds).map(getRegexPack).filter(p=>p&&p.enabled!==false).sort((a,b)=>Number(a.priority??50)-Number(b.priority??50));}
   function applyRegexForSession(sessionOrId,input,phase='display',diagnostics=null){const session=typeof sessionOrId==='string'?getSession(sessionOrId):sessionOrId;if(!session)return String(input??'');const transformed=window.MimaRegexEngine?.apply?window.MimaRegexEngine.apply(String(input??''),activeRegexPacks(session),phase,diagnostics):String(input??'');return phase==='display'||phase==='prompt'?resolveMacrosForSession(session,transformed):transformed;}
-  function messagePromptContent(m,session){return applyRegexForSession(session,m?.content||'', 'prompt');}
+  function historyHtmlProjection(textInput,session){
+    const content=String(textInput??'');
+    if(session?.promptSettings?.historyHtmlMode==='raw')return {text:content,changed:false,beforeChars:content.length,afterChars:content.length,reason:'disabled'};
+    const engine=window.MimaHistoryHtmlProjection;
+    // No weak regular-expression replacement when the parser module is missing.
+    if(!engine?.project)throw new ApiError('E_HISTORY_HTML_PROJECTION_UNAVAILABLE','历史 HTML 投影模块未加载；已中止新请求，不会损坏剧情。',{hint:'请检查 history-html-projection.js 是否与当前版本一并部署，以及浏览器是否使用了旧缓存。'});
+    return engine.project(content);
+  }
+  function messagePromptContent(m,session,stats=null){
+    const original=applyRegexForSession(session,m?.content||'', 'prompt');
+    const projection=historyHtmlProjection(original,session);
+    if(stats)stats.set(m.id,projection);
+    return projection.text;
+  }
   function inputSemanticMode(session,message=null){
     const stored=message?.metadata?.inputSemanticMode;
     if(['auto','dialogue_first','quote_dialogue','raw'].includes(stored))return stored;
@@ -421,7 +435,7 @@
     if(options.directorNote||session.directorNote)add('director_note',options.directorNote||session.directorNote);
     return {prompt:chunks.join('\n\n'),sections,memoryTrace};
   }
-  function toHistoryMessage(m,session){
+  function toHistoryMessage(m,session,stats=null){
     if(!m?.content)return null;
     // Preserve legacy evidence in canonical/version storage, but never replay
     // a positively identified provider refusal as character dialogue.
@@ -432,7 +446,8 @@
     if(m.role==='assistant'&&!isManuallyRecoveredReply(m)&&
       (evidence.providerRefused===true||evidence.providerFinishKind==='blocked'||
        ['content_filter','safety','blocked','prohibited_content','refusal'].includes(evidence.providerFinishReason)))return null;
-    const content=m.role==='user'?userMessagePromptContent(m,session):messagePromptContent(m,session);
+    const content=m.role==='user'?userMessagePromptContent(m,session):messagePromptContent(m,session,stats);
+    if(m.role==='assistant'&&!content.trim())return null;
     const role=['system','user','assistant'].includes(m.role)?m.role:'system';
     return {role,content,source:{kind:'canonical_history',sourceId:m.id,messageId:m.id,originalRole:m.role}};
   }
@@ -486,7 +501,7 @@
     }
     return [...terms].filter(x=>!['剧情','角色','继续','主人','回复','这样','发生','故事','之后','可以'].includes(x)).slice(0,120);
   }
-  function retrieveRawGap(session,history,coreCount,anchor,available){
+  function retrieveRawGap(session,history,coreCount,anchor,available,projectMessage=m=>toHistoryMessage(m,session)){
     const older=history.slice(0,Math.max(0,history.length-coreCount));
     if(!older.length||available<=0)return {chosen:[],omitted:older,usedTokens:0,terms:[]};
     const terms=retrievalTerms(anchor),generic=!terms.length,atoms=[];
@@ -495,8 +510,8 @@
     for(let i=0;i<older.length;){
       const pair=older[i]?.role==='user'&&older[i+1]?.role==='assistant';
       const group=older.slice(i,i+(pair?2:1));i+=group.length;
-      const rows=group.map(m=>({m,projected:toHistoryMessage(m,session)}));
-      const content=group.map(m=>String(m.rawContent||m.content||'')).join('\n');
+      const rows=group.map(m=>({m,projected:projectMessage(m)}));
+      const content=rows.map(row=>String(row.projected?.content||'')).join('\n');
       const cost=rows.reduce((n,r)=>n+(r.projected?estimateTokens(r.projected.content)+10:0),0);
       atoms.push({rows,index:i-group.length,content,cost,createdAt:group[0]?.createdAt||'',
         pinned:group.some(m=>m.metadata?.pinned===true)});
@@ -540,11 +555,24 @@
     const limit=Math.max(6,Number(session.promptSettings?.recentMessageLimit||34));
     const depthOnly=matched.filter(x=>Number(x.entry.depth||0)>0);
     let sys=buildSystemPrompt(session,options,matched);
+    // Per-assembly only: no stale cache when regex, original History or
+    // settings change. All cost estimates and retrieval reuse this projection.
+    const htmlProjectionStats=new Map(),projectedHistory=new Map();
+    const projectMessage=m=>{
+      if(projectedHistory.has(m))return projectedHistory.get(m);
+      // A prefix-continuation protocol treats the last assistant message as
+      // literal bytes to extend. Projecting that prefix would make the model
+      // extend different text than the user's saved reply, breaking append.
+      const preservePrefix=options.preserveTerminalAssistant===true&&m===visibleHistory[visibleHistory.length-1]&&m.role==='assistant';
+      const projected=preservePrefix?toHistoryMessage(m,{...session,promptSettings:{...session.promptSettings,historyHtmlMode:'raw'}},htmlProjectionStats):toHistoryMessage(m,session,htmlProjectionStats);
+      projectedHistory.set(m,projected);
+      return projected;
+    };
     let recentRaw=visibleHistory.slice(),projectedAway=[],estimatedBase=null;
     // Reserve a margin for JSON encoding, message roles, and protocol overhead.
     // Context estimates are intentionally marked as estimates in the Inspector.
     const baseTokens=(raw,system)=>{
-      const current=raw.map(m=>toHistoryMessage(m,session)).filter(Boolean);
+      const current=raw.map(projectMessage).filter(Boolean);
       const inserted=applyDepth(current,depthOnly,session);
       return estimateTokens(system.prompt)+inserted.messages.reduce((n,m)=>n+estimateTokens(m.content)+8,0)+Math.max(160,Math.ceil(system.prompt.length*.08));
     };
@@ -556,7 +584,7 @@
       if(recentRaw.length-count<2)return false;
       const removed=recentRaw.slice(0,count);
       projectedAway.push(...removed);recentRaw=recentRaw.slice(count);
-      if(estimatedBase!==null)estimatedBase-=removed.reduce((n,m)=>n+estimateTokens(toHistoryMessage(m,session)?.content||'')+8,0);
+      if(estimatedBase!==null)estimatedBase-=removed.reduce((n,m)=>n+estimateTokens(projectMessage(m)?.content||'')+8,0);
       return true;
     }
     if(promptCap.verified){
@@ -591,7 +619,7 @@
       }
     }
     const canonicalHistoryCount=visibleHistory.filter(m=>m.metadata?.source!=='prompt_preview_draft').length;
-    const recent=recentRaw.map(m=>toHistoryMessage(m,session)).filter(Boolean);
+    const recent=recentRaw.map(projectMessage).filter(Boolean);
     const baseline=applyDepth(recent,depthOnly,session),baselineTokens=baseTokens(recentRaw,sys);
     const summaryValid=!session.rollingSourceFingerprint?!(session.legacyMemoryQuarantined||session.promptLineageProjection):session.rollingSourceCount>0&&session.messages.length>=session.rollingSourceCount&&memorySourceFingerprint(session.messages,session.rollingSourceCount)===session.rollingSourceFingerprint;
     const coverageStart=summaryValid?Math.max(0,session.lastSummarizedIndex||0):0;
@@ -607,7 +635,7 @@
     const retrievalCap=promptCap.verified?promptCap.usable:promptCap.provisionalRetrievalTokens;
     const retrievalBudget=Math.min(Math.floor(retrievalCap*.38),Math.max(0,retrievalCap-baselineTokens-600));
     const candidateHistory=uncoveredOlder;
-    const retrieved=retrieveRawGap(session,candidateHistory,0,anchor,retrievalBudget);
+    const retrieved=retrieveRawGap(session,candidateHistory,0,anchor,retrievalBudget,projectMessage);
     const trace={pendingRawCount:pendingRaw.length,uncoveredRawCount:uncoveredOlder.length,retrievedCount:retrieved.chosen.length,
       fullHistoryPreferred:true,allHistoryIncluded:uncoveredOlder.length===0,temporarilyOmittedTurnIds:projectedAway.map(m=>m.id),canonicalHistoryCount,
       omittedCount:retrieved.omitted.length,retrievedIds:retrieved.chosen.map(x=>x.m.id),omittedIds:retrieved.omitted.slice(0,60).map(x=>x.id),
@@ -623,12 +651,20 @@
     const ordered=[...sections,...depthApplied.messages];
     const messages=ordered.map(({role,content})=>({role,content}));
     const messageSources=ordered.map(x=>x.source||{kind:'canonical_history'});
+    const sentAssistantIds=new Set(messageSources.filter(x=>x.kind==='canonical_history'&&x.originalRole==='assistant').map(x=>x.messageId));
+    const sentProjection=[...sentAssistantIds].map(id=>htmlProjectionStats.get(id)).filter(Boolean);
+    const historyHtmlProjection={mode:session.promptSettings.historyHtmlMode,processedMessages:sentProjection.length,
+      changedMessages:sentProjection.filter(x=>x.changed).length,
+      beforeChars:sentProjection.reduce((n,x)=>n+x.beforeChars,0),afterChars:sentProjection.reduce((n,x)=>n+x.afterChars,0),
+      estimate:'按字符长度 / 2.5 粗估，实际 Tokens 由模型分词器决定'};
+    historyHtmlProjection.savedChars=historyHtmlProjection.beforeChars-historyHtmlProjection.afterChars;
+    historyHtmlProjection.estimatedTokensSaved=Math.round(historyHtmlProjection.savedChars/2.5);
     for(const row of presetTrace){const index=messageSources.findIndex(x=>x.kind==='preset'&&x.sourceId===row.id);row.sendIndex=index<0?null:index+1;row.injected=index>=0;}
     presetTrace.sort((a,b)=>(a.sendIndex??Number.MAX_SAFE_INTEGER)-(b.sendIndex??Number.MAX_SAFE_INTEGER));
     const header=sections.map(x=>x.content).join('\n\n');
     const estimatedInputTokens=messages.reduce((sum,m)=>sum+estimateTokens(m?.content||''),0);
     if(promptCap.verified&&estimatedInputTokens>promptCap.usable)throw new ApiError('E_CONTEXT_BUDGET','上下文检索结果超过已配置的模型预算，已中止发送但保留全部资料。',{details:JSON.stringify({estimatedInputTokens,promptCap,trace})});
-    return{messages,messageSources,inspector:{systemChars:header.length,estimatedInputTokens,recentMessageCount:recent.length,unsummarizedGapCount:uncoveredOlder.length,recentMessageLimit:limit,fullHistoryPreferred:true,canonicalHistoryCount,temporarilyOmittedCount:projectedAway.length,allHistoryIncluded:uncoveredOlder.length===0,finalMessageCount:messages.length,
+    return{messages,messageSources,inspector:{historyHtmlProjection,systemChars:header.length,estimatedInputTokens,recentMessageCount:recent.length,unsummarizedGapCount:uncoveredOlder.length,recentMessageLimit:limit,fullHistoryPreferred:true,canonicalHistoryCount,temporarilyOmittedCount:projectedAway.length,allHistoryIncluded:uncoveredOlder.length===0,finalMessageCount:messages.length,
       contextTrace:trace,worldbookBudgetChars:budget,worldbookUsedChars:budgeted.used,upstreamUsage:lastUsage?clone(lastUsage):null,
       sections:sys.sections.map(({name,chars,source})=>({name,chars,transportRole:'system',source})),memoryTrace:sys.memoryTrace,
       presetConflictPolicy:{kind:'deterministic_order_only',semanticConflictsResolved:false,notice:'优先级只确定排列顺序；自由文本规则之间的语义冲突没有自动裁决。'},
@@ -1171,7 +1207,7 @@
   const MEMORY_TIME_CONTRACT='时间校验：现实消息记录时间与剧情内日期不同。不得将旧消息无依据改写成“昨天”“今天”“前天”“刚才”；剧情人物原话中的相对时间仅相对于其说话当时。没有可信剧情日期时写“具体剧情日期未明确”，保留先后顺序。';
   function formatTimelineBlock(label,messages,session){
     const ctx=macroContext(session);
-    const body=arr(messages).map(m=>memoryTimestampLabel(m)+(m.role==='user'?`${ctx.userName}（玩家输入语义）：\n${compileUserInputForPrompt(session,m.content,inputSemanticMode(session,m))}`:`${ctx.charName}：${resolveMacrosForSession(session,m.content)}`)).join('\n');
+    const body=arr(messages).map(m=>memoryTimestampLabel(m)+(m.role==='user'?`${ctx.userName}（玩家输入语义）：\n${compileUserInputForPrompt(session,m.content,inputSemanticMode(session,m))}`:`${ctx.charName}：${historyHtmlProjection(resolveMacrosForSession(session,m.content),session).text}`)).join('\n');
     return body?`${label}\n${body}`:'';
   }
   function formatRoundRange(data,startRound,endRound,{includeOpening=false,session=null}={}){
@@ -1247,7 +1283,7 @@
     opts={...opts,model:String(opts.model??original.manualMemory.settings.memoryModel??'').trim()};
     let job=null,heartbeat=null;
     try{
-      const cfg=getApiConfig();const configSignature=fingerprint([cfg.apiBase,cfg.chatEndpoint,opts.model||cfg.model,cfg.sendTemperature,cfg.maxTokens,cfg.stream]);
+      const cfg=getApiConfig();const configSignature=fingerprint([cfg.apiBase,cfg.chatEndpoint,opts.model||cfg.model,cfg.sendTemperature,cfg.maxTokens,cfg.stream,original.promptSettings?.historyHtmlMode||'semantic',window.MimaHistoryHtmlProjection?.version||'missing']);
       const sourceFingerprint=memorySourceFingerprint(original.messages,original.messages.length);
       const targetBaseline=kind==='rolling'?JSON.stringify([original.rollingSummary||'',original.lastSummarizedIndex||0]):JSON.stringify(kind==='core'?normalizeManualMemory(original.manualMemory).core:normalizeManualMemory(original.manualMemory).facts);
       const sourceHash=fingerprint([sourceFingerprint,kind==='core'&&opts.source==='facts'?original.manualMemory.facts:null,kind==='rolling'?original.rollingSummary:null]);
@@ -1540,7 +1576,7 @@
     const flush=()=>{if(!current.trim())return;out.push({text:current,sourceStartIndex:from,sourceEndExclusive:to,parts:records});current='';records=[];from=-1;to=-1;};
     for(let index=start;index<end;index++){
       const m=session.messages[index];if(m.role!=='user'&&m.role!=='assistant')continue;
-      const body=m.role==='user'?compileUserInputForPrompt(session,m.content,inputSemanticMode(session,m)):resolveMacrosForSession(session,m.content);
+      const body=m.role==='user'?compileUserInputForPrompt(session,m.content,inputSemanticMode(session,m)):historyHtmlProjection(resolveMacrosForSession(session,m.content),session).text;
       const actor=m.role==='user'?ctx.userName+'（玩家输入语义）：':ctx.charName+'：';
       // Keep the original index/ID and exact offsets in the model-visible text.
       // A single oversized message spans multiple parts, never claims to cover
@@ -1799,7 +1835,7 @@
       }
       emitProgress(progress,{phase:'prompt_ready',percent:34,detail:retryPending?(options.retryParameters==='current'?'保留原轮冻结消息，使用当前 API 模型与参数重试；不重复玩家消息。':'按原模型和参数重试冻结请求；API 设置变更不会改变本次请求。'):'使用原轮冻结上下文重新采样；旧回复与版本不进入请求。'});
     }else{
-      built=assemble(promptSession,opts);
+      built=assemble(promptSession,{...opts,preserveTerminalAssistant:action==='continue'&&cfg.continuationMode==='deepseek_prefix'});
       requestBody=makeApiBody(built.messages,cfg,temp,{continuation:action==='continue'});
       snapshot=generationSnapshot(session,promptSession,requestBody,built.messageSources,action,action==='continue'?target?.id:null,sourceFingerprint);
       const detail=action==='regenerate'&&target&&options.regenerationContext!=='current'?'旧记录没有请求快照，已明确使用当前挂载重建原轮。':action==='continue'?(cfg.continuationMode==='deepseek_prefix'?'按已声明的 prefix 协议请求续写。':'普通 Chat 后续 assistant 生成；接口未声明原文前缀补全，连续性由上下文和玩家预设决定。'):`Prompt（提示词）已组装 · ${requestBody.messages.length} 条消息`;
