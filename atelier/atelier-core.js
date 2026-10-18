@@ -4,14 +4,14 @@
 const root=window, DB='mima-theme-atelier-v1', STORE='records', VERSION=1;
 const TARGETS={
   shell:{label:'整体背景',real:'body',preview:'.atl-scene'},
-  topbar:{label:'顶部导航',real:'.topbar',preview:'.atl-demo-top'},
-  composer:{label:'底部输入区',real:'.composer-shell',preview:'.atl-demo-composer'},
-  button:{label:'主要按钮',real:'.primary-btn,.send-btn',preview:'.atl-demo-primary,.atl-demo-send'},
-  secondary:{label:'次要按钮',real:'.ghost-btn,.chip-btn,.nav-label',preview:'.atl-demo-secondary'},
-  field:{label:'输入框',real:'.field,.composer-row textarea',preview:'.atl-demo-field'},
-  message:{label:'剧情正文',real:'.msg-content',preview:'.atl-demo-message'},
-  panel:{label:'弹窗/卡片',real:'.modal-panel,.library-card,.settings-section',preview:'.atl-demo-card'},
-  status:{label:'状态栏/折叠面板',real:'.tavern-story-content details,.tavern-story-content system',preview:'.atl-demo-status'}
+  topbar:{label:'顶部导航',real:'.app-shell > header.topbar',preview:'.atl-demo-top'},
+  composer:{label:'底部输入区',real:'.app-shell > footer.composer-shell',preview:'.atl-demo-composer'},
+  button:{label:'主要按钮',real:'.app-shell .primary-btn,.app-shell .send-btn',preview:'.atl-demo-primary,.atl-demo-send'},
+  secondary:{label:'次要按钮',real:'.app-shell .ghost-btn,.app-shell .chip-btn,.app-shell .nav-label',preview:'.atl-demo-secondary'},
+  field:{label:'输入框',real:'.app-shell .field,.app-shell .composer-row textarea',preview:'.atl-demo-field'},
+  message:{label:'剧情消息外观（不改正文字体）',real:'.app-shell .assistant-msg > .msg-content,.app-shell .user-msg > .msg-content',preview:'.atl-demo-message'},
+  panel:{label:'弹窗/卡片（不改设置分组）',real:'.modal-panel,.session-drawer .session-item,.library-card',preview:'.atl-demo-card'},
+  status:{label:'HTML 状态栏（默认不接管）',real:'.app-shell .tavern-story-content.safe-html-content > details,.app-shell .tavern-story-content.safe-html-content > system',preview:'.atl-demo-status'}
 };
 const DEFAULT={material:'glass',image:'',fontFamily:'inherit',imageOpacity:100,maskColor:'#000000',maskOpacity:0,paddingX:-1,paddingY:-1,borderTop:-1,borderRight:-1,borderBottom:-1,borderLeft:-1,fill:'#f4e9ed',ink:'#403745',accent:'#a67b94',alpha:88,radius:18,border:1,borderColor:'#ffffff',borderAlpha:65,blur:12,shadow:10,shadowY:5,ornament:'none',visualEffect:'none',decorColor:'#a67b94',decorOpacity:18,decorSize:26,imagePosX:50,imagePosY:50,animationDuration:3,gradient:'none',gradientTo:'#ffffff',angle:145,shape:'round',fontSize:15,stroke:0,strokeColor:'#ffffff',textShadow:0,animation:'none'};
 const STYLES=[
@@ -22,6 +22,8 @@ const STYLES=[
   ['windows-retro','Windows 经典复古','skeuo','#d9d9d9','#5c70a9'],['cyberpunk','赛博朋克','brutal','#1d2435','#00b9c5'],['vaporwave','Vaporwave','glass','#e7b8e7','#a268d2'],['dark-academia','Dark Academia','skeuo','#554741','#b6a081'],
   ['galgame','日系 Galgame','glass','#e7dcf1','#a78abb'],['kawaii','Kawaii 可爱贴纸','clay','#ffe4ef','#ef92b1'],['aurora','Aurora 极光','glass','#d1dee9','#a08ccd'],['scrapbook','Paper Scrapbook','skeuo','#eddfc9','#a68a72']
 ];
+const REGION_KEYS=Object.keys(TARGETS);
+const defaultRegions=()=>Object.fromEntries(REGION_KEYS.map(k=>[k,k!=='status']));
 const PATTERNS=['dots','grid','stripes','diagonal','checker','waves','rings','radial','diamond','cross','halftone','none'];
 const clone=x=>JSON.parse(JSON.stringify(x));
 const clamp=(n,a,b)=>Math.max(a,Math.min(b,Number.isFinite(+n)?+n:a));
@@ -74,6 +76,7 @@ function atlasEffect(s){
  }
 }
 function styleRules(s0,pattern=[],key=''){const s={...DEFAULT,...s0},bg=rgba(s.fill,s.alpha),bd=rgba(s.borderColor,s.borderAlpha);
+  const structural=['topbar','composer','panel','status'].includes(key),prose=key==='message',shapeSafe=['button','secondary'].includes(key);
   let images=patternLayers(pattern,'image'),sizes=patternLayers(pattern,'size'),positions=patternLayers(pattern,'position');const effect=atlasEffect(s);if(effect){const layerCount=effect.image.split(/,(?=\s*(?:radial-gradient|linear-gradient|repeating-|conic-gradient))/).length;images.push(effect.image);sizes.push(effect.size);positions.push('0 0');}
   let gradientImage='';if(s.gradient!=='none'){const to=rgba(s.gradientTo,s.alpha);const gradient=s.gradient==='radial'?`radial-gradient(circle at 28% 20%,${to},${bg})`:s.gradient==='conic'?`conic-gradient(from ${clamp(s.angle,0,360)}deg,${bg},${to},${bg})`:`linear-gradient(${clamp(s.angle,0,360)}deg,${to},${bg})`;gradientImage=gradient;}
   if(s.image){
@@ -88,14 +91,18 @@ function styleRules(s0,pattern=[],key=''){const s={...DEFAULT,...s0},bg=rgba(s.f
   if((s.material==='skeuo'||s.material==='aqua')&&shadow==='none')shadow='inset 0 1px 1px rgba(255,255,255,.01)';
   if(s.material==='skeuo'||s.material==='aqua')shadow+=`,inset 0 2px 3px rgba(255,255,255,.65),inset 0 -3px 5px rgba(0,0,0,.13)`;
   if(s.material==='brutal')shadow=`${clamp(s.shadow,0,50)/2}px ${clamp(s.shadow,0,50)/2}px 0 ${rgba('#111111',80)}`;
-  const rules=[`background-color:${bg}`,images.length?`background-image:${images.join(',')}`:'background-image:none',images.length?`background-size:${sizes.join(',')}`:'',images.length?`background-position:${positions.join(',')}`:'',`border:${clamp(s.border,0,20)}px solid ${bd}`,`border-width:${['borderTop','borderRight','borderBottom','borderLeft'].map(k=>clamp(s[k]<0?s.border:s[k],0,20)+'px').join(' ')}`,s.paddingX>=0&&key!=='shell'?`padding-left:${clamp(s.paddingX,0,80)}px;padding-right:${clamp(s.paddingX,0,80)}px`:'',s.paddingY>=0&&key!=='shell'?`padding-top:${clamp(s.paddingY,0,80)}px;padding-bottom:${clamp(s.paddingY,0,80)}px`:'',`border-radius:${clamp(s.radius,0,100)}px`,`box-shadow:${shadow}`,s.blur>0?`backdrop-filter:blur(${clamp(s.blur,0,60)}px)`:'backdrop-filter:none',s.blur>0?`-webkit-backdrop-filter:blur(${clamp(s.blur,0,60)}px)`:'-webkit-backdrop-filter:none',`color:${hex(s.ink)}`,`font-size:${clamp(s.fontSize,8,38)}px`,s.fontFamily&&s.fontFamily!=='inherit'?`font-family:${/^MimaAtelierFont_[A-Za-z0-9]+$/.test(s.fontFamily)?'"'+s.fontFamily+'"':(['system-ui','serif','monospace'].includes(s.fontFamily)?s.fontFamily:'inherit')}`:'',s.stroke>0?`-webkit-text-stroke:${clamp(s.stroke,0,4)}px ${hex(s.strokeColor)}`:'',s.textShadow?`text-shadow:0 1px ${clamp(s.textShadow,0,20)}px ${rgba(s.strokeColor,75)}`:'text-shadow:none'];
+  const rules=[`background-color:${bg}`,images.length?`background-image:${images.join(',')}`:'background-image:none',images.length?`background-size:${sizes.join(',')}`:'',images.length?`background-position:${positions.join(',')}`:'',`border:${clamp(s.border,0,20)}px solid ${bd}`,`border-width:${['borderTop','borderRight','borderBottom','borderLeft'].map(k=>clamp(s[k]<0?s.border:s[k],0,20)+'px').join(' ')}`,s.paddingX>=0&&key!=='shell'?`padding-left:${clamp(s.paddingX,0,80)}px;padding-right:${clamp(s.paddingX,0,80)}px`:'',s.paddingY>=0&&key!=='shell'?`padding-top:${clamp(s.paddingY,0,80)}px;padding-bottom:${clamp(s.paddingY,0,80)}px`:'',`border-radius:${clamp(s.radius,0,100)}px`,`box-shadow:${shadow}`,s.blur>0?`backdrop-filter:blur(${clamp(s.blur,0,60)}px) saturate(${s.material==='aqua'?'1.35':'1.18'})`:'backdrop-filter:none',s.blur>0?`-webkit-backdrop-filter:blur(${clamp(s.blur,0,60)}px) saturate(${s.material==='aqua'?'1.35':'1.18'})`:'-webkit-backdrop-filter:none',(!prose?`color:${hex(s.ink)}`:''),(!structural&&!prose?`font-size:${clamp(s.fontSize,8,38)}px`:''),s.fontFamily&&s.fontFamily!=='inherit'?`font-family:${/^MimaAtelierFont_[A-Za-z0-9]+$/.test(s.fontFamily)?'"'+s.fontFamily+'"':(['system-ui','serif','monospace'].includes(s.fontFamily)?s.fontFamily:'inherit')}`:'',!structural&&!prose&&s.stroke>0?`-webkit-text-stroke:${clamp(s.stroke,0,4)}px ${hex(s.strokeColor)}`:'',!structural&&!prose&&s.textShadow?`text-shadow:0 1px ${clamp(s.textShadow,0,20)}px ${rgba(s.strokeColor,75)}`:''];
+  if(s.material==='glass' || s.material==='aqua'){rules.push(`background-clip:padding-box`); if(s.blur>0)rules.push(`box-shadow:${shadow==='none'?'0 3px 15px rgba(10,15,25,.10)':shadow},inset 0 1px 0 rgba(255,255,255,.28)`);}
+  if(prose){ // The font, margins, line-height and safe-HTML status descendants remain authored by the story renderer.
+    const omit=/^(?:font-|color:|text-shadow|animation:|-webkit-text-stroke)/;for(let i=rules.length-1;i>=0;i--)if(omit.test(rules[i]))rules.splice(i,1);
+  }
   if(s.shape==='pill')rules.push('border-radius:999px');
-  if(s.shape==='hexagon')rules.push('clip-path:polygon(17% 0,83% 0,100% 50%,83% 100%,17% 100%,0 50%)');
-  if(s.shape==='ticket')rules.push('clip-path:polygon(0 0,100% 0,100% 36%,94% 50%,100% 64%,100% 100%,0 100%,0 64%,6% 50%,0 36%)');
+  if(shapeSafe&&s.shape==='hexagon')rules.push('clip-path:polygon(17% 0,83% 0,100% 50%,83% 100%,17% 100%,0 50%)');
+  if(shapeSafe&&s.shape==='ticket')rules.push('clip-path:polygon(0 0,100% 0,100% 36%,94% 50%,100% 64%,100% 100%,0 100%,0 64%,6% 50%,0 36%)');
   if(s.shape==='cloud')rules.push('border-radius:48% 40% 45% 35% / 45% 50% 40% 48%');
   if(s.shape==='cookie')rules.push('border-radius:37% 43% 38% 44% / 40% 34% 46% 40%');
-  if(s.animation==='float')rules.push(`animation:mima-atl-float ${clamp(s.animationDuration,.2,30)}s ease-in-out infinite`);
-  if(s.animation==='glow')rules.push(`animation:mima-atl-glow ${clamp(s.animationDuration,.2,30)}s ease-in-out infinite alternate`);
+  if(shapeSafe&&s.animation==='float')rules.push(`animation:mima-atl-float ${clamp(s.animationDuration,.2,30)}s ease-in-out infinite`);
+  if(shapeSafe&&s.animation==='glow')rules.push(`animation:mima-atl-glow ${clamp(s.animationDuration,.2,30)}s ease-in-out infinite alternate`);
   return (key==='shell'?rules.filter(x=>x.startsWith('background-')||x.startsWith('color:')):rules.filter(Boolean)).join(';')+';';
 }
 function baseTheme(id='liquid-frost'){
@@ -112,10 +119,10 @@ function baseTheme(id='liquid-frost'){
  elements.button={...base,fill:accent,ink:'#ffffff',alpha:100,gradient:kind==='flat'||kind==='minimal'?'none':'linear',gradientTo:bg};
  elements.secondary={...base,fill:'#ffffff',alpha:55};
  elements.field={...base,fill:'#ffffff',alpha:78,blur:3};
- elements.message={...base,fill:'#ffffff',alpha:24,border:0,blur:0,shadow:0};
- return {id:uid(),name:`${name} · 自定义`,format:'mima-atl-project',schema:1,template:id,originPreset:'',layoutRecipe:'story',elements,patterns:[],stickers:[],fonts:[],favorites:[],variants:{},extraCss:'',draftVersion:0,createdAt:Date.now(),updatedAt:Date.now()};
+ elements.message={...base,fill:'#ffffff',alpha:kind==='glass'?58:kind==='aqua'?62:24,border:kind==='glass'||kind==='aqua'?1:0,blur:kind==='glass'?14:kind==='aqua'?10:0,shadow:0};
+ return {id:uid(),name:`${name} · 自定义`,format:'mima-atl-project',schema:1,template:id,originPreset:'',layoutRecipe:'story',cssPriority:'legacy-first',regions:defaultRegions(),nightMode:'app',elements,patterns:[],stickers:[],fonts:[],favorites:[],variants:{},extraCss:'',draftVersion:0,createdAt:Date.now(),updatedAt:Date.now()};
 }
-function normalized(raw){if(!raw||raw.format!=='mima-atl-project'||raw.schema!==1||!raw.elements||typeof raw.elements!=='object')throw new Error('不支持或损坏的主题工程格式');const obj=baseTheme(raw.template||'minimal-clear');obj.id=String(raw.id||uid());obj.name=safeName(raw.name);obj.originPreset=/^[a-z][a-z0-9-]{0,100}$/.test(String(raw.originPreset||''))?String(raw.originPreset):'';obj.layoutRecipe=/^[a-z][a-z0-9-]{0,80}$/.test(String(raw.layoutRecipe||''))?String(raw.layoutRecipe):'story';obj.createdAt=Number(raw.createdAt)||Date.now();obj.updatedAt=Number(raw.updatedAt)||Date.now();obj.draftVersion=Math.max(0,Number(raw.draftVersion)||0);for(const k of Object.keys(TARGETS)){if(raw.elements[k]&&typeof raw.elements[k]==='object'){
+function normalized(raw){if(!raw||raw.format!=='mima-atl-project'||raw.schema!==1||!raw.elements||typeof raw.elements!=='object')throw new Error('不支持或损坏的主题工程格式');const obj=baseTheme(raw.template||'minimal-clear');obj.id=String(raw.id||uid());obj.name=safeName(raw.name);obj.originPreset=/^[a-z][a-z0-9-]{0,100}$/.test(String(raw.originPreset||''))?String(raw.originPreset):'';obj.layoutRecipe=/^[a-z][a-z0-9-]{0,80}$/.test(String(raw.layoutRecipe||''))?String(raw.layoutRecipe):'story';obj.cssPriority=['legacy-first','regions-first'].includes(raw.cssPriority)?raw.cssPriority:'legacy-first';obj.nightMode=['app','system','light','dark'].includes(raw.nightMode)?raw.nightMode:'app';obj.regions=defaultRegions();if(raw.regions&&typeof raw.regions==='object')for(const k of REGION_KEYS)if(Object.prototype.hasOwnProperty.call(raw.regions,k))obj.regions[k]=raw.regions[k]===true;obj.createdAt=Number(raw.createdAt)||Date.now();obj.updatedAt=Number(raw.updatedAt)||Date.now();obj.draftVersion=Math.max(0,Number(raw.draftVersion)||0);for(const k of Object.keys(TARGETS)){if(raw.elements[k]&&typeof raw.elements[k]==='object'){
  const e={...obj.elements[k]};for(const field of Object.keys(DEFAULT))if(Object.prototype.hasOwnProperty.call(raw.elements[k],field)){
  const v=raw.elements[k][field];e[field]=typeof DEFAULT[field]==='number'?clamp(v,-10000,10000):typeof v==='string'?v.slice(0,250):DEFAULT[field];
  } e.fill=hex(e.fill);e.ink=hex(e.ink);e.borderColor=hex(e.borderColor);e.strokeColor=hex(e.strokeColor);e.gradientTo=hex(e.gradientTo);e.maskColor=hex(e.maskColor);e.image=validImage(raw.elements[k].image)?raw.elements[k].image:'';obj.elements[k]=e;}}
@@ -132,7 +139,7 @@ function atlasLayout(project,scope,mode){
  const preview=mode==='preview',base=preview?`${scope} .atl-demo-chat`:`${scope} #story-chat-box`,session=preview?`${scope} .atl-demo-session-list`:`${scope} .session-drawer .session-list`;
  const item=preview?`${scope} .atl-demo-session-item`:`${scope} .session-drawer .session-item`;
  let css='';
- if(['role-bubble','soft-dock','photo-journal'].includes(layout)){
+ if(project.regions?.message!==false&&['role-bubble','soft-dock','photo-journal'].includes(layout)){
   const a=preview?`${scope} .atl-demo-message[data-demo-role="assistant"]`:`${base} > article.message.assistant-msg`;
   const u=preview?`${scope} .atl-demo-message[data-demo-role="user"]`:`${base} > article.message.user-msg`;
   const rad=layout==='photo-journal'?32:20;
@@ -140,7 +147,7 @@ function atlasLayout(project,scope,mode){
   // Only the host message wrapper is repositioned: never touch nested safe HTML status components.
   css+=`${u} .msg-content{overflow-wrap:anywhere;}\n`;
  }
- if(['role-bubble','soft-dock','photo-journal'].includes(layout)){
+ if(project.regions?.composer!==false&&['role-bubble','soft-dock','photo-journal'].includes(layout)){
   const dock=preview?`${scope} .atl-demo-composer`:`${scope} .app-shell > footer.composer-shell`;
   css+=`${dock}{width:calc(100% - 20px);margin-left:10px;margin-right:10px;margin-bottom:6px;border-radius:30px;box-sizing:border-box;}\n`;
  }
@@ -157,7 +164,7 @@ function atlasLayout(project,scope,mode){
   'sidebar-fixed':'1fr','timeline-vertical':'1fr','f-pattern-layout':'1fr','z-pattern-layout':'1fr','holy-grail-layout':'1fr','parallax-editorial':'1fr'
  };
  if(columns[layout]){
-  css+=`${session}{display:grid;grid-template-columns:${columns[layout]};gap:10px;min-width:0;}\n${item}{min-width:0;max-width:100%;overflow-wrap:anywhere;}\n`;
+  css+=`${preview?'':`${scope} .session-drawer{container-name:mima-atlas-sessions;container-type:inline-size;}\n`}${session}{display:grid;grid-template-columns:${columns[layout]};gap:10px;min-width:0;}\n${item}{min-width:0;max-width:100%;overflow-wrap:anywhere;}\n`;
   if(['bento-grid','magazine-grid','dashboard-layout','asymmetric-grid'].includes(layout))css+=`${item}:first-child{grid-column:span 2;}\n`;
   if(layout==='masonry-flow')css+=`${item}:nth-child(even){transform:translateY(8px)}\n`;
   if(layout==='card-stack')css+=`${item}{margin-bottom:-6px;box-shadow:0 7px 18px ${rgba(accent,20)};border-color:${rgba(accent,32)};}\n`;
@@ -166,16 +173,19 @@ function atlasLayout(project,scope,mode){
   if(layout==='f-pattern-layout')css+=`${item}:first-child{border-left:4px solid ${accent};}\n${item}:nth-child(n+2){margin-left:16px;}\n`;
   if(layout==='z-pattern-layout')css+=`${item}:nth-child(even){margin-left:15px;}\n${item}:nth-child(odd){margin-right:15px;}\n`;
   if(layout==='parallax-editorial')css+=`${item}{background:linear-gradient(135deg,${c},transparent);border-radius:2px 24px;}\n`;
-  css+=`@media(max-width:420px){${session}{grid-template-columns:1fr;} ${item}:first-child{grid-column:auto;}}\n`;
+  // A session drawer is normally ~320px even on wide screens. Use its own width, not window width.
+  if(layout==='horizontal-gallery')css+=`${session}{container-type:normal;}\n`;
+  else css+=`@container mima-atlas-sessions (max-width:286px){${session}{grid-template-columns:1fr;} ${item}:first-child{grid-column:auto;}}\n`;
  }
  return css;
 }
 function compile(project,mode='live'){
- const scope=mode==='preview'?'[data-atl-preview]':'html[data-mima-atelier-active]';let result=`/* MIMA Theme Atelier | ${safeName(project.name)} | self contained CSS */\n`;
+ const scope=mode==='preview'?'[data-atl-preview]':project.cssPriority==='legacy-first'?':where(html[data-mima-atelier-active])':'html[data-mima-atelier-active]';let result=`/* MIMA Theme Atelier | ${safeName(project.name)} | self contained CSS */\n`;
  for(const font of project.fonts||[])if(/^MimaAtelierFont_[A-Za-z0-9]+$/.test(font.family))result+=`@font-face{font-family:"${font.family}";src:url("${font.src}") format("${font.format}");font-display:swap;}\n`;
  for(const [key,target] of Object.entries(TARGETS)){
+ if(project.regions?.[key]===false)continue;
  const rules=styleRules(project.elements[key],project.patterns.filter(p=>p.target===key),key);
- const selectors=(mode==='preview'?target.preview:target.real).split(',').map(x=>mode==='preview'?`${scope} ${x.trim()}`:key==='shell'?`${scope} body`:`${scope} ${x.trim()}`).join(',');
+ const selectors=(mode==='preview'?target.preview:target.real).split(',').map(x=>mode==='preview'?`${scope} ${x.trim()}`:project.cssPriority==='legacy-first'?`${scope} :where(${x.trim()})`:key==='shell'?`${scope} body`:`${scope} ${x.trim()}`).join(',');
  result+=`${selectors}{${rules}}\n`;
  const orn=project.elements[key]?.ornament;
  if((key==='button'||key==='secondary')&&['double','dotted','cream','inset'].includes(orn)){
@@ -190,7 +200,11 @@ function compile(project,mode='live'){
  }
  result+=`@keyframes mima-atl-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}\n@keyframes mima-atl-glow{from{filter:brightness(.95)}to{filter:brightness(1.15)}}\n@media(prefers-reduced-motion:reduce){${scope} *{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}\n`;
  // Extra CSS is an explicit advanced user-authored layer; it does not need to be parseable back into visual parameters.
- if(mode==='live'&&project.variants?.night){const alt={...project,elements:project.variants.night.elements,patterns:project.variants.night.patterns,extraCss:'',variants:{}};result+=`\n@media (prefers-color-scheme:dark){\n${compile(alt,'live')}\n}\n`;}
+ if(mode==='live'&&project.variants?.night&&project.nightMode!=='light'){const alt={...project,elements:project.variants.night.elements,patterns:project.variants.night.patterns,extraCss:'',variants:{},nightMode:'light'};let night=compile(alt,'live');
+  if(project.nightMode==='system')result+=`\n@media (prefers-color-scheme:dark){\n${night}\n}\n`;
+  else if(project.nightMode==='dark')result+=`\n${night}\n`;
+  else {const nightScope=project.cssPriority==='legacy-first'?':where(html[data-mima-atelier-active][data-mima-theme="midnight"])':'html[data-mima-atelier-active][data-mima-theme="midnight"]';night=night.replaceAll(scope,nightScope);result+=`\n${night}\n`;}
+ }
  result+=atlasLayout(project,scope,mode);
  if(mode==='live'&&project.extraCss)result+=`\n/* Advanced authored CSS, untouched */\n${project.extraCss}\n`;
  return result;
@@ -206,13 +220,14 @@ function ensureStyle(){if(!style){style=document.getElementById('mima-atelier-ru
 function removeDecor(){if(decor){decor.remove();decor=null}}
 function drawDecor(project){removeDecor();if(!project?.stickers?.length||bypass())return;decor=document.createElement('div');decor.id='mima-atelier-decor-root';decor.style.cssText='position:fixed;inset:0;z-index:25;pointer-events:none;overflow:visible';document.body.appendChild(decor);project.stickers.filter(s=>!s.hidden).forEach(s=>{const el=document.createElement('img');el.src=s.src;el.alt='';el.dataset.atlSticker=s.id;el.style.cssText=`position:fixed;max-width:none;pointer-events:none;user-select:none;opacity:${clamp(s.opacity,0,100)/100};transform:translate(-50%,-50%) rotate(${s.rotate}deg);`;decor.appendChild(el)});positionDecor();}
 function positionDecor(){if(!decor||!applied)return;const rectAll={left:0,top:0,width:innerWidth,height:innerHeight};for(const sticker of applied.stickers){const el=Array.from(decor.children).find(x=>x.dataset.atlSticker===sticker.id);if(!el)continue;const t=TARGETS[sticker.anchor];const target=(t?.real||'').split(',')[0];const r=sticker.anchor==='shell'?rectAll:(document.querySelector(target)?.getBoundingClientRect()||null);if(!r){el.style.display='none';continue;}el.style.display='';el.style.left=(r.left+r.width*sticker.x/100)+'px';el.style.top=(r.top+r.height*sticker.y/100)+'px';el.style.width=(r.width*sticker.width/100)+'px';}}
+function syncPriority(){if(!style?.isConnected)return;const first=applied?.cssPriority==='legacy-first';const legacy=['mima-custom-css-style','mima-global-css-style'].map(id=>document.getElementById(id)).filter(el=>el?.parentNode===document.head).sort((a,b)=>(a.compareDocumentPosition(b)&Node.DOCUMENT_POSITION_FOLLOWING)?-1:1)[0];if(first&&legacy)document.head.insertBefore(style,legacy);else document.head.appendChild(style);}
 function activate(project){if(bypass()){ensureStyle().textContent='';document.documentElement.removeAttribute('data-mima-atelier-active');removeDecor();applied=null;return;}
  const css=compile(project);if(typeof CSSStyleSheet!=='undefined'&&CSSStyleSheet.prototype.replaceSync){const sheet=new CSSStyleSheet();sheet.replaceSync(css);}
- ensureStyle().textContent=css;document.head.appendChild(style);document.documentElement.setAttribute('data-mima-atelier-active','1');applied=clone(project);drawDecor(applied);
+ ensureStyle().textContent=css;document.documentElement.setAttribute('data-mima-atelier-active','1');applied=clone(project);syncPriority();drawDecor(applied);
 }
 function deactivate(){ensureStyle().textContent='';document.documentElement.removeAttribute('data-mima-atelier-active');applied=null;removeDecor();}
 function disabled(){sessionStorage.setItem('mima-atl-safe-disabled','1');deactivate();}
-function reaffirm(){if(style?.isConnected)document.head.appendChild(style);}
+function reaffirm(){syncPriority();}
 async function initialize(){if(initialized)return;initialized=true;try{active=await get('active')||{id:null,version:0};if(active.id&&!bypass()){const p=await get(active.releaseKey||('release:'+active.id+':'+active.version));if(!p)throw Error('激活版本的固定快照不存在；保留原始界面且不覆盖任何资料');activate(normalized(p));} if(typeof BroadcastChannel!=='undefined'){channel=new BroadcastChannel(DB);channel.onmessage=async e=>{if(e.data?.kind==='activated'){try{const a=await get('active');if(!a||a.version<=(active?.version||0))return;const p=a.id?await get(a.releaseKey||('release:'+a.id+':'+a.version)):null;if(a.id&&!p)throw new Error('跨窗口主题内容丢失');if(p&&!bypass())activate(normalized(p));else deactivate();active=a;}catch(err){console.error('[Theme Atelier] cross-tab sync',err)}}};}}
  catch(e){console.error('[Theme Atelier] startup failed; legacy theme unchanged',e);deactivate();throw e;}}
 ready=initialize();ready.catch(()=>{});

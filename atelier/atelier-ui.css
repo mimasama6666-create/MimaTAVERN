@@ -43,3 +43,6 @@
 .atl-demo-session-item{font-size:10px;min-width:0;border:1px solid #ffffffa0;background:#fff9;padding:5px 7px;border-radius:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .atl-demo-session-item small{font-size:8px;opacity:.75;display:block}
 @media(max-width:370px){.atl-catalog-grid{gap:6px}.atl-catalog-art{height:78px}.atl-catalog-card{padding:5px}}
+
+/* Atlas R2: ownership selector and scope controls in the existing shadow editor */
+.atl-region-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:3px 9px;margin-top:8px}.atl-region-grid .atl-check{padding:5px 0;font-size:11px}.atl-preview-toolbar select{max-width:134px}@media(max-width:370px){.atl-region-grid{grid-template-columns:1fr}}

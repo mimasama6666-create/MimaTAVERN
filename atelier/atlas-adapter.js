@@ -72,7 +72,7 @@ function decorateElements(theme,opts){for(const [key,e] of Object.entries(theme.
  if(isShell)Object.assign(e,{alpha:100,blur:0,shadow:0,radius:0,border:0,gradient:opts.shellGradient||opts.gradient||'linear',gradientTo:opts.gradientTo||opts.bg});
  if(isButton)Object.assign(e,{fill:opts.accent,ink:chooseInk(opts.accent),alpha:100,radius:Math.min(65,opts.radius+4),border:Math.max(1,opts.border||0),shadow:Math.max(3,opts.shadow-3),gradient:opts.material==='aqua'?'linear':'none',gradientTo:opts.bg,ornament:opts.effect==='lace'?'cream':opts.effect==='ornate'?'double':'none'});
  if(key==='secondary'||key==='field')Object.assign(e,{fill:opts.bg,alpha:Math.max(65,opts.opacity??86),shadow:Math.max(0,opts.shadow-8),visualEffect:'none'});
- if(isMessage)Object.assign(e,{alpha:opts.messageAlpha??(opts.material==='glass'?58:opts.material==='minimal'?30:75),shadow:0,blur:0,border:0,radius:Math.max(2,opts.radius-2),visualEffect:'none'});
+ if(isMessage)Object.assign(e,{alpha:opts.messageAlpha??(opts.material==='glass'?58:opts.material==='aqua'?62:opts.material==='minimal'?30:75),shadow:0,blur:opts.messageBlur??(opts.material==='glass'?opts.blur??18:opts.material==='aqua'?opts.blur??12:0),border:opts.material==='glass'||opts.material==='aqua'?1:0,borderAlpha:opts.material==='glass'||opts.material==='aqua'?55:0,radius:Math.max(2,opts.radius-2),visualEffect:'none'});
  if(key==='status')Object.assign(e,{alpha:opts.opacity??90,shadow:Math.max(0,opts.shadow-8),visualEffect:'none'});
  }}
 function make(id){const entry=Catalog.find(id);if(!entry||entry.type==='layout')throw Error('不是可创建的视觉模板：'+id);
