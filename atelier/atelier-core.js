@@ -13,7 +13,7 @@ const TARGETS={
   panel:{label:'弹窗/卡片',real:'.modal-panel,.library-card,.settings-section',preview:'.atl-demo-card'},
   status:{label:'状态栏/折叠面板',real:'.tavern-story-content details,.tavern-story-content system',preview:'.atl-demo-status'}
 };
-const DEFAULT={material:'glass',image:'',fontFamily:'inherit',imageOpacity:100,maskColor:'#000000',maskOpacity:0,paddingX:-1,paddingY:-1,borderTop:-1,borderRight:-1,borderBottom:-1,borderLeft:-1,fill:'#f4e9ed',ink:'#403745',accent:'#a67b94',alpha:88,radius:18,border:1,borderColor:'#ffffff',borderAlpha:65,blur:12,shadow:10,shadowY:5,ornament:'none',animationDuration:3,gradient:'none',gradientTo:'#ffffff',angle:145,shape:'round',fontSize:15,stroke:0,strokeColor:'#ffffff',textShadow:0,animation:'none'};
+const DEFAULT={material:'glass',image:'',fontFamily:'inherit',imageOpacity:100,maskColor:'#000000',maskOpacity:0,paddingX:-1,paddingY:-1,borderTop:-1,borderRight:-1,borderBottom:-1,borderLeft:-1,fill:'#f4e9ed',ink:'#403745',accent:'#a67b94',alpha:88,radius:18,border:1,borderColor:'#ffffff',borderAlpha:65,blur:12,shadow:10,shadowY:5,ornament:'none',visualEffect:'none',decorColor:'#a67b94',decorOpacity:18,decorSize:26,imagePosX:50,imagePosY:50,animationDuration:3,gradient:'none',gradientTo:'#ffffff',angle:145,shape:'round',fontSize:15,stroke:0,strokeColor:'#ffffff',textShadow:0,animation:'none'};
 const STYLES=[
   ['minimal-clear','极简透明','minimal','#eff1f3','#8992a0'],['liquid-frost','液态磨砂','glass','#e9dfee','#9e83ac'],['liquid-light','流光玻璃','glass','#d8e7f0','#7da5b9'],['flat-modern','现代扁平','flat','#f2f1f9','#8274ab'],
   ['retro-skeuo','复古拟物','skeuo','#dfc5b3','#8b654b'],['neumorphism','新拟物','neo','#e5e3ed','#8f88a9'],['claymorphism','软陶拟物','clay','#f1d8d7','#d78d9a'],['aqua-gloss','Aqua 水晶','aqua','#d5e7f4','#65a5ce'],
@@ -49,13 +49,37 @@ function patternCSS(p){
   }
 }
 function patternLayers(pats,part){const a=(pats||[]).filter(p=>p.enabled!==false&&p.type!=='none'&&patternCSS(p));return a.flatMap(p=>{const x=patternCSS(p);if(part==='position')return [`${clamp(p.offsetX??0,-500,500)}px ${clamp(p.offsetY??0,-500,500)}px`];return x[part]?[x[part]]:part==='size'?['auto']:[]});}
+function atlasEffect(s){
+ const color=rgba(s.decorColor,s.decorOpacity),soft=rgba(s.decorColor,Math.min(60,s.decorOpacity+12));
+ const size=clamp(s.decorSize,6,100);
+ switch(s.visualEffect){
+ case 'stars':return {image:`radial-gradient(2px 2px at 25% 33%,${soft} 85%,transparent),radial-gradient(1px 1px at 78% 66%,${color} 90%,transparent)`,size:`${size*3}px ${size*3}px,${size*2}px ${size*2}px`};
+ case 'lace':return {image:`radial-gradient(circle at 50% 0,transparent ${size/4}px,${color} ${size/4+.5}px,transparent ${size/3}px),radial-gradient(circle at 50% 100%,${color} 1px,transparent ${size/3}px)`,size:`${size}px ${size}px,${size*2}px ${size*2}px`};
+ case 'bubbles':return {image:`radial-gradient(circle at 23% 36%,${color} 1px,transparent ${size/2}px),radial-gradient(circle at 77% 76%,transparent ${size/4}px,${soft} ${size/4+.5}px,transparent ${size/3}px)`,size:`${size*2}px ${size*2}px,${size*3}px ${size*3}px`};
+ case 'grain':return {image:`repeating-linear-gradient(87deg,transparent 0 3px,${color} 4px 4.5px,transparent 5px 9px)`,size:`${size*2}px ${size*2}px`};
+ case 'paper':return {image:`repeating-linear-gradient(0deg,${color} 0 .3px,transparent .3px ${size}px)`,size:`${size}px ${size}px`};
+ case 'scanlines':return {image:`repeating-linear-gradient(0deg,${color} 0 1px,transparent 1px ${Math.max(4,size/5)}px)`,size:`auto`};
+ case 'pixels':return {image:`conic-gradient(${color} 25%,transparent 0 50%,${color} 0 75%,transparent 0)`,size:`${size}px ${size}px`};
+ case 'grid':case 'blueprint':return {image:`linear-gradient(${color} 1px,transparent 1px),linear-gradient(90deg,${color} 1px,transparent 1px)`,size:`${size}px ${size}px,${size}px ${size}px`};
+ case 'gloss':return {image:`linear-gradient(150deg,rgba(255,255,255,.24),transparent 45%,${color})`,size:'cover'};
+ case 'holo':return {image:`linear-gradient(120deg,${color},transparent 38%,${soft} 75%,transparent)`,size:'cover'};
+ case 'ornate':return {image:`repeating-radial-gradient(circle at 0 0,transparent 0 ${size-1}px,${color} ${size-1}px ${size}px)`,size:`${size*2}px ${size*2}px`};
+ case 'watercolor':return {image:`radial-gradient(ellipse at 20% 25%,${color},transparent 62%),radial-gradient(ellipse at 80% 70%,${soft},transparent 70%)`,size:'cover,cover'};
+ case 'waves':return {image:`repeating-radial-gradient(ellipse at 0 100%,transparent 0 ${size-1}px,${color} ${size-1}px ${size}px,transparent ${size}px ${size*2}px)`,size:`${size*2}px ${size*2}px`};
+ case 'dots':return {image:`radial-gradient(circle,${color} 1.4px,transparent 1.8px)`,size:`${size}px ${size}px`};
+ case 'geometric':return {image:`linear-gradient(45deg,transparent 45%,${color} 46% 52%,transparent 53%),linear-gradient(-45deg,transparent 45%,${color} 46% 52%,transparent 53%)`,size:`${size*2}px ${size*2}px,${size*2}px ${size*2}px`};
+ case 'stripes':return {image:`repeating-linear-gradient(135deg,${color} 0 1px,transparent 1px ${size}px)`,size:'auto'};
+ case 'marble':return {image:`radial-gradient(ellipse at 15% 65%,${color},transparent 70%),repeating-linear-gradient(124deg,transparent 0 ${size*2}px,${soft} ${size*2}px ${size*2+1}px,transparent ${size*2+1}px ${size*4}px)`,size:'cover,auto'};
+ default:return null;
+ }
+}
 function styleRules(s0,pattern=[],key=''){const s={...DEFAULT,...s0},bg=rgba(s.fill,s.alpha),bd=rgba(s.borderColor,s.borderAlpha);
-  let images=patternLayers(pattern,'image'),sizes=patternLayers(pattern,'size'),positions=patternLayers(pattern,'position');
+  let images=patternLayers(pattern,'image'),sizes=patternLayers(pattern,'size'),positions=patternLayers(pattern,'position');const effect=atlasEffect(s);if(effect){const layerCount=effect.image.split(/,(?=\s*(?:radial-gradient|linear-gradient|repeating-|conic-gradient))/).length;images.push(effect.image);sizes.push(effect.size);positions.push('0 0');}
   let gradientImage='';if(s.gradient!=='none'){const to=rgba(s.gradientTo,s.alpha);const gradient=s.gradient==='radial'?`radial-gradient(circle at 28% 20%,${to},${bg})`:s.gradient==='conic'?`conic-gradient(from ${clamp(s.angle,0,360)}deg,${bg},${to},${bg})`:`linear-gradient(${clamp(s.angle,0,360)}deg,${to},${bg})`;gradientImage=gradient;}
   if(s.image){
     if(s.imageOpacity<100){images.push(`linear-gradient(${rgba(s.fill,100-clamp(s.imageOpacity,0,100))},${rgba(s.fill,100-clamp(s.imageOpacity,0,100))})`);sizes.push('cover');positions.push('0 0');}
     if(s.maskOpacity>0){images.push(`linear-gradient(${rgba(s.maskColor,s.maskOpacity)},${rgba(s.maskColor,s.maskOpacity)})`);sizes.push('cover');positions.push('0 0');}
-    images.push(`url("${String(s.image).replace(/["\\]/g,'')}")`);sizes.push('cover');positions.push('center center');
+    images.push(`url("${String(s.image).replace(/["\\]/g,'')}")`);sizes.push('cover');positions.push(`${clamp(s.imagePosX,0,100)}% ${clamp(s.imagePosY,0,100)}%`);
   }
   if(gradientImage){images.push(gradientImage);sizes.push('auto');positions.push('0 0');}
   const dark=rgba('#000000',Math.min(50,clamp(s.shadow,0,50)*1.6));const light=rgba('#ffffff',clamp(s.shadow,0,50)*1.8);
@@ -89,9 +113,9 @@ function baseTheme(id='liquid-frost'){
  elements.secondary={...base,fill:'#ffffff',alpha:55};
  elements.field={...base,fill:'#ffffff',alpha:78,blur:3};
  elements.message={...base,fill:'#ffffff',alpha:24,border:0,blur:0,shadow:0};
- return {id:uid(),name:`${name} · 自定义`,format:'mima-atl-project',schema:1,template:id,elements,patterns:[],stickers:[],fonts:[],favorites:[],variants:{},extraCss:'',draftVersion:0,createdAt:Date.now(),updatedAt:Date.now()};
+ return {id:uid(),name:`${name} · 自定义`,format:'mima-atl-project',schema:1,template:id,originPreset:'',layoutRecipe:'story',elements,patterns:[],stickers:[],fonts:[],favorites:[],variants:{},extraCss:'',draftVersion:0,createdAt:Date.now(),updatedAt:Date.now()};
 }
-function normalized(raw){if(!raw||raw.format!=='mima-atl-project'||raw.schema!==1||!raw.elements||typeof raw.elements!=='object')throw new Error('不支持或损坏的主题工程格式');const obj=baseTheme(raw.template||'minimal-clear');obj.id=String(raw.id||uid());obj.name=safeName(raw.name);obj.createdAt=Number(raw.createdAt)||Date.now();obj.updatedAt=Number(raw.updatedAt)||Date.now();obj.draftVersion=Math.max(0,Number(raw.draftVersion)||0);for(const k of Object.keys(TARGETS)){if(raw.elements[k]&&typeof raw.elements[k]==='object'){
+function normalized(raw){if(!raw||raw.format!=='mima-atl-project'||raw.schema!==1||!raw.elements||typeof raw.elements!=='object')throw new Error('不支持或损坏的主题工程格式');const obj=baseTheme(raw.template||'minimal-clear');obj.id=String(raw.id||uid());obj.name=safeName(raw.name);obj.originPreset=/^[a-z][a-z0-9-]{0,100}$/.test(String(raw.originPreset||''))?String(raw.originPreset):'';obj.layoutRecipe=/^[a-z][a-z0-9-]{0,80}$/.test(String(raw.layoutRecipe||''))?String(raw.layoutRecipe):'story';obj.createdAt=Number(raw.createdAt)||Date.now();obj.updatedAt=Number(raw.updatedAt)||Date.now();obj.draftVersion=Math.max(0,Number(raw.draftVersion)||0);for(const k of Object.keys(TARGETS)){if(raw.elements[k]&&typeof raw.elements[k]==='object'){
  const e={...obj.elements[k]};for(const field of Object.keys(DEFAULT))if(Object.prototype.hasOwnProperty.call(raw.elements[k],field)){
  const v=raw.elements[k][field];e[field]=typeof DEFAULT[field]==='number'?clamp(v,-10000,10000):typeof v==='string'?v.slice(0,250):DEFAULT[field];
  } e.fill=hex(e.fill);e.ink=hex(e.ink);e.borderColor=hex(e.borderColor);e.strokeColor=hex(e.strokeColor);e.gradientTo=hex(e.gradientTo);e.maskColor=hex(e.maskColor);e.image=validImage(raw.elements[k].image)?raw.elements[k].image:'';obj.elements[k]=e;}}
@@ -103,6 +127,49 @@ function normalized(raw){if(!raw||raw.format!=='mima-atl-project'||raw.schema!==
  obj.favorites=Array.isArray(raw.favorites)?raw.favorites.slice(0,40).filter(x=>x&&typeof x.name==='string'&&x.style&&typeof x.style==='object').map(x=>({id:String(x.id||uid()),name:safeName(x.name),style:{...obj.elements.button,...Object.fromEntries(Object.keys(DEFAULT).filter(k=>Object.hasOwn(x.style,k)).map(k=>[k,x.style[k]]))}})):[];
  obj.variants={};if(raw.variants&&typeof raw.variants==='object'&&raw.variants.night?.elements){const v=normalized({...raw,elements:raw.variants.night.elements,patterns:raw.variants.night.patterns||[],stickers:[],favorites:[],variants:null,extraCss:''});obj.variants.night={elements:v.elements,patterns:v.patterns};}
  return obj;}
+function atlasLayout(project,scope,mode){
+ const layout=project.layoutRecipe||'story',c=rgba(project.elements?.panel?.fill||'#eeeeee',80),ink=hex(project.elements?.message?.ink||'#323232'),accent=hex(project.elements?.button?.fill||'#888888');
+ const preview=mode==='preview',base=preview?`${scope} .atl-demo-chat`:`${scope} #story-chat-box`,session=preview?`${scope} .atl-demo-session-list`:`${scope} .session-drawer .session-list`;
+ const item=preview?`${scope} .atl-demo-session-item`:`${scope} .session-drawer .session-item`;
+ let css='';
+ if(['role-bubble','soft-dock','photo-journal'].includes(layout)){
+  const a=preview?`${scope} .atl-demo-message[data-demo-role="assistant"]`:`${base} > article.message.assistant-msg`;
+  const u=preview?`${scope} .atl-demo-message[data-demo-role="user"]`:`${base} > article.message.user-msg`;
+  const rad=layout==='photo-journal'?32:20;
+  css+=`${a}{box-sizing:border-box;max-width:92%;width:fit-content;margin-left:0;margin-right:auto;border-radius:${rad}px ${rad}px ${rad}px 7px;align-self:flex-start;}\n${u}{box-sizing:border-box;max-width:92%;width:fit-content;margin-left:auto;margin-right:0;border-radius:${rad}px ${rad}px 7px ${rad}px;align-self:flex-end;}\n`;
+  // Only the host message wrapper is repositioned: never touch nested safe HTML status components.
+  css+=`${u} .msg-content{overflow-wrap:anywhere;}\n`;
+ }
+ if(['role-bubble','soft-dock','photo-journal'].includes(layout)){
+  const dock=preview?`${scope} .atl-demo-composer`:`${scope} .app-shell > footer.composer-shell`;
+  css+=`${dock}{width:calc(100% - 20px);margin-left:10px;margin-right:10px;margin-bottom:6px;border-radius:30px;box-sizing:border-box;}\n`;
+ }
+ if(project.originPreset==='mima-inspo-k04'){
+  const top=preview?`${scope} .atl-demo-top`:`${scope} .app-shell > header.topbar`;
+  css+=`${top}{position:relative;}\n${top}::after{content:"୨୧";pointer-events:none;position:absolute;top:1px;left:50%;transform:translateX(-50%);font-size:12px;color:${accent};opacity:.72;}\n`;
+ }
+ if(layout==='editorial')css+=`${item}{border-radius:2px;box-shadow:none;border-width:0 0 1px 0;background:transparent;}\n`;
+ if(layout==='soft-dock'||layout==='photo-journal')css+=`${session}{gap:12px;}\n${item}{border-radius:26px;backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}\n`;
+ const columns={
+  'bento-grid':'repeat(2,minmax(0,1fr))','masonry-flow':'repeat(2,minmax(0,1fr))','split-screen':'repeat(2,minmax(0,1fr))',
+  'card-stack':'1fr','magazine-grid':'repeat(2,minmax(0,1fr))','dashboard-layout':'repeat(2,minmax(0,1fr))',
+  'asymmetric-grid':'repeat(2,minmax(0,1fr))','horizontal-gallery':'repeat(5,minmax(175px,1fr))',
+  'sidebar-fixed':'1fr','timeline-vertical':'1fr','f-pattern-layout':'1fr','z-pattern-layout':'1fr','holy-grail-layout':'1fr','parallax-editorial':'1fr'
+ };
+ if(columns[layout]){
+  css+=`${session}{display:grid;grid-template-columns:${columns[layout]};gap:10px;min-width:0;}\n${item}{min-width:0;max-width:100%;overflow-wrap:anywhere;}\n`;
+  if(['bento-grid','magazine-grid','dashboard-layout','asymmetric-grid'].includes(layout))css+=`${item}:first-child{grid-column:span 2;}\n`;
+  if(layout==='masonry-flow')css+=`${item}:nth-child(even){transform:translateY(8px)}\n`;
+  if(layout==='card-stack')css+=`${item}{margin-bottom:-6px;box-shadow:0 7px 18px ${rgba(accent,20)};border-color:${rgba(accent,32)};}\n`;
+  if(layout==='timeline-vertical')css+=`${session}{border-left:2px solid ${rgba(accent,50)};padding-left:12px;}\n${item}{border-radius:5px 20px 20px 5px;}\n`;
+  if(layout==='horizontal-gallery')css+=`${session}{overflow-x:auto;grid-auto-flow:column;grid-auto-columns:minmax(175px,70%);grid-template-columns:none;scroll-snap-type:x mandatory;}\n${item}{scroll-snap-align:start;}\n`;
+  if(layout==='f-pattern-layout')css+=`${item}:first-child{border-left:4px solid ${accent};}\n${item}:nth-child(n+2){margin-left:16px;}\n`;
+  if(layout==='z-pattern-layout')css+=`${item}:nth-child(even){margin-left:15px;}\n${item}:nth-child(odd){margin-right:15px;}\n`;
+  if(layout==='parallax-editorial')css+=`${item}{background:linear-gradient(135deg,${c},transparent);border-radius:2px 24px;}\n`;
+  css+=`@media(max-width:420px){${session}{grid-template-columns:1fr;} ${item}:first-child{grid-column:auto;}}\n`;
+ }
+ return css;
+}
 function compile(project,mode='live'){
  const scope=mode==='preview'?'[data-atl-preview]':'html[data-mima-atelier-active]';let result=`/* MIMA Theme Atelier | ${safeName(project.name)} | self contained CSS */\n`;
  for(const font of project.fonts||[])if(/^MimaAtelierFont_[A-Za-z0-9]+$/.test(font.family))result+=`@font-face{font-family:"${font.family}";src:url("${font.src}") format("${font.format}");font-display:swap;}\n`;
@@ -124,6 +191,7 @@ function compile(project,mode='live'){
  result+=`@keyframes mima-atl-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}\n@keyframes mima-atl-glow{from{filter:brightness(.95)}to{filter:brightness(1.15)}}\n@media(prefers-reduced-motion:reduce){${scope} *{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}\n`;
  // Extra CSS is an explicit advanced user-authored layer; it does not need to be parseable back into visual parameters.
  if(mode==='live'&&project.variants?.night){const alt={...project,elements:project.variants.night.elements,patterns:project.variants.night.patterns,extraCss:'',variants:{}};result+=`\n@media (prefers-color-scheme:dark){\n${compile(alt,'live')}\n}\n`;}
+ result+=atlasLayout(project,scope,mode);
  if(mode==='live'&&project.extraCss)result+=`\n/* Advanced authored CSS, untouched */\n${project.extraCss}\n`;
  return result;
 }
