@@ -460,6 +460,23 @@
       priority:Number.isFinite(Number(e.priority))?Number(e.priority):50,
       position:['front','middle','back'].includes(e.position)?e.position:'middle',
       maxChars:Number.isFinite(Number(e.maxChars))?Number(e.maxChars):0});
+    // Canonicalize legacy aliases against the exact mounted books once.
+    // A change to a DIFFERENT book's same-named entry cannot invalidate this task.
+    const refs=window.MimaWorldbookRefs;
+    const referencedBooks=mode==='none'?[]:context.worldbookIds.map(id=>{
+      if(!ids(session.worldbookIds).includes(id))throw new Error('E_MEMORY_REFERENCE_UNMOUNTED:worldbook:'+id);
+      return find(canonical.worldbooks,id,'worldbook');
+    });
+    if(mode!=='none'&&(!refs?.resolveSelectedWorldbookRefs||!refs?.resolveMatchedWorldbookRefs))throw Error('E_MEMORY_REFERENCE_RESOLVER_MISSING');
+    const effectiveRefs=mode==='selected_entries'?refs.resolveSelectedWorldbookRefs({
+      bookIds:context.worldbookIds,books:referencedBooks,
+      scopedRefs:context.worldbookEntryRefs,legacyIds:context.worldbookEntryIds
+    }):mode==='matched_entries'?refs.resolveMatchedWorldbookRefs({
+      bookIds:context.worldbookIds,books:referencedBooks,messages:session.messages
+    }):[];
+    context.worldbookEntryRefs=effectiveRefs;
+    context.worldbookEntryIds=[]; // obsolete aliases must not alter the effective digest
+    const scoped=new Set(effectiveRefs.map(ref=>JSON.stringify(ref)));
     const chosen={context,
       characterPersona:context.characterPersona?maskRecord(session.loadedCharMaskId,'character'):null,
       userPersona:context.userPersona?maskRecord(session.loadedUserMaskId,'user'):null,
@@ -470,9 +487,7 @@
       worldbooks:mode==='none'?[]:context.worldbookIds.map(id=>{
         if(!ids(session.worldbookIds).includes(id))throw new Error('E_MEMORY_REFERENCE_UNMOUNTED:worldbook:'+id);
         const book=find(canonical.worldbooks,id,'worldbook');
-        const scoped=new Set(context.worldbookEntryRefs.map(x=>JSON.stringify(x)));
-        const selected=mode==='selected_entries'?(book.entries||[]).filter(e=>scoped.has(JSON.stringify([id,e.id]))||
-          context.worldbookEntryIds.includes(e.id)):(book.entries||[]);
+        const selected=(mode==='selected_entries'||mode==='matched_entries')?(book.entries||[]).filter(e=>scoped.has(JSON.stringify([id,e.id]))):(book.entries||[]);
         return {id,entries:selected.map(entryRecord)};
       })
     };

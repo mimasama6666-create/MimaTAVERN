@@ -393,21 +393,29 @@
     const mounted=new Set(arr(session.presetIds));
     for(const id of settings.presetIds){const preset=getPreset(id);if(!mounted.has(id)||!preset||preset.enabled===false)throw new ApiError('E_MEMORY_REFERENCE_MISSING','选择用于记忆的预设已卸载或停用：'+id);add('preset',id,resolveMacrosForSession(session,preset.content),'generation_instruction');}
     if(settings.worldbookMode!=='none'){
-      const activated=settings.worldbookMode==='matched_entries'?new Set(collectWorldbookEntries(session).matched.map(x=>x.book.id+'/'+x.entry.id)):null;
+      const activated=settings.worldbookMode==='matched_entries'?
+        new Set((window.MimaWorldbookRefs?.resolveMatchedWorldbookRefs?.({
+          bookIds:settings.worldbookIds,
+          books:settings.worldbookIds.map(id=>getWorldbook(id)).filter(Boolean),
+          messages:session.messages
+        })||[]).map(ref=>JSON.stringify(ref))):null;
+      if(settings.worldbookMode==='matched_entries'&&!window.MimaWorldbookRefs?.resolveMatchedWorldbookRefs)
+        throw new ApiError('E_MEMORY_REFERENCE_RESOLVER_MISSING','记忆匹配规则未加载');
       const mountedBooks=new Set(arr(session.worldbookIds));
-      const scoped=new Set(arr(settings.worldbookEntryRefs).map(x=>JSON.stringify([x.bookId,x.entryId])));
-      const legacy=new Set(settings.worldbookEntryIds||[]);
       const eligibleBooks=settings.worldbookIds.map(id=>getWorldbook(id)).filter(Boolean);
-      for(const oldId of legacy){
-        if(scoped.size&&[...scoped].some(x=>JSON.parse(x)[1]===oldId))continue;
-        const hits=eligibleBooks.flatMap(b=>arr(b.entries).filter(e=>e.id===oldId).map(e=>[b.id,e.id]));
-        if(hits.length!==1)throw new ApiError('E_MEMORY_REFERENCE_AMBIGUOUS',hits.length?'旧世界书条目 ID 在多本书中重复，请明确选择书和条目：'+oldId:'旧世界书条目不存在：'+oldId);
-        scoped.add(JSON.stringify(hits[0]));
+      // Contract and actual prompt MUST agree on one exact composite ID set.
+      const resolver=window.MimaWorldbookRefs?.resolveSelectedWorldbookRefs;
+      if(!resolver)throw new ApiError('E_MEMORY_REFERENCE_RESOLVER_MISSING','记忆世界书来源解析器尚未加载');
+      let selectedRefs=[];
+      if(settings.worldbookMode==='selected_entries'){
+        try{selectedRefs=resolver({bookIds:settings.worldbookIds,books:eligibleBooks,scopedRefs:settings.worldbookEntryRefs,legacyIds:settings.worldbookEntryIds});}
+        catch(e){throw new ApiError(String(e.message).startsWith('E_MEMORY_REFERENCE_AMBIGUOUS')?'E_MEMORY_REFERENCE_AMBIGUOUS':'E_MEMORY_REFERENCE_MISSING','世界书来源不能唯一验证：'+e.message);}
       }
+      const scoped=new Set(selectedRefs.map(ref=>JSON.stringify(ref)));
       for(const id of settings.worldbookIds){const book=getWorldbook(id);if(!mountedBooks.has(id)||!book||book.enabled===false)throw new ApiError('E_MEMORY_REFERENCE_MISSING','所选世界书已卸载或停用：'+id);
         for(const entry of arr(book.entries)){
           if(settings.worldbookMode==='selected_entries'&&!scoped.has(JSON.stringify([book.id,entry.id])))continue;
-          if(activated&&!activated.has(book.id+'/'+entry.id))continue;
+          if(activated&&!activated.has(JSON.stringify([book.id,entry.id])))continue;
           if(entry.enabled===false){if(settings.worldbookMode==='selected_entries')throw new ApiError('E_MEMORY_REFERENCE_MISSING','所选世界书条目已停用：'+entry.id);continue;}
           add('worldbook',book.id+'/'+entry.id,resolveMacrosForSession(session,entry.content),'background_only');
         }
