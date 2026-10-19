@@ -423,6 +423,64 @@
   // the canonical state record. No new database/version or destructive migration.
   const jobKey=(sessionId,kind)=>`memory_job:${sessionId}:${kind}`;
   const MEMORY_LEASE_MS=45000; // durable ownership, not a Provider request timeout
+  // Contract covers ONLY the owner's chosen reference resources. Comparing an
+  // unrelated preset or appended History would incorrectly discard good work.
+  // It is deliberately a canonical-state projection, not a UI cache or a
+  // digest of the assistant's prose (which cannot establish resource version).
+  function memoryReferenceContract(canonical,sessionId){
+    if(!isCanonicalStateRecord(canonical))throw new Error('E_MEMORY_REFERENCE_STATE_UNVERIFIED');
+    const session=canonical.sessions.find(s=>s?.id===sessionId);
+    if(!session)throw new Error('E_STORY_SESSION_MISSING');
+    const raw=session.manualMemory?.settings?.summaryContext||{};
+    const ids=v=>Array.isArray(v)?v.filter(x=>typeof x==='string'&&x):[];
+    const mode=['selected_entries','matched_entries'].includes(raw.worldbookMode)?raw.worldbookMode:'none';
+    const context={userPersona:raw.userPersona===true,characterPersona:raw.characterPersona===true,
+      presetIds:ids(raw.presetIds),worldbookMode:mode,worldbookIds:ids(raw.worldbookIds),
+      worldbookEntryIds:ids(raw.worldbookEntryIds),
+      worldbookEntryRefs:Array.isArray(raw.worldbookEntryRefs)?raw.worldbookEntryRefs
+        .filter(r=>r&&typeof r.bookId==='string'&&typeof r.entryId==='string').map(r=>[r.bookId,r.entryId]):[]};
+    const find=(list,id,kind)=>{
+      const v=(list||[]).find(item=>item?.id===id);
+      if(!v||v.enabled===false)throw new Error('E_MEMORY_REFERENCE_MISSING:'+kind+':'+id);
+      return v;
+    };
+    const safeText=v=>String(v??'').replace(/\uFFFD+/g,'').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g,'').trim();
+    const maskRecord=(id,kind)=>{
+      const m=find(canonical.masks,id,kind),description=safeText(m.description);
+      return {id:m.id,name:safeText(m.name||'未命名面具'),description,
+        content:safeText(m.content||m.persona||m.description),
+        scenario:safeText(m.scenario),exampleDialogue:safeText(m.exampleDialogue||m.mes_example)};
+    };
+    const entryRecord=e=>({id:e.id,content:safeText(e.content),enabled:e.enabled!==false,
+      keywords:ids(e.keywords),secondaryKeywords:ids(e.secondaryKeywords),
+      alwaysActive:e.alwaysActive===true,matchMode:e.matchMode==='all'?'all':'any',
+      caseSensitive:e.caseSensitive===true,useRegex:e.useRegex===true,
+      scanDepth:Number.isFinite(Number(e.scanDepth))?Number(e.scanDepth):12,
+      depth:Number.isFinite(Number(e.depth))?Number(e.depth):0,
+      priority:Number.isFinite(Number(e.priority))?Number(e.priority):50,
+      position:['front','middle','back'].includes(e.position)?e.position:'middle',
+      maxChars:Number.isFinite(Number(e.maxChars))?Number(e.maxChars):0});
+    const chosen={context,
+      characterPersona:context.characterPersona?maskRecord(session.loadedCharMaskId,'character'):null,
+      userPersona:context.userPersona?maskRecord(session.loadedUserMaskId,'user'):null,
+      presets:context.presetIds.map(id=>{
+        if(!ids(session.presetIds).includes(id))throw new Error('E_MEMORY_REFERENCE_UNMOUNTED:preset:'+id);
+        const p=find(canonical.presets,id,'preset');return {id:p.id,content:safeText(p.content)};
+      }),
+      worldbooks:mode==='none'?[]:context.worldbookIds.map(id=>{
+        if(!ids(session.worldbookIds).includes(id))throw new Error('E_MEMORY_REFERENCE_UNMOUNTED:worldbook:'+id);
+        const book=find(canonical.worldbooks,id,'worldbook');
+        const scoped=new Set(context.worldbookEntryRefs.map(x=>JSON.stringify(x)));
+        const selected=mode==='selected_entries'?(book.entries||[]).filter(e=>scoped.has(JSON.stringify([id,e.id]))||
+          context.worldbookEntryIds.includes(e.id)):(book.entries||[]);
+        return {id,entries:selected.map(entryRecord)};
+      })
+    };
+    const stable=(v)=>JSON.stringify(v,(_key,x)=>x&&typeof x==='object'&&!Array.isArray(x)
+      ?Object.fromEntries(Object.keys(x).sort().map(k=>[k,x[k]])):x);
+    if(!window.MimaSHA256?.digest)throw new Error('E_MEMORY_REFERENCE_HASH_UNAVAILABLE');
+    return window.MimaSHA256.digest(new TextEncoder().encode(stable(chosen)));
+  }
   async function getMemoryJob(sessionId,kind){return get(jobKey(sessionId,kind));}
   async function memoryJobTransaction(sessionId,kind,work){
     const db=await openDb();return new Promise((resolve,reject)=>{
@@ -432,8 +490,60 @@
       tx.oncomplete=()=>{db.close();resolve(result);};tx.onabort=()=>{db.close();reject(issue||tx.error||new Error('E_MEMORY_JOURNAL_WRITE_FAILED'));};
     });
   }
-  async function beginMemoryJob({sessionId,kind,options,sourceHash,sourceCount,sourceFingerprint,targetBaseline,configSignature}){
-    return memoryJobTransaction(sessionId,kind,(old,kv)=>{
+  // Checkpoints are a bounded diagnostic ledger. Accepted stage candidates
+  // require an independent durable key in the SAME verified IndexedDB store.
+  const stageRecordKey=(job,stage,digest)=>'memory_stage_v1:'+job.sessionId+':'+job.kind+':'+stage+':'+digest;
+  // v2 is addressed by the full effective stage contract, NOT the whole job.
+  // Append-only History must not invalidate an already checked stage.
+  const stageV2Key=digest=>'memory_stage_v2:'+digest;
+  async function getMemoryStage(job,stage,digest,legacyDigest=null){
+    const candidate=await get(stageV2Key(digest));
+    if(candidate){
+      if(candidate.status!=='STAGED'||candidate.version!==2||candidate.sessionId!==job.sessionId||candidate.kind!==job.kind||candidate.stage!==stage||candidate.contractDigest!==digest||typeof candidate.outputText!=='string')
+        throw new Error('E_MEMORY_STAGE_CONTRACT_MISMATCH');
+      return candidate;
+    }
+    // Legacy v1 records are left untouched; only identical complete-job source
+    // and exactly matching old contracts can ever be reused.
+    const legacy=await get(stageRecordKey(job,stage,legacyDigest||digest));
+    if(!legacy)return null;
+    if(legacy.version!==1||legacy.status!=='STAGED'||legacy.sessionId!==job.sessionId||legacy.kind!==job.kind||legacy.stage!==stage||legacy.sourceHash!==job.sourceHash||legacy.sourceFingerprint!==job.sourceFingerprint||legacy.contractDigest!==(legacyDigest||digest)||typeof legacy.outputText!=='string'||!legacy.outputDigest)
+      throw new Error('E_MEMORY_STAGE_CONTRACT_MISMATCH');
+    return legacy;
+  }
+  async function inspectLegacyMemoryStages(sessionId,kind){
+    if(!['core','facts','rolling'].includes(kind)||typeof sessionId!=='string')throw new Error('E_MEMORY_LEGACY_SCOPE_INVALID');
+    const db=await openDb();return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readonly'),req=tx.objectStore(STORE).openCursor();let issue;const entries=[];
+      const prefix='memory_stage_v1:'+sessionId+':'+kind+':';
+      req.onerror=()=>{issue=req.error;tx.abort();};
+      req.onsuccess=()=>{const cursor=req.result;if(!cursor)return;
+        if(typeof cursor.key==='string'&&cursor.key.startsWith(prefix)){
+          const value=cursor.value;
+          entries.push({stage:String(value?.stage||''),contractDigest:String(value?.contractDigest||''),
+            outputLength:Number(value?.outputLength)||String(value?.outputText||'').length,
+            verifiedForCurrentRequest:false,status:'LEGACY_READ_ONLY',createdAt:String(value?.createdAt||'')});
+        }cursor.continue();};
+      tx.oncomplete=()=>{db.close();resolve(entries);};tx.onabort=()=>{db.close();reject(issue||tx.error||new Error('E_MEMORY_LEGACY_READ_FAILED'));};
+    });
+  }
+  async function putMemoryStage(job,stage,digest,content,meta={}){
+    if(typeof content!=='string'||!content.trim())throw new Error('E_MEMORY_STAGE_INVALID');
+    return memoryJobTransaction(job.sessionId,job.kind,(old,kv)=>{
+      if(old?.id!==job.id||old?.attemptId!==job.attemptId||old.status!=='running')throw new Error('E_MEMORY_JOB_FENCED');
+      const record={version:2,status:'STAGED',sessionId:job.sessionId,kind:job.kind,stage,contractDigest:digest,
+        sourceHash:job.sourceHash,sourceFingerprint:job.sourceFingerprint,sourceCount:job.sourceCount,
+        sourceRange:job.stageScopes?.[stage]||null,referenceDigest:job.referenceDigest||'',
+        outputText:content,outputLength:content.length,outputDigest:meta.outputDigest||'',
+        model:meta.model||'',finishReason:meta.finishReason||'',createdAt:new Date().toISOString(),
+        jobId:job.id,attemptId:job.attemptId,verification:meta.verification||null};
+      kv.put(record,stageV2Key(digest));return record;
+    });
+  }
+  async function beginMemoryJob({sessionId,kind,options,sourceHash,sourceCount,sourceFingerprint,targetBaseline,configSignature,expectedReferenceContract=null}){
+    const referenceContract=memoryReferenceContract(await loadState(),sessionId);
+    if(expectedReferenceContract!==null&&referenceContract!==expectedReferenceContract)throw new Error('E_MEMORY_REFERENCE_CHANGED_BEFORE_REQUEST');
+    return memoryJobTransaction(sessionId,kind,(old,kv,tx)=>{
       const live=old?.status==='running'&&Number(old.leaseUntilEpoch||0)>Date.now();
       if(live)throw new Error('E_MEMORY_JOB_PENDING: 另一个尚有租约的 attempt 正在运行；不能竞争结算');
       if(old?.status==='running'&&Number(old.recoveryCount||0)>=3)throw new Error('E_MEMORY_RECOVERY_LIMIT: 连续恢复已达到上限，请检查后台任务错误记录并人工操作');
@@ -449,14 +559,29 @@
         }
       }
       const now=new Date().toISOString(),recovering=old?.status==='running';
+      const resumeIdentity=sameSource&&['running','failed','interrupted','aborted','needs_review'].includes(old?.status)&&old?.referenceContract===referenceContract;
+      const priorAttempts=resumeIdentity?[...(old.recoverableAttempts||[]),old.attemptId].filter(Boolean):[];
       const job={resumeCandidates,humanApprovedStages,configSignature,sourceFingerprint,targetBaseline,
-        id:recovering?old.id:`mem_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+        referenceContract,recoverableAttempts:[...new Set(priorAttempts)],
+        recoverCommittedRanges:old?.status==='partially_committed'||old?.recoverCommittedRanges===true,
+        id:resumeIdentity?old.id:`mem_${Date.now()}_${Math.random().toString(36).slice(2)}`,
         attemptId:`a_${Date.now()}_${Math.random().toString(36).slice(2)}`,sessionId,kind,options,sourceHash,sourceCount,
         status:'running',stage:recovering?'recovered_pending':'prepared',startedAt:recovering?old.startedAt:now,updatedAt:now,
-        checkpoints:sameSource&&['running','failed','interrupted','aborted'].includes(old?.status)?(old.checkpoints||[]):[],revision:(old?.revision||0)+1,
+        checkpoints:resumeIdentity?(old.checkpoints||[]):[],revision:(old?.revision||0)+1,
         leaseUntilEpoch:Date.now()+MEMORY_LEASE_MS,recoveryCount:recovering?(Number(old.recoveryCount||0)+1):0,
-        recoveredFromAttemptId:recovering?old.attemptId:null};
-      kv.put(job,jobKey(sessionId,kind));return job;
+        recoveredFromAttemptId:resumeIdentity?old.attemptId:null};
+      const sr=kv.get(STATE_KEY);
+      sr.onerror=()=>tx.abort();
+      sr.onsuccess=()=>{
+        try{
+          if(memoryReferenceContract(sr.result,sessionId)!==referenceContract){tx.abort();return;}
+          const liveSession=sr.result.sessions.find(x=>x?.id===sessionId);
+          if(!Array.isArray(liveSession?.messages)||liveSession.messages.length<sourceCount||
+             window.MimaStandalone?.memorySourceFingerprint?.(liveSession.messages,sourceCount)!==sourceFingerprint){tx.abort();return;}
+          kv.put(job,jobKey(sessionId,kind));
+        }catch(error){tx.abort();}
+      };
+      return job;
     });
   }
   async function heartbeatMemoryJob(job){
@@ -669,6 +794,153 @@
       kv.put(next,jobKey(sessionId,kind));return next;
     });
   }
+  // Durable AI merge stages and one review draft per Session. These records
+  // never modify canonical facts before the owner confirms in a CAS transaction.
+  const mergeStageKey=(sessionId,digest)=>`memory_merge_stage_v2:${sessionId}:${digest}`;
+  const mergeDraftKey=sessionId=>`memory_merge_draft_v1:${sessionId}`;
+  async function getMergeStage(sessionId,digest){const record=await get(mergeStageKey(sessionId,digest));
+    if(record&&(record.status!=='STAGED'||record.sessionId!==sessionId||record.contractDigest!==digest||typeof record.outputText!=='string'))throw new Error('E_MEMORY_MERGE_STAGE_INVALID');
+    return record||null;
+  }
+  async function putMergeStage(sessionId,digest,content,outputDigest){
+    if(!content?.trim()||!outputDigest)throw new Error('E_MEMORY_MERGE_STAGE_INVALID');
+    const db=await openDb();return new Promise((resolve,reject)=>{const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE),req=kv.get(mergeStageKey(sessionId,digest));let error,result;
+      req.onerror=()=>{error=req.error;tx.abort();};req.onsuccess=()=>{
+        const old=req.result;if(old){if(old.status!=='STAGED'||old.outputDigest!==outputDigest){error=new Error('E_MEMORY_MERGE_STAGE_CONFLICT');tx.abort();return;}result=old;return;}
+        result={version:2,status:'STAGED',sessionId,contractDigest:digest,outputText:content,outputLength:content.length,outputDigest,createdAt:new Date().toISOString()};kv.put(result,mergeStageKey(sessionId,digest));
+      };tx.oncomplete=()=>{db.close();resolve(result);};tx.onabort=()=>{db.close();reject(error||tx.error||new Error('E_MEMORY_MERGE_STAGE_WRITE'));};});
+  }
+  async function getMergeDraft(sessionId){return await get(mergeDraftKey(sessionId))||null;}
+  async function createMergeDraft(sessionId,draft){
+    const db=await openDb();return new Promise((resolve,reject)=>{const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE);let result,error;
+      const fail=msg=>{error=new Error(msg);tx.abort();};
+      const oldReq=kv.get(mergeDraftKey(sessionId));oldReq.onerror=()=>fail('E_MEMORY_MERGE_DRAFT_READ');oldReq.onsuccess=()=>{
+        const old=oldReq.result;
+        if(old&&!['DISCARDED','COMMITTED'].includes(old.status)){fail('E_MEMORY_MERGE_DRAFT_EXISTS');return;}
+        const sr=kv.get(STATE_KEY);sr.onerror=()=>fail('E_MEMORY_STORE_READ');sr.onsuccess=()=>{
+          const state=sr.result,impl=window.MimaStandalone,contract=window.MimaMemoryContracts;
+          if(!isCanonicalStateRecord(state)||!impl?.memoryFactSignature||!contract?.normalizeManualMemory){fail('E_MEMORY_STORE_UNVERIFIED');return;}
+          const session=state.sessions.find(x=>x.id===sessionId);
+          if(!session){fail('E_STORY_SESSION_MISSING');return;}
+          if(impl.memoryFactSignature(contract.normalizeManualMemory(session.manualMemory).facts)!==draft.sourceSignature||
+            session.messages.length<draft.sourceHistoryCount||
+            impl.memorySourceFingerprint(session.messages,draft.sourceHistoryCount)!==draft.sourceHistoryFingerprint){fail('E_MEMORY_MERGE_SOURCE_CHANGED');return;}
+          const stamp=new Date().toISOString();result={...draft,draftId:`merge_${Date.now()}_${Math.random().toString(36).slice(2)}`,sessionId,version:1,status:'DRAFT_PERSISTED',createdAt:stamp,updatedAt:stamp};kv.put(result,mergeDraftKey(sessionId));
+        };};tx.oncomplete=()=>{db.close();resolve(result);};tx.onabort=()=>{db.close();reject(error||tx.error||new Error('E_MEMORY_MERGE_DRAFT_WRITE'));};});
+  }
+  async function updateMergeDraft(sessionId,draftId,expectedVersion,content,action='edit'){
+    const db=await openDb();return new Promise((resolve,reject)=>{const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE),req=kv.get(mergeDraftKey(sessionId));let error,result;
+      const fail=msg=>{error=new Error(msg);tx.abort();};req.onerror=()=>fail('E_MEMORY_MERGE_DRAFT_READ');req.onsuccess=()=>{
+        const old=req.result;if(!old||old.draftId!==draftId||old.version!==expectedVersion||!['DRAFT_PERSISTED','USER_EDITED'].includes(old.status)){fail('E_MEMORY_MERGE_DRAFT_CONFLICT');return;}
+        if(action==='edit'&&(typeof content!=='string'||content.length>250000)){fail('E_MEMORY_MERGE_INVALID');return;}
+        result={...old,version:old.version+1,status:action==='discard'?'DISCARDED':'USER_EDITED',content:action==='discard'?old.content:String(content),updatedAt:new Date().toISOString()};kv.put(result,mergeDraftKey(sessionId));
+      };tx.oncomplete=()=>{db.close();resolve(result);};tx.onabort=()=>{db.close();reject(error||tx.error||new Error('E_MEMORY_MERGE_DRAFT_WRITE'));};});
+  }
+  // Individual verified fact ranges remain reviewable if a later range fails.
+  // A staged candidate is NOT a canonical fact or a settled job.
+  const factStageText=v=>String(v??'').replace(/\uFFFD+/g,'').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g,'').trim();
+  const factRangeKey=(jobId,stage)=>`memory_fact_range_v2:${jobId}:${stage}`;
+  const factRangeReceiptKey=op=>`memory_fact_receipt_v1:${op}`;
+  async function putFactRangeCandidate(job,stage,scope,fact,sourceSliceFingerprint,outputDigest){
+    if(!fact?.content||!scope||!outputDigest||!sourceSliceFingerprint)throw new Error('E_MEMORY_FACT_RANGE_INVALID');
+    return memoryJobTransaction(job.sessionId,job.kind,(old,kv,tx)=>{
+      if(job.kind!=='facts'||old?.id!==job.id||old?.attemptId!==job.attemptId||old.status!=='running')throw new Error('E_MEMORY_JOB_FENCED');
+      const stageDigest=job.factRangeStageDigests?.[stage];
+      if(!old.referenceContract||!stageDigest||!job.referenceDigest)throw new Error('E_MEMORY_FACT_STAGE_CONTRACT_MISSING');
+      const record={version:3,status:'STAGED',sessionId:job.sessionId,kind:'facts',stage,jobId:job.id,attemptId:job.attemptId,
+        startRound:scope.startRound,endRound:scope.endRound,sourceStartIndex:scope.sourceStartIndex,sourceEndExclusive:scope.sourceEndExclusive,
+        messageIds:scope.messageIds,loadedCharMaskId:job.loadedCharMaskId||'',sourceSliceFingerprint,outputDigest,fact,
+        referenceContract:old.referenceContract,referenceDigest:job.referenceDigest,stageDigest,
+        replaceExisting:job.options?.scope==='all'&&job.options?.replaceExisting===true,createdAt:new Date().toISOString()};
+      const verified=kv.get(stageV2Key(stageDigest));
+      verified.onerror=()=>tx.abort();
+      verified.onsuccess=()=>{
+        const stageRecord=verified.result;
+        if(!stageRecord||stageRecord.status!=='STAGED'||stageRecord.kind!=='facts'||
+           stageRecord.sessionId!==job.sessionId||stageRecord.contractDigest!==stageDigest||
+           factStageText(stageRecord.outputText)!==fact.content||stageRecord.referenceDigest!==job.referenceDigest||
+           window.MimaSHA256.digest(new TextEncoder().encode(stageRecord.outputText))!==stageRecord.outputDigest){tx.abort();return;}
+        const request=kv.get(STATE_KEY);
+        request.onerror=()=>tx.abort();
+        request.onsuccess=()=>{
+          try{if(memoryReferenceContract(request.result,job.sessionId)!==record.referenceContract)tx.abort();
+            else kv.put({...record,stageOutputDigest:stageRecord.outputDigest},factRangeKey(job.id,stage));}
+          catch(e){tx.abort();}
+        };
+      };
+      return record;
+    });
+  }
+  async function listFactRangeCandidates(sessionId){
+    const job=await getMemoryJob(sessionId,'facts');if(!job)return {job:null,ranges:[]};
+    const db=await openDb();return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readonly'),kv=tx.objectStore(STORE),prefix=`memory_fact_range_v2:${job.id}:`,out=[];let problem;
+      const req=kv.openCursor(IDBKeyRange.bound(prefix,prefix+'\uffff'));
+      req.onsuccess=()=>{const cursor=req.result;if(cursor){const r=cursor.value;if(r?.sessionId===sessionId&&r.jobId===job.id)out.push({...r,fact:{...r.fact,content:r.fact.content}});cursor.continue();}};
+      req.onerror=()=>{problem=req.error;tx.abort();};
+      tx.oncomplete=()=>{db.close();resolve({job:{id:job.id,status:job.status,stage:job.stage,leaseUntilEpoch:job.leaseUntilEpoch},ranges:out.sort((a,b)=>a.startRound-b.startRound)});};
+      tx.onabort=()=>{db.close();reject(problem||tx.error||new Error('E_MEMORY_FACT_RANGE_READ'));};
+    });
+  }
+  async function commitVerifiedFactRanges(sessionId,jobId,stageIds,operationId,expectedFactsSignature=null){
+    if(!Array.isArray(stageIds)||!stageIds.length||stageIds.length>200||new Set(stageIds).size!==stageIds.length||!operationId||String(operationId).length>200)
+      throw new Error('E_MEMORY_FACT_RANGE_SELECTION_INVALID');
+    const db=await openDb();return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE);let result,problem;
+      const fail=code=>{problem=new Error(code);tx.abort();};
+      const receipt=kv.get(factRangeReceiptKey(operationId));receipt.onerror=()=>fail('E_MEMORY_FACT_RECEIPT_READ');receipt.onsuccess=()=>{
+        if(receipt.result){if(receipt.result.sessionId!==sessionId||receipt.result.jobId!==jobId||JSON.stringify(receipt.result.stages.slice().sort())!==JSON.stringify(stageIds.slice().sort())){fail('E_MEMORY_FACT_OPERATION_COLLISION');return;}
+          const sr=kv.get(STATE_KEY);sr.onerror=()=>fail('E_MEMORY_STORE_READ');sr.onsuccess=()=>{if(!isCanonicalStateRecord(sr.result)){fail('E_MEMORY_STORE_UNVERIFIED');return;}result=sr.result;};return;}
+        const jr=kv.get(jobKey(sessionId,'facts'));jr.onerror=()=>fail('E_MEMORY_JOURNAL_READ');jr.onsuccess=()=>{
+          const job=jr.result;if(!job||job.id!==jobId||job.kind!=='facts'||(job.status==='running'&&Number(job.leaseUntilEpoch||0)>Date.now())||!['failed','interrupted','aborted','needs_review','partially_committed','running'].includes(job.status)){fail('E_MEMORY_FACT_JOB_UNAVAILABLE');return;}
+          if(job.options?.scope==='all'&&job.options?.replaceExisting===true){fail('E_MEMORY_FACT_REPLACE_ATOMIC_REQUIRED');return;}
+          const sr=kv.get(STATE_KEY);sr.onerror=()=>fail('E_MEMORY_STORE_READ');sr.onsuccess=()=>{
+            const canonical=sr.result,impl=window.MimaStandalone,contracts=window.MimaMemoryContracts;
+            if(!isCanonicalStateRecord(canonical)||!impl?.memorySourceFingerprint||!contracts?.normalizeManualMemory||!window.MimaSHA256?.digest){fail('E_MEMORY_STORE_UNVERIFIED');return;}
+            const index=canonical.sessions.findIndex(x=>x.id===sessionId);if(index<0){fail('E_STORY_SESSION_MISSING');return;}
+            const live=canonical.sessions[index],memory=contracts.normalizeManualMemory(live.manualMemory||{}),selected=[];
+            if(expectedFactsSignature!==null){
+              if(!impl.memoryFactSignature||impl.memoryFactSignature(memory.facts)!==expectedFactsSignature){fail('E_MEMORY_FACT_TARGET_CHANGED');return;}
+            }
+            const collect=i=>{
+              if(i===stageIds.length){
+                const ranges=selected.slice().sort((a,b)=>a.startRound-b.startRound);
+                if(ranges.some((r,j)=>j>0&&r.startRound<=ranges[j-1].endRound)){fail('E_MEMORY_FACT_RANGE_OVERLAP');return;}
+                const existing=memory.facts;
+                if(ranges.some(r=>existing.some(f=>f.startRound<=r.endRound&&r.startRound<=f.endRound))){fail('E_MEMORY_FACT_RANGE_ALREADY_COVERED');return;}
+                const unique=new Set(existing.map(f=>f.id));if(ranges.some(r=>unique.has(r.fact.id))){fail('E_MEMORY_FACT_ID_CONFLICT');return;}
+                const updated={...live,manualMemory:{...memory,facts:existing.concat(ranges.map(r=>r.fact)).sort((a,b)=>a.startRound-b.startRound||a.endRound-b.endRound)},recordRevision:(Number(live.recordRevision)||0)+1,updatedAt:new Date().toISOString()};
+                const sessions=canonical.sessions.slice();sessions[index]=updated;result={...canonical,sessions,storeRevision:(Number(canonical.storeRevision)||0)+1,savedAt:new Date().toISOString()};
+                kv.put(result,STATE_KEY);
+                kv.put({sessionId,jobId,operationId,stages:stageIds,rounds:ranges.map(r=>[r.startRound,r.endRound]),committedAt:new Date().toISOString()},factRangeReceiptKey(operationId));
+                kv.put({...job,status:'partially_committed',stage:'partial_fact_ranges_committed',revision:(Number(job.revision)||0)+1,updatedAt:new Date().toISOString()},jobKey(sessionId,'facts'));
+                return;
+              }
+              const req=kv.get(factRangeKey(jobId,stageIds[i]));req.onerror=()=>fail('E_MEMORY_FACT_RANGE_READ');req.onsuccess=()=>{
+                const r=req.result;if(!r||r.sessionId!==sessionId||r.jobId!==jobId||(![job.attemptId,...(job.recoverableAttempts||[])].includes(r.attemptId))||r.status!=='STAGED'||r.replaceExisting||!r.fact?.content||!Number.isInteger(r.sourceStartIndex)||r.sourceStartIndex<0||!Number.isInteger(r.sourceEndExclusive)||r.sourceEndExclusive>live.messages.length||r.sourceStartIndex>=r.sourceEndExclusive||!r.sourceSliceFingerprint){fail('E_MEMORY_FACT_RANGE_INVALID');return;}
+                if(r.version!==3||!r.stageDigest||!r.referenceDigest||!r.referenceContract||
+                   r.referenceContract!==job.referenceContract){fail('E_MEMORY_FACT_CONTRACT_UNVERIFIED');return;}
+                try{if(memoryReferenceContract(canonical,sessionId)!==r.referenceContract){fail('E_MEMORY_FACT_REFERENCE_CHANGED');return;}}
+                catch(e){fail('E_MEMORY_FACT_REFERENCE_CHANGED');return;}
+                const slice=live.messages.slice(r.sourceStartIndex,r.sourceEndExclusive);
+                if(impl.memorySourceFingerprint(slice,slice.length)!==r.sourceSliceFingerprint||r.loadedCharMaskId!==(live.loadedCharMaskId||'')){fail('E_MEMORY_FACT_RANGE_SOURCE_CHANGED');return;}
+                if(window.MimaSHA256.digest(new TextEncoder().encode(r.fact.content))!==r.outputDigest){fail('E_MEMORY_FACT_RANGE_CHECKSUM');return;}
+                const stageReq=kv.get(stageV2Key(r.stageDigest));stageReq.onerror=()=>fail('E_MEMORY_FACT_STAGE_READ');
+                stageReq.onsuccess=()=>{const stage=stageReq.result;
+                  if(!stage||stage.status!=='STAGED'||stage.contractDigest!==r.stageDigest||stage.kind!=='facts'||
+                    stage.sessionId!==sessionId||stage.referenceDigest!==r.referenceDigest||
+                    stage.outputDigest!==r.stageOutputDigest||factStageText(stage.outputText)!==r.fact.content||
+                    window.MimaSHA256.digest(new TextEncoder().encode(stage.outputText))!==stage.outputDigest){fail('E_MEMORY_FACT_STAGE_CHANGED');return;}
+                  selected.push(r);collect(i+1);
+                };
+              };
+            };collect(0);
+          };
+        };
+      };
+      tx.oncomplete=()=>{db.close();resolve(result);};tx.onabort=()=>{db.close();reject(problem||tx.error||new Error('E_MEMORY_FACT_PARTIAL_COMMIT_FAILED'));};
+    });
+  }
   // Two-phase manual fact consolidation: AI preview performs no writes.
   // Approval and one-step undo are canonical IDB transactions, never whole
   // stale-state saves. No History/Persona/core memory is replaced.
@@ -677,7 +949,7 @@
     const db=await openDb();return new Promise((resolve,reject)=>{
       const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE);let issue,result;
       const fail=m=>{issue=new Error(m);tx.abort();};
-      const sr=kv.get(STATE_KEY);sr.onerror=()=>fail('E_MEMORY_MERGE_STATE_READ');
+      const proceed=draft=>{const sr=kv.get(STATE_KEY);sr.onerror=()=>fail('E_MEMORY_MERGE_STATE_READ');
       sr.onsuccess=()=>{
         const canonical=sr.result;
         if(!isCanonicalStateRecord(canonical)){fail('E_MEMORY_STORE_UNVERIFIED');return;}
@@ -707,7 +979,11 @@
         kv.put(result,STATE_KEY);
         kv.put({sessionId,mergedId:id,originalFacts:facts,afterSignature:impl.memoryFactSignature(nextFacts),
           selectedIds,createdAt:stamp},factMergeUndoKey(sessionId));
-      };
+        if(draft)kv.put({...draft,status:'COMMITTED',version:draft.version+1,committedAt:stamp},mergeDraftKey(sessionId));
+      };};
+      if(body?.draftId){const dr=kv.get(mergeDraftKey(sessionId));dr.onerror=()=>fail('E_MEMORY_MERGE_DRAFT_READ');dr.onsuccess=()=>{
+        const draft=dr.result;if(!draft||draft.draftId!==body.draftId||draft.version!==body.version||!['DRAFT_PERSISTED','USER_EDITED'].includes(draft.status)||draft.content!==body.content||draft.sourceSignature!==body.sourceSignature||JSON.stringify(draft.selectedIds)!==JSON.stringify(body.selectedIds)){fail('E_MEMORY_MERGE_DRAFT_CONFLICT');return;}proceed(draft);
+      };}else proceed(null);
       tx.oncomplete=()=>{db.close();resolve(result);};tx.onabort=()=>{db.close();reject(issue||tx.error||new Error('E_MEMORY_MERGE_ABORTED'));};
     });
   }
@@ -734,5 +1010,5 @@
       tx.oncomplete=()=>{db.close();resolve(result);};tx.onabort=()=>{db.close();reject(issue||tx.error||new Error('E_MEMORY_MERGE_UNDO_ABORTED'));};
     });
   }
-  window.MimaLocalStore={commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,clearSettingsSnapshot,getMemoryJob,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
+  window.MimaLocalStore={inspectLegacyMemoryStages,memoryReferenceContract,putFactRangeCandidate,listFactRangeCandidates,commitVerifiedFactRanges,getMergeStage,putMergeStage,getMergeDraft,createMergeDraft,updateMergeDraft,commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,clearSettingsSnapshot,getMemoryJob,getMemoryStage,putMemoryStage,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
 })();

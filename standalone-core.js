@@ -93,6 +93,14 @@
       stale:m.stale===true,verification:normalizeMemoryVerification(m.verification)
     };
   }
+  function normalizeSummaryContext(raw={}){
+    const value=raw&&typeof raw==='object'?raw:{};
+    const ids=x=>arr(x).filter(y=>typeof y==='string'&&y.length<=150).slice(0,200);
+    return {version:1,userPersona:value.userPersona===true,characterPersona:value.characterPersona===true,
+      presetIds:ids(value.presetIds),worldbookMode:['none','selected_entries','matched_entries'].includes(value.worldbookMode)?value.worldbookMode:'none',
+      worldbookIds:ids(value.worldbookIds),worldbookEntryIds:ids(value.worldbookEntryIds),
+      worldbookEntryRefs:arr(value.worldbookEntryRefs).filter(x=>x&&typeof x.bookId==='string'&&typeof x.entryId==='string').slice(0,200).map(x=>({bookId:x.bookId,entryId:x.entryId}))};
+  }
   function normalizeManualMemory(input = {}) {
     const coreInput=input.core&&typeof input.core==='object'?input.core:{};
     return {
@@ -113,7 +121,8 @@
         factScope:input.settings?.factScope==='all'?'all':'recent',
         factRecentRounds:clampInt(input.settings?.factRecentRounds,1,100000,25),
         summaryTemperature:clampTemp(input.settings?.summaryTemperature??0.35),
-        memoryModel:String(input.settings?.memoryModel||'').trim().slice(0,240)
+        memoryModel:String(input.settings?.memoryModel||'').trim().slice(0,240),
+        summaryContext:normalizeSummaryContext(input.settings?.summaryContext)
       }
     };
   }
@@ -373,6 +382,77 @@
     // Never send that same fallback a second time in one provider request.
     if(mask.content&&mask.content.trim()!==mask.description.trim())blocks.push(mask.content);
     if(mask.scenario&&kind==='character')blocks.push(`【角色卡 Scenario】\n${mask.scenario}`);if(mask.exampleDialogue&&kind==='character')blocks.push(`【Example Dialogue】\n${mask.exampleDialogue}`);return blocks.join('\n');}
+  // The owner chooses reference material for memory generation independently
+  // of ordinary story prompt mounting and forward memory-injection toggles.
+  function memoryReferenceSnapshot(session){
+    const settings=normalizeManualMemory(session.manualMemory).settings.summaryContext;
+    const records=[];
+    const add=(kind,id,content,authority)=>{if(String(content||'').trim())records.push({kind,id,content:String(content),authority});};
+    if(settings.userPersona){const mask=enabledMask(session.loadedUserMaskId);if(!mask)throw new ApiError('E_MEMORY_REFERENCE_MISSING','所选玩家 Persona 未挂载或被关闭');add('user_persona',mask.id,formatMask(mask,'user'),'background_only');}
+    if(settings.characterPersona){const mask=enabledMask(session.loadedCharMaskId);if(!mask)throw new ApiError('E_MEMORY_REFERENCE_MISSING','所选角色 Persona 未挂载或被关闭');add('character_persona',mask.id,formatMask(mask,'character'),'background_only');}
+    const mounted=new Set(arr(session.presetIds));
+    for(const id of settings.presetIds){const preset=getPreset(id);if(!mounted.has(id)||!preset||preset.enabled===false)throw new ApiError('E_MEMORY_REFERENCE_MISSING','选择用于记忆的预设已卸载或停用：'+id);add('preset',id,resolveMacrosForSession(session,preset.content),'generation_instruction');}
+    if(settings.worldbookMode!=='none'){
+      const activated=settings.worldbookMode==='matched_entries'?new Set(collectWorldbookEntries(session).matched.map(x=>x.book.id+'/'+x.entry.id)):null;
+      const mountedBooks=new Set(arr(session.worldbookIds));
+      const scoped=new Set(arr(settings.worldbookEntryRefs).map(x=>JSON.stringify([x.bookId,x.entryId])));
+      const legacy=new Set(settings.worldbookEntryIds||[]);
+      const eligibleBooks=settings.worldbookIds.map(id=>getWorldbook(id)).filter(Boolean);
+      for(const oldId of legacy){
+        if(scoped.size&&[...scoped].some(x=>JSON.parse(x)[1]===oldId))continue;
+        const hits=eligibleBooks.flatMap(b=>arr(b.entries).filter(e=>e.id===oldId).map(e=>[b.id,e.id]));
+        if(hits.length!==1)throw new ApiError('E_MEMORY_REFERENCE_AMBIGUOUS',hits.length?'旧世界书条目 ID 在多本书中重复，请明确选择书和条目：'+oldId:'旧世界书条目不存在：'+oldId);
+        scoped.add(JSON.stringify(hits[0]));
+      }
+      for(const id of settings.worldbookIds){const book=getWorldbook(id);if(!mountedBooks.has(id)||!book||book.enabled===false)throw new ApiError('E_MEMORY_REFERENCE_MISSING','所选世界书已卸载或停用：'+id);
+        for(const entry of arr(book.entries)){
+          if(settings.worldbookMode==='selected_entries'&&!scoped.has(JSON.stringify([book.id,entry.id])))continue;
+          if(activated&&!activated.has(book.id+'/'+entry.id))continue;
+          if(entry.enabled===false){if(settings.worldbookMode==='selected_entries')throw new ApiError('E_MEMORY_REFERENCE_MISSING','所选世界书条目已停用：'+entry.id);continue;}
+          add('worldbook',book.id+'/'+entry.id,resolveMacrosForSession(session,entry.content),'background_only');
+        }
+      }
+      if(settings.worldbookMode==='selected_entries')for(const ref of scoped){
+        const [bookId,entryId]=JSON.parse(ref);
+        if(!records.some(x=>x.kind==='worldbook'&&x.id===bookId+'/'+entryId))throw new ApiError('E_MEMORY_REFERENCE_MISSING','所选世界书条目不存在、已卸载或停用：'+bookId+'/'+entryId);
+      }
+    }
+    return records;
+  }
+  function referencePromptMessages(records){
+    return records.map(x=>({role:'system',content:`【记忆生成参考 / ${x.kind} / ${x.id}】【${x.authority==='generation_instruction'?'用户选择的总结指令':'仅供人物背景消歧，不得记作已发生剧情'}】\n${x.content}`}));
+  }
+  // Stable serialization keeps stage digests independent of incidental object
+  // insertion order while retaining the exact string bytes of model prompts.
+  function canonicalSerialize(value){
+    return JSON.stringify(value,(_key,v)=>v&&typeof v==='object'&&!Array.isArray(v)
+      ?Object.fromEntries(Object.keys(v).sort().map(k=>[k,v[k]])):v);
+  }
+  async function exactDigest(value){
+    const bytes=new TextEncoder().encode(typeof value==='string'?value:canonicalSerialize(value));
+    try {
+      if(globalThis.crypto?.subtle?.digest){
+        const hash=await globalThis.crypto.subtle.digest('SHA-256',bytes);
+        return Array.from(new Uint8Array(hash),b=>b.toString(16).padStart(2,'0')).join('');
+      }
+      if(globalThis.MimaSHA256?.digest)return globalThis.MimaSHA256.digest(bytes);
+    }catch(error){throw new ApiError('E_MEMORY_DIGEST_UNAVAILABLE','SHA-256 校验过程失败，记忆任务已中止：'+(error?.message||'unknown'));}
+    throw new ApiError('E_MEMORY_DIGEST_UNAVAILABLE','当前环境缺少可验证的 SHA-256；记忆数据未修改。');
+  }
+  // R4.5 used insertion-order JSON serialization and a job-wide source
+  // identity. Calculate that historical signature separately: never weaken
+  // the current v2 stable-contract signature to make migration look green.
+  async function legacyStageDigest(value){
+    const bytes=new TextEncoder().encode(JSON.stringify(value));
+    try{
+      if(globalThis.crypto?.subtle?.digest){
+        const hash=await globalThis.crypto.subtle.digest('SHA-256',bytes);
+        return Array.from(new Uint8Array(hash),b=>b.toString(16).padStart(2,'0')).join('');
+      }
+      if(globalThis.MimaSHA256?.digest)return globalThis.MimaSHA256.digest(bytes);
+    }catch(error){throw new ApiError('E_MEMORY_LEGACY_DIGEST_FAILED','旧分片 SHA-256 复核失败：'+(error?.message||'unknown'));}
+    throw new ApiError('E_MEMORY_DIGEST_UNAVAILABLE','没有可用的 SHA-256 进行旧分片复核。');
+  }
   function joinWb(items,label){if(!items.length)return'';return `【Worldbook · ${label}】\n`+items.map(({book,entry})=>`【${book.name} / ${entry.name}】\n${clip(entry.content,entry.maxChars)}`).join('\n\n');}
   function buildSystemPrompt(session,options={},matched=[]){
     const front=matched.filter(x=>Number(x.entry.depth||0)===0&&x.entry.position==='front');
@@ -558,13 +638,28 @@
     // Per-assembly only: no stale cache when regex, original History or
     // settings change. All cost estimates and retrieval reuse this projection.
     const htmlProjectionStats=new Map(),projectedHistory=new Map();
+    // Only the last actually admissible completed character reply is an HTML
+    // exemplar. The current visible timeline usually ends in a user message.
+    // No inference from HTML-looking text: a newer plain reply supersedes it.
+    const eligibleAssistant=m=>m?.role==='assistant'&&!!String(m.content||'').trim()&&
+      m.metadata?.source!=='prompt_preview_draft'&&
+      (isManuallyRecoveredReply(m)||!(m.metadata?.providerRefused===true||
+        m.metadata?.providerFinishKind==='blocked'||
+        ['content_filter','safety','blocked','prohibited_content','refusal'].includes(m.metadata?.providerFinishReason)));
+    const latestAssistant=[...visibleHistory].reverse().find(eligibleAssistant);
+    const lastEligibleAssistantId=latestAssistant?.id||null;
+    const latestAssistantHtml={enabled:!!lastEligibleAssistantId&&session.promptSettings?.historyHtmlMode!=='raw',
+      selectedMessageId:lastEligibleAssistantId,retainedChars:0,estimatedTokenCost:0,
+      reason:lastEligibleAssistantId?'latest_committed_assistant':'no_eligible_assistant'};
     const projectMessage=m=>{
       if(projectedHistory.has(m))return projectedHistory.get(m);
       // A prefix-continuation protocol treats the last assistant message as
       // literal bytes to extend. Projecting that prefix would make the model
       // extend different text than the user's saved reply, breaking append.
       const preservePrefix=options.preserveTerminalAssistant===true&&m===visibleHistory[visibleHistory.length-1]&&m.role==='assistant';
-      const projected=preservePrefix?toHistoryMessage(m,{...session,promptSettings:{...session.promptSettings,historyHtmlMode:'raw'}},htmlProjectionStats):toHistoryMessage(m,session,htmlProjectionStats);
+      const preserveLatest=!!lastEligibleAssistantId&&m.id===lastEligibleAssistantId&&m.role==='assistant';
+      const projected=(preservePrefix||preserveLatest)?toHistoryMessage(m,{...session,promptSettings:{...session.promptSettings,historyHtmlMode:'raw'}},htmlProjectionStats):toHistoryMessage(m,session,htmlProjectionStats);
+      if(preserveLatest&&projected){latestAssistantHtml.retainedChars=projected.content.length;latestAssistantHtml.estimatedTokenCost=estimateTokens(projected.content);}
       projectedHistory.set(m,projected);
       return projected;
     };
@@ -583,6 +678,8 @@
       let count=recentRaw[0]?.role==='user'&&recentRaw[1]?.role==='assistant'?2:1;
       if(recentRaw.length-count<2)return false;
       const removed=recentRaw.slice(0,count);
+      // Never silently evict the current HTML exemplar to fit a window.
+      if(removed.some(m=>m.id===lastEligibleAssistantId))return false;
       projectedAway.push(...removed);recentRaw=recentRaw.slice(count);
       if(estimatedBase!==null)estimatedBase-=removed.reduce((n,m)=>n+estimateTokens(projectMessage(m)?.content||'')+8,0);
       return true;
@@ -664,7 +761,8 @@
     const header=sections.map(x=>x.content).join('\n\n');
     const estimatedInputTokens=messages.reduce((sum,m)=>sum+estimateTokens(m?.content||''),0);
     if(promptCap.verified&&estimatedInputTokens>promptCap.usable)throw new ApiError('E_CONTEXT_BUDGET','上下文检索结果超过已配置的模型预算，已中止发送但保留全部资料。',{details:JSON.stringify({estimatedInputTokens,promptCap,trace})});
-    return{messages,messageSources,inspector:{historyHtmlProjection,systemChars:header.length,estimatedInputTokens,recentMessageCount:recent.length,unsummarizedGapCount:uncoveredOlder.length,recentMessageLimit:limit,fullHistoryPreferred:true,canonicalHistoryCount,temporarilyOmittedCount:projectedAway.length,allHistoryIncluded:uncoveredOlder.length===0,finalMessageCount:messages.length,
+    return{messages,messageSources,inspector:{historyHtmlProjection,latestAssistantHtml:{...latestAssistantHtml,
+      actuallySent:messageSources.some(x=>x.kind==='canonical_history'&&x.messageId===lastEligibleAssistantId)},systemChars:header.length,estimatedInputTokens,recentMessageCount:recent.length,unsummarizedGapCount:uncoveredOlder.length,recentMessageLimit:limit,fullHistoryPreferred:true,canonicalHistoryCount,temporarilyOmittedCount:projectedAway.length,allHistoryIncluded:uncoveredOlder.length===0,finalMessageCount:messages.length,
       contextTrace:trace,worldbookBudgetChars:budget,worldbookUsedChars:budgeted.used,upstreamUsage:lastUsage?clone(lastUsage):null,
       sections:sys.sections.map(({name,chars,source})=>({name,chars,transportRole:'system',source})),memoryTrace:sys.memoryTrace,
       presetConflictPolicy:{kind:'deterministic_order_only',semanticConflictsResolved:false,notice:'优先级只确定排列顺序；自由文本规则之间的语义冲突没有自动裁决。'},
@@ -1235,7 +1333,9 @@
   }
   async function summarizeFactText(sourceText,targetChars,temp,signal,progress,label='事实记忆',job=null,rangeTag='fact',rangeScope=null,rangeMessages=[],sourceSession=null){
     const chunks=splitTextBlocks(sourceText,28000),partials=[];
-    const partScopes=chunks.map(()=>rangeScope);
+    // A long message can be split at 28k characters. These identities bind
+    // each stage to its actual model-visible slice, not the whole range.
+    const partScopes=chunks.map((part,partIndex)=>({...rangeScope,modelVisibleSlice:{partIndex,startOffset:0,endExclusive:part.length,sourceFingerprint:fingerprint(part)}}));
     for(let i=0;i<chunks.length;i++){
       emitProgress(progress,{phase:'memory_fact',percent:12+Math.round(((i+.25)/chunks.length)*62),detail:`${label} · 正在总结 ${i+1}/${chunks.length}`});
       const prompt=[
@@ -1248,7 +1348,7 @@
     }
     if(partials.length===1)return partials[0];
     emitProgress(progress,{phase:'memory_fact_merge',percent:78,detail:`${label} · 正在合并超长分片`});
-    if(job)(job.stageScopes||(job.stageScopes={}))[rangeTag+'_merge']=rangeScope||{sourceStartIndex:0,sourceEndExclusive:job.sourceCount};
+    if(job)(job.stageScopes||(job.stageScopes={}))[rangeTag+'_merge']={...(rangeScope||{sourceStartIndex:0,sourceEndExclusive:job.sourceCount}),prerequisiteOutputDigests:await Promise.all(partials.map(exactDigest))};
     return await memoryModel([
       {role:'system',content:'你是“咪嘛馆”的事实记忆整理器。把多个同一剧情区间的分段摘要合并为一个事实摘要。不得新增事实。'+MEMORY_TIME_CONTRACT},
       {role:'user',content:`【分段事实摘要】\n${partials.map((x,i)=>`[${i+1}] ${x}`).join('\n\n')}\n\n合并表达中的重复措辞，但独立发生的相同事件要保留其发生次数。保留每一来源分片里的所有独立事件、先后、人物、地点及否定；允许超过 ${targetChars} 字，不能靠删事件换取压缩率。`}
@@ -1278,30 +1378,47 @@
   async function runRecordedMemory(kind,id,opts={},signal=null,progress=null){
     const store=window.MimaLocalStore;
     const snapshot=getSession(id);if(!snapshot)throw new ApiError('E_STORY_SESSION_MISSING','剧情已不存在');
-    if(typeof store?.beginMemoryJob!=='function')return kind==='core'?generateCoreMemory(id,opts,signal,progress):kind==='facts'?generateFactMemories(id,opts,signal,progress):refreshSummary(snapshot,opts.temperature,signal,progress);
+    if(typeof store?.beginMemoryJob!=='function'||typeof store?.putMemoryStage!=='function'||typeof store?.commitMemoryJob!=='function')
+      throw new ApiError('E_MEMORY_STORE_UNAVAILABLE','持久记忆事务不可用；已停止本次请求，不会用无记录的生成流程消耗额度。');
     const original=normalizeSession(clone(snapshot));if(kind==='rolling'&&!summaryNeeded(original))return original;
     opts={...opts,model:String(opts.model??original.manualMemory.settings.memoryModel??'').trim()};
     let job=null,heartbeat=null;
+    const generationAbort=new AbortController();
+    const forwardAbort=()=>generationAbort.abort();
+    if(signal?.aborted)forwardAbort();else signal?.addEventListener?.('abort',forwardAbort,{once:true});
     try{
       const cfg=getApiConfig();const configSignature=fingerprint([cfg.apiBase,cfg.chatEndpoint,opts.model||cfg.model,cfg.sendTemperature,cfg.maxTokens,cfg.stream,original.promptSettings?.historyHtmlMode||'semantic',window.MimaHistoryHtmlProjection?.version||'missing']);
+      const referenceRecords=memoryReferenceSnapshot(original);
+      const referenceMessages=referencePromptMessages(referenceRecords);
+      const referenceDigest=await exactDigest(referenceRecords);
+      // The exact selected-source versions used to build referenceRecords
+      // must also match the durable store, before any paid model call begins.
+      const referenceContract=store.memoryReferenceContract?.(state,id);
+      if(!referenceContract)throw new ApiError('E_MEMORY_REFERENCE_CONTRACT_UNAVAILABLE','记忆参考资料版本合同不可用，已停止本次请求');
       const sourceFingerprint=memorySourceFingerprint(original.messages,original.messages.length);
       const targetBaseline=kind==='rolling'?JSON.stringify([original.rollingSummary||'',original.lastSummarizedIndex||0]):JSON.stringify(kind==='core'?normalizeManualMemory(original.manualMemory).core:normalizeManualMemory(original.manualMemory).facts);
-      const sourceHash=fingerprint([sourceFingerprint,kind==='core'&&opts.source==='facts'?original.manualMemory.facts:null,kind==='rolling'?original.rollingSummary:null]);
-      job=await store.beginMemoryJob({sessionId:id,kind,options:opts,sourceHash,sourceCount:original.messages.length,sourceFingerprint,targetBaseline,configSignature});
+      const sourceHash=fingerprint([sourceFingerprint,referenceDigest,kind==='core'&&opts.source==='facts'?original.manualMemory.facts:null,kind==='rolling'?original.rollingSummary:null]);
+      job=await store.beginMemoryJob({sessionId:id,kind,options:opts,sourceHash,sourceCount:original.messages.length,sourceFingerprint,targetBaseline,configSignature,expectedReferenceContract:referenceContract});
+      job.referenceMessages=referenceMessages;job.referenceDigest=referenceDigest;
+      await store.checkpointMemoryJob(job,'reference_snapshot',{digest:referenceDigest,selected:referenceRecords.map(x=>({kind:x.kind,id:x.id,authority:x.authority})),chars:referenceMessages.reduce((n,x)=>n+x.content.length,0)});
       if(typeof store.heartbeatMemoryJob==='function'&&typeof setInterval==='function'){
         heartbeat=setInterval(()=>store.heartbeatMemoryJob(job).catch(e=>{
-          console.warn('Memory lease heartbeat failed',{sessionId:id,kind,jobId:job.id,attemptId:job.attemptId,stage:'heartbeat',code:e.code||e.message});
+          job.leaseError=new ApiError('E_MEMORY_HEARTBEAT_FAILED','记忆任务租约无法续期，已停止当前生成：'+(e?.message||'unknown'));
+          console.error('Memory lease heartbeat failed',{sessionId:id,kind,jobId:job.id,attemptId:job.attemptId,stage:'heartbeat',code:e.code||e.message});
+          generationAbort.abort();
         }),10000);
       }
+      job.progress=progress;
       await store.checkpointMemoryJob(job,'request_planned',{sourceCount:original.messages.length,sourceRevision:original.recordRevision});
-      if(kind==='core')return await generateCoreMemory(id,opts,signal,progress,job,original);
-      if(kind==='facts')return await generateFactMemories(id,opts,signal,progress,job,original);
-      return await refreshSummary(original,opts.temperature,signal,progress,job);
-    }catch(e){if(job){try{await store.settleMemoryJob(job,signal?.aborted||e.name==='AbortError'?'aborted':e.code==='E_MEMORY_NEEDS_REVIEW'?'needs_review':'failed',e.code||e.message||'E_MEMORY_FAILED');}catch(settle){e.settlementError=settle.message;}}throw e;}
-    finally{if(heartbeat!==null)clearInterval(heartbeat);}
+      if(kind==='core')return await generateCoreMemory(id,opts,generationAbort.signal,progress,job,original);
+      if(kind==='facts')return await generateFactMemories(id,opts,generationAbort.signal,progress,job,original);
+      return await refreshSummary(original,opts.temperature,generationAbort.signal,progress,job);
+    }catch(error){const e=job?.leaseError||error;if(job){try{await store.settleMemoryJob(job,job.leaseError?'failed':signal?.aborted||e.name==='AbortError'?'aborted':e.code==='E_MEMORY_NEEDS_REVIEW'?'needs_review':'failed',e.code||e.message||'E_MEMORY_FAILED');}catch(settle){e.settlementError=settle.message;}}throw e;}
+    finally{if(heartbeat!==null)clearInterval(heartbeat);signal?.removeEventListener?.('abort',forwardAbort);}
   }
-  async function checkpoint(job,stage,info={}){if(job)await window.MimaLocalStore.checkpointMemoryJob(job,stage,info);}
+  async function checkpoint(job,stage,info={}){if(job){if(job.leaseError)throw job.leaseError;await window.MimaLocalStore.checkpointMemoryJob(job,stage,info);}}
   async function storeMemoryResult(job,snapshot,patch){
+    if(job?.leaseError)throw job.leaseError;
     const normalizedPatch=patch.manualMemory?{...patch,manualMemory:normalizeManualMemory(patch.manualMemory)}:patch;
     const committed=await window.MimaLocalStore.commitMemoryJob(job,snapshot,normalizedPatch);
     // Merge persisted current state, not the stale pre-request snapshot.
@@ -1341,6 +1458,19 @@
     // Model responses are authored summaries; source fidelity is steered in
     // the prompt and owner edits, not decided by another brittle text matcher.
     const sourceRecords=[];
+    // SHA binds the exact prompt, source slice and reference snapshot without
+    // depending on the model name. Already-admitted stages survive refresh and
+    // a deliberate switch to another provider/model.
+    const actualPrompt=messages.map(m=>({...m}));
+    actualPrompt[0]={...actualPrompt[0],content:actualPrompt[0].content+'\n【输出规则】仅输出忠实、清晰、详尽的记忆正文；允许自然意译及合并重复，保留重要细节、发生顺序与人物关系；不要 JSON、来源证明、额外解释或续写。'};
+    if(job?.referenceMessages?.length)actualPrompt.splice(1,0,...job.referenceMessages);
+    const contractDigest=job?await exactDigest({contractVersion:2,sessionId:job.sessionId,kind:job.kind,
+      loadedCharMaskId:activeSession?.loadedCharMaskId||'',stage,
+      sourceScope:stageScope||null,sourceLineage:stageScope?arr(activeSession?.messages).slice(stageScope.sourceStartIndex,stageScope.sourceEndExclusive).map(m=>[m.id,m.branchId||'',m.parentMessageId||'',m.metadata?.branchId||'']):null,
+      referenceDigest:job.referenceDigest||'',messages:actualPrompt,temperature:temp}):'';
+    if(job&&job.kind==='facts'){
+      (job.stageContractDigests||(job.stageContractDigests={}))[stage]=contractDigest;
+    }
     // A human-approved stage is durable only for an identical source/config
     // and the precisely fenced message range. It does not settle the final job.
     if(job?.humanApprovedStages&&Object.hasOwn(job.humanApprovedStages,stage)){
@@ -1351,8 +1481,30 @@
       if(approved.sourceStartIndex!==range.sourceStartIndex||approved.sourceEndExclusive!==range.sourceEndExclusive||approved.sourceCoverageHash!==hash)
         throw new ApiError('E_MEMORY_REVIEW_RANGE_CHANGED','人工审核过的分片来源已经变化，不能复用。');
       (job.verifiedStages||(job.verifiedStages={}))[stage]={memory:approved.output,verification:{fact:'human_confirmed'},provenance:[]};
+      if(job){await window.MimaLocalStore.putMemoryStage(job,stage,contractDigest,approved.output,
+        {outputDigest:await exactDigest(approved.output),finishReason:'human_confirmed',verification:{fact:'human_confirmed'}});}
       await checkpoint(job,stage+'_reused_human',{sourceStartIndex:range.sourceStartIndex,sourceEndExclusive:range.sourceEndExclusive,sourceCoverageHash:hash});
       return approved.output;
+    }
+    if(job&&window.MimaLocalStore?.getMemoryStage){
+      const oldDigest=await legacyStageDigest({stage,sourceHash:job.sourceHash,
+        sourceFingerprint:job.sourceFingerprint,sourceScope:stageScope||null,
+        referenceDigest:job.referenceDigest||'',messages:actualPrompt,temperature:temp});
+      const staged=await window.MimaLocalStore.getMemoryStage(job,stage,contractDigest,oldDigest);
+      if(staged){
+        if(staged.outputLength!==staged.outputText.length||await exactDigest(staged.outputText)!==staged.outputDigest)
+          throw new ApiError('E_MEMORY_STAGE_CHECKSUM','记忆候选的长度或 SHA256 校验失败；不会误写长期记忆。');
+        const checked=validateMemoryCandidate(messages,staged.outputText,stage,staged.finishReason);
+        // A v1 record is reused only if both its historical exact prompt
+        // contract and SHA pass. Promote in a fenced v2 transaction; keep
+        // the original v1 record untouched for rollback and audit.
+        if(staged.version===1)await window.MimaLocalStore.putMemoryStage(job,stage,contractDigest,checked.memory,
+          {outputDigest:await exactDigest(checked.memory),finishReason:staged.finishReason,model:staged.model,
+            verification:{...checked.verification,legacySource:'R4.5_v1_revalidated'}});
+        (job.verifiedStages||(job.verifiedStages={}))[stage]=checked;
+        await checkpoint(job,stage+'_reused_durable',{contractDigest,outputDigest:staged.outputDigest,chars:checked.memory.length});
+        return checked.memory;
+      }
     }
     if(job?.resumeCandidates&&Object.hasOwn(job.resumeCandidates,stage)){
       // Third-round journals predate the new output contract: even a durable
@@ -1363,16 +1515,22 @@
         const portion=(activeSession?.messages||[]).slice(from,to);
         await checkpoint(job,stage+'_needs_review',{trust:'unverified',candidate:e.candidateForReview.slice(0,25000),reason:e.validationReason||'legacy_candidate',sourceHash:job.sourceHash,
           sourceStartIndex:from,sourceEndExclusive:to,sourceCoverageHash:memorySourceFingerprint(portion,portion.length),messageIds:portion.map(x=>x.id),sourceParts:stageScope?.sourceParts||[]});}throw e;}
-      if(job)(job.verifiedStages||(job.verifiedStages={}))[stage]=checked;
+      if(job){
+        await window.MimaLocalStore.putMemoryStage(job,stage,contractDigest,checked.memory,
+          {outputDigest:await exactDigest(checked.memory),finishReason:'legacy_revalidated',verification:checked.verification});
+        (job.verifiedStages||(job.verifiedStages={}))[stage]=checked;
+      }
       await checkpoint(job,stage+'_reused',{sourceHash:job.sourceHash,outputContract:checked.contract});return checked.memory;
     }
     if(job&&window.MimaMemoryPriority?.whenIdle){await checkpoint(job,stage+'_queued');await window.MimaMemoryPriority.whenIdle(signal);}
     await checkpoint(job,stage+'_request');const started=Date.now(),meta={};
     try{
-      const prompt=messages.map(m=>({...m}));
-      prompt[0]={...prompt[0],content:prompt[0].content+'\n【输出规则】仅输出忠实、清晰、详尽的记忆正文；允许自然意译及合并重复，保留重要细节、发生顺序与人物关系；不要 JSON、来源证明、额外解释或续写。'};
+      const prompt=actualPrompt;
       const memoryCfg=getApiConfig();if(job?.options?.model)memoryCfg.model=job.options.model;
-      const value=await callModelWithConfig(prompt,memoryCfg,temp,signal,{streamOverride:false,resultMeta:meta,memoryContext:job?{jobId:job.id,attemptId:job.attemptId,stage}:null});
+      if(job){const declared=promptBudget();const estimated=prompt.reduce((n,m)=>n+estimateTokens(m.content)+8,0);
+        if(declared.verified&&estimated>declared.usable)throw new ApiError('E_MEMORY_REFERENCE_BUDGET','记忆请求包含的参考资料超过已配置模型窗口；不会静默裁剪。',{details:JSON.stringify({stage,estimated,usable:declared.usable})});}
+      const modelProgress=ev=>{if(job?.progress){emitProgress(job.progress,{...ev,jobId:job.id,attemptId:job.attemptId,stageKey:stage,sourceRange:stageScope||null});}};
+      const value=await callModelWithConfig(prompt,memoryCfg,temp,signal,{streamOverride:false,resultMeta:meta,onProgress:modelProgress,memoryContext:job?{jobId:job.id,attemptId:job.attemptId,stage}:null});
       // Recheck the canonical prefix *before* validating the response against
       // sourceRecords captured prior to the network await. Otherwise a source
       // edit can be misclassified as merely a reviewable model output, and a
@@ -1384,7 +1542,13 @@
           throw new ApiError('E_MEMORY_SOURCE_STALE','记忆请求期间原始剧情已被修改，旧响应不能验收或覆盖新剧情。');
       }
       const checked=validateMemoryCandidate(messages,value,stage,meta.finishReason||'unknown',!!job,sourceRecords);
-      if(job)(job.verifiedStages||(job.verifiedStages={}))[stage]=checked;
+      if(job){
+        // Fenced durable write occurs before the bounded checkpoint. A failure
+        // to persist is a failure, not a pretend success or a lost candidate.
+        const outputDigest=await exactDigest(checked.memory);
+        await window.MimaLocalStore.putMemoryStage(job,stage,contractDigest,checked.memory,{outputDigest,model:memoryCfg.model,finishReason:meta.finishReason||'unknown',verification:checked.verification});
+        (job.verifiedStages||(job.verifiedStages={}))[stage]=checked;
+      }
       await checkpoint(job,stage+'_received',{chars:checked.memory.length,elapsedMs:Date.now()-started,finishReason:meta.finishReason||'unknown',outputContract:checked.contract,evidenceCount:checked.evidenceCount,provenance:checked.provenance,verification:checked.verification,usage:meta.usage||null,...(checked.memory.length<=20000?{output:checked.memory}:{candidateOversize:true})});
       return checked.memory;
     }
@@ -1415,6 +1579,18 @@
     const generated=[];
     for(let i=0;i<ranges.length;i++){
       const [a,b]=ranges[i],source=formatRoundRange(data,a,b,{includeOpening:a===1,session});
+      // Resume only uncommitted source ranges after a partial manual commit.
+      // A later owner edit is authoritative and must never be overwritten.
+      if(job?.recoverCommittedRanges&&!opts.regenerateExisting&&scope==='recent'){
+        const existing=normalizeManualMemory(session.manualMemory).facts.filter(f=>f.startRound<=b&&a<=f.endRound);
+        if(existing.length){
+          if(existing.length!==1||existing[0].startRound!==a||existing[0].endRound!==b||!memorySourceValid(session,existing[0]))
+            throw new ApiError('E_MEMORY_FACT_RANGE_ALREADY_COVERED','已提交事实与当前来源范围重叠或来源改变，自动恢复不会覆盖旧记忆。');
+          await checkpoint(job,`fact_range_${a}_${b}_already_committed`,{startRound:a,endRound:b,source:'canonical_verified'});
+          emitProgress(progress,{phase:'memory_fact_range_reused_committed',percent:8+Math.round(((i+1)/ranges.length)*78),detail:`第 ${a}–${b} 轮已确认入库，不重复调用 API`});
+          continue;
+        }
+      }
       emitProgress(progress,{phase:'memory_fact_range',percent:8+Math.round((i/ranges.length)*78),detail:`事实记忆 · 第 ${a}–${b} 轮（${i+1}/${ranges.length}）`});
       assertMemoryTaskActive(signal);
       const report=ev=>{
@@ -1429,8 +1605,18 @@
       const outputPlan=factOutputPlan(rangeMessages,targetChars);
       await checkpoint(job,'fact_range_output_plan',{startRound:a,endRound:b,...outputPlan});
       const content=await summarizeFactText(source,outputPlan.advisedChars,temp,signal,report,`第 ${a}–${b} 轮`,job,rangeTag,rangeScope,rangeMessages,session);
-      generated.push(normalizeFactMemory({startRound:a,endRound:b,content,source:'manual_fact_summary',targetChars,temperature:temp,sourceMessageCount:data.rounds.filter(r=>r.index>=a&&r.index<=b).reduce((n,r)=>n+r.messages.length,0),sourceCount:session.messages.length,sourceFingerprint:memorySourceFingerprint(session.messages,session.messages.length),sourceMessageIds:rangeMessages.map(m=>m.id),sourceHash:memorySourceFingerprint(rangeMessages,rangeMessages.length),verification:verifiedMemoryMetadata(job,rangeTag+(splitTextBlocks(source,28000).length>1?'_merge':'_part_0'))}));
-      await checkpoint(job,'fact_range_verified',{startRound:a,endRound:b,chars:content.length});
+      const checkedFact=normalizeFactMemory({startRound:a,endRound:b,content,source:'manual_fact_summary',targetChars,temperature:temp,sourceMessageCount:data.rounds.filter(r=>r.index>=a&&r.index<=b).reduce((n,r)=>n+r.messages.length,0),sourceCount:session.messages.length,sourceFingerprint:memorySourceFingerprint(session.messages,session.messages.length),sourceMessageIds:rangeMessages.map(m=>m.id),sourceHash:memorySourceFingerprint(rangeMessages,rangeMessages.length),verification:verifiedMemoryMetadata(job,rangeTag+(splitTextBlocks(source,28000).length>1?'_merge':'_part_0'))});
+      if(job){
+        if(!window.MimaLocalStore?.putFactRangeCandidate)throw new ApiError('E_MEMORY_FACT_RANGE_STORE_UNAVAILABLE','事实分段存储不可用，不宣告成功');
+        const sliced=session.messages.slice(rangeScope.sourceStartIndex,rangeScope.sourceEndExclusive);
+        job.loadedCharMaskId=session.loadedCharMaskId||'';
+        const finalStage=rangeTag+(splitTextBlocks(source,28000).length>1?'_merge':'_part_0');
+        job.factRangeStageDigests ||= {};
+        job.factRangeStageDigests[rangeTag]=job.stageContractDigests?.[finalStage];
+        await window.MimaLocalStore.putFactRangeCandidate(job,rangeTag,rangeScope,checkedFact,memorySourceFingerprint(sliced,sliced.length),await exactDigest(checkedFact.content));
+      }
+      generated.push(checkedFact);
+      await checkpoint(job,'fact_range_verified',{startRound:a,endRound:b,chars:content.length,durable:!!job});
     }
     assertMemoryTaskActive(signal);
     const replace=scope==='all'&&opts.replaceExisting===true;
@@ -1522,6 +1708,28 @@
     facts.sort((a,b)=>a.startRound-b.startRound||a.endRound-b.endRound);
     const temperature=clampTemp(opts.temperature??memory.settings.summaryTemperature),targetChars=clampInt(opts.targetChars,100,250000,6000);
     const cfg=getApiConfig(),model=String((opts.model??memory.settings.memoryModel)||'').trim();if(model)cfg.model=model;
+    const referenceSnapshot=memoryReferenceSnapshot(session);
+    const referenceMessages=referencePromptMessages(referenceSnapshot);
+    const mergeStore=window.MimaLocalStore;
+    if(!mergeStore?.getMergeStage||!mergeStore?.putMergeStage||!mergeStore?.createMergeDraft)
+      throw new ApiError('E_MEMORY_MERGE_STORE_UNAVAILABLE','合并候选持久化不可用，未调用模型。');
+    const oldDraft=await mergeStore.getMergeDraft(id);
+    if(oldDraft&&!['DISCARDED','COMMITTED'].includes(oldDraft.status))
+      throw new ApiError('E_MEMORY_MERGE_DRAFT_EXISTS','此剧情仍有可恢复的合并草稿，请先确认或放弃，不会重复消耗额度。');
+    const checkedMergeStage=async(stage,prompt)=>{
+      const contractDigest=await exactDigest({version:2,sessionId:id,role:stage,
+        selectedFactIds:facts.map(x=>x.id),references:referenceSnapshot,
+        messages:prompt,temperature,maxTokens:cfg.maxTokens,source:facts.map(x=>[x.id,x.content,x.startRound,x.endRound])});
+      const existing=await mergeStore.getMergeStage(id,contractDigest);
+      if(existing){
+        if(existing.outputLength!==existing.outputText.length||await exactDigest(existing.outputText)!==existing.outputDigest)
+          throw new ApiError('E_MEMORY_MERGE_CHECKSUM','已保存的合并阶段校验失败；不会覆盖原始事实。');
+        return validateMemoryCandidate([],existing.outputText,stage).memory;
+      }
+      const output=validateMemoryCandidate([],await callModelWithConfig(prompt,cfg,temperature,signal,{streamOverride:false}),stage).memory;
+      await mergeStore.putMergeStage(id,contractDigest,output,await exactDigest(output));
+      return output;
+    };
     // Batch on saved memory boundaries; a second pass cannot see source data
     // that was never passed to the model. Always keep originals until approval.
     const slices=[],maxPartChars=16000;let part='';
@@ -1536,9 +1744,9 @@
     for(let i=0;i<slices.length;i++){
       assertMemoryTaskActive(signal);
       emitProgress(progress,{phase:'memory_merge',percent:5+Math.round(70*i/Math.max(1,slices.length)),detail:`整理事实记忆 ${i+1}/${slices.length}`});
-      const txt=await callModelWithConfig([{role:'system',content:'你是咪嘛馆的长期事实记忆整理助手。忠实保留人物、时间顺序、具体经历、对话与细节，不续写，不增加事实。只输出整理后的正文。'},
-        {role:'user',content:`请合并下面的事实记忆，消除冗余描述，但保留不同轮次实际重复发生的事件。允许内容详细，目标约${targetChars}字，内容准确优先。\n${slices[i]}`}],cfg,temperature,signal,{streamOverride:false});
-      pieces.push(validateMemoryCandidate([],txt,'fact_merge_part_'+i).memory);
+      const prompt=[{role:'system',content:'你是咪嘛馆的长期事实记忆整理助手。忠实保留人物、时间顺序、具体经历、对话与细节，不续写，不增加事实。只输出整理后的正文。'},...referenceMessages,
+        {role:'user',content:`请合并下面的事实记忆，消除冗余描述，但保留不同轮次实际重复发生的事件。允许内容详细，目标约${targetChars}字，内容准确优先.\n${slices[i]}`}];
+      pieces.push(await checkedMergeStage('fact_merge_part_'+i,prompt));
     }
     let output=pieces[0];
     if(pieces.length>1){
@@ -1546,16 +1754,17 @@
       // context. Otherwise concatenate all checked parts without silently dropping.
       const source=pieces.map((x,i)=>`【第${i+1}部分】\n${x}`).join('\n\n');
       if(source.length<=16000){
-        output=validateMemoryCandidate([],await callModelWithConfig([{role:'system',content:'把以下多个事实记忆分片合成一份按时间顺序的完整记忆。不要遗漏不同事件；不得杜撰。只输出正文。'},
-          {role:'user',content:`${source}\n\n合并重复描述并保留全部独立事件，目标约${targetChars}字；如内容过多可超出字数。`}],cfg,temperature,signal,{streamOverride:false}),'fact_merge_final').memory;
+        output=await checkedMergeStage('fact_merge_final',[{role:'system',content:'把以下多个事实记忆分片合成一份按时间顺序的完整记忆。不要遗漏不同事件；不得杜撰。只输出正文。'},...referenceMessages,
+          {role:'user',content:`${source}\n\n合并重复描述并保留全部独立事件，目标约${targetChars}字；如内容过多可超出字数。`}]);
       }else output=source;
     }
     assertMemoryTaskActive(signal);
-    emitProgress(progress,{phase:'memory_merge_preview',percent:100,detail:'合并候选已生成，原记忆尚未变更'});
-    return {content:output,selectedIds:facts.map(f=>f.id),sourceSignature:memoryFactSignature(memory.facts),
+    const draft=await mergeStore.createMergeDraft(id,{content:output,selectedIds:facts.map(f=>f.id),sourceSignature:memoryFactSignature(memory.facts),
       sourceHistoryFingerprint:memorySourceFingerprint(session.messages,session.messages.length),
       sourceHistoryCount:session.messages.length,startRound:Math.min(...facts.map(f=>f.startRound)),endRound:Math.max(...facts.map(f=>f.endRound)),
-      targetChars,temperature,model:cfg.model};
+      targetChars,temperature,model:cfg.model,referenceDigest:await exactDigest(referenceSnapshot),outputDigest:await exactDigest(output)});
+    emitProgress(progress,{phase:'memory_merge_preview',percent:100,detail:'合并候选已持久保存，原记忆尚未变更'});
+    return draft;
   }
   async function commitFactMerge(id,body){
     if(typeof window.MimaLocalStore?.commitFactMerge!=='function')throw new ApiError('E_MEMORY_MERGE_STORE_UNAVAILABLE','合并事务不可用；旧记忆保持不变');
