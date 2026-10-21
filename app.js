@@ -29,6 +29,7 @@ let memoryMergeSaveTimer=null, memoryMergeWrite=Promise.resolve();
 let memoryFactEditId = null;
 let liveStreamState = null;
 let deferredGenerationProgress = null;
+let generationPanelMinimized = false;
 let lastGenerationFailure = null;
 let currentGenerationAction = null;
 let appearancePreviewSurface = 'chat';
@@ -2170,9 +2171,13 @@ function toggleUIState(generating){
     qs('story-input').disabled=visible;
 }
 function generationActionLabel(action){return action==='regenerate'?'正在重新生成':action==='continue'?'正在续写':action==='auto_advance'?'正在推进剧情':'正在生成剧情'}
-function setGenerationProgress(payload={}){const panel=qs('generation-panel'),bar=qs('generation-progress-bar'),label=qs('generation-label'),pct=qs('generation-percent'),detail=qs('generation-detail');if(!panel)return;panel.classList.remove('hidden','error','done');const n=Math.max(2,Math.min(100,Number(payload.percent)||2));bar.style.width=`${n}%`;pct.textContent=`${Math.round(n)}%`;if(payload.label)label.textContent=payload.label;if(payload.detail)detail.textContent=payload.detail}
+function syncGenerationMinimizedBadge(percent=0){const badge=qs('generation-minimized-badge'),ring=badge?.querySelector('.generation-minimized-ring'),pct=qs('generation-minimized-percent');if(!badge||!ring||!pct)return;const n=Math.max(2,Math.min(100,Number(percent)||2));badge.style.setProperty('--generation-mini-progress',`${n}%`);ring.style.setProperty('--generation-mini-progress',`${n}%`);pct.textContent=`${Math.round(n)}%`;}
+function setGenerationPanelMinimized(next){const panel=qs('generation-panel'),badge=qs('generation-minimized-badge');generationPanelMinimized=!!next;panel?.classList.toggle('minimized',generationPanelMinimized);const minimizable=!!currentGenerationOwner()||!!panel?.classList.contains('error');badge?.classList.toggle('hidden',!generationPanelMinimized||!minimizable);if(!generationPanelMinimized)badge?.classList.add('hidden');}
+function toggleGenerationPanelMinimize(force){if(!currentGenerationOwner()&&!qs('generation-panel')?.classList.contains('error')){dismissGenerationPanel();return;}setGenerationPanelMinimized(force===undefined?!generationPanelMinimized:!!force);}
+function restoreGenerationPanel(){setGenerationPanelMinimized(false);}
+function setGenerationProgress(payload={}){const panel=qs('generation-panel'),bar=qs('generation-progress-bar'),label=qs('generation-label'),pct=qs('generation-percent'),detail=qs('generation-detail');if(!panel)return;panel.classList.remove('hidden','error','done');const n=Math.max(2,Math.min(100,Number(payload.percent)||2));bar.style.width=`${n}%`;pct.textContent=`${Math.round(n)}%`;syncGenerationMinimizedBadge(n);if(payload.label)label.textContent=payload.label;if(payload.detail)detail.textContent=payload.detail}
 function setGenerationRetryVisible(visible){for(const id of ['generation-retry','generation-retry-current'])qs(id)?.classList.toggle('hidden',!visible);}
-function beginGenerationProgress(action){deferredGenerationProgress=null;currentGenerationAction=action;lastGenerationFailure=null;setGenerationRetryVisible(false);const panel=qs('generation-panel');panel?.classList.remove('hidden','error','done');setGenerationProgress({percent:4,label:`🤍 ${generationActionLabel(action)}`,detail:'正在准备本轮剧情…'})}
+function beginGenerationProgress(action){deferredGenerationProgress=null;currentGenerationAction=action;lastGenerationFailure=null;setGenerationRetryVisible(false);setGenerationPanelMinimized(false);const panel=qs('generation-panel');panel?.classList.remove('hidden','error','done');setGenerationProgress({percent:4,label:`🤍 ${generationActionLabel(action)}`,detail:'正在准备本轮剧情…'})}
 function isStoryNearBottom(box,threshold=96){return !box||((box.scrollHeight-box.scrollTop-box.clientHeight)<=threshold)}
 function updateStoryFollowButton(){const b=qs('story-follow-stream');if(!b)return;b.classList.toggle('hidden',!liveStreamState||liveStreamState.followTail!==false)}
 function resumeStoryStreamFollow(){if(!liveStreamState)return;liveStreamState.followTail=true;const box=qs('story-chat-box');if(box)box.scrollTop=box.scrollHeight;updateStoryFollowButton()}
@@ -2267,11 +2272,13 @@ function finishGenerationProgress(owner=null){
     setGenerationRetryVisible(false);
     setGenerationProgress({percent:100,label:'🤍 生成完成',detail:'剧情已保存到本机。'});
     const panel=qs('generation-panel');panel?.classList.add('done');
+    setGenerationPanelMinimized(false);
     const sessionId=currentSessionId;
-    setTimeout(()=>{if(!currentGenerationOwner()&&currentSessionId===sessionId)panel?.classList.add('hidden')},650);
+    setTimeout(()=>{if(!currentGenerationOwner()&&currentSessionId===sessionId){panel?.classList.add('hidden');qs('generation-minimized-badge')?.classList.add('hidden');}},650);
 }
 function showGenerationError(err,action=currentGenerationAction,fromRestore=false){
     deferredGenerationProgress=null;
+    setGenerationPanelMinimized(false);
     const info=describeApiError(err),panel=qs('generation-panel'),bar=qs('generation-progress-bar'),label=qs('generation-label'),pct=qs('generation-percent'),detail=qs('generation-detail'),retry=qs('generation-retry');
     if(!panel)return;
     lastGenerationFailure={...info,action};
@@ -2301,7 +2308,7 @@ function retryFailedGeneration(parameters='original'){
     setGenerationRetryVisible(false);
     return triggerChat('','retry',{retryParameters:parameters==='current'?'current':'original'});
 }
-function dismissGenerationPanel(){qs('generation-panel')?.classList.add('hidden')}
+function dismissGenerationPanel(){qs('generation-panel')?.classList.add('hidden');qs('generation-minimized-badge')?.classList.add('hidden');generationPanelMinimized=false;}
 async function triggerChat(text,actionType='send',generationOptions={}){
     const targetSessionId=currentSessionId;
     if(!targetSessionId)return toast('请先创建一个剧情。');
@@ -2672,7 +2679,7 @@ function restoreLegacyFont(){
 }
 
 // Expose inline handlers
-Object.assign(window,{importCurrentSessionAsSettingTemplate,chooseIndependentTemplate,saveIndependentTemplate,copyIndependentTemplate,setIndependentTemplateDefault,deleteIndependentTemplate,setImmersiveReading,saveCurrentSettingTemplate,duplicateSettingTemplate,setDefaultSettingTemplate,deleteSettingTemplate,exportSettingTemplate,importSettingTemplate,refreshSettingTemplateChoices,renderSettingTemplatePreview,manualRollingSummary,mimaFilterLibrary,mimaToggleFavorite,goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,choosePngResourceInspection,playInspectedPngInCompat,savePngSelectedResources,exportPngInspection,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,exportStoryTranscript,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,loadMemoryModels,selectMemoryModel,startFactMemoryEdit,cancelFactMemoryEdit,saveFactMemoryEdit,toggleMergeFactSelection,previewFactMemoryMerge,cancelFactMemoryMerge,confirmFactMemoryMerge,undoFactMemoryMerge,clearCoreMemory,deleteFactMemory,clearAllFactMemories,revokeRollingMemory,restoreRollingMemory,discardMemoryCandidate,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,mimaLoadLargeCssForEdit,stopAtelierAndRestoreCss,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,syncTemperature,updateStoryTypography,resetStoryTypography,setAppearancePreviewSurface,setBuiltInTheme,dismissGenerationPanel,retryFailedGeneration,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,regenerateCurrentMsg,continueMsg,autoAdvance,restoreMessageVersion,stopGeneration});
+Object.assign(window,{importCurrentSessionAsSettingTemplate,chooseIndependentTemplate,saveIndependentTemplate,copyIndependentTemplate,setIndependentTemplateDefault,deleteIndependentTemplate,setImmersiveReading,saveCurrentSettingTemplate,duplicateSettingTemplate,setDefaultSettingTemplate,deleteSettingTemplate,exportSettingTemplate,importSettingTemplate,refreshSettingTemplateChoices,renderSettingTemplatePreview,manualRollingSummary,mimaFilterLibrary,mimaToggleFavorite,goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,choosePngResourceInspection,playInspectedPngInCompat,savePngSelectedResources,exportPngInspection,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,exportStoryTranscript,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,loadMemoryModels,selectMemoryModel,startFactMemoryEdit,cancelFactMemoryEdit,saveFactMemoryEdit,toggleMergeFactSelection,previewFactMemoryMerge,cancelFactMemoryMerge,confirmFactMemoryMerge,undoFactMemoryMerge,clearCoreMemory,deleteFactMemory,clearAllFactMemories,revokeRollingMemory,restoreRollingMemory,discardMemoryCandidate,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,mimaLoadLargeCssForEdit,stopAtelierAndRestoreCss,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,syncTemperature,updateStoryTypography,resetStoryTypography,setAppearancePreviewSurface,setBuiltInTheme,dismissGenerationPanel,retryFailedGeneration,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,regenerateCurrentMsg,continueMsg,autoAdvance,restoreMessageVersion,stopGeneration,toggleGenerationPanelMinimize,restoreGenerationPanel});
 
 
 window.MimaTavernBridge={

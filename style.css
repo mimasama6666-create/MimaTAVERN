@@ -1003,3 +1003,55 @@ body.mima-reading-mode #story-chat-box[data-mima-chat-wallpaper="1"]::before{
 .mima-template-section .form-label{line-height:1.45;}
 .mima-template-editor .helper{line-height:1.55;}
 @media(max-width:480px){.mima-template-choice-grid{grid-template-columns:1fr;}}
+
+
+/* R14 visual polish — restore a lighter header, readable tool row, and ornate floating generation status. */
+@media (max-width:700px){
+  .topbar{min-height:52px;padding-top:5px;padding-bottom:5px;gap:9px;}
+  .top-avatar{width:36px;height:36px;border-radius:13px;}
+  .topbar .icon-btn{min-width:36px;height:36px;}
+}
+#story-chat-box .msg-tools{display:flex;gap:8px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;-webkit-overflow-scrolling:touch;padding-bottom:2px;}
+#story-chat-box .msg-tools::-webkit-scrollbar{display:none;}
+#story-chat-box .msg-tools .tool-mini{white-space:nowrap;flex:0 0 auto;padding:8px 12px;font-size:.78rem;line-height:1.2;border-radius:999px;}
+
+.app-shell>.composer-shell>.generation-panel:not(.hidden){
+  left:50%;right:auto;bottom:calc(100% + 10px);transform:translateX(-50%);
+  width:min(470px,calc(100vw - 34px));max-width:calc(100% - 18px);
+  max-height:min(28dvh,176px);padding:10px 12px 11px;border-radius:22px;
+  border:1px solid color-mix(in srgb,var(--accent) 34%,var(--line));
+  background:linear-gradient(180deg,color-mix(in srgb,var(--panel-solid) 90%,transparent),color-mix(in srgb,var(--panel) 82%,transparent));
+  box-shadow:0 10px 26px rgba(38,25,26,.14), inset 0 1px 0 rgba(255,255,255,.55);
+  -webkit-backdrop-filter:blur(16px) saturate(1.18);backdrop-filter:blur(16px) saturate(1.18);
+  overflow:visible;display:flex;flex-direction:column;gap:6px;z-index:8;
+}
+.app-shell>.composer-shell>.generation-panel:not(.hidden)::before{
+  content:"";position:absolute;inset:-1px;border-radius:inherit;padding:1px;
+  background:conic-gradient(from 180deg,transparent 0deg,color-mix(in srgb,var(--accent) 28%,transparent) 52deg,rgba(255,255,255,.88) 115deg,color-mix(in srgb,var(--accent-strong) 36%,transparent) 190deg,transparent 255deg,rgba(255,255,255,.74) 320deg,transparent 360deg);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;pointer-events:none;animation:mimaGenerationBorderSpin 6.8s linear infinite;opacity:.9;
+}
+@keyframes mimaGenerationBorderSpin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+.app-shell>.composer-shell>.generation-panel.minimized{display:none!important;}
+.app-shell>.composer-shell>.generation-panel .generation-head{min-height:30px;align-items:center;gap:8px;position:relative;z-index:1;}
+.app-shell>.composer-shell>.generation-panel .generation-head>span:first-child{font-size:.84rem;font-weight:760;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.app-shell>.composer-shell>.generation-panel .generation-head>span:nth-child(2){font-size:.78rem;font-weight:760;color:var(--accent-strong);}
+.app-shell>.composer-shell>.generation-panel .generation-close{width:32px;height:32px;min-width:32px;min-height:32px;flex:0 0 32px;border-radius:12px;background:rgba(255,255,255,.54);border:1px solid var(--line);font-size:1rem;line-height:1;color:var(--accent-strong);}
+.app-shell>.composer-shell>.generation-panel .generation-track{margin:0;height:4px;background:color-mix(in srgb,var(--accent) 16%,transparent);}
+.app-shell>.composer-shell>.generation-panel .generation-progress-bar{background:linear-gradient(90deg,var(--accent),var(--accent-strong));}
+.app-shell>.composer-shell>.generation-panel .generation-detail{margin:0;min-height:16px;max-height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:.7rem;line-height:16px;color:var(--muted);padding-right:0;}
+.app-shell>.composer-shell>.generation-panel .generation-actions{display:flex;align-items:center;justify-content:flex-end;gap:7px;position:relative;z-index:1;margin:0;padding:0;overflow:visible;flex-wrap:nowrap;}
+.app-shell>.composer-shell>.generation-panel .generation-stop-btn,.app-shell>.composer-shell>.generation-panel #generation-diagnostic-link{flex:0 0 auto;min-height:30px;padding:6px 11px;border-radius:999px;font-size:.72rem;border:1px solid var(--line);background:rgba(255,255,255,.54);color:var(--text);box-shadow:none;}
+.app-shell>.composer-shell>.generation-panel .generation-stop-btn{color:#7a4653;border-color:color-mix(in srgb,var(--danger) 24%,var(--line));background:color-mix(in srgb,rgba(187,89,96,.14) 70%,rgba(255,255,255,.55));}
+.app-shell>.composer-shell>.generation-panel #generation-diagnostic-link::after{content:none;}
+.app-shell>.composer-shell>.generation-panel #generation-diagnostic-link{width:auto;height:auto;}
+.app-shell>.composer-shell>.generation-panel #generation-retry,.app-shell>.composer-shell>.generation-panel #generation-retry-current{min-height:30px;padding:6px 10px;font-size:.72rem;white-space:nowrap;}
+.app-shell>.composer-shell>.generation-panel.error:not(.hidden){max-height:min(48dvh,320px);bottom:calc(100% + 12px);display:flex!important;}
+.app-shell>.composer-shell>.generation-panel.error .generation-detail{max-height:min(22dvh,145px);white-space:pre-wrap;overflow-y:auto;}
+.generation-minimized-badge{position:absolute;right:max(10px,env(safe-area-inset-right));bottom:calc(100% + 10px);width:54px;height:54px;border-radius:50%;border:1px solid color-mix(in srgb,var(--accent) 32%,var(--line));background:linear-gradient(180deg,color-mix(in srgb,var(--panel-solid) 88%,transparent),color-mix(in srgb,var(--panel) 84%,transparent));box-shadow:0 9px 26px rgba(38,25,26,.16);display:grid;place-items:center;z-index:7;-webkit-backdrop-filter:blur(15px) saturate(1.15);backdrop-filter:blur(15px) saturate(1.15);}
+.generation-minimized-ring{position:absolute;inset:5px;border-radius:50%;background:conic-gradient(var(--accent) var(--generation-mini-progress,0%),rgba(255,255,255,.38) 0);-webkit-mask:radial-gradient(circle,transparent 58%,#000 60%);mask:radial-gradient(circle,transparent 58%,#000 60%);animation:mimaMiniSpinner 1.6s linear infinite;}
+@keyframes mimaMiniSpinner{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+.generation-minimized-percent{position:relative;z-index:1;font-size:.66rem;font-weight:760;color:var(--accent-strong);}
+@media (max-width:700px){
+  .app-shell>.composer-shell>.generation-panel:not(.hidden){width:min(430px,calc(100vw - 26px));bottom:calc(100% + 6px);max-height:min(26dvh,165px);}
+  .generation-minimized-badge{right:max(12px,env(safe-area-inset-right));bottom:calc(100% + 6px);width:50px;height:50px;}
+}
