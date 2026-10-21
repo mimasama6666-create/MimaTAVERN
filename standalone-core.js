@@ -702,10 +702,11 @@
     const cfg=getApiConfig(),configured=Number(cfg.contextWindowTokens);
     const verified=Number.isFinite(configured)&&configured>=4096;
     if(!verified){
-      const provisionalWindow=32768;
-      const provisionalReserve=Math.max(1024,Number(cfg.maxTokens)>0?Math.floor(Number(cfg.maxTokens)):4096);
-      return {windowTokens:null,reserve:null,usable:null,verified:false,
-        provisionalRetrievalTokens:Math.max(0,Math.floor(provisionalWindow*.85)-provisionalReserve)};
+      // Unknown means unknown. Do not invent a 32k window, use it to reject
+      // complete canonical History, or pretend an unverified model has one.
+      // Without a declared window, assemble keeps complete original History;
+      // the Provider is authoritative about whether it can accept the request.
+      return {windowTokens:null,reserve:null,usable:null,verified:false};
     }
     const windowTokens=Math.floor(configured);
     const reserve=Math.max(1024,Number(cfg.maxTokens)>0?Math.floor(Number(cfg.maxTokens)):Math.min(4096,Math.floor(windowTokens*.5)));
@@ -870,17 +871,7 @@
       return true;
     }
     estimatedBase=baseTokens(recentRaw,sys);
-    if(!promptCap.verified){
-      // Unknown context is NOT a licence to send a potentially million-token
-      // prompt. Keep normal smaller legacy sessions working, but block large
-      // unverified payloads before transport. Never invent a model capacity.
-      if(estimatedBase>promptCap.provisionalRetrievalTokens){
-        throw new ApiError('E_CONTEXT_WINDOW_REQUIRED','当前完整剧情预计超过安全检查阈值，但尚未配置模型实际上下文窗口；未发起请求。',{
-          details:JSON.stringify({estimatedInputTokens:estimatedBase,configuredWindow:null,
-            legacyScreeningThreshold:promptCap.provisionalRetrievalTokens,fullHistoryCount:visibleHistory.length}),
-          hint:'请在 API 设置中填写服务商确认支持的模型上下文窗口 Tokens；咪嘛馆不会凭模型名称猜 100 万窗口，也不会默默删减剧情。'});
-      }
-    }else{
+    if(promptCap.verified){
       while(estimatedBase>promptCap.usable){
         if(!trimOldestBatch()){
           throw new ApiError('E_CONTEXT_RECENT_MINIMUM','保留最新完整剧情和固定资料后仍超出本轮模型预算；已暂停且未删除任何 History。',{
@@ -903,9 +894,10 @@
     // by a rolling summary; coverage is not deletion or a retrieval exclusion.
     const uncoveredOlder=visibleHistory.filter(m=>!recentIds.has(m.id));
     const anchor=options.draft||recentRaw.filter(m=>m.role==='user').slice(-1).map(m=>m.rawContent||m.content).join(' ')||recentRaw.slice(-1).map(m=>m.rawContent||m.content).join(' ');
-    // In unverified mode this is a SOFT optional retrieval budget, not a
-    // fabricated upper bound on the model or on mandatory prompt materials.
-    const retrievalCap=promptCap.verified?promptCap.usable:promptCap.provisionalRetrievalTokens;
+    // Only an explicitly declared context creates a retrieval budget.
+    // With unknown capacity no history is projected away; optional retrieval
+    // has no missing old groups to recover, so it needs no guessed allowance.
+    const retrievalCap=promptCap.verified?promptCap.usable:0;
     const retrievalBudget=Math.min(Math.floor(retrievalCap*.38),Math.max(0,retrievalCap-baselineTokens-600));
     const candidateHistory=projectedAway.length?[]:uncoveredOlder;
     const retrieved=retrieveRawGap(session,candidateHistory,0,anchor,retrievalBudget,projectMessage);
@@ -2612,10 +2604,9 @@
       throw new ApiError('E_CONTEXT_FROZEN_BUDGET','冻结的历史请求已经超过当前声明的模型容量；未重复发送旧超大请求。',{
         details:JSON.stringify({estimatedInputTokens:frozenEstimate,usableTokens:frozenBudget.usable,source:'frozen_request'}),
         hint:'请用当前剧情重新规划上下文；旧生成快照和存档保持原样，不自动更换模型或扣费。'});
-    if(!frozenBudget.verified&&frozenEstimate>frozenBudget.provisionalRetrievalTokens)
-      throw new ApiError('E_CONTEXT_WINDOW_REQUIRED','冻结请求体过大且没有配置真实模型上下文容量；未重复发送。',{
-        details:JSON.stringify({estimatedInputTokens:frozenEstimate,source:'frozen_request'}),
-        hint:'请先核实并填写模型上下文窗口，再使用当前剧情重新规划；旧快照不变。'});
+    // An unverified window cannot be compared against a fabricated limit.
+    // Keep the frozen payload byte-for-byte and leave capacity adjudication
+    // to the Provider, with no local retry or automatic substitution.
     cfg={...cfg,model:requestBody.model,stream:requestBody.stream===true,sendTemperature:Object.hasOwn(requestBody,'temperature'),maxTokens:requestBody.max_tokens||0};
     messages=requestBody.messages;
     pending={id:retryPending?.id||makeId('generation'),action,targetMessageId:target?.id||null,snapshot,canonicalFingerprint,status:'prepared',attempt:(retryPending?.attempt||0)+1};
