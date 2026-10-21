@@ -752,5 +752,109 @@ body.mima-reading-mode .app-shell>.context-ribbon,body.mima-reading-mode .app-sh
 body.mima-reading-mode .app-shell>.story-follow-stream{display:none;}
 body.mima-reading-mode #story-chat-box .msg-header,
 body.mima-reading-mode #story-chat-box .msg-tools{display:none;}
-body.mima-reading-mode .app-shell{height:100dvh;min-height:100dvh;}
-body.mima-reading-mode #story-chat-box{touch-action:manipulation;height:100%;min-height:0;overflow-y:auto;padding-bottom:calc(28px + env(safe-area-inset-bottom));}
+/* Reading is a single-track viewport, not the normal four-row composer grid.
+   Hidden topbars/composer otherwise leave unused grid tracks and a blank lower screen. */
+body.mima-reading-mode .app-shell{
+  display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr);
+  width:100%;max-width:none;margin:0;height:100vh;height:100dvh;min-height:0;
+  overflow:hidden;
+}
+body.mima-reading-mode #story-chat-box{
+  grid-column:1;grid-row:1;align-self:stretch;justify-self:stretch;
+  display:block;width:100%;height:100%;min-height:0;max-height:none;
+  overflow-x:hidden;overflow-y:auto;overscroll-behavior-y:contain;
+  -webkit-overflow-scrolling:touch;touch-action:manipulation;scroll-behavior:auto;
+  padding:calc(14px + env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) calc(28px + env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left));
+}
+/* The existing wallpaper remains a viewport background even while prose scrolls. */
+body.mima-reading-mode #story-chat-box[data-mima-chat-wallpaper="1"]::before{
+  position:fixed;inset:0;width:100vw;height:100vh;height:100dvh;
+}
+
+
+
+/* R4.10 R10 — Generation HUD must not resize or clip the themed composer.
+   The R16.2 footer overflow scrollport clipped theme decorations; the in-flow
+   panel grew the max-content grid row and shoved the story and tool buttons.
+   Keep this panel absolutely anchored to the UNCHANGED footer boundary.
+   Theme color/background remain controlled by existing CSS/Atelier overrides. */
+.app-shell>.composer-shell{
+  position:relative;
+  min-width:0;
+  overflow:visible;
+}
+.app-shell>.composer-shell>.generation-panel:not(.hidden){
+  position:absolute;
+  inset:auto max(9px,env(safe-area-inset-right)) calc(100% + 8px) max(9px,env(safe-area-inset-left));
+  width:auto;
+  min-width:0;
+  margin:0;
+  max-height:min(42dvh,340px);
+  overflow-x:hidden;
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  -webkit-overflow-scrolling:touch;
+  z-index:16;
+}
+/* Large failures stay inspectable while the footer and decorations remain still. */
+.app-shell>.composer-shell>.generation-panel.error:not(.hidden){
+  max-height:min(42dvh,340px);
+  overflow-x:hidden;
+  overflow-y:hidden;
+}
+.app-shell>.composer-shell>.generation-panel .generation-detail{
+  min-width:0;
+  overflow-wrap:anywhere;
+}
+.app-shell>.composer-shell>.generation-panel.error .generation-detail{
+  max-height:min(23dvh,170px);
+  overflow-x:hidden;
+  overflow-y:auto;
+  -webkit-overflow-scrolling:touch;
+}
+.app-shell>.composer-shell>.generation-panel .generation-close{
+  min-width:40px;
+  min-height:40px;
+  flex:0 0 40px;
+  touch-action:manipulation;
+}
+/* Constrain only the quick-action scrollport; never clip absolute footer art. */
+.app-shell>.composer-shell>.quick-actions{max-width:100%;min-width:0;}
+@media(max-height:480px) and (orientation:landscape){
+  .app-shell>.composer-shell{max-height:calc(100dvh - 64px);}
+  .app-shell>.composer-shell>.generation-panel:not(.hidden){
+    max-height:min(44dvh,200px);
+    bottom:calc(100% + 3px);
+  }
+  .app-shell>.composer-shell>.generation-panel.error .generation-detail{max-height:16dvh;}
+}
+
+/* Responsive input and diagnostics: do not let flex min-content squeeze Send. */
+.app-shell>.composer-shell>.composer-row{min-width:0;max-width:100%;}
+.app-shell>.composer-shell>.composer-row textarea{min-width:0;}
+.app-shell>.composer-shell>.composer-row .send-btn{flex:0 0 46px;}
+.app-shell>.composer-shell>.generation-panel .generation-head{min-width:0;}
+.app-shell>.composer-shell>.generation-panel .generation-head>span:first-child{min-width:0;overflow-wrap:anywhere;}
+.app-shell>.composer-shell>.generation-panel .generation-actions button{max-width:100%;overflow-wrap:anywhere;}
+
+/* When the diagnostics HUD overlays the story's lower edge, the existing
+   'follow streaming output' control must remain discoverable and tappable.
+   Stack it at the TOP of the same chat grid track only during the HUD.
+   Explicit chat grid placement avoids introducing a new auto-placed grid row. */
+.app-shell:has(>.composer-shell>.generation-panel:not(.hidden)) > .story-follow-stream:not(.hidden){
+  position:relative;
+  inset:auto;
+  grid-column:1;
+  grid-row:3;
+  justify-self:end;
+  align-self:start;
+  margin:12px max(12px,env(safe-area-inset-right));
+  z-index:20;
+  min-height:38px;
+}
+/* Stable four-row shell even when the independent-universe ribbon is hidden:
+   implicit grid placement had put the story in row 2, leaving row 3 empty. */
+.app-shell>.topbar{grid-column:1;grid-row:1;}
+.app-shell>.context-ribbon{grid-column:1;grid-row:2;}
+.app-shell>#story-chat-box{grid-column:1;grid-row:3;}
+.app-shell>.composer-shell{grid-column:1;grid-row:4;}

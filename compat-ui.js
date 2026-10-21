@@ -625,12 +625,29 @@ function stopMedia(){if(player){player.pause();player.remove();player=null;}for(
 function close(){closeSheet();if(activeId)storyDrafts.set(activeId,$('compat-input').value);if(unsubscribeLiveSync){unsubscribeLiveSync();unsubscribeLiveSync=null;}++sessionGeneration;opened=false;clearMvuTemplate();if(cardPreviewUrl){URL.revokeObjectURL(cardPreviewUrl);cardPreviewUrl='';}$('compat-lab').classList.add('hidden');$('compat-lab').classList.remove('in-chat');stopMedia();root.MimaCompatPlugins?.unmountAll();root.MimaAuthorHost?.unmountAll('已离开当前故事；已提交变量保留');}
 async function refreshCompatSettingTemplates(){
  const select=$('compat-setting-template');if(!select)return;
+ // Distinguish an explicit "no template" choice from the initial blank placeholder.
+ // Never replace an in-progress choice with a background default refresh.
+ if(select.dataset.mimaExplicitChoiceBound!=='1'){
+  select.addEventListener('change',()=>{select.dataset.mimaExplicitChoice='1';});
+  select.dataset.mimaExplicitChoiceBound='1';
+ }
  const previous=select.value;
+ const explicit=select.dataset.mimaExplicitChoice==='1';
+ const refreshEpoch=String(Number(select.dataset.mimaRefreshEpoch||'0')+1);
+ select.dataset.mimaRefreshEpoch=refreshEpoch;
  const state=await root.MimaLocalStore.loadState();
+ if(select.dataset.mimaRefreshEpoch!==refreshEpoch)return; // stale asynchronous refresh
  if(!Array.isArray(state.settingTemplates))throw new Error('E_SETTINGS_TEMPLATE_STORE_UNVERIFIED');
+ const livePrevious=select.value;
+ const userHasChanged=livePrevious!==previous||(select.dataset.mimaExplicitChoice==='1'&&!explicit);
  clear(select);el('option',{value:'',text:'不使用模板（角色卡独立配置）'},select);
  for(const item of state.settingTemplates)el('option',{value:item.id,text:item.name+(item.isDefault?'（默认）':'')},select);
- if([...select.options].some(o=>o.value===previous))select.value=previous;
+ const desired=userHasChanged?livePrevious:previous;
+ if(explicit||userHasChanged){
+  // If explicitly chosen template was deleted, do not silently substitute another.
+  select.value=[...select.options].some(o=>o.value===desired)?desired:'';
+ }else if(desired&&[...select.options].some(o=>o.value===desired))select.value=desired;
+ else select.value=String(state.settingTemplates.find(item=>item.isDefault)?.id||'');
 }
 function open(){opened=true;
  refreshCompatSettingTemplates().catch(e=>message('读取剧情设置模板失败：'+e.message+'，不会假装已挂载','error'));listenLiveSync();$('compat-lab').classList.remove('hidden');showLibrary();root.closeDrawer?.();Promise.all([refreshSourceList(),refreshSessionList()]).catch(e=>message('兼容库读取失败，禁止假装无数据：'+e.message,'error'));}

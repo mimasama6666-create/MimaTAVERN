@@ -427,7 +427,7 @@ function setImmersiveReading(on){
 }
 function setupImmersiveReading(){
     const root=qs('story-chat-box');if(!root)return;
-    root.addEventListener('dblclick',e=>{if(!readingMode||e.target.closest('a,button,input,textarea,select,[contenteditable]')||window.getSelection()?.toString())return;setImmersiveReading(false);});
+    root.addEventListener('dblclick',e=>{if(!readingMode||e.target.closest('a,button,input,textarea,select,[contenteditable]'))return;setImmersiveReading(false);});
     root.addEventListener('pointerdown',e=>{if(!readingMode||e.pointerType!=='touch')return;
         readingTouchStart={x:e.clientX,y:e.clientY,scrollTop:root.scrollTop,target:e.target};
     });
@@ -1530,7 +1530,7 @@ async function applyFullSettingsBackup(raw,{fromSnapshot=false,templatePolicy='r
     const fontPlan=Array.isArray(src.fonts)&&src.fonts.length
       ? await MimaFontManager.planPortableImport(src.fonts) : null;
     const previousApi=MimaStandalone.getApiConfig(),previousPrefs=collectPortableLocalPrefs();
-    let fontReceipt=null;
+    let fontReceipt=null,canonicalCommitted=false,restoreWarnings=[];
     const selected={ui:MimaFontManager.getSelected('ui'),story:MimaFontManager.getSelected('story')};
     try{
         // Prepare external assets before the final canonical commit. Font imports only add assets;
@@ -1544,8 +1544,14 @@ async function applyFullSettingsBackup(raw,{fromSnapshot=false,templatePolicy='r
         if(src.selectedFonts?.ui!==undefined)MimaFontManager.setSelected('ui',src.selectedFonts.ui||'');
         if(src.selectedFonts?.story!==undefined)MimaFontManager.setSelected('story',src.selectedFonts.story||'');
         const restored=await MimaStandalone.importLibrary(src.library,{templatePolicy}); // last; atomic compare-and-swap
-        if(restored.importWarnings?.length)toast('资料库已保存，但外观未完全应用：'+restored.importWarnings.join('；'));
+        canonicalCommitted=true; // commit boundary: later UI work must never undo or misreport canonical
+        restoreWarnings=Array.isArray(restored?.importWarnings)?restored.importWarnings:[];
     }catch(e){
+        if(canonicalCommitted){
+            // A post-commit error is NOT a failed DB restore. Keep canonical + font receipt.
+            console.error('E_FULL_RESTORE_POST_COMMIT: 资料库已提交，后续非事务步骤失败',e);
+            return {canonicalCommitted:true,uiRefreshed:false,warnings:['已提交，后续刷新失败：'+(e?.message||String(e))]};
+        }
         let rollbackError=null;
         if(fontReceipt)try{await MimaFontManager.rollbackPortablePlan(fontReceipt);}catch(issue){rollbackError=issue;}
         MimaStandalone.saveApiConfig(previousApi);
@@ -1555,15 +1561,23 @@ async function applyFullSettingsBackup(raw,{fromSnapshot=false,templatePolicy='r
         if(rollbackError){const partial=new Error('E_FULL_RESTORE_PARTIAL: 字体回滚失败，本次恢复未完成；请保留网站数据并检查诊断：'+rollbackError.message);partial.cause=e;throw partial;}
         throw e;
     }
-    applyStoryTypography();restoreLegacyFont();
-    currentSessionId=null;currentSessionData=null;
-    await loadAll();
-    if(!fromSnapshot)openSettings('data');
+    // Canonical is already durable. Appearance and UI refresh cannot retroactively
+    // turn this into a failed import (which would tempt a second destructive restore).
+    try{
+        applyStoryTypography();restoreLegacyFont();
+        currentSessionId=null;currentSessionData=null;
+        await loadAll();
+        if(!fromSnapshot)openSettings('data');
+    }catch(e){
+        console.error('E_FULL_RESTORE_POST_COMMIT: 资料库已提交，界面刷新失败',e);
+        return {canonicalCommitted:true,uiRefreshed:false,warnings:[...restoreWarnings,'外观或页面刷新失败：'+(e?.message||String(e))]};
+    }
+    return {canonicalCommitted:true,uiRefreshed:true,warnings:restoreWarnings};
 }
 async function importFullSettingsFile(file){
     if(!file)return;
     if(!confirm('导入完整设置会用备份中的剧情/角色卡/世界书/预设/CSS 数据覆盖当前资料库，并恢复外观与 API 配置。继续吗？'))return;
-    try{const raw=JSON.parse(await file.text());const policy=chooseTemplateRestorePolicy(await MimaStandalone.exportLibrary(),raw?.data?.library);if(!policy)return;await applyFullSettingsBackup(raw,{templatePolicy:policy});toast('完整咪嘛馆设置数据已恢复')}catch(e){toast(`完整设置导入失败：${e.message}`)}
+    try{const raw=JSON.parse(await file.text());const policy=chooseTemplateRestorePolicy(await MimaStandalone.exportLibrary(),raw?.data?.library);if(!policy)return;const result=await applyFullSettingsBackup(raw,{templatePolicy:policy});toast(result?.uiRefreshed?'完整咪嘛馆设置数据已恢复':'资料库已成功恢复，但界面刷新失败；请刷新页面查看，勿重复导入');if(result?.warnings?.length)console.warn('设置恢复附加诊断：',result.warnings)}catch(e){toast(`完整设置导入失败：${e.message}`)}
 }
 async function restoreSavedSettingsSnapshot(){
     try{
@@ -1571,8 +1585,9 @@ async function restoreSavedSettingsSnapshot(){
         if(!snap)return toast('当前浏览器还没有保存过咪嘛馆设置快照');
         if(!confirm(`恢复本机设置快照？\n保存时间：${snap.savedAt||snap.exportedAt||'未知'}\n\n这会覆盖当前剧情资料库。`))return;
         const policy=chooseTemplateRestorePolicy(await MimaStandalone.exportLibrary(),snap?.data?.library);if(!policy)return;
-        await applyFullSettingsBackup(snap,{fromSnapshot:true,templatePolicy:policy});
-        openSettings('data');toast('本机设置快照已恢复');
+        const result=await applyFullSettingsBackup(snap,{fromSnapshot:true,templatePolicy:policy});
+        if(result?.uiRefreshed){openSettings('data');toast('本机设置快照已恢复')}else toast('快照数据已经成功保存，但界面刷新失败；请刷新页面，勿重复恢复');
+        if(result?.warnings?.length)console.warn('快照恢复附加诊断：',result.warnings);
     }catch(e){toast(`恢复快照失败：${e.message}`)}
 }
 async function renderDataTab(box,renderEpoch=++settingsRenderEpoch){
