@@ -157,8 +157,8 @@ function openDrawer(){qs('session-drawer').classList.add('open');qs('drawer-scri
 function closeDrawer(){qs('session-drawer').classList.remove('open');qs('drawer-scrim').classList.add('hidden')}
 function isSettingsOpen(){const modal=qs('settings-modal');return !!modal&&!modal.classList.contains('hidden')}
 function openSettings(tab='roles'){settingsNavigationTouched=true;settingsTab=tab;qs('settings-modal').classList.remove('hidden');renderSettings()}
-function closeSettings(){settingsNavigationTouched=true;++settingsRenderEpoch;qs('settings-modal').classList.add('hidden');if(deferredGenerationProgress){if(ownsVisibleGeneration(deferredGenerationProgress.owner))setGenerationProgress(deferredGenerationProgress.payload);deferredGenerationProgress=null}if(liveStreamState)liveStreamState.visualPaused=false}
-function switchSettingsTab(tab){settingsNavigationTouched=true;settingsTab=tab;renderSettings()}
+function closeSettings(){if(settingsTab==='templates'&&templateEditorDirty&&!confirm('设置模板有尚未保存的修改，确定关闭并放弃吗？'))return;templateEditorDirty=false;settingsNavigationTouched=true;++settingsRenderEpoch;qs('settings-modal').classList.add('hidden');if(deferredGenerationProgress){if(ownsVisibleGeneration(deferredGenerationProgress.owner))setGenerationProgress(deferredGenerationProgress.payload);deferredGenerationProgress=null}if(liveStreamState)liveStreamState.visualPaused=false}
+function switchSettingsTab(tab){if(tab!==settingsTab&&settingsTab==='templates'&&templateEditorDirty&&!confirm('模板修改尚未保存，确定离开并放弃吗？'))return;templateEditorDirty=false;settingsNavigationTouched=true;settingsTab=tab;renderSettings()}
 function maybeOpenInitialApiSettings(){
     // This delayed first-run invitation must never override a user's tab selection.
     if(settingsNavigationTouched||isSettingsOpen()||!currentSessionData||MimaStandalone.getApiConfig().apiBase)return false;
@@ -207,6 +207,9 @@ function renderAppearancePreview(){
 function closeEditor(){qs('editor-modal').classList.add('hidden');editorState=null}
 function openNewSessionModal(){qs('new-session-modal').classList.remove('hidden');refreshSettingTemplateChoices();setTimeout(()=>qs('new-session-title').focus(),50)}
 let settingTemplateCache=[];
+let selectedTemplateEditId=''; // independent editor, never tied to any session
+let templateEditorDirty=false;
+
 async function refreshSettingTemplateChoices(){
     const select=qs('new-session-template');if(!select)return;
     const res=await fetchStory('/setting-templates');
@@ -225,8 +228,150 @@ function renderSettingTemplatePreview(){
     const c=tpl.config||{};
     view.textContent=`${tpl.name}：${(c.presetIds||[]).length} 个预设、${(c.worldbookIds||[]).length} 本世界书、${(c.regexPackIds||[]).length} 个正则包；${c.promptSettings?'包含长剧情设置；':''}${c.loadedUserMaskId?'包含用户面具；':''}${c.customCssId?'包含 CSS 皮肤；':''}不复制角色卡、剧情消息、旧记忆或密钥；自动付费旧剧情整理不会继承授权，新剧情需单独确认开启。`;
 }
+// Standalone template editor: a template is an independently editable resource.
+// It never reads the active session and never grants paid auto-summary consent.
+function mimaTemplateChecked(ids, list, group){
+    const selected=new Set(Array.isArray(ids)?ids:[]);
+    const available=new Set(list.map(item=>item.id));
+    const missing=[...selected].filter(id=>!available.has(id));
+    return `<div class="mima-template-choice-grid">${list.length?list.map(item=>`<label class="mima-template-choice"><input type="checkbox" data-template-group="${group}" value="${escapeHtml(item.id)}" ${selected.has(item.id)?'checked':''}><span>${escapeHtml(item.name||item.id)}</span></label>`).join(''):'<p class="helper">资源库暂无条目，可先在相应设置页创建。</p>'}${missing.map(id=>`<label class="mima-template-choice"><input type="checkbox" data-template-group="${group}" value="${escapeHtml(id)}" checked><span>⚠ 资源缺失：${escapeHtml(id)}（保留引用，取消勾选才移除）</span></label>`).join('')}</div>`;
+}
+function selectedTemplateForEditor(){return settingTemplateCache.find(t=>t.id===selectedTemplateEditId)||null;}
+function templateEditorValue(value){return escapeHtml(value===undefined||value===null?'':String(value));}
+async function renderSettingTemplatesTab(box){
+    const epoch=settingsRenderEpoch;
+    box.innerHTML='<p class="helper">正在读取独立模板库…</p>';
+    const res=await fetchStory('/setting-templates');
+    if(settingsTab!=='templates'||epoch!==settingsRenderEpoch)return;
+    if(!res.success||!Array.isArray(res.data)){
+        box.innerHTML='<p role="alert">设置模板库读取失败，未把失败当作空模板。请关闭重试。</p>';return;
+    }
+    settingTemplateCache=res.data;
+    const tpl=selectedTemplateForEditor();
+    const cfg=tpl?.config||{};
+    const ps=cfg.promptSettings||{};
+    const oc=ps.outputContract||{};
+    const renderCheck=(id,label,checked)=>`<label class="mima-template-choice"><input id="${id}" type="checkbox" ${checked?'checked':''}>${label}</label>`;
+    box.innerHTML=`<section class="settings-section mima-template-editor">
+      <h3>🗂️ 剧情设置模板</h3>
+      <p class="helper">在这里独立创建、编辑并保存模板。**无需先打开其他剧情**。之后在「新建剧情」或「PNG 角色卡开局」选择挂载；不会携带旧 History、旧记忆、密钥或后台任务。</p>
+      <div class="mima-template-chooser"><label class="form-label" for="tpl-edit-choice">选择要编辑的模板</label>
+        <select id="tpl-edit-choice" class="field" onchange="chooseIndependentTemplate(this.value)"><option value="">＋ 全新空白模板</option>${settingTemplateCache.map(t=>`<option value="${escapeHtml(t.id)}" ${tpl?.id===t.id?'selected':''}>${t.isDefault?'★ ':''}${escapeHtml(t.name)}</option>`).join('')}</select></div>
+      <div class="mima-template-actions"><button class="ghost-btn" onclick="chooseIndependentTemplate('')">＋ 创建空白模板</button><button class="ghost-btn" onclick="importCurrentSessionAsSettingTemplate()">从当前剧情复制配置</button><button class="ghost-btn" onclick="exportSettingTemplate()">导出模板</button><button class="ghost-btn" onclick="document.getElementById('setting-template-file-input').click()">导入模板</button>${tpl?'<button class="ghost-btn" onclick="copyIndependentTemplate()">复制当前模板</button><button class="ghost-btn" onclick="setIndependentTemplateDefault()">设为默认 / 取消默认</button>':''}</div>
+      <label class="form-label" for="tpl-edit-name">模板名称</label><input id="tpl-edit-name" class="field" maxlength="120" value="${templateEditorValue(tpl?.name||'')}" placeholder="例如：我的通用长剧情">
+      <details class="mima-template-section" open><summary>🧩 预设 · 多选挂载</summary>${mimaTemplateChecked(cfg.presetIds,presets,'presetIds')}</details>
+      <details class="mima-template-section" open><summary>📚 世界书 · 多选挂载</summary>${mimaTemplateChecked(cfg.worldbookIds,worldbooks,'worldbookIds')}</details>
+      <details class="mima-template-section" open><summary>🧬 正则包 · 多选挂载</summary>${mimaTemplateChecked(cfg.regexPackIds,regexPacks,'regexPackIds')}</details>
+      <details class="mima-template-section" open><summary>🤍 用户面具与可选皮肤</summary>
+       <div class="form-grid"><div><label class="form-label">用户面具</label><select id="tpl-edit-mask" class="field">${optionList(masks.filter(x=>x.type==='user'),cfg.loadedUserMaskId,'不挂载')}</select></div>
+       <div><label class="form-label">CSS 皮肤</label><select id="tpl-edit-css" class="field">${optionList(cssPresets,cfg.customCssId,'不挂载')}</select></div></div>
+       ${renderCheck('tpl-edit-css-on','启用选中的 CSS 皮肤',cfg.customCssEnabled!==false)}
+      </details>
+      <details class="mima-template-section" open><summary>🧠 长剧情 · 上下文设置</summary>
+        ${renderCheck('tpl-edit-context-on','这个模板保存长剧情设置',!!cfg.promptSettings)}
+        <div class="form-grid">
+         <div><label class="form-label">最近 History 条数</label><input id="tpl-edit-recent" class="field" type="number" min="6" max="100000" step="1" value="${templateEditorValue(ps.recentMessageLimit??34)}"></div>
+         <div><label class="form-label">世界书预算（字符）</label><input id="tpl-edit-worldbudget" class="field" type="number" min="1000" max="1000000" step="1" value="${templateEditorValue(ps.worldbookBudgetChars??16000)}"></div>
+         <div><label class="form-label">自动整理触发阈值（条）</label><input id="tpl-edit-trigger" class="field" type="number" min="12" max="200" step="1" value="${templateEditorValue(ps.summaryTriggerMessages??28)}"></div>
+         <div><label class="form-label">整理每次允许的最多请求数</label><input id="tpl-edit-maxrequests" class="field" type="number" min="1" max="20" step="1" value="${templateEditorValue(ps.autoRollingMaxRequests??1)}"></div>
+        </div>
+        <p class="helper">这里只保存阈值，不会替新剧情授权自动付费整理。完整原始 History 不删除；超过窗口时仍按已有预算合同处理。</p>
+        ${renderCheck('tpl-edit-inject-rolling','注入已保存的滚动摘要',ps.injectSavedRolling!==false)}
+        ${renderCheck('tpl-edit-pinned','注入固定事实',ps.pinnedFactsEnabled!==false)}
+        <label class="form-label">历史 HTML 注入方式</label><select id="tpl-edit-historyhtml" class="field"><option value="semantic" ${ps.historyHtmlMode!=='raw'?'selected':''}>语义内容（节省历史 HTML 代码）</option><option value="raw" ${ps.historyHtmlMode==='raw'?'selected':''}>原始 HTML（保留历史代码）</option></select>
+        <label class="form-label">本轮回复显示模式</label><select id="tpl-edit-render" class="field"><option value="text" ${cfg.renderMode!=='safe_html'?'selected':''}>普通文本 / Markdown</option><option value="safe_html" ${cfg.renderMode==='safe_html'?'selected':''}>Safe HTML（受限结构）</option></select>
+        ${renderCheck('tpl-edit-require-html','要求模型输出 HTML 状态栏合同',oc.requireHtml===true)}
+        ${renderCheck('tpl-edit-complete-html','允许代码补全缺失 HTML 外壳',oc.completeHtml===true)}
+        <div class="form-grid"><div><label class="form-label">正文槽选择器</label><input id="tpl-edit-body" class="field" value="${templateEditorValue(oc.bodySelector)}" placeholder=".story-body"></div>
+        <div><label class="form-label">状态栏选择器</label><input id="tpl-edit-status" class="field" value="${templateEditorValue(oc.statusSelector)}" placeholder=".status"></div>
+        <div class="form-full"><label class="form-label">必须存在的元素选择器</label><input id="tpl-edit-required" class="field" value="${templateEditorValue(oc.requiredSelectors)}" placeholder=".story-body, .status"></div></div>
+        <p class="helper">跨剧情不会复制上一轮的 HTML 样本消息 ID。需要参考模板时，开局后再明确绑定本剧情自己的 HTML 格式样本。</p>
+       </details>
+      <details class="mima-template-section"><summary>🗃️ 记忆注入开关（不含记忆数据）</summary>
+        ${renderCheck('tpl-edit-memory-on','为新剧情带入记忆注入开关',!!cfg.memoryInject)}
+        ${renderCheck('tpl-edit-memory-core','注入核心记忆',cfg.memoryInject?.injectCore!==false)}
+        ${renderCheck('tpl-edit-memory-facts','注入事实记忆',cfg.memoryInject?.injectFacts!==false)}
+      </details>
+      <div class="mima-template-bottom"><button class="primary-btn" onclick="saveIndependentTemplate()">${tpl?'保存模板修改':'创建并保存模板'}</button>
+      ${tpl?'<button class="danger-btn" onclick="deleteIndependentTemplate()">删除这份模板</button>':''}</div>
+      <p id="tpl-edit-status-message" class="helper" role="status">${tpl?'正在编辑已保存模板（未点击保存不会改变原件）':'正在创建独立空白模板（尚未保存）'}</p>
+     </section>`;
+    templateEditorDirty=false;
+    box.querySelector('.mima-template-editor')?.addEventListener('input',()=>{templateEditorDirty=true;});
+    box.querySelector('.mima-template-editor')?.addEventListener('change',event=>{if(event.target?.id!=='tpl-edit-choice')templateEditorDirty=true;});
+}
+function chooseIndependentTemplate(id){if(templateEditorDirty&&!confirm('这个模板还没有保存，确定切换并放弃修改吗？')){qs('tpl-edit-choice').value=selectedTemplateEditId;return;}templateEditorDirty=false;selectedTemplateEditId=id||'';renderSettings();}
+function templateEditorNumber(id,min,max){const raw=qs(id)?.value.trim()||'';const n=Number(raw);if(raw===''||!Number.isSafeInteger(n)||n<min||n>max)throw Error(`设置值无效：${qs(id)?.previousElementSibling?.textContent||id}（${min}～${max}）`);return n;}
+function getIndependentTemplateConfig(){
+    const keys=['presetIds','worldbookIds','regexPackIds'];
+    const cfg=selectedTemplateForEditor()?.config?clone(selectedTemplateForEditor().config):{};
+    for(const key of keys)cfg[key]=Array.from(document.querySelectorAll(`[data-template-group="${key}"]:checked`),x=>x.value);
+    cfg.loadedUserMaskId=qs('tpl-edit-mask').value||null;
+    cfg.customCssId=qs('tpl-edit-css').value||null;
+    cfg.customCssEnabled=qs('tpl-edit-css-on').checked;
+    if(qs('tpl-edit-context-on').checked){
+      const ps={...(cfg.promptSettings||{})};
+      ps.recentMessageLimit=templateEditorNumber('tpl-edit-recent',6,100000);
+      ps.worldbookBudgetChars=templateEditorNumber('tpl-edit-worldbudget',1000,1000000);
+      ps.summaryTriggerMessages=templateEditorNumber('tpl-edit-trigger',12,200);
+      ps.autoRollingMaxRequests=templateEditorNumber('tpl-edit-maxrequests',1,20);
+      ps.autoRollingEnabled=false;ps.summaryEnabled=false;
+      ps.injectSavedRolling=qs('tpl-edit-inject-rolling').checked;
+      ps.pinnedFactsEnabled=qs('tpl-edit-pinned').checked;
+      ps.historyHtmlMode=qs('tpl-edit-historyhtml').value;
+      cfg.renderMode=qs('tpl-edit-render').value;
+      const require=qs('tpl-edit-require-html').checked,complete=qs('tpl-edit-complete-html').checked;
+      if(require||complete)ps.outputContract={...(ps.outputContract||{}),requireHtml:require,completeHtml:complete,templateMessageId:'',bodySelector:qs('tpl-edit-body').value.trim(),statusSelector:qs('tpl-edit-status').value.trim(),requiredSelectors:qs('tpl-edit-required').value.trim()};
+      else delete ps.outputContract;
+      cfg.promptSettings=ps;
+    }else{delete cfg.promptSettings;delete cfg.renderMode;}
+    if(qs('tpl-edit-memory-on').checked)cfg.memoryInject={injectCore:qs('tpl-edit-memory-core').checked,injectFacts:qs('tpl-edit-memory-facts').checked};
+    else delete cfg.memoryInject;
+    return cfg;
+}
+async function saveIndependentTemplate(){
+    const old=selectedTemplateForEditor();const name=qs('tpl-edit-name')?.value.trim();if(!name)return toast('请填写模板名称');
+    try{
+      const config=getIndependentTemplateConfig();
+      const res=await fetchStory(old?`/setting-templates/${old.id}`:'/setting-templates',old?'PATCH':'POST',{name,config,...(old?{id:old.id,expectedRevision:old.revision}:{})});
+      if(!res.success)throw Error(res.msg||'数据库未确认保存');
+      selectedTemplateEditId=res.data.id;templateEditorDirty=false;
+      await renderSettingTemplatesTab(qs('settings-content'));
+      toast('模板已独立保存；新剧情选择它后才会挂载');
+    }catch(e){toast('模板未保存：'+e.message);}
+}
+async function importCurrentSessionAsSettingTemplate(){
+  if(!currentSessionId)return toast('当前没有可复制设置的剧情。可以直接编辑上面的空白模板。');
+  const name=qs('tpl-edit-name')?.value.trim()||'当前剧情配置副本';
+  if(!confirm('只把当前剧情的挂载配置复制为一份新模板，不复制 History、记忆内容、密钥或付费授权。继续吗？'))return;
+  const include={presets:true,worldbooks:true,regex:true,context:true,userMask:true,css:true,memoryInject:true};
+  const res=await fetchStory('/setting-templates','POST',{name,fromSessionId:currentSessionId,include});
+  if(!res.success)return toast('无法复制设置：'+res.msg);
+  selectedTemplateEditId=res.data.id;await renderSettingTemplatesTab(qs('settings-content'));toast('已建立当前配置副本；可在这里单独修改并保存');
+}
+async function copyIndependentTemplate(){const old=selectedTemplateForEditor();if(!old)return;
+  const res=await fetchStory('/setting-templates','POST',{name:old.name+'（副本）',config:old.config});if(!res.success)return toast('复制失败：'+res.msg);selectedTemplateEditId=res.data.id;await renderSettingTemplatesTab(qs('settings-content'));toast('复制完成，原模板未修改');
+}
+async function setIndependentTemplateDefault(){const old=selectedTemplateForEditor();if(!old)return;
+ const res=await fetchStory('/setting-templates/default','POST',{id:old.isDefault?'':old.id});if(!res.success)return toast('更新默认模板失败：'+res.msg);await renderSettingTemplatesTab(qs('settings-content'));toast(old.isDefault?'已取消默认模板':'已设置为默认模板');
+}
+async function deleteIndependentTemplate(){const old=selectedTemplateForEditor();if(!old||!confirm(`删除设置模板「${old.name}」？已创建的剧情不受影响。`))return;
+ const res=await fetchStory(`/setting-templates/${old.id}`,'DELETE',{expectedRevision:old.revision});if(!res.success)return toast('删除失败：'+res.msg);selectedTemplateEditId='';await renderSettingTemplatesTab(qs('settings-content'));
+}
+
 function checkedTemplateScopes(){return {presets:qs('tpl-presets').checked,worldbooks:qs('tpl-worldbooks').checked,regex:qs('tpl-regex').checked,userMask:qs('tpl-user-mask').checked,context:qs('tpl-context').checked,memoryInject:qs('tpl-memory').checked,css:qs('tpl-css').checked};}
 async function saveCurrentSettingTemplate(overwrite=false){
+    // Backwards-compatible direct handler: the old new-session modal no longer
+    // owns editable template controls; keep callers functional without throwing.
+    if(!qs('tpl-name')){
+      if(overwrite){
+        const old=selectedTemplateForEditor();if(!old||!currentSessionId)return toast('请先选择已有模板和来源剧情');
+        const include={presets:true,worldbooks:true,regex:true,context:true,userMask:true,css:true,memoryInject:true};
+        const result=await fetchStory(`/setting-templates/${old.id}`,'PATCH',{id:old.id,name:old.name,expectedRevision:old.revision,fromSessionId:currentSessionId,include});
+        if(!result.success)return toast('更新失败：'+result.msg);await renderSettingTemplatesTab(qs('settings-content'));return toast('模板已用当前剧情设置更新');
+      }
+      return importCurrentSessionAsSettingTemplate();
+    }
     if(!currentSessionId)return toast('请先进入需要复制设置的剧情');
     const name=(qs('tpl-name')?.value||'').trim();if(!name)return toast('请填写模板名称');
     const old=settingTemplateCache.find(t=>t.id===qs('new-session-template')?.value);
@@ -252,13 +397,13 @@ async function deleteSettingTemplate(){
     if(!res.success)return toast('删除失败：'+res.msg);await refreshSettingTemplateChoices();
 }
 function exportSettingTemplate(){
-    const old=settingTemplateCache.find(t=>t.id===qs('new-session-template')?.value);if(!old)return toast('请先选模板');
+    const old=settingsTab==='templates'?selectedTemplateForEditor():settingTemplateCache.find(t=>t.id===qs('new-session-template')?.value);if(!old)return toast('请先选模板');
     downloadJson(`咪嘛馆-剧情设置模板-${old.name}.json`,{format:'mima-session-settings-template',version:1,name:old.name,config:old.config});
 }
 async function importSettingTemplate(file){if(!file)return;try{
     const raw=JSON.parse(await file.text());if(raw.format!=='mima-session-settings-template'||raw.version!==1||!raw.config||typeof raw.config!=='object')throw Error('不是合法的设置模板');
     const res=await fetchStory('/setting-templates','POST',{name:raw.name,config:raw.config});
-    if(!res.success)throw Error(res.msg);await refreshSettingTemplateChoices();qs('new-session-template').value=res.data.id;renderSettingTemplatePreview();toast('设置模板已导入，资源在创建新剧情时再次校验');
+    if(!res.success)throw Error(res.msg);selectedTemplateEditId=res.data.id;if(settingsTab==='templates')await renderSettingTemplatesTab(qs('settings-content'));else{await refreshSettingTemplateChoices();qs('new-session-template').value=res.data.id;renderSettingTemplatePreview();}toast('设置模板已导入，资源在创建新剧情时再次校验');
 }catch(e){toast('导入模板失败：'+e.message)}}
 
 function closeNewSessionModal(){qs('new-session-modal').classList.add('hidden')}
@@ -451,7 +596,8 @@ function renderSettings(){
     syncAppearancePreviewMode(settingsTab==='appearance');
     const box=qs('settings-content');
     if(settingsTab==='png-resources'){renderPngResourcesTab(box);return;}
-    if(!currentSessionData&&!['appearance','api','data','diagnostics'].includes(settingsTab)){box.innerHTML='<div class="empty-state"><p>选择一种方式开始。</p><div class="toolbar"><button class="primary-btn" onclick="openNewSessionModal()">开始新剧情</button><button class="ghost-btn" onclick="MimaCompatUI.open()">🎴 玩酒馆角色卡</button></div></div>';return}
+    if(settingsTab==='templates'){void renderSettingTemplatesTab(box);return;}
+    if(!currentSessionData&&!['appearance','api','data','diagnostics','templates'].includes(settingsTab)){box.innerHTML='<div class="empty-state"><p>选择一种方式开始。</p><div class="toolbar"><button class="primary-btn" onclick="openNewSessionModal()">开始新剧情</button><button class="ghost-btn" onclick="MimaCompatUI.open()">🎴 玩酒馆角色卡</button></div></div>';return}
     if(settingsTab==='roles')renderRolesTab(box);
     else if(settingsTab==='worldbook')renderWorldbookTab(box);
     else if(settingsTab==='presets')renderPresetsTab(box);
@@ -2084,7 +2230,7 @@ function pumpLiveStream(){
         if(liveStreamState!==st||!ownsVisibleGeneration(st.owner))return;
         if(isSettingsOpen()||st.visualPaused)return;
         if(st.targetText===st.displayText)return;
-        const minPaintInterval=currentSessionData?.renderMode==='safe_html'?Math.min(350,96+Math.floor(st.targetText.length/6000)*36):Math.min(160,48+Math.floor(st.targetText.length/15000)*18);
+        const minPaintInterval=currentSessionData?.renderMode==='safe_html'?Math.min(550,160+Math.floor(st.targetText.length/2500)*55):Math.min(280,90+Math.floor(st.targetText.length/4000)*30);
         if(now-st.lastPaintAt<minPaintInterval){st.timer=requestAnimationFrame(drawFrame);return;}
         st.displayText=st.targetText;st.lastPaintAt=now;
         renderLiveStreamText();
@@ -2526,7 +2672,7 @@ function restoreLegacyFont(){
 }
 
 // Expose inline handlers
-Object.assign(window,{setImmersiveReading,saveCurrentSettingTemplate,duplicateSettingTemplate,setDefaultSettingTemplate,deleteSettingTemplate,exportSettingTemplate,importSettingTemplate,refreshSettingTemplateChoices,renderSettingTemplatePreview,manualRollingSummary,mimaFilterLibrary,mimaToggleFavorite,goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,choosePngResourceInspection,playInspectedPngInCompat,savePngSelectedResources,exportPngInspection,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,exportStoryTranscript,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,loadMemoryModels,selectMemoryModel,startFactMemoryEdit,cancelFactMemoryEdit,saveFactMemoryEdit,toggleMergeFactSelection,previewFactMemoryMerge,cancelFactMemoryMerge,confirmFactMemoryMerge,undoFactMemoryMerge,clearCoreMemory,deleteFactMemory,clearAllFactMemories,revokeRollingMemory,restoreRollingMemory,discardMemoryCandidate,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,mimaLoadLargeCssForEdit,stopAtelierAndRestoreCss,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,syncTemperature,updateStoryTypography,resetStoryTypography,setAppearancePreviewSurface,setBuiltInTheme,dismissGenerationPanel,retryFailedGeneration,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,regenerateCurrentMsg,continueMsg,autoAdvance,restoreMessageVersion,stopGeneration});
+Object.assign(window,{importCurrentSessionAsSettingTemplate,chooseIndependentTemplate,saveIndependentTemplate,copyIndependentTemplate,setIndependentTemplateDefault,deleteIndependentTemplate,setImmersiveReading,saveCurrentSettingTemplate,duplicateSettingTemplate,setDefaultSettingTemplate,deleteSettingTemplate,exportSettingTemplate,importSettingTemplate,refreshSettingTemplateChoices,renderSettingTemplatePreview,manualRollingSummary,mimaFilterLibrary,mimaToggleFavorite,goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,choosePngResourceInspection,playInspectedPngInCompat,savePngSelectedResources,exportPngInspection,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,exportStoryTranscript,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,loadMemoryModels,selectMemoryModel,startFactMemoryEdit,cancelFactMemoryEdit,saveFactMemoryEdit,toggleMergeFactSelection,previewFactMemoryMerge,cancelFactMemoryMerge,confirmFactMemoryMerge,undoFactMemoryMerge,clearCoreMemory,deleteFactMemory,clearAllFactMemories,revokeRollingMemory,restoreRollingMemory,discardMemoryCandidate,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,mimaLoadLargeCssForEdit,stopAtelierAndRestoreCss,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,syncTemperature,updateStoryTypography,resetStoryTypography,setAppearancePreviewSurface,setBuiltInTheme,dismissGenerationPanel,retryFailedGeneration,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,regenerateCurrentMsg,continueMsg,autoAdvance,restoreMessageVersion,stopGeneration});
 
 
 window.MimaTavernBridge={

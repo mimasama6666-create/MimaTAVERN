@@ -858,3 +858,148 @@ body.mima-reading-mode #story-chat-box[data-mima-chat-wallpaper="1"]::before{
 .app-shell>.context-ribbon{grid-column:1;grid-row:2;}
 .app-shell>#story-chat-box{grid-column:1;grid-row:3;}
 .app-shell>.composer-shell{grid-column:1;grid-row:4;}
+
+
+/* R4.10 R11 · Themed compact generation ribbon.
+   Normal generation is an unobtrusive status capsule, not a full-width dialog.
+   It stays OUT OF FLOW above the footer without covering footer stickers.
+   Errors alone may expand, retaining evidence, retries and accessible scrolling.
+   Respect project/user CSS through CSS variables rather than taking ownership
+   of custom sticker coordinates or changing existing chat/composer DOM. */
+  .app-shell > .composer-shell > .generation-panel:not(.hidden) {
+    left:50%;right:auto;
+    bottom:calc(100% + var(--mima-generation-sticker-clearance,clamp(108px,12dvh,130px)));
+    transform:translateX(-50%);
+    width:min(410px,calc(100vw - 28px));
+    max-width:calc(100% - 20px);
+    max-height:min(27dvh,180px);
+    padding:7px 11px 8px;
+    margin:0;
+    border-radius:18px;
+    border:1px solid color-mix(in srgb,var(--accent) 32%,var(--line));
+    background:linear-gradient(125deg,
+      color-mix(in srgb,var(--panel-solid) 78%,transparent),
+      color-mix(in srgb,var(--accent-soft) 68%,transparent));
+    color:var(--text);
+    box-shadow:0 6px 20px rgba(38,25,26,.16),inset 0 1px rgba(255,255,255,.45);
+    -webkit-backdrop-filter:blur(15px) saturate(1.2);
+    backdrop-filter:blur(15px) saturate(1.2);
+    overflow:visible;
+    display:flex;flex-direction:column;gap:3px;
+    animation:none;
+  }
+  .app-shell > .composer-shell > .generation-panel:not(.error)::before {
+    display:none;
+  }
+  .app-shell > .composer-shell > .generation-panel:not(.error) .generation-head {
+    min-height:32px;gap:7px;font-size:.75rem;
+  }
+  .app-shell > .composer-shell > .generation-panel:not(.error) .generation-head > span:first-child {
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  .app-shell > .composer-shell > .generation-panel:not(.error) .generation-head > span:nth-child(2) {
+    color:var(--accent-strong);font-size:.72rem;font-weight:750;
+  }
+  .app-shell > .composer-shell > .generation-panel:not(.error) .generation-close {
+    position:relative;width:32px;height:32px;min-width:32px;min-height:32px;flex:0 0 32px;
+    border-radius:12px;background:color-mix(in srgb,var(--panel) 58%,transparent);
+    border:1px solid var(--line);font-size:1.05rem;
+  }
+  .app-shell > .composer-shell > .generation-panel:not(.error) .generation-close::after {
+    content:"";position:absolute;inset:-6px;
+  }
+  .app-shell > .composer-shell > .generation-panel:not(.error) .generation-track {
+    margin:0;height:3px;flex:none;
+    background:color-mix(in srgb,var(--accent) 18%,transparent);
+  }
+  .app-shell > .composer-shell > .generation-panel:not(.error) .generation-progress-bar {
+    background:linear-gradient(90deg,var(--accent),var(--accent-strong));
+  }
+  .app-shell > .composer-shell > .generation-panel:not(.error) .generation-detail {
+    margin:0;padding-right:40px;
+    min-height:15px;max-height:15px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    font-size:.66rem;line-height:15px;
+  }
+  .app-shell > .composer-shell > .generation-panel:not(.error) .generation-actions {
+    position:absolute;right:9px;bottom:6px;
+    margin:0;padding:0;display:flex;gap:0;
+    overflow:visible;
+  }
+  .app-shell > .composer-shell > .generation-panel:not(.error) #generation-diagnostic-link {
+    font-size:0;width:35px;height:23px;min-width:35px;min-height:23px;
+    padding:0;border:0;border-radius:9px;background:transparent;
+    box-shadow:none;color:var(--accent-strong);
+  }
+  .app-shell > .composer-shell > .generation-panel:not(.error) #generation-diagnostic-link::after {
+    content:'日志';font-size:11px;font-weight:600;
+  }
+  /* The error state is deliberately separate: no details or retry actions
+     may be truncated merely to achieve the normal capsule silhouette. */
+  .app-shell > .composer-shell > .generation-panel.error:not(.hidden) {
+    width:min(460px,calc(100vw - 28px));
+    max-height:min(48dvh,320px);
+    padding:11px 12px;
+    bottom:calc(100% + 12px);
+    overflow:hidden;
+    gap:7px;
+    background:color-mix(in srgb,var(--panel-solid) 88%,var(--danger) 12%);
+    border-color:color-mix(in srgb,var(--danger) 45%,var(--line));
+  }
+  .app-shell > .composer-shell > .generation-panel.error .generation-detail {
+    margin:0;max-height:min(22dvh,145px);min-height:0;
+    padding:0;overflow-y:auto;white-space:pre-wrap;
+  }
+  .app-shell > .composer-shell > .generation-panel.error .generation-actions {
+    position:static;display:flex;margin:0;gap:6px;
+    overflow-x:auto;overflow-y:hidden;
+    flex-wrap:wrap;
+  }
+  .app-shell > .composer-shell > .generation-panel.error #generation-diagnostic-link {
+    font-size:.72rem;padding:6px 9px;min-height:32px;
+  }
+  /* A slightly slimmer mobile header with all button hit areas at 44px.
+     No fixed height, clipping or transforms: theme stickers can overflow. */
+  @media (max-width:700px) {
+    .topbar {
+      min-height:46px;
+      padding-top:1px;padding-bottom:1px;
+    }
+  }
+  @media(max-height:480px) and (orientation:landscape) {
+    .app-shell > .composer-shell > .generation-panel:not(.hidden) {
+      bottom:calc(100% + 65px);
+      max-height:min(44dvh,155px);
+    }
+    .app-shell > .composer-shell > .generation-panel.error:not(.hidden) {max-height:min(50dvh,190px);}
+  }
+
+/* R12: mobile compositor hot path — scrolling hundreds of messages must NOT
+   render dozens of 22px live-blurred layers under the chat scrollport. Static
+   transparency/gradients stay intact; owner custom CSS remains later authority. */
+#story-chat-box .user-msg .msg-content,
+#story-chat-box .msg-tools .tool-mini{
+  -webkit-backdrop-filter:none;
+  backdrop-filter:none;
+}
+#story-chat-box .message{animation:none;}
+#story-chat-box{scroll-behavior:auto;}
+/* Keep the single scene background but avoid an offscreen GPU blur layer at 0px. */
+/* Compact, legible drawer footer: do not make buttons taller than the title. */
+.session-drawer .drawer-footer{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;align-items:center;padding:9px 0 4px;}
+.session-drawer .drawer-footer>button{min-width:0;min-height:44px;padding:7px 5px;border-radius:13px;white-space:nowrap;font-size:clamp(11px,2.8vw,13px);line-height:1.2;}
+.session-drawer .drawer-footer>.standalone-note{grid-column:1/-1;font-size:11px;line-height:1.5;min-width:0;text-align:center;overflow-wrap:normal;}
+/* Dedicated settings editor: separate resource management from new-session creation. */
+.mima-template-editor{max-width:760px;margin:0 auto;padding-bottom:20px;}
+.mima-template-chooser{margin:12px 0;}
+.mima-template-actions,.mima-template-bottom{display:flex;gap:7px;flex-wrap:wrap;margin:12px 0;}
+.mima-template-actions>button,.mima-template-bottom>button{padding:9px 11px;min-height:42px;font-size:.82rem;}
+.mima-template-section{border:1px solid var(--line);border-radius:15px;padding:10px 12px;margin:12px 0;background:var(--panel);}
+.mima-template-section>summary{cursor:pointer;font-weight:750;padding:4px 0;}
+.mima-template-choice-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:4px 10px;margin:8px 0;}
+.mima-template-choice{display:flex;gap:8px;align-items:center;padding:9px 4px;min-height:40px;font-size:.86rem;overflow-wrap:anywhere;}
+.mima-template-choice input{width:18px;height:18px;flex:none;}
+.mima-template-section .form-grid{margin:10px 0;}
+.mima-template-section .form-label{line-height:1.45;}
+.mima-template-editor .helper{line-height:1.55;}
+@media(max-width:480px){.mima-template-choice-grid{grid-template-columns:1fr;}}

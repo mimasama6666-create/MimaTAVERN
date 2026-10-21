@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="theme-color" content="#dfe1e4">
     <title>咪嘛馆 · MIMAMAO Tavern（酒馆） · Standalone（独立版）</title>
-    <link rel="stylesheet" href="./style.css?v=1.1.2&hotfix=1.1.3&release=1.3.1&auditfix=1.3.2&themefix=1.4.0&memoryfix=1.3.9&uihotfix=20261013-1&ctxsave=20261013-2&diagnostics=r8&r13=20261015-1&manualrecovery=20261015-r14-2&replylayout=20261016-r16.2&librarycss=20261019-r3&templateux=20261021-r10-hud">
+    <link rel="stylesheet" href="./style.css?v=1.1.2&hotfix=1.1.3&release=1.3.1&auditfix=1.3.2&themefix=1.4.0&memoryfix=1.3.9&uihotfix=20261013-1&ctxsave=20261013-2&diagnostics=r8&r13=20261015-1&manualrecovery=20261015-r14-2&replylayout=20261016-r16.2&librarycss=20261019-r3&templateux=20261021-r12-perf-ui">
     <link rel="stylesheet" href="./theme-skin.css?v=1.4.0">
     <link rel="stylesheet" href="./compat-style.css?v=r11-card-launch-20261014&mvustatus=r11.8&dynamic=r11.14&redesign=20261014-inline-2">
 <!-- v1.1.5 compatibility regression marker: release=1.1.5 -->
@@ -35,10 +35,10 @@
     <div class="toolbar"><button class="primary-btn" style="flex:1" onclick="openNewSessionModal()">＋ 新建剧情</button><button class="ghost-btn" onclick="chooseSessionImport()">⇧ 导入</button></div>
     <div id="session-list" class="session-list"></div>
     <div class="drawer-footer">
-        <button class="ghost-btn" onclick="openSettings('api')">🔌 API（接口）设置</button>
-        <button class="ghost-btn" onclick="MimaThemeAtelier.open();closeDrawer()">🎨 主题工坊</button>
-        <button class="ghost-btn" id="mima-license-open" type="button" onclick="openMimaLicenseDialog()" title="阅读完整软件授权与免责声明">© 版权与许可 · 18+</button>
-        <div class="standalone-note">Standalone（独立版） · 数据仅保存在本机浏览器</div>
+        <button class="ghost-btn" onclick="openSettings('api')" title="API 接口设置" aria-label="API 接口设置">🔌 API</button>
+        <button class="ghost-btn" onclick="MimaThemeAtelier.open();closeDrawer()" title="打开主题工坊">🎨 主题</button>
+        <button class="ghost-btn" id="mima-license-open" type="button" onclick="openMimaLicenseDialog()" title="阅读完整软件授权与免责声明">© 许可</button>
+        <div class="standalone-note">独立版 · 数据保存在本机浏览器 · 仅限成年人</div>
     </div>
 </aside>
 
@@ -137,6 +137,7 @@ function openMimaLicenseDialog() {
             <button data-tab="worldbook" onclick="switchSettingsTab('worldbook')">📚 世界书</button>
             <button data-tab="presets" onclick="switchSettingsTab('presets')">🧩 预设</button>
             <button data-tab="regex" onclick="switchSettingsTab('regex')">🧬 正则</button>
+            <button data-tab="templates" onclick="switchSettingsTab('templates')">🗂️ 设置模板</button>
             <button data-tab="context" onclick="switchSettingsTab('context')">🧠 Context（上下文）</button>
             <button data-tab="memory" onclick="switchSettingsTab('memory')">🗃️ 记忆</button>
             <button data-tab="appearance" onclick="switchSettingsTab('appearance')">🎨 外观</button>
@@ -202,19 +203,8 @@ function openMimaLicenseDialog() {
         <label class="form-label">使用剧情设置模板</label>
         <select id="new-session-template" class="field" onchange="renderSettingTemplatePreview()"><option value="">不使用模板</option></select>
         <p id="new-session-template-preview" class="helper">可快速复用预设、世界书与长剧情设置，不复制旧剧情。</p>
-        <details><summary>管理剧情设置模板</summary>
-          <label class="form-label">模板名称</label><input id="tpl-name" class="field" value="通用长剧情">
-          <div class="form-grid">
-          <label class="check-row"><input id="tpl-presets" type="checkbox" checked> 预设</label>
-          <label class="check-row"><input id="tpl-worldbooks" type="checkbox" checked> 世界书</label>
-          <label class="check-row"><input id="tpl-regex" type="checkbox" checked> 正则包</label>
-          <label class="check-row"><input id="tpl-context" type="checkbox" checked> 长剧情设置与 HTML 合同</label>
-          <label class="check-row"><input id="tpl-user-mask" type="checkbox"> 用户面具</label>
-          <label class="check-row"><input id="tpl-css" type="checkbox"> CSS 皮肤</label>
-          <label class="check-row"><input id="tpl-memory" type="checkbox"> 记忆注入开关（不含记忆内容）</label></div>
-          <p class="helper">从当前剧情保存配置；不会复制旧角色卡、聊天、记忆、任务或密钥。创建新剧情时逐项检查挂载资源。</p>
-          <div class="toolbar"><button class="ghost-btn" onclick="saveCurrentSettingTemplate()">新建模板</button><button class="ghost-btn" onclick="saveCurrentSettingTemplate(true)">用当前设置更新选中模板</button><button class="ghost-btn" onclick="duplicateSettingTemplate()">复制</button><button class="ghost-btn" onclick="setDefaultSettingTemplate()">设为默认/取消默认</button><button class="ghost-btn" onclick="exportSettingTemplate()">导出</button><button class="ghost-btn" onclick="document.getElementById('setting-template-file-input').click()">导入</button><button class="danger-btn" onclick="deleteSettingTemplate()">删除</button></div>
-        </details>
+        <p class="helper mima-template-hint">模板需先在「设置 → 🗂️ 设置模板」独立配置并保存；在这里仅选择挂载。</p>
+        <button class="ghost-btn" type="button" onclick="closeNewSessionModal();openSettings('templates')">🗂️ 单独编辑 / 新建设置模板</button>
         <button class="primary-btn wide" onclick="createSession()">创建并进入</button><button class="ghost-btn wide" onclick="closeNewSessionModal();MimaCompatUI.open()">🎴 或者：用酒馆角色卡开始聊天</button>
     </div>
 </div>
@@ -287,12 +277,12 @@ function openMimaLicenseDialog() {
 <script src="./history-html-projection.js?v=20261019-r43"></script>
 <script src="./story-transcript-export.js?v=20261019-r44"></script>
 <script src="./mima-file-export.js?v=20261019-r44"></script>
-<script src="./html-structure-contract.js?v=20261021-r412&template-ux=20261021-r5"></script>
-<script src="./standalone-core.js?v=20261021-r413&template-ux=20261021-r5&provider-diagnostic=20261021-r6&r7=20261021-contract&r9=20261021-reader-default-postcommit"></script>
+<script src="./html-structure-contract.js?v=20261021-r412&template-ux=20261021-r12-independent"></script>
+<script src="./standalone-core.js?v=20261021-r413&template-ux=20261021-r12-independent&provider-diagnostic=20261021-r6&r7=20261021-contract&r9=20261021-reader-default-postcommit"></script>
 <script src="./font-manager.js?v=1.1.0&fontsplit=20261013-1&txguard=20261013-2&r9=20261021-reader-default-postcommit"></script>
 <script src="./png-card-import.js?v=1.4.0&r11=20261012-2"></script>
 <script src="./png-resource-inspector.js?v=1.4.0"></script>
-<script src="./app.js?v=20261021-r413&template-ux=20261021-r5&provider-diagnostic=20261021-r6&r7=20261021-contract&r9=20261021-reader-default-postcommit"></script>
+<script src="./app.js?v=20261021-r413&template-ux=20261021-r12-independent&provider-diagnostic=20261021-r6&r7=20261021-contract&r9=20261021-reader-default-postcommit"></script>
 <script src="./sha256-browser.js?v=r11-20261012-2"></script>
 <script src="./compat-author-contract.js?v=r16-20261015-1"></script>
 <script src="./vendor/author-libraries-data.js?v=r16-20261015-1"></script>
@@ -323,8 +313,8 @@ function openMimaLicenseDialog() {
 <script src="./ux-r6.js?v=r6-20261012"></script>
 <script src="./ux-r7.js?v=r7-20261012"></script>
 <script src="./ui-layout.js?v=r13"></script>
-<link rel="stylesheet" href="./chat-wallpaper.css?v=20261019-r4">
-<script src="./chat-wallpaper.js?v=20261019-r4"></script>
+<link rel="stylesheet" href="./chat-wallpaper.css?v=20261021-r12-gpu">
+<script src="./chat-wallpaper.js?v=20261021-r12-gpu"></script>
 <script src="./atelier/atelier-core.js?v=20261020-r49"></script>
 <script src="./atelier/atlas-catalog.js?v=20261018-atlas-r1"></script>
 <script src="./atelier/atlas-adapter.js?v=20261019-atlas-r3"></script>

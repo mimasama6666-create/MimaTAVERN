@@ -12,8 +12,8 @@ async function remove(key){const db=await database();return new Promise((resolve
 function msg(s){const e=document.getElementById('mima-wallpaper-message');if(e)e.textContent=s;else console.info('[ChatWallpaper]',s);}
 function eraseURL(){if(url){URL.revokeObjectURL(url);url=null;}}
 function draw(){const box=document.getElementById('story-chat-box');if(!box)return;
- if(!current?.blob){box.removeAttribute('data-mima-chat-wallpaper');for(const k of ['--mima-wallpaper-image','--mima-wallpaper-size','--mima-wallpaper-position','--mima-wallpaper-mask','--mima-wallpaper-blur'])box.style.removeProperty(k);return;}
- if(!url)url=URL.createObjectURL(current.blob);const o=safeOpts(current.opts);box.setAttribute('data-mima-chat-wallpaper','1');box.style.setProperty('--mima-wallpaper-image',`url("${url}")`);box.style.setProperty('--mima-wallpaper-size',o.fit);box.style.setProperty('--mima-wallpaper-position',`${o.focusX}% ${o.focusY}%`);box.style.setProperty('--mima-wallpaper-mask',String(o.mask/100));box.style.setProperty('--mima-wallpaper-blur',o.blur+'px');
+ if(!current?.blob){box.removeAttribute('data-mima-chat-wallpaper');for(const k of ['--mima-wallpaper-image','--mima-wallpaper-size','--mima-wallpaper-position','--mima-wallpaper-mask','--mima-wallpaper-blur','--mima-wallpaper-filter'])box.style.removeProperty(k);return;}
+ if(!url)url=URL.createObjectURL(current.blob);const o=safeOpts(current.opts);box.setAttribute('data-mima-chat-wallpaper','1');box.style.setProperty('--mima-wallpaper-image',`url("${url}")`);box.style.setProperty('--mima-wallpaper-size',o.fit);box.style.setProperty('--mima-wallpaper-position',`${o.focusX}% ${o.focusY}%`);box.style.setProperty('--mima-wallpaper-mask',String(o.mask/100));box.style.setProperty('--mima-wallpaper-blur',o.blur+'px');box.style.setProperty('--mima-wallpaper-filter',o.blur>0?`blur(${o.blur}px)`:'none');
 }
 function replace(record){eraseURL();current=record;if(!record){const picker=document.getElementById('mima-wallpaper-file');if(picker)picker.value='';}draw();}
 async function onSession(id){if(sessionId===id&&current)return;sessionId=id||null;const step=++seq;replace(null);if(!id)return;
