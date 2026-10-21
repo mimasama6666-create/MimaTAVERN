@@ -61,6 +61,10 @@
   function normalizePromptSettings(input = {}) {
     return {
       recentMessageLimit: clampInt(input.recentMessageLimit, 6, 100000, 34),
+      // Prompt-only, full-turn trimming. Does NOT alter the independent
+      // rolling-memory source window, canonical History, or saved summaries.
+      contextTrimBatchRounds: clampInt(input.contextTrimBatchRounds, 1, 100, 10),
+      contextMinRecentRounds: clampInt(input.contextMinRecentRounds, 1, 100000, 20),
       worldbookBudgetChars: clampInt(input.worldbookBudgetChars, 1000, 1000000, 16000),
       // Legacy summaryEnabled remains readable; new consent is opt-in, never inferred
       // from an old default-true setting that may never have been chosen.
@@ -802,54 +806,88 @@
       return projected;
     };
     let recentRaw=visibleHistory.slice(),projectedAway=[],estimatedBase=null;
-    // Reserve a margin for JSON encoding, message roles, and protocol overhead.
-    // Context estimates are intentionally marked as estimates in the Inspector.
+    const trimBatchRounds=session.promptSettings.contextTrimBatchRounds;
+    const minRecentRounds=session.promptSettings.contextMinRecentRounds;
+    const trimBatches=[];
+    // A turn is one player message and all following assistant responses up to
+    // the next player message. An initial assistant greeting or an exceptional
+    // unmatched message is its own indivisible unit. No turn is split or
+    // rewritten. The last twenty units are protected by default.
+    const groupedTurns=[];
+    for(const m of visibleHistory){
+      const previous=groupedTurns[groupedTurns.length-1];
+      if(m.role==='user'||!previous||previous[0].role!=='user')groupedTurns.push([m]);
+      else previous.push(m);
+    }
+    let projectedGroups=groupedTurns.slice(),removedGroups=0;
+    // Reserve a margin for JSON encoding, message roles and protocol overhead.
     const baseTokens=(raw,system)=>{
       const current=raw.map(projectMessage).filter(Boolean);
       const inserted=applyDepth(current,depthOnly,session);
-      return estimateTokens(system.prompt)+inserted.messages.reduce((n,m)=>n+estimateTokens(m.content)+8,0)+Math.max(160,Math.ceil(system.prompt.length*.08));
+      return system.sections.reduce((n,row)=>n+estimateTokens(row.content)+8,0)+inserted.messages.reduce((n,m)=>n+estimateTokens(m.content)+8,0)+Math.max(160,Math.ceil(system.prompt.length*.08));
     };
-    function discardOldestCompleteTurn(){
-      if(recentRaw.length<=2)return false;
-      // Player+reply are an indivisible turn; an initial assistant greeting is
-      // its own atom. No source messages or store records are ever deleted.
-      let count=recentRaw[0]?.role==='user'&&recentRaw[1]?.role==='assistant'?2:1;
-      if(recentRaw.length-count<2)return false;
-      const removed=recentRaw.slice(0,count);
-      // Never silently evict the current HTML exemplar to fit a window.
+    // A rolling summary is only allowed to stand in for a canonical PREFIX
+    // whose source fingerprint and cursor are still current. A core/fact
+    // memory, a legacy summary without source proof, or a summary disabled
+    // for injection CANNOT satisfy this guarantee. This proves SOURCE RANGE,
+    // not semantic fidelity: model summaries still require owner review.
+    const summaryInjected=!!sys.memoryTrace.find(x=>x.kind==='rolling'&&x.injected);
+    const rollingCount=Math.floor(Number(session.rollingSourceCount)||0);
+    const summaryCursor=Math.floor(Number(session.lastSummarizedIndex)||0);
+    const rollingProof=Boolean(summaryInjected&&session.rollingSourceFingerprint&&rollingCount>0&&
+      summaryCursor>=rollingCount&&session.messages.length>=rollingCount&&
+      memorySourceFingerprint(session.messages,rollingCount)===session.rollingSourceFingerprint);
+    const canonicalIndex=new Map(session.messages.map((m,i)=>[m.id,i]));
+    function trimOldestBatch(){
+      if(projectedGroups.length<=minRecentRounds)return false;
+      // Never silently change the owner's chosen batch size to a smaller
+      // unit. A partial batch would make trace/coverage expectation unclear.
+      if(projectedGroups.length-minRecentRounds<trimBatchRounds)return false;
+      const take=trimBatchRounds;
+      const groups=projectedGroups.slice(0,take);
+      const removed=groups.flat();
       if(removed.some(m=>m.id===lastEligibleAssistantId))return false;
-      projectedAway.push(...removed);recentRaw=recentRaw.slice(count);
-      if(estimatedBase!==null)estimatedBase-=removed.reduce((n,m)=>n+estimateTokens(projectMessage(m)?.content||'')+8,0);
+      const indexes=removed.map(m=>canonicalIndex.get(m.id));
+      if(indexes.some(i=>!Number.isSafeInteger(i))){
+        throw new ApiError('E_CONTEXT_SOURCE_IDENTITY','裁剪来源无法对应完整的本地剧情记录，未发送模型请求。');
+      }
+      const sourceEndExclusive=Math.max(...indexes)+1;
+      if(!rollingProof||summaryCursor<sourceEndExclusive||rollingCount<sourceEndExclusive){
+        throw new ApiError('E_CONTEXT_MEMORY_COVERAGE','最早剧情尚无可验证来源范围的滚动摘要；已暂停本轮模型请求，不会丢弃旧剧情。',{
+          details:JSON.stringify({sourceStartIndex:indexes[0],requiredSourceEndExclusive:sourceEndExclusive,
+            summaryCursor,rollingSourceCount:rollingCount,rollingFingerprintCurrent:rollingProof,
+            summaryInjected,requiredBatchRounds:take,protectedRecentRounds:minRecentRounds,
+            omittedMessages:removed.length}),
+          hint:'请到「设置 → 长剧情与记忆」先手动查看滚动记忆的完整请求计划，确认费用并整理到上述来源游标，再重试；本地 History 未删除，也不会自动发起总结收费。'});
+      }
+      const before=estimatedBase;
+      projectedAway.push(...removed);
+      projectedGroups=projectedGroups.slice(take);
+      recentRaw=projectedGroups.flat();
+      removedGroups+=take;
+      estimatedBase=baseTokens(recentRaw,sys);
+      trimBatches.push({rounds:take,sourceEndExclusive,messageIds:removed.map(m=>m.id),estimatedBeforeTokens:before,estimatedAfterTokens:estimatedBase});
       return true;
     }
-    if(promptCap.verified){
-      estimatedBase=baseTokens(recentRaw,sys);
-      while(estimatedBase>promptCap.usable){if(!discardOldestCompleteTurn()){
-        throw new ApiError('E_CONTEXT_BUDGET_BASE','当前人物设定、世界书和最新剧情已经超过模型已配置的输入窗口，无法在不破坏必需内容的情况下发送。',{
-          details:JSON.stringify({stage:'r11_full_history',windowTokens:promptCap.windowTokens,usableTokens:promptCap.usable,estimatedTokens:estimatedBase,temporarilyOmittedCount:projectedAway.length}),
-          hint:'请核实模型上下文窗口或由玩家主动调整设置。原始 History、Persona、世界书均未修改。'});
-      }}
-      if(projectedAway.length){
-        // Confirm actual depth-inserted projection at the boundary, without
-        // rescanning all 3000 turns on every discard.
-        estimatedBase=baseTokens(recentRaw,sys);
-        while(estimatedBase>promptCap.usable){if(!discardOldestCompleteTurn())throw new ApiError('E_CONTEXT_BUDGET_BASE','最新原始剧情超过已配置窗口，已保留本地 History。');}
-        // The summary was already included before raw-history budgeting; do
-        // not rebuild or silently change memory while trimming source turns.
-        estimatedBase=baseTokens(recentRaw,sys);
-        while(estimatedBase>promptCap.usable){if(!discardOldestCompleteTurn()){
-          throw new ApiError('E_CONTEXT_BUDGET_BASE','旧剧情摘要及当前必需材料超过已配置窗口。已保留完整原始存档，未发送。',{
-            details:JSON.stringify({stage:'r11_summary_projection',usableTokens:promptCap.usable,estimatedTokens:estimatedBase}),
-            hint:'请确认窗口或自行调整摘要/提示词设置；不会删除原始数据。'});
-        }}
+    estimatedBase=baseTokens(recentRaw,sys);
+    if(!promptCap.verified){
+      // Unknown context is NOT a licence to send a potentially million-token
+      // prompt. Keep normal smaller legacy sessions working, but block large
+      // unverified payloads before transport. Never invent a model capacity.
+      if(estimatedBase>promptCap.provisionalRetrievalTokens){
+        throw new ApiError('E_CONTEXT_WINDOW_REQUIRED','当前完整剧情预计超过安全检查阈值，但尚未配置模型实际上下文窗口；未发起请求。',{
+          details:JSON.stringify({estimatedInputTokens:estimatedBase,configuredWindow:null,
+            legacyScreeningThreshold:promptCap.provisionalRetrievalTokens,fullHistoryCount:visibleHistory.length}),
+          hint:'请在 API 设置中填写服务商确认支持的模型上下文窗口 Tokens；咪嘛馆不会凭模型名称猜 100 万窗口，也不会默默删减剧情。'});
       }
-      if(projectedAway.length){
-        // A compact prompt must have room to retrieve relevant original source
-        // events; otherwise even a perfect index cannot return old memories.
-        const retrievalHeadroom=Math.min(1800,Math.floor(promptCap.usable*.18));
-        estimatedBase=baseTokens(recentRaw,sys);
-        while(estimatedBase>promptCap.usable-retrievalHeadroom&&recentRaw.length>2){
-          if(!discardOldestCompleteTurn())break;
+    }else{
+      while(estimatedBase>promptCap.usable){
+        if(!trimOldestBatch()){
+          throw new ApiError('E_CONTEXT_RECENT_MINIMUM','保留最新完整剧情和固定资料后仍超出本轮模型预算；已暂停且未删除任何 History。',{
+            details:JSON.stringify({estimatedInputTokens:estimatedBase,usableTokens:promptCap.usable,
+              windowTokens:promptCap.windowTokens,protectedRecentRounds:minRecentRounds,
+              totalRounds:groupedTurns.length,alreadyPlannedTrimRounds:removedGroups}),
+            hint:'请核实上下文窗口、输出预留或精简自己挂载的固定资料；至少保留的最新 20 轮不能自动裁掉。'});
         }
       }
     }
@@ -869,14 +907,17 @@
     // fabricated upper bound on the model or on mandatory prompt materials.
     const retrievalCap=promptCap.verified?promptCap.usable:promptCap.provisionalRetrievalTokens;
     const retrievalBudget=Math.min(Math.floor(retrievalCap*.38),Math.max(0,retrievalCap-baselineTokens-600));
-    const candidateHistory=uncoveredOlder;
+    const candidateHistory=projectedAway.length?[]:uncoveredOlder;
     const retrieved=retrieveRawGap(session,candidateHistory,0,anchor,retrievalBudget,projectMessage);
     const trace={pendingRawCount:pendingRaw.length,uncoveredRawCount:uncoveredOlder.length,retrievedCount:retrieved.chosen.length,
       fullHistoryPreferred:true,allHistoryIncluded:uncoveredOlder.length===0,temporarilyOmittedTurnIds:projectedAway.map(m=>m.id),canonicalHistoryCount,
       omittedCount:retrieved.omitted.length,retrievedIds:retrieved.chosen.map(x=>x.m.id),omittedIds:retrieved.omitted.slice(0,60).map(x=>x.id),
       sourceFingerprint:memorySourceFingerprint(session.messages.filter(m=>m.metadata?.source!=='prompt_preview_draft'),session.messages.filter(m=>m.metadata?.source!=='prompt_preview_draft').length),sourceCount:session.messages.filter(m=>m.metadata?.source!=='prompt_preview_draft').length,
       sourceWindow:promptCap.windowTokens,budgetVerified:promptCap.verified,budgetPolicy:promptCap.verified?'configured_hard_limit':'unverified_provider_authoritative',baselineEstimateTokens:baselineTokens,retrievalEstimateTokens:retrieved.usedTokens,
-      coverageComplete:!retrieved.omitted.length,summarySourceValid:summaryValid,summarySourceCount:session.rollingSourceCount,
+      coverageComplete:projectedAway.length?rollingProof&&summaryCursor>=Math.max(...projectedAway.map(m=>canonicalIndex.get(m.id)+1)):!retrieved.omitted.length,
+      memoryCoverageProof:rollingProof,protectedRecentRounds:minRecentRounds,trimBatchRounds,
+      plannedTrimRounds:removedGroups,trimBatches,rollingSummaryCursor:summaryCursor,
+      summarySourceValid:summaryValid,summarySourceCount:session.rollingSourceCount,
       retrievalMode:retrieved.terms.length?'lexical_events':'continuation_event_index',unverifiedPastCount:retrieved.omitted.length};
     const recall=tracked=>tracked.map(x=>x.projected).filter(Boolean);
     const olderMessages=recall(retrieved.chosen);
@@ -897,7 +938,7 @@
     for(const row of presetTrace){const index=messageSources.findIndex(x=>x.kind==='preset'&&x.sourceId===row.id);row.sendIndex=index<0?null:index+1;row.injected=index>=0;}
     presetTrace.sort((a,b)=>(a.sendIndex??Number.MAX_SAFE_INTEGER)-(b.sendIndex??Number.MAX_SAFE_INTEGER));
     const header=sections.map(x=>x.content).join('\n\n');
-    const estimatedInputTokens=messages.reduce((sum,m)=>sum+estimateTokens(m?.content||''),0);
+    const estimatedInputTokens=messages.reduce((sum,m)=>sum+estimateTokens(m?.content||'')+8,0)+Math.max(160,Math.ceil(header.length*.08));
     if(promptCap.verified&&estimatedInputTokens>promptCap.usable)throw new ApiError('E_CONTEXT_BUDGET','上下文检索结果超过已配置的模型预算，已中止发送但保留全部资料。',{details:JSON.stringify({estimatedInputTokens,promptCap,trace})});
     return{messages,messageSources,inspector:{historyHtmlProjection,latestAssistantHtml:{...latestAssistantHtml,
       actuallySent:messageSources.some(x=>x.kind==='canonical_history'&&x.messageId===lastEligibleAssistantId)},systemChars:header.length,estimatedInputTokens,recentMessageCount:recent.length,unsummarizedGapCount:uncoveredOlder.length,recentMessageLimit:limit,fullHistoryPreferred:true,canonicalHistoryCount,temporarilyOmittedCount:projectedAway.length,allHistoryIncluded:uncoveredOlder.length===0,finalMessageCount:messages.length,
@@ -1151,7 +1192,7 @@
     if(Number(cfg.maxTokens)>0)body.max_tokens=Math.floor(Number(cfg.maxTokens));
     return body;
   }
-  function generationSnapshot(session,promptSession,body,messageSources=[],operation='send',excludeReferenceId=null,sourceFingerprint=null){
+  function generationSnapshot(session,promptSession,body,messageSources=[],operation='send',excludeReferenceId=null,sourceFingerprint=null,contextTrace=null){
     const safe={model:body.model,messages:body.messages.map((m,index)=>{
       const original=messageSources[index]?.kind==='canonical_history'?promptSession.messages.find(x=>x.id===messageSources[index].messageId):null;
       const row={role:m.role};if(m.prefix===true)row.prefix=true;
@@ -1162,7 +1203,19 @@
       return row;
     })};
     for(const key of ['stream','temperature','max_tokens'])if(Object.hasOwn(body,key))safe[key]=body[key];
-    return {version:1,operation,requestBody:safe,messageSources:clone(messageSources),sourceCount:promptSession.messages.length,sourceFingerprint:sourceFingerprint??memorySourceFingerprint(promptSession.messages,promptSession.messages.length)};
+    const trimAudit=contextTrace?.plannedTrimRounds?{
+      policyVersion:1,trimBatchRounds:contextTrace.trimBatchRounds,
+      protectedRecentRounds:contextTrace.protectedRecentRounds,
+      trimmedRounds:contextTrace.plannedTrimRounds,
+      batches:contextTrace.trimBatches.map(b=>({rounds:b.rounds,sourceEndExclusive:b.sourceEndExclusive,messageIds:b.messageIds.slice()})),
+      rollingSummaryCursor:contextTrace.rollingSummaryCursor,memoryCoverageProof:contextTrace.memoryCoverageProof,
+      configuredWindowTokens:contextTrace.sourceWindow,
+      // Canonical source identity lives next to this trace, never raw text.
+      sourceFingerprint:sourceFingerprint??memorySourceFingerprint(promptSession.messages,promptSession.messages.length)
+    }:null;
+    return {version:1,operation,requestBody:safe,messageSources:clone(messageSources),sourceCount:promptSession.messages.length,
+      sourceFingerprint:sourceFingerprint??memorySourceFingerprint(promptSession.messages,promptSession.messages.length),
+      ...(trimAudit?{contextTrimAudit:trimAudit}:{})};
   }
   function restoreGenerationRequest(snapshot,promptSession,sourceFingerprint=null){
     if(snapshot?.version!==1||!snapshot.requestBody?.model||!Array.isArray(snapshot.requestBody.messages))
@@ -2482,10 +2535,23 @@
     }else{
       built=assemble(promptSession,{...opts,preserveTerminalAssistant:action==='continue'&&cfg.continuationMode==='deepseek_prefix'});
       requestBody=makeApiBody(built.messages,cfg,temp,{continuation:action==='continue'});
-      snapshot=generationSnapshot(session,promptSession,requestBody,built.messageSources,action,action==='continue'?target?.id:null,sourceFingerprint);
+      snapshot=generationSnapshot(session,promptSession,requestBody,built.messageSources,action,action==='continue'?target?.id:null,sourceFingerprint,built.inspector?.contextTrace);
       const detail=action==='regenerate'&&target&&options.regenerationContext!=='current'?'旧记录没有请求快照，已明确使用当前挂载重建原轮。':action==='continue'?(cfg.continuationMode==='deepseek_prefix'?'按已声明的 prefix 协议请求续写。':'普通 Chat 后续 assistant 生成；接口未声明原文前缀补全，连续性由上下文和玩家预设决定。'):`Prompt（提示词）已组装 · ${requestBody.messages.length} 条消息`;
       emitProgress(progress,{phase:'prompt_ready',percent:34,detail});
     }
+    // Frozen retries/regenerations bypass assemble(); capacity checks must not.
+    // This only fences requests, never edits their historical frozen content.
+    const frozenBudget=promptBudget();
+    const frozenSystemChars=requestBody.messages.filter(m=>m.role==='system').reduce((n,m)=>n+String(m.content||'').length,0);
+    const frozenEstimate=requestBody.messages.reduce((n,m)=>n+estimateTokens(m.content)+8,0)+Math.max(160,Math.ceil(frozenSystemChars*.08));
+    if(frozenBudget.verified&&frozenEstimate>frozenBudget.usable)
+      throw new ApiError('E_CONTEXT_FROZEN_BUDGET','冻结的历史请求已经超过当前声明的模型容量；未重复发送旧超大请求。',{
+        details:JSON.stringify({estimatedInputTokens:frozenEstimate,usableTokens:frozenBudget.usable,source:'frozen_request'}),
+        hint:'请用当前剧情重新规划上下文；旧生成快照和存档保持原样，不自动更换模型或扣费。'});
+    if(!frozenBudget.verified&&frozenEstimate>frozenBudget.provisionalRetrievalTokens)
+      throw new ApiError('E_CONTEXT_WINDOW_REQUIRED','冻结请求体过大且没有配置真实模型上下文容量；未重复发送。',{
+        details:JSON.stringify({estimatedInputTokens:frozenEstimate,source:'frozen_request'}),
+        hint:'请先核实并填写模型上下文窗口，再使用当前剧情重新规划；旧快照不变。'});
     cfg={...cfg,model:requestBody.model,stream:requestBody.stream===true,sendTemperature:Object.hasOwn(requestBody,'temperature'),maxTokens:requestBody.max_tokens||0};
     messages=requestBody.messages;
     pending={id:retryPending?.id||makeId('generation'),action,targetMessageId:target?.id||null,snapshot,canonicalFingerprint,status:'prepared',attempt:(retryPending?.attempt||0)+1};
