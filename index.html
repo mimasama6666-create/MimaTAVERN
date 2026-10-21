@@ -84,6 +84,15 @@
             <div class="generation-track"><div id="generation-progress-bar" class="generation-progress-bar"></div></div>
             <div id="generation-detail" class="generation-detail">正在准备本轮剧情…</div>
             <div class="generation-actions"><button type="button" class="generation-stop-btn" id="generation-stop-inline" onclick="stopGeneration()">■ 停止生成</button><button id="generation-retry" class="generation-retry hidden" onclick="retryFailedGeneration()" title="精确重放原请求；模型、输出上限、流式和温度保持原值">↻ 原请求 · 原 API 参数</button><button id="generation-retry-current" class="generation-retry hidden" onclick="retryFailedGeneration('current')" title="保留原轮消息与资料，使用当前 API 配置；不重复玩家消息">↻ 原上下文 · 当前 API 参数</button><button type="button" class="ghost-btn" id="generation-diagnostic-link" onclick="openSettings('diagnostics')">🧾 查看诊断日志</button></div>
+            <details id="generation-capacity-recovery" class="generation-capacity-recovery hidden" aria-label="修复模型上下文容量">
+                <summary>⚙️ 修复模型窗口 · 免费预检（不用重发剧情）</summary>
+                <strong>模型窗口未生效 · 无需重发玩家消息</strong>
+                <p>这里需要模型实际支持的<strong>上下文总窗口 Tokens</strong>，不是 Max Tokens（最大输出）或每批裁剪轮数。不确定时请向中转服务核实。</p>
+                <label for="generation-context-tokens">确认的模型上下文总窗口 Tokens</label>
+                <div class="generation-capacity-row"><input id="generation-context-tokens" type="number" min="4096" max="100000000" step="1" inputmode="numeric" placeholder="例如经服务商确认的 1000000"><button type="button" onclick="saveGenerationContextAndPreview()">保存并免费预检</button></div>
+                <div id="generation-capacity-status" role="status" aria-live="polite"></div>
+                <button id="generation-resume-unanswered" type="button" class="hidden" onclick="resumeGenerationAfterCapacityPreview()">手动恢复未完成轮（可能收费）</button>
+            </details>
         </div>
         <button id="generation-minimized-badge" class="generation-minimized-badge hidden" type="button" onclick="restoreGenerationPanel()" aria-label="恢复生成状态" title="恢复生成状态"><span class="generation-minimized-ring" aria-hidden="true"></span><span id="generation-minimized-percent" class="generation-minimized-percent">0%</span></button>
         <div id="director-wrap" class="director-wrap collapsed">
@@ -278,12 +287,12 @@ function openMimaLicenseDialog() {
 <script src="./history-html-projection.js?v=20261019-r43"></script>
 <script src="./story-transcript-export.js?v=20261019-r44"></script>
 <script src="./mima-file-export.js?v=20261019-r44"></script>
-<script src="./html-structure-contract.js?v=20261021-r412&template-ux=20261021-r13-generation-polish"></script>
-<script src="./standalone-core.js?v=20261022-r15-context&template-ux=20261021-r13-generation-polish&provider-diagnostic=20261021-r6&r7=20261021-contract&r9=20261021-reader-default-postcommit&r13gen=20261022-r15"></script>
+<script src="./html-structure-contract.js?v=20261021-r412&template-ux=20261022-r16-capacity-recovery"></script>
+<script src="./standalone-core.js?v=20261022-r15-context&template-ux=20261022-r16-capacity-recovery&provider-diagnostic=20261021-r6&r7=20261021-contract&r9=20261021-reader-default-postcommit&r13gen=20261022-r15"></script>
 <script src="./font-manager.js?v=1.1.0&fontsplit=20261013-1&txguard=20261013-2&r9=20261021-reader-default-postcommit&r13gen=20261022-r15"></script>
 <script src="./png-card-import.js?v=1.4.0&r11=20261012-2"></script>
 <script src="./png-resource-inspector.js?v=1.4.0"></script>
-<script src="./app.js?v=20261022-r15-context&template-ux=20261021-r13-generation-polish&provider-diagnostic=20261021-r6&r7=20261021-contract&r9=20261021-reader-default-postcommit&r13gen=20261022-r15"></script>
+<script src="./app.js?v=20261022-r15-context&template-ux=20261022-r16-capacity-recovery&provider-diagnostic=20261021-r6&r7=20261021-contract&r9=20261021-reader-default-postcommit&r13gen=20261022-r15"></script>
 <script src="./sha256-browser.js?v=r11-20261012-2"></script>
 <script src="./compat-author-contract.js?v=r16-20261015-1"></script>
 <script src="./vendor/author-libraries-data.js?v=r16-20261015-1"></script>
