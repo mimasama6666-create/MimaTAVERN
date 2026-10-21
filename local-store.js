@@ -19,7 +19,7 @@
       ['sessions', 'masks', 'presets', 'worldbooks'].every(key => Array.isArray(value[key])) &&
       // Older v2/v3 / early v4 snapshots may lack these collections. However,
       // a PRESENT but malformed collection is corruption, never "empty".
-      ['cssPresets', 'regexPacks', 'novelProjects'].every(key =>
+      ['cssPresets', 'regexPacks', 'novelProjects', 'settingTemplates'].every(key =>
         value[key] === undefined || Array.isArray(value[key])) &&
       (value.themeSettings === undefined ||
         (value.themeSettings !== null && typeof value.themeSettings === 'object' &&
@@ -33,7 +33,7 @@
   // Keep legacy v2/v3 READ compatibility; writes always target schema v4.
   function assertWritableState(candidate) {
     if (!isCanonicalStateRecord(candidate) || candidate.schemaVersion !== 4 ||
-        !['sessions','masks','presets','worldbooks','cssPresets','regexPacks','novelProjects']
+        !['sessions','masks','presets','worldbooks','cssPresets','regexPacks','novelProjects','settingTemplates']
           .every(key => Array.isArray(candidate[key])) ||
         !candidate.themeSettings || typeof candidate.themeSettings !== 'object' ||
         Array.isArray(candidate.themeSettings)) {
@@ -121,7 +121,7 @@
         throw new Error('E_CANONICAL_STATE_UNVERIFIED: 已存在的本地资料库结构无法核实，停止初始化与写入');
       return existing;
     }
-    const blank = {schemaVersion:4,sessions:[],masks:[],presets:[],worldbooks:[],cssPresets:[],regexPacks:[],novelProjects:[],themeSettings:{...EMPTY_THEME}};
+    const blank = {schemaVersion:4,sessions:[],masks:[],presets:[],worldbooks:[],cssPresets:[],regexPacks:[],settingTemplates:[],novelProjects:[],themeSettings:{...EMPTY_THEME}};
     return blank; // verified nonexistent; first write still uses CAS
   }
   async function saveState(state, expectedRevision, options={}) {
@@ -249,7 +249,7 @@
     const required=version===4?['sessions','masks','presets','worldbooks','cssPresets','regexPacks','novelProjects']:['sessions','masks','presets','worldbooks'];
     for (const key of required) if (!Array.isArray(src[key])) invalid(key,'缺失必需数组字段，拒绝覆盖');
     if(version===4)mustRecord(src.themeSettings,'themeSettings',true);
-    for (const key of ['sessions','masks','presets','worldbooks','cssPresets','regexPacks','novelProjects']) mustArray(src[key], key, required.includes(key));
+    for (const key of ['sessions','masks','presets','worldbooks','cssPresets','regexPacks','novelProjects','settingTemplates']) mustArray(src[key], key, required.includes(key));
     validateItems(src.sessions, 'sessions', {validate:(s,at)=>{
       persistedTextFields(s,['summary','rollingSummary','longSummary','sceneSummary','characterPsychSummary','relationshipSummary','lastScene','userNotes','aiNotes','directorNote'],at,version);
       validateMessages(mustArray(s.messages, `${at}.messages`, true), `${at}.messages`, version);
@@ -407,6 +407,7 @@
       worldbooks:Array.isArray(src.worldbooks)?src.worldbooks:[],
       cssPresets:Array.isArray(src.cssPresets)?src.cssPresets:[],
       regexPacks:Array.isArray(src.regexPacks)?src.regexPacks:[],
+      settingTemplates:Array.isArray(src.settingTemplates)?src.settingTemplates:[],
       novelProjects:Array.isArray(src.novelProjects)?src.novelProjects:[],
       themeSettings:src.themeSettings&&typeof src.themeSettings==='object'?src.themeSettings:{...EMPTY_THEME}
     };
@@ -496,6 +497,115 @@
     if(!window.MimaSHA256?.digest)throw new Error('E_MEMORY_REFERENCE_HASH_UNAVAILABLE');
     return window.MimaSHA256.digest(new TextEncoder().encode(stable(chosen)));
   }
+  const htmlRepairKey=(id,msgId)=>'html_repair_candidate_v1:'+id+':'+msgId;
+  const htmlRepairArchiveKey=id=>'html_repair_immutable_v2:'+id;
+  async function putHtmlRepairCandidate(candidate){
+    if(!candidate?.id||candidate.state!=='pending'||typeof candidate.proposedContent!=='string')throw Error('E_HTML_REPAIR_INVALID');
+    // Keep all superseded pending candidates for audit. Pointer + immutable
+    // content share one transaction; a second tab may replace only the pointer,
+    // never destroy an older attempted repair.
+    const db=await openDb();return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE);
+      kv.put(candidate,htmlRepairArchiveKey(candidate.id));
+      kv.put(candidate,htmlRepairKey(candidate.sessionId,candidate.messageId));
+      tx.oncomplete=()=>{db.close();resolve(candidate)};
+      tx.onabort=()=>{db.close();reject(tx.error||Error('E_HTML_REPAIR_STORE_FAILED'))};
+    });
+  }
+  async function getHtmlRepairCandidate(sessionId,msgId){return get(htmlRepairKey(sessionId,msgId));}
+  async function setHtmlRepairCandidateState(sessionId,msgId,id,state){
+    if(!['approved','rejected'].includes(state))throw Error('E_HTML_REPAIR_STATUS_INVALID');
+    const key=htmlRepairKey(sessionId,msgId),db=await openDb();return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE),req=kv.get(key);let problem;
+      req.onerror=()=>{problem=req.error;tx.abort();};req.onsuccess=()=>{
+        if(!req.result||req.result.id!==id||req.result.state!=='pending'){problem=Error('E_HTML_REPAIR_FENCED');tx.abort();return;}
+        const settled={...req.result,state,settledAt:new Date().toISOString()};
+        kv.put(settled,key);kv.put(settled,htmlRepairArchiveKey(id));
+      };
+      tx.oncomplete=()=>{db.close();resolve(state);};tx.onabort=()=>{db.close();reject(problem||tx.error||Error('E_HTML_REPAIR_STORE_FAILED'));};
+    });
+  }
+  // A repair approval and canonical story write are one settlement. A failed
+  // candidate-state update must never leave a silently committed story, or the
+  // reverse. The IDB transaction fences both the candidate pointer and the
+  // canonical record against independent tabs and retained old candidates.
+  async function commitHtmlRepair(candidateState,expectedRevision,sessionId,messageId,candidateId,expectedRecordRevision){
+    assertWritableState(candidateState);
+    const db=await openDb();return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE);
+      let presentState=false,presentCandidate=false,current,repair,result,problem;
+      const fail=e=>{problem=e;try{tx.abort();}catch(_){/* onabort reports */}};
+      const settle=()=>{
+        if(!presentState||!presentCandidate)return;
+        if(current!==undefined&&!isCanonicalStateRecord(current))return fail(Error('E_CANONICAL_STATE_UNVERIFIED'));
+        if(!current)return fail(Error('E_CANONICAL_STATE_NOT_FOUND'));
+        const revision=Number(current.storeRevision)||0;
+        if(revision!==expectedRevision)return fail(Error('E_CANONICAL_CONFLICT: repair revision changed'));
+        if(!repair||repair.id!==candidateId||repair.state!=='pending'||repair.sessionId!==sessionId||repair.messageId!==messageId)
+          return fail(Error('E_HTML_REPAIR_FENCED'));
+        const currentSession=current.sessions.find(x=>x.id===sessionId);
+        const candidateSession=candidateState.sessions.find(x=>x.id===sessionId);
+        if(!currentSession||!candidateSession||
+          Number(currentSession.recordRevision||0)!==Number(expectedRecordRevision||0)||
+          Number(candidateSession.recordRevision||0)!==Number(expectedRecordRevision||0)+1)
+          return fail(Error('E_HTML_REPAIR_STALE_SESSION'));
+        // Any unrelated canonical collection changed since preview fails closed.
+        result={...candidateState,storeRevision:revision+1,schemaVersion:4,savedAt:new Date().toISOString()};
+        const settled={...repair,state:'approved',settledAt:result.savedAt};
+        kv.put(result,STATE_KEY);
+        kv.put(settled,htmlRepairKey(sessionId,messageId));
+        kv.put(settled,htmlRepairArchiveKey(candidateId));
+      };
+      const a=kv.get(STATE_KEY),b=kv.get(htmlRepairKey(sessionId,messageId));
+      a.onerror=()=>fail(a.error||Error('E_CANONICAL_READ_FAILED'));
+      b.onerror=()=>fail(b.error||Error('E_HTML_REPAIR_READ_FAILED'));
+      a.onsuccess=()=>{current=a.result;presentState=true;settle();};
+      b.onsuccess=()=>{repair=b.result;presentCandidate=true;settle();};
+      tx.oncomplete=()=>{db.close();resolve(result)};
+      tx.onabort=()=>{db.close();reject(problem||tx.error||Error('E_HTML_REPAIR_ATOMIC_ABORT'))};
+      tx.onerror=()=>{ /* onabort preserves root error */ };
+    });
+  }
+  const rollingPreflightKey=sessionId=>'memory_rolling_preflight_v1:'+sessionId;
+  async function getRollingPreflight(sessionId){return get(rollingPreflightKey(sessionId));}
+  async function putRollingPreflight(sessionId,record){
+    if(!sessionId||!record||!['E_ROLLING_AUTO_BUDGET','E_MEMORY_ROLLING_WINDOW_UNVERIFIED','E_MEMORY_CAPACITY','E_MEMORY_WINDOW_UNVERIFIED'].includes(String(record.code)))
+      throw Error('E_ROLLING_PREFLIGHT_INVALID');
+    // Single transaction fences late older attempts against the current
+    // canonical source. An unrelated or stale tab cannot overwrite the report.
+    const db=await openDb();return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE);let result,problem;
+      const req=kv.get(STATE_KEY);
+      req.onerror=()=>{problem=req.error||Error('E_CANONICAL_READ_FAILED');tx.abort();};
+      req.onsuccess=()=>{
+        try{
+          const current=req.result;
+          if(!isCanonicalStateRecord(current))throw Error('E_CANONICAL_STATE_UNVERIFIED');
+          const session=current.sessions.find(item=>item.id===sessionId);
+          if(!session||Number(session.recordRevision||0)!==Number(record.sourceRevision||0)||
+             session.messages?.length!==Number(record.sourceCount||0))throw Error('E_ROLLING_PREFLIGHT_SOURCE_CHANGED');
+          result={version:1,kind:'rolling_preflight',sessionId,status:'paused_no_charge',
+            code:String(record.code),requestCount:Number(record.requestCount)||null,
+            allowedRequests:Number(record.allowedRequests)||1,contextWindowTokens:Number(record.contextWindowTokens)||null,
+            estimatedInputTokens:Number(record.estimatedInputTokens)||null,
+            sourceCount:Number(record.sourceCount)||0,sourceRevision:Number(record.sourceRevision)||0,
+            detail:String(record.detail||'').slice(0,600),createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+          kv.put(result,rollingPreflightKey(sessionId));
+        }catch(e){problem=e;tx.abort();}
+      };
+      tx.oncomplete=()=>{db.close();resolve(result)};
+      tx.onerror=()=>{problem=problem||tx.error;};
+      tx.onabort=()=>{db.close();reject(problem||tx.error||Error('E_ROLLING_PREFLIGHT_WRITE_FAILED'));};
+    });
+  }
+  async function clearRollingPreflight(sessionId){
+    // Keep successful old jobs and history untouched; only retire this diagnostic.
+    const db=await openDb();return new Promise((resolve,reject)=>{
+      let issue;const tx=db.transaction(STORE,'readwrite');tx.objectStore(STORE).delete(rollingPreflightKey(sessionId));
+      tx.oncomplete=()=>{db.close();resolve(true);};tx.onerror=()=>{issue=tx.error;};
+      tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_ROLLING_PREFLIGHT_DELETE_FAILED'));};
+    });
+  }
   async function getMemoryJob(sessionId,kind){return get(jobKey(sessionId,kind));}
   async function memoryJobTransaction(sessionId,kind,work){
     const db=await openDb();return new Promise((resolve,reject)=>{
@@ -525,6 +635,19 @@
     if(legacy.version!==1||legacy.status!=='STAGED'||legacy.sessionId!==job.sessionId||legacy.kind!==job.kind||legacy.stage!==stage||legacy.sourceHash!==job.sourceHash||legacy.sourceFingerprint!==job.sourceFingerprint||legacy.contractDigest!==(legacyDigest||digest)||typeof legacy.outputText!=='string'||!legacy.outputDigest)
       throw new Error('E_MEMORY_STAGE_CONTRACT_MISMATCH');
     return legacy;
+  }
+  async function listMemoryStages(sessionId,kind){
+    if(typeof sessionId!=='string'||!['core','facts','rolling'].includes(kind))throw Error('E_MEMORY_STAGE_LIST_SCOPE');
+    const db=await openDb();return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readonly'),cursor=tx.objectStore(STORE).openCursor(),entries=[];let issue;
+      cursor.onerror=()=>{issue=cursor.error;tx.abort();};
+      cursor.onsuccess=()=>{const entry=cursor.result;if(!entry)return;
+        const x=entry.value;
+        if(typeof entry.key==='string'&&entry.key.startsWith('memory_stage_v2:')&&x?.status==='STAGED'&&x?.version===2&&x.sessionId===sessionId&&x.kind===kind&&typeof x.outputText==='string')entries.push(x);
+        entry.continue();};
+      tx.oncomplete=()=>{db.close();resolve(entries.sort((a,b)=>String(a.createdAt).localeCompare(String(b.createdAt))));};
+      tx.onabort=()=>{db.close();reject(issue||tx.error||new Error('E_MEMORY_STAGE_LIST_READ_FAILED'));};
+    });
   }
   async function inspectLegacyMemoryStages(sessionId,kind){
     if(!['core','facts','rolling'].includes(kind)||typeof sessionId!=='string')throw new Error('E_MEMORY_LEGACY_SCOPE_INVALID');
@@ -1025,5 +1148,5 @@
       tx.oncomplete=()=>{db.close();resolve(result);};tx.onabort=()=>{db.close();reject(issue||tx.error||new Error('E_MEMORY_MERGE_UNDO_ABORTED'));};
     });
   }
-  window.MimaLocalStore={inspectLegacyMemoryStages,memoryReferenceContract,putFactRangeCandidate,listFactRangeCandidates,commitVerifiedFactRanges,getMergeStage,putMergeStage,getMergeDraft,createMergeDraft,updateMergeDraft,commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,clearSettingsSnapshot,getMemoryJob,getMemoryStage,putMemoryStage,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
+  window.MimaLocalStore={getRollingPreflight,putRollingPreflight,clearRollingPreflight,commitHtmlRepair,putHtmlRepairCandidate,getHtmlRepairCandidate,setHtmlRepairCandidateState,listMemoryStages,inspectLegacyMemoryStages,memoryReferenceContract,putFactRangeCandidate,listFactRangeCandidates,commitVerifiedFactRanges,getMergeStage,putMergeStage,getMergeDraft,createMergeDraft,updateMergeDraft,commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,clearSettingsSnapshot,getMemoryJob,getMemoryStage,putMemoryStage,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
 })();

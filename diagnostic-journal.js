@@ -32,15 +32,15 @@
    if(deletes.length){const tx=db.transaction(STORE,'readwrite'),st=tx.objectStore(STORE);deletes.forEach(id=>st.delete(id));await finished(tx);}
  }
  function issueId(){return 'd_'+Date.now().toString(36)+'_'+(window.crypto?.randomUUID?.()||Math.random().toString(36).slice(2));}
- function begin({sessionId,action,turnId,attemptId}={}){
+ function begin({sessionId,action,turnId,attemptId,traceId}={}){
    if(!sessionId)return null;
    const id=issueId(),row={id,sessionId:String(sessionId),turnId:pickString(turnId,100),action:pickString(action,40),createdAt:new Date().toISOString(),createdAtMs:Date.now(),status:'preparing',model:'',requestId:'',messageCount:0,request:null,requestTruncated:false,rawRejectedReply:'',rejectedReplyTruncated:false,error:null,finishKind:'',finishReason:'',settledAt:null};
-   row.replyCaptureVersion=1;if(attemptId)row.attemptId=pickString(attemptId,120);
+   row.traceId=pickString(traceId,120);row.replyCaptureVersion=1;if(attemptId)row.attemptId=pickString(attemptId,120);
    void transact(async()=>{const db=await open(),tx=db.transaction(STORE,'readwrite');tx.objectStore(STORE).put(row);await finished(tx);await prune();});
    return id;
  }
  function event(id,data={}){
-   if(!id||!data||!['request','transport_response','provider_result','settlement','manual_recovery'].includes(data.type))return Promise.resolve();
+   if(!id||!data||!['request','transport_response','provider_result','settlement','manual_recovery','timing'].includes(data.type))return Promise.resolve();
    return transact(async()=>{
      const db=await open();const tx=db.transaction(STORE,'readwrite'),st=tx.objectStore(STORE),row=await waitRequest(st.get(id));
      // Deleting a record is final, even if a request still runs.
@@ -57,6 +57,19 @@
          row.requestChars=all.length;row.messageCount=safe.messages.length;row.model=safe.model;row.requestId=pickString(data.requestId,120);row.endpointOrigin=pickString(data.endpointOrigin,260);row.status='requesting';
          row.requestBytes=Number(data.requestBytes)||0;row.preparationElapsedMs=Number.isFinite(data.preparationElapsedMs)?data.preparationElapsedMs:null;
          row.serializationElapsedMs=Number(data.serializationElapsedMs)||0;row.generationId=pickString(data.generationId,120);row.generationAttempt=Number(data.generationAttempt)||null;
+       }else if(data.type==='timing'){
+         row.timings=Array.isArray(row.timings)?row.timings:[];
+         row.timings.push({phase:pickString(data.phase,80),requestId:pickString(data.requestId||row.requestId,120),
+           generationId:pickString(data.generationId||row.generationId,120),
+           generationAttempt:Number(data.attempt)||row.generationAttempt||null,
+           elapsedAfterPreparedMs:Number.isFinite(data.elapsedAfterPreparedMs)?Number(data.elapsedAfterPreparedMs):null,
+           elapsedFromTransportMs:Number.isFinite(data.elapsedFromTransportMs)?Number(data.elapsedFromTransportMs):null,
+           preparationElapsedMs:Number.isFinite(data.preparationElapsedMs)?Number(data.preparationElapsedMs):null,
+           serializationElapsedMs:Number.isFinite(data.serializationElapsedMs)?Number(data.serializationElapsedMs):null,
+           httpStatus:Number(data.httpStatus)||0,requestBytes:Number(data.requestBytes)||0,
+           receivedChars:Number(data.receivedChars)||0,chars:Number(data.chars)||0,messageCount:Number(data.messageCount)||0,
+           recordedAt:new Date().toISOString()});
+         row.timings=row.timings.slice(-48);
        }else if(data.type==='transport_response'){
          row.transport={requestStartedAt:pickString(data.requestStartedAt,50),responseReceivedAt:pickString(data.responseReceivedAt,50),fetchElapsedMs:Number(data.fetchElapsedMs)||0,httpStatus:Number(data.httpStatus)||0,
            providerRequestId:pickString(data.providerRequestId,200),cfRay:pickString(data.cfRay,200)};
@@ -77,6 +90,23 @@
      }
      await finished(tx);
      await prune();
+   });
+ }
+ // Never join UI events using the legacy page-local turnId. Exact traceId
+ // joins are required; unmatched or ambiguous events cannot modify history.
+ function uiTiming({sessionId,traceId,phase,elapsedSinceUiSubmitMs,paintDurationMs,paintCount,chars}={}){
+   if(!sessionId||!/^gen_[a-f0-9-]{20,80}$/i.test(String(traceId||''))||!/^ui_(first_visible|last_visible|final_stable)$/.test(String(phase||'')))return Promise.resolve();
+   return transact(async()=>{
+     const rows=await readAll();const matched=rows.filter(r=>r.sessionId===String(sessionId)&&r.traceId===String(traceId));
+     if(matched.length!==1){if(matched.length>1)throw Error('E_DIAGNOSTIC_TRACE_COLLISION');return;}
+     const row=matched[0];
+     if(!row)return; // A cancelled preflight may have no diagnostic row.
+     const db=await open(),tx=db.transaction(STORE,'readwrite'),st=tx.objectStore(STORE),latest=await waitRequest(st.get(row.id));
+     if(latest&&latest.sessionId===String(sessionId)&&latest.traceId===String(traceId)){latest.uiTimings=latest.uiTimings&&typeof latest.uiTimings==='object'?latest.uiTimings:{};
+       latest.uiTimings[phase]={elapsedSinceUiSubmitMs:Number(elapsedSinceUiSubmitMs)||0,paintDurationMs:Number(paintDurationMs)||0,
+         paintCount:Number(paintCount)||0,chars:Number(chars)||0,recordedAt:new Date().toISOString(),generationId:latest.generationId||''};
+       st.put(latest);}
+     await finished(tx);
    });
  }
  async function get(id){
@@ -101,5 +131,5 @@
  function clearSession(sessionId){return transact(async()=>{const rows=await readAll(),db=await open(),tx=db.transaction(STORE,'readwrite'),st=tx.objectStore(STORE);rows.filter(x=>x.sessionId===sessionId).forEach(x=>st.delete(x.id));await finished(tx)});}
  function clearAll(){return transact(async()=>{const db=await open(),tx=db.transaction(STORE,'readwrite');tx.objectStore(STORE).clear();await finished(tx)});}
  function status(){return {error:lastError,limitCount:LIMIT_COUNT,limitDays:LIMIT_DAYS,limitBytes:LIMIT_BYTES,database:DB};}
- window.MimaDiagnosticJournal=Object.freeze({begin,event,get,recoveryCandidate,list,remove,clearSession,clearAll,status});
+ window.MimaDiagnosticJournal=Object.freeze({begin,event,uiTiming,get,recoveryCandidate,list,remove,clearSession,clearAll,status});
 })();

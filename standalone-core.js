@@ -7,7 +7,7 @@
   'use strict';
 
   const API_CONFIG_KEY = 'MIMAMAO_TAVERN_STANDALONE_API_V1';
-  let state = { storeRevision: 0, schemaVersion: 4, sessions: [], masks: [], presets: [], worldbooks: [], cssPresets: [], regexPacks: [], novelProjects: [], themeSettings:{theme:'default',updatedAt:''} };
+  let state = { storeRevision: 0, schemaVersion: 4, sessions: [], masks: [], presets: [], worldbooks: [], cssPresets: [], regexPacks: [], settingTemplates: [], novelProjects: [], themeSettings:{theme:'default',updatedAt:''} };
   let lastUsage = null; // v1.1.4: upstream usage/cache telemetry only; never treated as canonical story data.
 
   const nowIso = () => new Date().toISOString();
@@ -60,14 +60,30 @@
 
   function normalizePromptSettings(input = {}) {
     return {
-      recentMessageLimit: clampInt(input.recentMessageLimit, 6, 200, 34),
+      recentMessageLimit: clampInt(input.recentMessageLimit, 6, 100000, 34),
       worldbookBudgetChars: clampInt(input.worldbookBudgetChars, 1000, 1000000, 16000),
-      summaryEnabled: input.summaryEnabled !== false,
+      // Legacy summaryEnabled remains readable; new consent is opt-in, never inferred
+      // from an old default-true setting that may never have been chosen.
+      summaryEnabled: input.autoRollingEnabled === true,
+      autoRollingEnabled: input.autoRollingEnabled === true,
+      injectSavedRolling: input.injectSavedRolling !== undefined ? input.injectSavedRolling !== false : input.summaryEnabled !== false,
+      autoRollingMaxRequests: clampInt(input.autoRollingMaxRequests, 1, 20, 1),
       historyHtmlMode: input.historyHtmlMode==='raw'?'raw':'semantic',
       pinnedFactsEnabled: input.pinnedFactsEnabled !== false,
       showInjectionLabels: input.showInjectionLabels !== false,
       summaryTriggerMessages: clampInt(input.summaryTriggerMessages, 12, 200, 28),
-      ...(input.outputContract?.completeHtml===true?{outputContract:{completeHtml:true}}:{}),
+      ...(input.outputContract&&(input.outputContract.completeHtml===true||input.outputContract.requireHtml===true)?{outputContract:{
+        completeHtml:input.outputContract.completeHtml===true,
+        requireHtml:input.outputContract.requireHtml===true,
+        requiredSelectors:String(input.outputContract.requiredSelectors||'').slice(0,600),
+        templateMessageId:String(input.outputContract.templateMessageId||'').slice(0,200),
+        bodySelector:String(input.outputContract.bodySelector||'').slice(0,200),
+        statusSelector:String(input.outputContract.statusSelector||'').slice(0,200),
+        staticSelectors:String(input.outputContract.staticSelectors||'').slice(0,600),
+        staticCssSelectors:String(input.outputContract.staticCssSelectors||'').slice(0,2000),
+        staticCommentTexts:String(input.outputContract.staticCommentTexts||'').slice(0,4000),
+        staticClassTokens:String(input.outputContract.staticClassTokens||'').slice(0,4000)
+      }}:{}),
       inputSemanticMode: ['auto','dialogue_first','quote_dialogue','raw'].includes(input.inputSemanticMode) && (input.inputSemanticMode==='raw'||input.inputSemanticExplicit===true) ? input.inputSemanticMode : 'raw',
       inputSemanticExplicit: input.inputSemanticExplicit===true,
       legacyInputSemanticMode: ['auto','dialogue_first','quote_dialogue'].includes(input.legacyInputSemanticMode) ? input.legacyInputSemanticMode : input.inputSemanticExplicit!==true&&['auto','dialogue_first','quote_dialogue'].includes(input.inputSemanticMode) ? input.inputSemanticMode : null
@@ -84,7 +100,10 @@
     const startRound=clampInt(m.startRound,1,1000000,1), endRound=clampInt(m.endRound,startRound,1000000,startRound);
     return {
       id:m.id||makeId('factmem'), startRound, endRound, content:text(m.content),
-      createdAt:m.createdAt||nowIso(), updatedAt:m.updatedAt||m.createdAt||nowIso(),
+      // Legacy imported facts may lack timestamps. Do not mint a different
+      // synthetic timestamp on every read: merge/undo CAS signatures need
+      // a deterministic view of the same unchanged canonical bytes.
+      createdAt:m.createdAt||'', updatedAt:m.updatedAt||m.createdAt||'',
       source:text(m.source||'manual_fact_summary'), targetChars:clampInt(m.targetChars,80,12000,1800),
       temperature:clampTemp(m.temperature??0.35), sourceMessageCount:Math.max(0,Number(m.sourceMessageCount)||0), sourceCount:Math.max(0,Number(m.sourceCount)||0),sourceFingerprint:String(m.sourceFingerprint||''),
       // Do not add empty fields to legacy facts: facts-derived cores hash the
@@ -122,6 +141,7 @@
         factRecentRounds:clampInt(input.settings?.factRecentRounds,1,100000,25),
         summaryTemperature:clampTemp(input.settings?.summaryTemperature??0.35),
         memoryModel:String(input.settings?.memoryModel||'').trim().slice(0,240),
+        memoryStreamMode:['inherit','on','off'].includes(input.settings?.memoryStreamMode)?input.settings.memoryStreamMode:'inherit',
         summaryContext:normalizeSummaryContext(input.settings?.summaryContext)
       }
     };
@@ -207,12 +227,62 @@
       createdAt, updatedAt: w.updatedAt || createdAt };
   }
 
+  // Configuration templates have no History, generated Memory, source cursor,
+  // running jobs, API credentials, character reply or owner private notes.
+  const templateFields=['presetIds','worldbookIds','regexPackIds','loadedUserMaskId','customCssId','customCssEnabled','promptSettings','renderMode','memoryInject'];
+  function normalizeSettingTemplate(t={}){
+    const raw=t.config&&typeof t.config==='object'&&!Array.isArray(t.config)?t.config:{};
+    const config={};
+    for(const key of templateFields)if(Object.prototype.hasOwnProperty.call(raw,key)){
+      if(['presetIds','worldbookIds','regexPackIds'].includes(key))config[key]=list(raw[key]);
+      else if(key==='loadedUserMaskId'||key==='customCssId')config[key]=raw[key]?String(raw[key]):null;
+      else if(key==='customCssEnabled')config[key]=raw[key]!==false;
+      else if(key==='renderMode')config[key]=raw[key]==='safe_html'?'safe_html':'text';
+      else if(key==='promptSettings'){
+        const p=normalizePromptSettings(raw[key]);
+        // A reference to a message in the SOURCE session must never point into
+        // another universe. Owners rebind the template after creation.
+        if(p.outputContract)p.outputContract.templateMessageId='';
+        p.autoRollingEnabled=false; // paid background work always needs fresh opt-in
+        p.summaryEnabled=false;
+        config[key]=p;
+      }else if(key==='memoryInject')config[key]={injectCore:raw[key]?.injectCore!==false,injectFacts:raw[key]?.injectFacts!==false};
+    }
+    return {id:String(t.id||makeId('settingtpl')).slice(0,100),name:text(t.name||'未命名剧情模板').slice(0,120),version:1,
+      revision:Math.max(0,Number(t.revision)||0),isDefault:t.isDefault===true,config,createdAt:String(t.createdAt||nowIso()),updatedAt:String(t.updatedAt||t.createdAt||nowIso())};
+  }
+  function templateFromSession(session,include={}){
+    const c={};
+    if(include.presets!==false)c.presetIds=list(session.presetIds);
+    if(include.worldbooks!==false)c.worldbookIds=list(session.worldbookIds);
+    if(include.regex!==false)c.regexPackIds=list(session.regexPackIds);
+    if(include.userMask===true)c.loadedUserMaskId=session.loadedUserMaskId||null;
+    if(include.css===true){c.customCssId=session.customCssId||null;c.customCssEnabled=session.customCssEnabled!==false;}
+    if(include.context!==false){c.promptSettings=clone(session.promptSettings);if(c.promptSettings.outputContract)c.promptSettings.outputContract.templateMessageId='';c.promptSettings.autoRollingEnabled=false;c.promptSettings.summaryEnabled=false;c.renderMode=session.renderMode;}
+    if(include.memoryInject===true)c.memoryInject={injectCore:session.manualMemory.settings.injectCore,injectFacts:session.manualMemory.settings.injectFacts};
+    return normalizeSettingTemplate({config:c}).config;
+  }
+  function templateMissing(state,c){const missing=[];
+    const refs=[['presetIds','presets'],['worldbookIds','worldbooks'],['regexPackIds','regexPacks']];
+    for(const [field,table] of refs)for(const id of c[field]||[])if(!state[table].some(x=>x.id===id))missing.push(field+':'+id);
+    if(c.loadedUserMaskId&&!state.masks.some(x=>x.id===c.loadedUserMaskId&&x.type==='user'))missing.push('userMask:'+c.loadedUserMaskId);
+    if(c.customCssId&&!state.cssPresets.some(x=>x.id===c.customCssId))missing.push('css:'+c.customCssId);
+    return missing;
+  }
+  function appliedSessionSettings(body,template,stored){
+    const c=template.config||{},missing=templateMissing(stored,c);
+    if(missing.length)throw new ApiError('E_SETTINGS_TEMPLATE_MISSING_RESOURCES','剧情模板所需的预设/世界书/面具/CSS 已缺失，未创建半成品会话',{details:JSON.stringify({missing})});
+    const next={...body};
+    for(const key of templateFields){if(key==='memoryInject'||!Object.prototype.hasOwnProperty.call(c,key))continue;next[key]=clone(c[key]);}
+    if(c.memoryInject){const defaults=normalizeManualMemory();next.manualMemory={...defaults,settings:{...defaults.settings,...c.memoryInject}};}
+    return next;
+  }
   function normalizeState(raw = {}) {
     return {
       schemaVersion: 4, storeRevision: Math.max(0,Number(raw.storeRevision)||0),
       sessions: arr(raw.sessions).map(normalizeSession), masks: arr(raw.masks).map(normalizeMask),
       presets: arr(raw.presets).map(normalizePreset), worldbooks: arr(raw.worldbooks).map(normalizeWorldbook), cssPresets: arr(raw.cssPresets).map(normalizeCssPreset),
-      regexPacks: arr(raw.regexPacks).map(normalizeRegexPack),
+      regexPacks: arr(raw.regexPacks).map(normalizeRegexPack),settingTemplates:arr(raw.settingTemplates).map(normalizeSettingTemplate),
       novelProjects: arr(raw.novelProjects).map(x=>window.MimaNovelEngine?.normalizeProject?window.MimaNovelEngine.normalizeProject(x):x),
       themeSettings: window.MimaThemeEngine?.normalizeSettings?window.MimaThemeEngine.normalizeSettings(raw.themeSettings||{}):{theme:'default',updatedAt:''}
     };
@@ -287,6 +357,49 @@
     const task=sessionSaveTail.then(commit,commit);
     sessionSaveTail=task.then(()=>{},()=>{});
     return task;
+  }
+  async function editSettingTemplate(action,body={}){
+    // Same serialized CAS queue as session saves, but each edit starts with a
+    // fresh verified state. Never overwrite a concurrent tab's resource edits.
+    const commit=async()=>{
+      const stored=normalizeState(await window.MimaLocalStore.loadState());
+      let result=null;
+      if(action==='save'){
+        const existing=stored.settingTemplates.find(x=>x.id===body.id);
+        if(existing&&existing.revision!==Number(body.expectedRevision))throw new ApiError('E_SETTINGS_TEMPLATE_STALE','模板已在别处修改，请刷新再保存');
+        if(body.id&&!existing)throw new ApiError('E_SETTINGS_TEMPLATE_MISSING','模板已不存在，不能复活旧记录');
+        const cfg=body.fromSessionId?templateFromSession(stored.sessions.find(s=>s.id===body.fromSessionId)||(()=>{throw new ApiError('E_STORY_SESSION_MISSING','模板来源剧情不存在')})(),body.include||{}):body.config;
+        const next=normalizeSettingTemplate({id:existing?.id,name:body.name||existing?.name,config:cfg,createdAt:existing?.createdAt,revision:(existing?.revision||0)+1});
+        if(existing)stored.settingTemplates=stored.settingTemplates.map(x=>x.id===next.id?next:x);else stored.settingTemplates.push(next);
+        result=next;
+      }else if(action==='default'){
+        if(body.id&&!stored.settingTemplates.some(x=>x.id===body.id))throw new ApiError('E_SETTINGS_TEMPLATE_MISSING','指定模板已不存在');
+        stored.settingTemplates.forEach(x=>{x.isDefault=x.id===body.id;x.revision++;x.updatedAt=nowIso();});
+        result=stored.settingTemplates;
+      }else if(action==='delete'){
+        const existing=stored.settingTemplates.find(x=>x.id===body.id);
+        if(!existing)throw new ApiError('E_SETTINGS_TEMPLATE_MISSING','指定模板已不存在');
+        if(existing.revision!==Number(body.expectedRevision))throw new ApiError('E_SETTINGS_TEMPLATE_STALE','模板版本已经变化');
+        stored.settingTemplates=stored.settingTemplates.filter(x=>x.id!==body.id);result={deleted:true};
+      }else throw new ApiError('E_SETTINGS_TEMPLATE_ACTION','无效模板操作');
+      const committed=await window.MimaLocalStore.saveState(stored,stored.storeRevision);
+      state=normalizeState(committed);return result;
+    };
+    const task=sessionSaveTail.then(commit,commit);sessionSaveTail=task.then(()=>{},()=>{});return task;
+  }
+  async function createSessionUsingTemplate(body){
+    const commit=async()=>{
+      const stored=normalizeState(await window.MimaLocalStore.loadState());
+      const id=String(body.settingTemplateId||'');
+      const tpl=id==='default'?stored.settingTemplates.find(x=>x.isDefault):stored.settingTemplates.find(x=>x.id===id);
+      if(!tpl)throw new ApiError('E_SETTINGS_TEMPLATE_MISSING','设置模板已删除，未创建剧情');
+      const input=appliedSessionSettings(body,tpl,stored);
+      const result=normalizeSession({...input,id:makeId('sess'),createdAt:nowIso(),updatedAt:nowIso(),messages:[]});
+      result.recordRevision=1;stored.sessions.push(result);
+      const committed=await window.MimaLocalStore.saveState(stored,stored.storeRevision);
+      state=normalizeState(committed);return result;
+    };
+    const task=sessionSaveTail.then(commit,commit);sessionSaveTail=task.then(()=>{},()=>{});return task;
   }
   async function saveMask(m) { const n=normalizeMask({ ...m, updatedAt:nowIso() }); const i=state.masks.findIndex(x=>x.id===n.id); if(i>=0)state.masks[i]=n;else state.masks.push(n); await persist(); return n; }
   async function savePreset(p) { const n=normalizePreset({ ...p, updatedAt:nowIso() }); const i=state.presets.findIndex(x=>x.id===n.id); if(i>=0)state.presets[i]=n;else state.presets.push(n); await persist(); return n; }
@@ -484,9 +597,9 @@
     const rollingSourceCurrent=!session.rollingSourceFingerprint
       ?!(session.legacyMemoryQuarantined||replay)
       :session.rollingSourceCount>0&&session.messages.length>=session.rollingSourceCount&&memorySourceFingerprint(session.messages,session.rollingSourceCount)===session.rollingSourceFingerprint;
-    const rollingIncluded=options.excludeRollingSummary!==true&&session.promptSettings?.summaryEnabled!==false&&!!rollingText&&(!replay||rollingSourceCurrent);
+    const rollingIncluded=options.excludeRollingSummary!==true&&session.promptSettings?.injectSavedRolling!==false&&!!rollingText&&(!replay||rollingSourceCurrent);
     memoryTrace.push({kind:'rolling',chars:rollingText.length,injected:rollingIncluded,sourceCurrent:rollingSourceCurrent,
-      reason:options.excludeRollingSummary===true?'explicit_exclusion':session.promptSettings?.summaryEnabled===false?'disabled':!rollingText?'empty':replay&&!rollingSourceCurrent?'historical_replay_boundary':rollingSourceCurrent?'included':'source_changed_included'});
+      reason:options.excludeRollingSummary===true?'explicit_exclusion':session.promptSettings?.injectSavedRolling===false?'disabled':!rollingText?'empty':replay&&!rollingSourceCurrent?'historical_replay_boundary':rollingSourceCurrent?'included':'source_changed_included'});
     if(rollingIncluded)add('story_summary',`【剧情摘要 / Rolling Summary】\n${rollingText}`);
     const coreSourceCurrent=memorySourceValid(session,memory.core);
     const coreIncluded=!!(memory.settings.injectCore&&memory.core.content&&(!replay||coreSourceCurrent));
@@ -520,6 +633,23 @@
     if(session.userNotes)add('user_notes',`【玩家备注】\n${session.userNotes}`);
     if(session.aiNotes)add('ai_notes',`【AI 备注】\n${session.aiNotes}`);
     add('worldbook_back',joinWb(back,'System Back'),{sourceId:back.map(x=>x.entry.id).join(','),resourceId:back.map(x=>x.book.id).join(',')});
+    const htmlContract=session.promptSettings?.outputContract;
+    if(htmlContract?.requireHtml){
+      // Stable opt-in structural contract is independent from the last assistant
+      // message and never substitutes a historical example.
+      const standard=arr(session.messages).find(x=>x.id===htmlContract.templateMessageId&&x.role==='assistant');
+      // A historical reference is layout evidence, NOT current character
+      // state. Never elevate its old status attributes, CSS or prose into a
+      // fresh system instruction merely because the player selected it.
+      let sourceSafeShell='';
+      if(standard?.content&&htmlContract.bodySelector){
+        try{
+          const draft=window.MimaHtmlStructure?.propose('【本轮正文槽：仅使用本轮新内容】',standard.content,htmlContract);
+          if(draft?.proposedContent)sourceSafeShell='\n【已移除旧动态值的参考结构；所有待确认字段都不是本轮事实】\n'+draft.proposedContent;
+        }catch(e){sourceSafeShell='\n【标准参考消息的动态来源无法验证，仅使用上述显式结构选择器；原参考消息仍安全保存在历史存档。】';}
+      }
+      add('html_structure_contract',`【本轮 HTML 结构合同：须按 HTML 形式回复；不得只输出纯文本。必需结构选择器：${htmlContract.requiredSelectors||'(只要求 HTML)'}。正文槽：${htmlContract.bodySelector||'(未标注)'}。状态槽：${htmlContract.statusSelector||'(未标注)'}。所有旧状态是历史快照，不得当成当前事实；无法确认的本轮状态请标明待确认。】${sourceSafeShell}`);
+    }
     if(options.directorNote||session.directorNote)add('director_note',options.directorNote||session.directorNote);
     return {prompt:chunks.join('\n\n'),sections,memoryTrace};
   }
@@ -948,7 +1078,7 @@
   async function readStreamingReply(res,onProgress,model='',allowIncompleteDraft=false){
     if(!res.body?.getReader)throw new ApiError('E_STREAM_PARSE','当前浏览器无法读取流式响应。',{status:res.status});
     const reader=res.body.getReader(),decoder=new TextDecoder();
-    let buffer='',reply='',eventCount=0,finalPayload=null,streamUsage=null,receivedDone=false,finishReason='',finishKind='unknown',badEvents=0,refusalSeen=false,terminalConflict=false;
+    let buffer='',reply='',eventCount=0,finalPayload=null,streamUsage=null,receivedDone=false,finishReason='',finishKind='unknown',badEvents=0,refusalSeen=false,terminalConflict=false,firstByteMarked=false;
     const publishMeta=()=>{if(onProgress?.resultMeta)Object.assign(onProgress.resultMeta,{finishReason:finishReason||'unknown',finishKind,receivedDone,refused:refusalSeen});};
     let eventType='message';
     const consumeLine=line=>{
@@ -976,7 +1106,7 @@
       const piece=extractStreamDelta(payload);if(piece){reply+=piece;emitProgress(onProgress,{phase:'streaming',percent:Math.min(90,58+Math.log10(reply.length+1)*12),receivedChars:reply.length,delta:piece,streamText:reply,detail:`已接收 ${reply.length} 个字符`});}
     };
     try{
-      while(true){const {done,value}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});const lines=buffer.split(/\r?\n/);buffer=lines.pop()||'';for(const line of lines)consumeLine(line)}
+      while(true){const {done,value}=await reader.read();if(done)break;if(!firstByteMarked){firstByteMarked=true;onProgress?.onTiming?.('first_byte',{chunkBytes:value?.byteLength||0});}buffer+=decoder.decode(value,{stream:true});const lines=buffer.split(/\r?\n/);buffer=lines.pop()||'';for(const line of lines)consumeLine(line)}
       buffer+=decoder.decode();if(buffer.trim())for(const line of buffer.split(/\r?\n/))consumeLine(line);
     }catch(e){
       publishMeta();
@@ -985,6 +1115,7 @@
       if(reply)throw Object.assign(new ApiError('E_STREAM_INTERRUPTED',`流式连接在接收 ${reply.length} 字符后异常终止。未将部分文本当成角色回复。`,{status:res.status,details:`stage: stream_read; events: ${eventCount}; cause: ${e?.name||'unknown'}: ${e?.message||String(e)}`}),{partialDraft:reply.slice(0,24000)});
       throw asApiError(e,'E_API_NETWORK_CORS');
     }
+    onProgress?.onTiming?.('last_delta',{receivedChars:reply.length,events:eventCount,receivedDone});
     if(!reply&&finalPayload){try{reply=extractReply(finalPayload)}catch(e){if(e instanceof ApiError&&e.code==='E_API_UPSTREAM')throw e;}}
     publishMeta();
     if(refusalSeen){const issue=new ApiError('E_API_REFUSAL','流式响应包含明确拒绝字段，未提交角色回复。',{status:res.status,details:JSON.stringify({stage:'provider_terminal_admission',finishKind,finishReason,eventCount})});issue.partialDraft=reply.slice(0,24000);throw issue;}
@@ -1079,15 +1210,43 @@
     // shape at the network boundary. NEVER store raw story text or credentials.
     // Repeating a failed stage can now prove whether the same body was sent.
     const payloadShape=Array.isArray(body.messages)?body.messages.map(m=>({role:String(m.role||''),chars:typeof m.content==='string'?m.content.length:null})):[];
+    const perfClock=()=>typeof performance!=='undefined'&&performance.now?performance.now():Date.now();
+    const transportClock=perfClock();
     const requestId=makeId('req'),diag={requestId,jobId:options.memoryContext?.jobId||null,attemptId:options.memoryContext?.attemptId||null,stage:options.memoryContext?.stage||'story',model:body.model,endpointOrigin:(()=>{try{return new URL(chat).origin}catch{return 'unknown'}})(),requestFields:Object.keys(body).sort(),messageCount:body.messages.length,messageShape:payloadShape,requestFingerprint:fingerprint(requestJson),temperaturePresent:Object.hasOwn(body,'temperature'),maxTokens:body.max_tokens||null,stream:streamEnabled,requestBytes,serializationElapsedMs:Date.now()-serializationStartedAt,
       generationId:options.storyContext?.generationId||null,generationAttempt:options.storyContext?.generationAttempt||null,preparationElapsedMs:options.storyContext?.preparationElapsedMs??null};
     const diagnostic=extra=>JSON.stringify({...diag,...extra});
+    // Once HTTP response headers exist, a provider refusal, terminal filter or
+    // malformed body MUST retain that observed status and the actual failure
+    // provenance. These failures are not fetch-before-response network errors.
+    // Keep the original terminal evidence in a bounded diagnostic field;
+    // never persist the full response, prompt, headers or credentials.
+    let observedFinish={kind:'unknown',reason:'unknown'};
+    const responseFailure=(error,errorSource,extra={})=>{
+      const issue=asApiError(error,'E_API_UNRECOGNIZED_RESPONSE');
+      if(issue instanceof ApiError){
+        const previous=String(issue.details||'').slice(0,1200);
+        let previousFinish={};try{previousFinish=JSON.parse(previous);}catch(_){/* Legacy text error; preserve as text only. */}
+        if(!issue.status&&res)issue.status=res.status;
+        if(issue.code==='E_API_REFUSAL')issue.hint=errorSource==='response_shape'
+          ?'已收到模型/网关的 HTTP 响应，但其中含明确 refusal 拒绝字段；不是没有收到响应。旧剧情与记忆不会自动覆盖，是否产生计费请核对中转站对应 requestId。'
+          :'已收到模型/网关的 HTTP 响应，终止状态表明内容被拦截；未把不完整的正文当作成功。是否产生计费需要核对请求记录。';
+        issue.details=diagnostic({errorSource:issue.code==='E_API_REFUSAL'&&errorSource==='response_shape'?'provider_refusal':errorSource,
+          errorStage:errorSource,httpStatus:res?.status||null,
+          finishKind:observedFinish.kind!=='unknown'?observedFinish.kind:previousFinish.finishKind||'unknown',
+          finishReason:observedFinish.reason!=='unknown'?observedFinish.reason:previousFinish.finishReason||'unknown',
+          errorCode:issue.code,providerTerminalDetails:previous,...extra});
+      }
+      return issue;
+    };
+    const timing=(phase,extra={})=>{try{options.onDiagnostic?.({type:'timing',phase,requestId,elapsedFromTransportMs:Math.round((perfClock()-transportClock)*100)/100,...extra});}catch(e){console.error('分段时钟诊断失败，生成不受影响',e);}};
+    timing('serialized',{requestBytes,serializationElapsedMs:diag.serializationElapsedMs});
     // Exact body.messages at the fetch boundary. Credentials, auth headers and
     // extraHeaders never enter the independent diagnostics database.
     try{options.onDiagnostic?.({type:'request',request:body,messageSources:options.messageSources||[],...diag});}
     catch(e){console.error('诊断事件回调失败；真实模型请求继续执行',e);}
     emitProgress(options.onProgress,{phase:'requesting',percent:42,detail:`正在请求 ${cfg.model}`});
     const fetchStartedAt=Date.now(),requestStartedAt=new Date(fetchStartedAt).toISOString();
+    timing('fetch_start');
     let res;try{res=await fetch(chat,{method:'POST',headers:apiHeaders(cfg),body:requestJson,signal,mode:'cors',credentials:'omit',cache:'no-store'});}catch(e){
       const err=asApiError(e);
       if(err instanceof ApiError&&err.code==='E_API_NETWORK_CORS'){
@@ -1122,34 +1281,44 @@
       if(err.code==='model_not_found'&&/No available channel for model/i.test(String(message)))problem.hint='中转报告当前模型在该分组下没有可用渠道。请中转管理员按上游 request id 核查模型映射与渠道状态；连续重试同一路由无法修复渠道配置。';
       problem.details=diagnostic({errorSource:'http',...responseTiming,providerError,responseKind,responseBodyElapsedMs:Date.now()-responseBodyStartedAt,responseShape:data&&typeof data==='object'?Object.keys(data).slice(0,20):[]});throw problem;
     }
+    timing('headers',{httpStatus:res.status});
     const contentType=String(res.headers?.get?.('content-type')||'').toLowerCase();
     if(streamEnabled&&!/application\/json/i.test(contentType)){
       emitProgress(options.onProgress,{phase:'streaming',percent:55,detail:'连接成功，正在接收流式正文…'});
-      const streamProgress=ev=>options.onProgress?.(ev.streamText===undefined?ev:{...ev,streamText:prefixResponseText(ev.streamText,body,cfg,true)});streamProgress.resultMeta=options.resultMeta;try{
+      let firstVisibleMarked=false,lastChars=0;
+      const streamProgress=ev=>{if(ev.streamText!==undefined){lastChars=ev.streamText.length;if(!firstVisibleMarked&&lastChars){firstVisibleMarked=true;timing('first_visible_delta',{receivedChars:lastChars});}}options.onProgress?.(ev.streamText===undefined?ev:{...ev,streamText:prefixResponseText(ev.streamText,body,cfg,true)});};
+      streamProgress.resultMeta=options.resultMeta;streamProgress.onTiming=timing;try{
         const received=await readStreamingReply(res,streamProgress,cfg.model,options.allowIncompleteDraft===true);
+        timing('stream_finish',{receivedChars:received.length});
         const streamed=text(prefixResponseText(received,body,cfg));
         if(!streamed)throw new ApiError('E_API_EMPTY_REPLY','前缀续写没有返回新的正文，原回复未改动。');
         try{options.onDiagnostic?.({type:'provider_result',finishKind:options.resultMeta?.finishKind||'unknown',finishReason:options.resultMeta?.finishReason||'unknown',responseChars:streamed.length});}catch(e){console.error('诊断事件回调失败',e);}
         return streamed;
       }catch(e){
         if(options.resultMeta?.finishReason)try{options.onDiagnostic?.({type:'provider_result',finishKind:options.resultMeta.finishKind,finishReason:options.resultMeta.finishReason,responseChars:e?.partialDraft?.length||0});}catch(diagErr){console.error('诊断事件回调失败',diagErr);}
-        if(e instanceof ApiError)e.details=diagnostic({errorSource:'stream',httpStatus:res.status,errorCode:e.code,streamDetails:String(e.details||'').slice(0,500)});throw e;}
+        throw responseFailure(e,'stream',{streamDetails:String(e?.details||'').slice(0,500)});}
     }
     emitProgress(options.onProgress,{phase:'receiving',percent:68,detail:'模型已响应，正在解析正文…'});
-    const data=await parseJsonResponse(res,'API');
+    timing('json_receive_start');
+    let data;try{data=await parseJsonResponse(res,'API');}
+    catch(e){throw responseFailure(e,'response_body_parse');}
+    timing('json_receive_done');
     captureUsageMetrics(data,cfg.model,options.onProgress);
     const ending=finishState(data);
+    observedFinish=ending;
     if(options.resultMeta){options.resultMeta.finishReason=ending.reason;options.resultMeta.finishKind=ending.kind;options.resultMeta.refused=!!data?.choices?.[0]?.message?.refusal;options.resultMeta.requestId=requestId;}
     try{options.onDiagnostic?.({type:'provider_result',finishKind:ending.kind,finishReason:ending.reason,responseChars:0});}catch(e){console.error('诊断事件回调失败',e);}
     if(ending.kind==='blocked'||ending.kind==='abnormal'){
       const evidence=contentPiece(data?.choices?.[0]?.message?.content??data?.choices?.[0]?.text??'');
-      try{assertFinishState({finishKind:ending.kind,finishReason:ending.reason},evidence.length);}catch(e){e.partialDraft=evidence.slice(0,24000);throw e;}
+      try{assertFinishState({finishKind:ending.kind,finishReason:ending.reason},evidence.length);}
+      catch(e){e.partialDraft=evidence.slice(0,24000);throw responseFailure(e,'provider_terminal_admission',{finishKind:ending.kind,finishReason:ending.reason});}
     }
-    let reply;try{reply=extractReply(data)}catch(e){const cause=asApiError(e,'E_API_UNRECOGNIZED_RESPONSE');if(cause instanceof ApiError)cause.details=diagnostic({errorSource:'response_shape',errorCode:cause.code,httpStatus:res.status,responseShape:Object.keys(data||{}).slice(0,20),messageShape:Object.keys(data?.choices?.[0]?.message||{}).slice(0,20)});throw cause;}
+    let reply;try{reply=extractReply(data)}catch(e){throw responseFailure(e,'response_shape',{
+      responseShape:Object.keys(data||{}).slice(0,20),messageShape:Object.keys(data?.choices?.[0]?.message||{}).slice(0,20)});}
     reply=text(prefixResponseText(reply,body,cfg));
     try{options.onDiagnostic?.({type:'provider_result',finishKind:ending.kind,finishReason:ending.reason,responseChars:reply.length});}catch(e){console.error('诊断事件回调失败',e);}
     if(options.resultMeta){options.resultMeta.finishReason=ending.reason;options.resultMeta.finishKind=ending.kind;options.resultMeta.refused=!!data?.choices?.[0]?.message?.refusal;options.resultMeta.usage=data?.usage||null;options.resultMeta.requestId=requestId;}
-    if(!(options.allowIncompleteDraft===true&&ending.kind==='truncated'))try{assertFinishState({finishKind:ending.kind,finishReason:ending.reason},reply.length)}catch(e){e.partialDraft=reply.slice(0,24000);throw e;}
+    if(!(options.allowIncompleteDraft===true&&ending.kind==='truncated'))try{assertFinishState({finishKind:ending.kind,finishReason:ending.reason},reply.length)}catch(e){e.partialDraft=reply.slice(0,24000);throw responseFailure(e,'provider_terminal_admission',{finishKind:ending.kind,finishReason:ending.reason});}
     if(!reply){
       const msg=data?.choices?.[0]?.message||{},rawContent=msg.content;
       const contentKind=rawContent===null?'null':Array.isArray(rawContent)?'array':typeof rawContent;
@@ -1163,6 +1332,7 @@
         thinkingTokens:finiteUsageNumber(u.completion_tokens_details?.reasoning_tokens,u.thoughtsTokenCount,u.reasoning_tokens),
         visibleChars:0})});
     }
+    timing('provider_text_validated',{receivedChars:reply.length});
     emitProgress(options.onProgress,{phase:'received',percent:90,receivedChars:reply.length,detail:`正文接收完成 · ${reply.length} 字符`});
     return reply;
   }
@@ -1332,6 +1502,188 @@
     }
     push();return out.length?out:[String(textInput||'')];
   }
+  // R4.11 memory request planner: no paid request until an exact source/reference
+  // plan has been inspected and approved. Unknown provider windows are NEVER
+  // guessed as 32k or 1M; the default plan is ONE full request with a warning.
+  function memorySourceParts(source,refMessages=[],cfg=getApiConfig(),kind='core'){
+    const budget=promptBudget();
+    const referenceTokens=refMessages.reduce((n,m)=>n+estimateTokens(m.content)+8,0);
+    // Reserve a generous prompt envelope (instructions + origin labels), distinct
+    // from the model-output reserve already subtracted by promptBudget().
+    const sourceCap=budget.verified?budget.usable-referenceTokens-1536:null;
+    if(budget.verified&&sourceCap<512)
+      throw new ApiError('E_MEMORY_REFERENCE_BUDGET','模型窗口不足以容纳所选参考、输出和总结指令；未删除任何参考或剧情。',{
+        details:JSON.stringify({referenceTokens,usable:budget.usable,windowTokens:budget.windowTokens})});
+    const full=String(source||'');
+    if(!full)return [];
+    if(!budget.verified||estimateTokens(full)<=sourceCap)
+      return [{text:full,startOffset:0,endExclusive:full.length,splitOfSingleBlock:false}];
+    // Divide at full chronology block boundaries, retaining the original bytes.
+    // Large single blocks can only be divided with explicit indexed offsets.
+    const breaks=[0],delimiter=/\n\n(?=【)/g;let found;
+    while((found=delimiter.exec(full)))breaks.push(found.index+2);
+    breaks.push(full.length);
+    const out=[];let buf='',start=0;
+    const flush=()=>{if(buf){out.push({text:buf,startOffset:start,endExclusive:start+buf.length,splitOfSingleBlock:false});buf='';}};
+    for(let j=0;j<breaks.length-1;j++){
+      let at=breaks[j],end=breaks[j+1],block=full.slice(at,end);
+      if(estimateTokens(block)<=sourceCap){
+        if(buf&&estimateTokens(buf+block)>sourceCap)flush();
+        if(!buf)start=at;
+        buf+=block;continue;
+      }
+      flush();
+      while(at<end){
+        let lo=at+1,hi=end,best=at;
+        while(lo<=hi){const mid=Math.floor((lo+hi)/2),part=full.slice(at,mid);
+          if(estimateTokens(part)<=sourceCap){best=mid;lo=mid+1;}else hi=mid-1;}
+        if(best<=at)throw new ApiError('E_MEMORY_CHUNK_BUDGET','单个源片段无法在给定窗口容纳；没有发生无凭据裁切。');
+        // Never slice one UTF-16 surrogate pair in two.
+        if(best<end&&best>at&&/[\uD800-\uDBFF]/.test(full[best-1])&&/[\uDC00-\uDFFF]/.test(full[best]))best--;
+        if(best<=at)throw new ApiError('E_MEMORY_CHUNK_BUDGET','边界落在不可拆字符中，未请求模型。');
+        out.push({text:full.slice(at,best),startOffset:at,endExclusive:best,splitOfSingleBlock:true});at=best;
+      }
+    }
+    flush();
+    if(out.map(x=>x.text).join('')!==full)throw new ApiError('E_MEMORY_PLAN_SOURCE_LOSS','记忆规划来源范围不连续，禁止开始请求。');
+    return out;
+  }
+  function memorySourceForCore(session,opts){
+    const data=storyRoundData(session),memory=normalizeManualMemory(session.manualMemory);
+    if(opts.source==='facts'){
+      const facts=memory.facts.filter(f=>trustedFactForCore(session,f)).sort((a,b)=>a.startRound-b.startRound||a.endRound-b.endRound);
+      if(!facts.length)throw new ApiError('E_MEMORY_NO_FACTS','没有可用的事实记忆。');
+      return facts.map(x=>`【第 ${x.startRound}–${x.endRound} 轮】\n${x.content}`).join('\n\n');
+    }
+    if(!data.rounds.length&&!data.opening.length)throw new ApiError('E_MEMORY_NO_CONTEXT','当前还没有可总结的剧情正文。');
+    return formatRoundRange(data,1,Math.max(1,data.rounds.length),{includeOpening:true,session});
+  }
+  // G2: A paid plan is an executable, topologically ordered dependency DAG.
+  // Every merge (including the final one) has a capacity proof BEFORE any paid leaf.
+  // Worst-case child size uses the declared per-request output limit, not a
+  // guess based on the desired short summary length.
+  function memoryMergeGraph(prefix,leafStages,referenceTokens,budget,cfg,results,rounds=null){
+    if(leafStages.length<2)return {levels:[],finalStage:leafStages[0],stages:[]};
+    const outputBound=Math.max(256,Math.floor(Number(cfg.maxTokens)>0?Number(cfg.maxTokens):budget.reserve||4096));
+    // The application's own estimateTokens() is only approximate; allowance
+    // covers numbering, UTF representation and irregular output lengths.
+    const perChild=Math.ceil(outputBound*1.6)+48;
+    const envelope=referenceTokens+1536;
+    // Without a declared context limit no split is authorized by the planner.
+    if(!budget.verified)throw new ApiError('E_MEMORY_MERGE_PREFLIGHT_UNVERIFIED','多阶段记忆合并没有已声明的模型窗口；请求 0 次。');
+    const maxFanIn=Math.min(32,Math.floor((budget.usable-envelope)/perChild));
+    if(maxFanIn<2)throw new ApiError('E_MEMORY_MERGE_PREFLIGHT_UNSATISFIABLE',
+      '根据当前窗口、输出上限和全部选中参考，无法完成最小双路合并；未发出任何付费请求。',
+      {details:JSON.stringify({usable:budget.usable,referenceTokens,outputBound,perChild,maxFanIn})});
+    const levels=[];let layer=leafStages.slice(),level=0;
+    while(layer.length>1){
+      const groups=[],next=[];
+      for(let i=0;i<layer.length;i+=maxFanIn){
+        const dependsOn=layer.slice(i,i+maxFanIn);
+        if(dependsOn.length===1){next.push(dependsOn[0]);continue;}
+        const isFinal=layer.length<=maxFanIn;
+        const stage=isFinal?prefix+'_merge':`${prefix}_merge_l${level}_${groups.length}`;
+        const inputEstimate=envelope+dependsOn.length*perChild;
+        if(inputEstimate>budget.usable)throw new ApiError('E_MEMORY_MERGE_PREFLIGHT_UNSATISFIABLE','中间合并超过窗口，未发起请求。');
+        const row={stage,operation:'merge',rounds,sourceRange:null,dependsOn,inputEstimate,outputTokenBound:outputBound,level};
+        groups.push(row);results.push(row);next.push(stage);
+      }
+      levels.push(groups);layer=next;level++;
+      if(level>64)throw new ApiError('E_MEMORY_MERGE_DEPTH','合并 DAG 深度超过有界限制，未发起请求。');
+    }
+    // A carried singleton can become the final dependency only if the last
+    // level contains multiple nodes, so the public final ID is always stable.
+    return {levels,finalStage:layer[0],stages:levels.flat()};
+  }
+  function memoryWorkPlan(kind,session,opts,refs,cfg){
+    const budget=promptBudget(),results=[],referenceTokens=refs.reduce((n,m)=>n+estimateTokens(m.content)+8,0);
+    let core=null,facts={},rolling=null;
+    const registerLeaves=(chunks,leafStages,rounds=null)=>{
+      chunks.forEach((chunk,i)=>{
+        const inputEstimate=estimateTokens(chunk.text)+referenceTokens+1536;
+        if(budget.verified&&inputEstimate>budget.usable)
+          throw new ApiError('E_MEMORY_PLAN_LEAF_OVERFLOW','源分片和全部参考超过模型声明窗口，付费前中止。',{details:JSON.stringify({inputEstimate,usable:budget.usable,stage:leafStages[i]})});
+        results.push({stage:leafStages[i],operation:'source',rounds,sourceRange:[chunk.startOffset,chunk.endExclusive],inputEstimate,
+          outputTokenBound:Math.max(256,Number(cfg.maxTokens)||budget.reserve||4096),partialSingleBlock:chunk.splitOfSingleBlock});
+      });
+    };
+    if(kind==='core'){
+      const source=memorySourceForCore(session,opts),chunks=memorySourceParts(source,refs,cfg,'core');
+      const leaves=chunks.map((_,i)=>chunks.length===1?'core_final_single':'core_part_'+i);
+      registerLeaves(chunks,leaves);
+      core={source,chunks,mergeGraph:memoryMergeGraph('core_final',leaves,referenceTokens,budget,cfg,results)};
+      // Preserve legacy stage name core_final_merge for the root, not core_final_merge_merge.
+    }else if(kind==='facts'){
+      const data=storyRoundData(session),total=data.rounds.length;
+      if(!total)throw new ApiError('E_MEMORY_NO_ROUNDS','当前剧情没有可总结的轮次。');
+      const chunkRounds=clampInt(opts.chunkRounds,1,200,10),recentRounds=clampInt(opts.recentRounds,1,100000,total),first=opts.scope==='all'?1:Math.max(1,total-recentRounds+1);
+      for(let a=first;a<=total;a+=chunkRounds){
+        const b=Math.min(total,a+chunkRounds-1),tag=`fact_range_${a}_${b}`;
+        const source=formatRoundRange(data,a,b,{includeOpening:a===1,session}),chunks=memorySourceParts(source,refs,cfg,'facts');
+        const leaves=chunks.map((_,i)=>tag+'_part_'+i);
+        registerLeaves(chunks,leaves,[a,b]);
+        facts[tag]={source,chunks,mergeGraph:memoryMergeGraph(tag,leaves,referenceTokens,budget,cfg,results,[a,b])};
+      }
+    }
+    // Stable topological stages include EVERY paid merge before approval.
+    else if(kind==='rolling'){
+      if(!budget.verified)throw new ApiError('E_MEMORY_ROLLING_WINDOW_UNVERIFIED','自动滚动记忆未声明真实模型窗口，无法证明合并容量；未进行付费请求。');
+      const msgs=session.messages||[],safeWindow=Math.max(18,Number(session.promptSettings?.recentMessageLimit||34)-4);
+      const end=msgs.length-safeWindow,start=session.lastSummarizedIndex||0;
+      if(end<=start)throw new ApiError('E_MEMORY_ROLLING_NO_SOURCE','滚动记忆无新来源。');
+      const sourceParts=rollingSourceParts(session,start,end,25000);
+      const source=['【已有长期摘要】\n'+(session.rollingSummary||'(无)'),
+        ...sourceParts.map((x,i)=>`【本次新增旧剧情 · 第 ${i+1} 段】\n${x.text}`)].join('\n\n');
+      const chunks=memorySourceParts(source,refs,cfg,'rolling');
+      const leaves=chunks.map((_,i)=>chunks.length===1?'rolling_summary':'rolling_part_'+i);
+      registerLeaves(chunks,leaves);
+      rolling={source,chunks,sourceParts,start,end,mergeGraph:memoryMergeGraph('rolling',leaves,referenceTokens,budget,cfg,results)};
+    }
+    const summary={kind,requestCount:results.length,referenceTokensPerRequest:referenceTokens,
+      estimatedTotalInputTokens:results.reduce((n,x)=>n+x.inputEstimate,0),
+      estimatedOutputTokens:results.reduce((n,x)=>n+x.outputTokenBound,0),
+      contextWindowTokens:budget.verified?budget.windowTokens:null,windowDeclared:budget.verified,
+      unknownCapacityWarning:!budget.verified,requiresSplit:results.some(x=>x.operation==='merge'),
+      sourceChars:core?.source?.length??rolling?.source?.length??Object.values(facts).reduce((n,x)=>n+x.source.length,0),
+      planVersion:3,capacityVerifiedForAllStages:budget.verified,stages:results};
+    return {core,facts,rolling,summary};
+  }
+  async function executeMemoryMergeGraph(graph,leafStages,outputs,{job,signal,progress,kind,targetChars,temp,rangeScope=null,sourceType=''}){
+    if(!graph?.stages?.length)return outputs[0];
+    const parts=new Map(leafStages.map((stage,i)=>[stage,outputs[i]]));
+    for(const node of graph.stages){
+      assertMemoryTaskActive(signal);
+      const inputs=node.dependsOn.map(dep=>{
+        if(!parts.has(dep))throw new ApiError('E_MEMORY_PLAN_DEPENDENCY','已确认合并图存在未结算的上游阶段；未提交核心记忆。');
+        return parts.get(dep);
+      });
+      if(job){(job.stageScopes||(job.stageScopes={}))[node.stage]={...(rangeScope||{sourceStartIndex:0,sourceEndExclusive:job.sourceCount}),
+        prerequisiteOutputDigests:await Promise.all(inputs.map(exactDigest))};}
+      emitProgress(progress,{phase:'memory_merge',stageKey:node.stage,detail:`记忆合并第 ${node.level+1} 层 · ${node.dependsOn.length} 项`});
+      const prompt=kind==='core'?
+        [{role:'system',content:'你是咪嘛馆的长期核心记忆编辑器。只合并给定的上游记忆，不能添加事实、遗漏关键关系，也不能续写。'+MEMORY_TIME_CONTRACT},
+         {role:'user',content:`【候选核心材料】\n${inputs.map((x,i)=>`[${i+1}] ${x}`).join('\n\n')}\n\n保留重要关系、事件与因果，去重不删独立事实；${node.stage==='core_final_merge'?`最终目标约 ${targetChars} 字。`: '这是中间层整理，不强制压缩掉事实。'}`}]:
+      kind==='rolling'?
+        [{role:'system',content:'你是咪嘛馆的滚动剧情档案整理器。忠实合并旧档案与新增旧剧情，不遗漏任何独立事件，不擅自杜撰。'+MEMORY_TIME_CONTRACT},
+         {role:'user',content:`【滚动记忆上游阶段】\n${inputs.map((x,i)=>`[${i+1}] ${x}`).join('\n\n')}\n\n按照发生顺序保存全部人物、事件、关系、状态、承诺与伏笔；禁止因为合并而删除不同事件或叙述细节。`}]:
+        [{role:'system',content:'你是咪嘛馆的事实记忆编辑器。只合并上游已发生事实，不能创造新事实，同一行为多次发生要分别保留。'+MEMORY_TIME_CONTRACT},
+         {role:'user',content:`【分段事实摘要】\n${inputs.map((x,i)=>`[${i+1}] ${x}`).join('\n\n')}\n\n合并重复措辞，完整保留不同事件的次数、人物、先后、否定与关系；目标约 ${targetChars} 字但不得删事实。`}];
+      // Runtime guard uses the same effective reference injection and budget.
+      const merged=await memoryModel(prompt,temp,signal,job,node.stage);
+      parts.set(node.stage,merged);
+    }
+    return parts.get(graph.finalStage);
+  }
+  async function previewMemoryPlan(kind,id,opts={}){
+    const original=getSession(id);if(!original)throw new ApiError('E_STORY_SESSION_MISSING','剧情不存在');
+    const session=normalizeSession(clone(original)),cfg=getApiConfig(),refs=memoryReferenceSnapshot(session);
+    const referenceMessages=referencePromptMessages(refs);
+    const options={...opts,model:String(opts.model??session.manualMemory.settings.memoryModel??'').trim()};
+    const planned=memoryWorkPlan(kind,session,options,referenceMessages,cfg);
+    const digest=await exactDigest({kind,sessionId:id,options:{...options,approvedPlanDigest:undefined},source:planned.core?.source||planned.rolling?.source||Object.values(planned.facts).map(x=>x.source),references:refs,
+      api:[cfg.contextWindowTokens,cfg.maxTokens,cfg.model,options.model],planVersion:planned.summary.planVersion,stages:planned.summary.stages});
+    return {...planned.summary,digest};
+  }
   // Bind each fact part to the exact model-visible characters and their
   // canonical message offsets. A >28k-character utterance can straddle parts;
   // validating both parts against the entire round falsely expands authority.
@@ -1340,7 +1692,7 @@
     return {requestedChars:requested,advisedChars:requested,sourceMessageCount:arr(messages).length};
   }
   async function summarizeFactText(sourceText,targetChars,temp,signal,progress,label='事实记忆',job=null,rangeTag='fact',rangeScope=null,rangeMessages=[],sourceSession=null){
-    const chunks=splitTextBlocks(sourceText,28000),partials=[];
+    const chunks=(job?.workPlan?.facts?.[rangeTag]?.chunks||memorySourceParts(sourceText,job?.referenceMessages||[])).map(x=>x.text),partials=[];
     // A long message can be split at 28k characters. These identities bind
     // each stage to its actual model-visible slice, not the whole range.
     const partScopes=chunks.map((part,partIndex)=>({...rangeScope,modelVisibleSlice:{partIndex,startOffset:0,endExclusive:part.length,sourceFingerprint:fingerprint(part)}}));
@@ -1355,12 +1707,10 @@
       partials.push(await memoryModel(prompt,temp,signal,job,stage));
     }
     if(partials.length===1)return partials[0];
-    emitProgress(progress,{phase:'memory_fact_merge',percent:78,detail:`${label} · 正在合并超长分片`});
-    if(job)(job.stageScopes||(job.stageScopes={}))[rangeTag+'_merge']={...(rangeScope||{sourceStartIndex:0,sourceEndExclusive:job.sourceCount}),prerequisiteOutputDigests:await Promise.all(partials.map(exactDigest))};
-    return await memoryModel([
-      {role:'system',content:'你是“咪嘛馆”的事实记忆整理器。把多个同一剧情区间的分段摘要合并为一个事实摘要。不得新增事实。'+MEMORY_TIME_CONTRACT},
-      {role:'user',content:`【分段事实摘要】\n${partials.map((x,i)=>`[${i+1}] ${x}`).join('\n\n')}\n\n合并表达中的重复措辞，但独立发生的相同事件要保留其发生次数。保留每一来源分片里的所有独立事件、先后、人物、地点及否定；允许超过 ${targetChars} 字，不能靠删事件换取压缩率。`}
-    ],temp,signal,job,rangeTag+'_merge');
+    const graph=job?.workPlan?.facts?.[rangeTag]?.mergeGraph;
+    if(!graph)throw new ApiError('E_MEMORY_MERGE_PLAN_MISSING','超窗记忆没有预先签发的完整合并 DAG；拒绝继续收费。');
+    return executeMemoryMergeGraph(graph,chunks.map((_,i)=>rangeTag+'_part_'+i),partials,
+      {job,signal,progress,kind:'facts',targetChars,temp,rangeScope});
   }
   function assertMemoryTaskActive(signal){
     if(signal?.aborted)throw new DOMException('记忆总结已由用户停止。','AbortError');
@@ -1406,8 +1756,26 @@
       const sourceFingerprint=memorySourceFingerprint(original.messages,original.messages.length);
       const targetBaseline=kind==='rolling'?JSON.stringify([original.rollingSummary||'',original.lastSummarizedIndex||0]):JSON.stringify(kind==='core'?normalizeManualMemory(original.manualMemory).core:normalizeManualMemory(original.manualMemory).facts);
       const sourceHash=fingerprint([sourceFingerprint,referenceDigest,kind==='core'&&opts.source==='facts'?original.manualMemory.facts:null,kind==='rolling'?original.rollingSummary:null]);
+      const proposed=memoryWorkPlan(kind,original,opts,referenceMessages,cfg);
+      if(kind==='rolling'){
+        if(opts.autoRolling===true){
+          if(original.promptSettings.autoRollingEnabled!==true)
+            throw new ApiError('E_ROLLING_AUTO_NOT_AUTHORIZED','未开启允许收费的自动旧剧情整理');
+          if(proposed.summary.requestCount>original.promptSettings.autoRollingMaxRequests)
+            throw new ApiError('E_ROLLING_AUTO_BUDGET','自动整理的完整阶段图超过主人授权的单次请求预算；未调用模型');
+        }else{
+          const signed=await previewMemoryPlan('rolling',id,opts);
+          if(!opts.approvedPlanDigest||opts.approvedPlanDigest!==signed.digest)
+            throw new ApiError('E_MEMORY_PLAN_NOT_CONFIRMED','手动旧剧情整理收费计划未确认，未调用模型');
+        }
+      }
+      if(proposed&&kind!=='rolling'){
+        const signed=await previewMemoryPlan(kind,id,opts);
+        if(!opts.approvedPlanDigest||opts.approvedPlanDigest!==signed.digest)
+          throw new ApiError('E_MEMORY_PLAN_NOT_CONFIRMED','记忆请求计划未确认或来源/配置已变动，未调用付费模型。',{details:JSON.stringify(signed)});
+      }
       job=await store.beginMemoryJob({sessionId:id,kind,options:opts,sourceHash,sourceCount:original.messages.length,sourceFingerprint,targetBaseline,configSignature,expectedReferenceContract:referenceContract});
-      job.referenceMessages=referenceMessages;job.referenceDigest=referenceDigest;
+      job.referenceMessages=referenceMessages;job.referenceDigest=referenceDigest;job.workPlan=proposed;
       await store.checkpointMemoryJob(job,'reference_snapshot',{digest:referenceDigest,selected:referenceRecords.map(x=>({kind:x.kind,id:x.id,authority:x.authority})),chars:referenceMessages.reduce((n,x)=>n+x.content.length,0)});
       if(typeof store.heartbeatMemoryJob==='function'&&typeof setInterval==='function'){
         heartbeat=setInterval(()=>store.heartbeatMemoryJob(job).catch(e=>{
@@ -1417,7 +1785,7 @@
         }),10000);
       }
       job.progress=progress;
-      await store.checkpointMemoryJob(job,'request_planned',{sourceCount:original.messages.length,sourceRevision:original.recordRevision});
+      await store.checkpointMemoryJob(job,'request_planned',{sourceCount:original.messages.length,sourceRevision:original.recordRevision,planVersion:proposed?.summary?.planVersion,requestCount:proposed?.summary?.requestCount,stages:proposed?.summary?.stages});
       if(kind==='core')return await generateCoreMemory(id,opts,generationAbort.signal,progress,job,original);
       if(kind==='facts')return await generateFactMemories(id,opts,generationAbort.signal,progress,job,original);
       return await refreshSummary(original,opts.temperature,generationAbort.signal,progress,job);
@@ -1511,6 +1879,7 @@
             verification:{...checked.verification,legacySource:'R4.5_v1_revalidated'}});
         (job.verifiedStages||(job.verifiedStages={}))[stage]=checked;
         await checkpoint(job,stage+'_reused_durable',{contractDigest,outputDigest:staged.outputDigest,chars:checked.memory.length});
+        emitProgress(job?.progress,{phase:'memory_stage_durable',stageKey:stage,stageContent:checked.memory,detail:`已复用耐久候选 ${stage}`});
         return checked.memory;
       }
     }
@@ -1538,7 +1907,7 @@
       if(job){const declared=promptBudget();const estimated=prompt.reduce((n,m)=>n+estimateTokens(m.content)+8,0);
         if(declared.verified&&estimated>declared.usable)throw new ApiError('E_MEMORY_REFERENCE_BUDGET','记忆请求包含的参考资料超过已配置模型窗口；不会静默裁剪。',{details:JSON.stringify({stage,estimated,usable:declared.usable})});}
       const modelProgress=ev=>{if(job?.progress){emitProgress(job.progress,{...ev,jobId:job.id,attemptId:job.attemptId,stageKey:stage,sourceRange:stageScope||null});}};
-      const value=await callModelWithConfig(prompt,memoryCfg,temp,signal,{streamOverride:false,resultMeta:meta,onProgress:modelProgress,memoryContext:job?{jobId:job.id,attemptId:job.attemptId,stage}:null});
+      const value=await callModelWithConfig(prompt,memoryCfg,temp,signal,{streamOverride:job?.options?.memoryStreamMode==='on'?true:job?.options?.memoryStreamMode==='off'?false:undefined,resultMeta:meta,onProgress:modelProgress,memoryContext:job?{jobId:job.id,attemptId:job.attemptId,stage}:null});
       // Recheck the canonical prefix *before* validating the response against
       // sourceRecords captured prior to the network await. Otherwise a source
       // edit can be misclassified as merely a reviewable model output, and a
@@ -1557,6 +1926,7 @@
         await window.MimaLocalStore.putMemoryStage(job,stage,contractDigest,checked.memory,{outputDigest,model:memoryCfg.model,finishReason:meta.finishReason||'unknown',verification:checked.verification});
         (job.verifiedStages||(job.verifiedStages={}))[stage]=checked;
       }
+      emitProgress(job?.progress,{phase:'memory_stage_durable',stageKey:stage,stageContent:checked.memory,detail:`已安全保存候选 ${stage}`});
       await checkpoint(job,stage+'_received',{chars:checked.memory.length,elapsedMs:Date.now()-started,finishReason:meta.finishReason||'unknown',outputContract:checked.contract,evidenceCount:checked.evidenceCount,provenance:checked.provenance,verification:checked.verification,usage:meta.usage||null,...(checked.memory.length<=20000?{output:checked.memory}:{candidateOversize:true})});
       return checked.memory;
     }
@@ -1613,12 +1983,12 @@
       const outputPlan=factOutputPlan(rangeMessages,targetChars);
       await checkpoint(job,'fact_range_output_plan',{startRound:a,endRound:b,...outputPlan});
       const content=await summarizeFactText(source,outputPlan.advisedChars,temp,signal,report,`第 ${a}–${b} 轮`,job,rangeTag,rangeScope,rangeMessages,session);
-      const checkedFact=normalizeFactMemory({startRound:a,endRound:b,content,source:'manual_fact_summary',targetChars,temperature:temp,sourceMessageCount:data.rounds.filter(r=>r.index>=a&&r.index<=b).reduce((n,r)=>n+r.messages.length,0),sourceCount:session.messages.length,sourceFingerprint:memorySourceFingerprint(session.messages,session.messages.length),sourceMessageIds:rangeMessages.map(m=>m.id),sourceHash:memorySourceFingerprint(rangeMessages,rangeMessages.length),verification:verifiedMemoryMetadata(job,rangeTag+(splitTextBlocks(source,28000).length>1?'_merge':'_part_0'))});
+      const checkedFact=normalizeFactMemory({startRound:a,endRound:b,content,createdAt:nowIso(),updatedAt:nowIso(),source:'manual_fact_summary',targetChars,temperature:temp,sourceMessageCount:data.rounds.filter(r=>r.index>=a&&r.index<=b).reduce((n,r)=>n+r.messages.length,0),sourceCount:session.messages.length,sourceFingerprint:memorySourceFingerprint(session.messages,session.messages.length),sourceMessageIds:rangeMessages.map(m=>m.id),sourceHash:memorySourceFingerprint(rangeMessages,rangeMessages.length),verification:verifiedMemoryMetadata(job,rangeTag+((job?.workPlan?.facts?.[rangeTag]?.chunks.length||1)>1?'_merge':'_part_0'))});
       if(job){
         if(!window.MimaLocalStore?.putFactRangeCandidate)throw new ApiError('E_MEMORY_FACT_RANGE_STORE_UNAVAILABLE','事实分段存储不可用，不宣告成功');
         const sliced=session.messages.slice(rangeScope.sourceStartIndex,rangeScope.sourceEndExclusive);
         job.loadedCharMaskId=session.loadedCharMaskId||'';
-        const finalStage=rangeTag+(splitTextBlocks(source,28000).length>1?'_merge':'_part_0');
+        const finalStage=rangeTag+((job?.workPlan?.facts?.[rangeTag]?.chunks.length||1)>1?'_merge':'_part_0');
         job.factRangeStageDigests ||= {};
         job.factRangeStageDigests[rangeTag]=job.stageContractDigests?.[finalStage];
         await window.MimaLocalStore.putFactRangeCandidate(job,rangeTag,rangeScope,checkedFact,memorySourceFingerprint(sliced,sliced.length),await exactDigest(checkedFact.content));
@@ -1654,7 +2024,7 @@
       if(!data.rounds.length&&!data.opening.length)throw new ApiError('E_MEMORY_NO_CONTEXT','当前剧情还没有可总结的正文。');
       source=formatRoundRange(data,1,Math.max(1,data.rounds.length),{includeOpening:true,session});
     }
-    const chunks=splitTextBlocks(source,30000),partials=[];
+    const chunks=(job?.workPlan?.core?.chunks||memorySourceParts(source,job?.referenceMessages||[])).map(x=>x.text),partials=[];
     for(let i=0;i<(chunks.length===1?0:chunks.length);i++){
       assertMemoryTaskActive(signal);
       emitProgress(progress,{phase:'memory_core',percent:10+Math.round(((i+.2)/chunks.length)*58),detail:`核心记忆 · 整理材料 ${i+1}/${chunks.length}`});
@@ -1668,12 +2038,10 @@
     const final=chunks.length===1
       ? await memoryModel([
           {role:'system',content:'你是“咪嘛馆”的长期核心记忆编辑器。只根据材料输出最终核心记忆，不续写、不虚构、不杜撰角色心理，不加入推测。'+MEMORY_TIME_CONTRACT},
-          {role:'user',content:`【完整来源：${sourceType==='facts'?'事实记忆':'剧情原文'}】\n${source}\n\n写成约 ${targetChars} 字的长期核心记忆。按主题与关系组织，优先记录：关系转变、重要承诺/约定、关键选择及其后果、持续状态变化、身份和世界观重要事实、未解决事项。保留主体和因果，不写流水账，不凑字数。`}
+          {role:'user',content:`【完整来源：${sourceType==='facts'?'事实记忆':'剧情原文'}】\n${source}\n\n写成约 ${targetChars} 字的长期核心记忆。按主题与关系组织，优先记录关系转变、承诺、重要选择及其后果、持续状态、身份、世界观与未解决事项。保留主体和因果。`}
         ],temp,signal,job,'core_final_single')
-      : await memoryModel([
-          {role:'system',content:'你是“咪嘛馆”的长期核心记忆编辑器。根据材料输出最终核心记忆。不得新增任何事实；如果材料之间信息重复，要合并而不是复述。'+MEMORY_TIME_CONTRACT},
-          {role:'user',content:`【候选核心材料】\n${partials.map((x,i)=>`[${i+1}] ${x}`).join('\n\n')}\n\n请写成约 ${targetChars} 字的最终“核心记忆”。绝对不要写成“第1轮……第2轮……”的流水账。按主题与关系组织，优先记录：关系转变、重要承诺/约定、关键选择及其后果、长期状态变化、身份与世界观关键事实、重要未解决事项。保留必要的因果关系与主体，不要为了凑字数重复内容。`}
-        ],temp,signal,job,'core_final_merge');
+      : await executeMemoryMergeGraph(job?.workPlan?.core?.mergeGraph,
+          chunks.map((_,i)=>'core_part_'+i),partials,{job,signal,progress,kind:'core',targetChars,temp,sourceType});
     assertMemoryTaskActive(signal);
     const fresh=commitMemoryIntoLatest(session,'core',sourceType,nowMemory=>({
       ...nowMemory,
@@ -1708,6 +2076,8 @@
     session.manualMemory=memory;return await saveSession(session);
   }
   async function previewFactMerge(id,opts={},signal=null,progress=null){
+    // Refresh canon on both zero-API planning and approved execution.
+    state=normalizeState(await window.MimaLocalStore.loadState());
     const session=getSession(id);if(!session)throw new ApiError('E_STORY_SESSION_MISSING','剧情已不存在');
     const memory=normalizeManualMemory(session.manualMemory),ids=arr(opts.factIds).map(String),unique=[...new Set(ids)];
     if(unique.length<2||unique.length!==ids.length)throw new ApiError('E_MEMORY_MERGE_SELECTION','至少选择两条不同的事实记忆');
@@ -1725,7 +2095,7 @@
     if(oldDraft&&!['DISCARDED','COMMITTED'].includes(oldDraft.status))
       throw new ApiError('E_MEMORY_MERGE_DRAFT_EXISTS','此剧情仍有可恢复的合并草稿，请先确认或放弃，不会重复消耗额度。');
     const checkedMergeStage=async(stage,prompt)=>{
-      const contractDigest=await exactDigest({version:2,sessionId:id,role:stage,
+      const contractDigest=await exactDigest({version:3,preflight,sessionId:id,role:stage,
         selectedFactIds:facts.map(x=>x.id),references:referenceSnapshot,
         messages:prompt,temperature,maxTokens:cfg.maxTokens,source:facts.map(x=>[x.id,x.content,x.startRound,x.endRound])});
       const existing=await mergeStore.getMergeStage(id,contractDigest);
@@ -1738,34 +2108,67 @@
       await mergeStore.putMergeStage(id,contractDigest,output,await exactDigest(output));
       return output;
     };
-    // Batch on saved memory boundaries; a second pass cannot see source data
-    // that was never passed to the model. Always keep originals until approval.
-    const slices=[],maxPartChars=16000;let part='';
-    for(const fact of facts){
-      const entry=`【原事实记忆 ${fact.id} · 第${fact.startRound}–${fact.endRound}轮】\n${fact.content}\n`;
-      if(part&&part.length+entry.length>maxPartChars){slices.push(part);part='';}
-      if(entry.length>maxPartChars){if(part){slices.push(part);part='';}slices.push(...splitTextBlocks(entry,maxPartChars));}
-      else part+=entry+'\n';
+    // Explicit manual fact-to-fact consolidation is ALSO a paid memory task.
+    // Prove every leaf and every dependency merge fits before the FIRST call.
+    // No 16k-char fallback concatenation can masquerade as a merged result.
+    const source=facts.map(f=>`【原事实记忆 ${f.id} · 第${f.startRound}–${f.endRound}轮】\n${f.content}`).join('\n\n');
+    const chunks=memorySourceParts(source,referenceMessages,cfg,'facts');
+    const graphRows=[],budget=promptBudget();
+    const referenceTokens=referenceMessages.reduce((n,m)=>n+estimateTokens(m.content)+8,0);
+    const leaves=chunks.map((_,i)=>'fact_merge_part_'+i);
+    for(let i=0;i<chunks.length;i++){
+      const inputEstimate=estimateTokens(chunks[i].text)+referenceTokens+1536;
+      if(budget.verified&&inputEstimate>budget.usable)throw new ApiError('E_MEMORY_MERGE_PREFLIGHT_LEAF_OVERFLOW','所选事实记忆超出窗口，未产生任何付费请求');
     }
-    if(part)slices.push(part);
-    const pieces=[];
-    for(let i=0;i<slices.length;i++){
+    const graph=memoryMergeGraph('fact',leaves,referenceTokens,budget,cfg,graphRows);
+    // Preserve legacy final-stage public name, but bind its digest to the
+    // complete ordered DAG / source / reference contract, not stage labels.
+    for(const row of graph.stages){if(row.stage==='fact_merge')row.stage='fact_merge_final';row.dependsOn=row.dependsOn.map(x=>x==='fact_merge'?'fact_merge_final':x);}
+    if(graph.finalStage==='fact_merge')graph.finalStage='fact_merge_final';
+    const preflight={version:3,leafCount:chunks.length,stages:[...leaves.map((stage,i)=>({stage,operation:'source',sourceRange:[chunks[i].startOffset,chunks[i].endExclusive]})),...graph.stages],
+      sourceDigest:await exactDigest(source),referenceDigest:await exactDigest(referenceSnapshot),selectedFactIds:facts.map(x=>x.id)};
+    // Bind the actual paid work to all sources, model settings, stage edges,
+    // output ceiling and locally declared window. No paid call may precede
+    // this digest equality check. Old callers must explicitly authorize.
+    const planDigest=await exactDigest({preflight,selected:facts.map(f=>[f.id,f.content,f.startRound,f.endRound]),
+      wholeFacts:memory.facts.map(f=>[f.id,f.content,f.startRound,f.endRound,f.source,f.sourceFingerprint,f.sourceHash||'']),
+      historyFingerprint:memorySourceFingerprint(session.messages,session.messages.length),
+      referenceSnapshot,model:cfg.model,apiKind:cfg.apiType||cfg.provider||'',maxTokens:cfg.maxTokens,
+      contextWindowTokens:budget.verified?budget.windowTokens:null,temperature,targetChars});
+    const plannedRequests=preflight.stages.length;
+    if(opts.planOnly===true)return {
+      planDigest,planVersion:4,selectedCount:facts.length,requestCount:plannedRequests,
+      sourceCharacters:source.length,model:cfg.model,contextWindowTokens:budget.verified?budget.windowTokens:null,
+      capacityVerifiedForAllStages:budget.verified,
+      estimatedInputTokens:chunks.reduce((n,c)=>n+estimateTokens(c.text)+referenceTokens+1536,0)
+        +graph.stages.reduce((n,x)=>n+(Number(x.inputEstimate)||0),0),
+      stages:preflight.stages.map((x,i)=>({index:i+1,id:x.stage,operation:x.operation,
+        inputEstimate:x.inputEstimate||null,outputTokenBound:x.outputTokenBound||null,
+        dependsOn:x.dependsOn||[],sourceRange:x.sourceRange||null})),
+      note:'这是全部阶段最多可能调用的次数；符合合同的已存阶段可恢复复用，实际新请求可能更少。'};
+    if(!opts.approvedPlanDigest||opts.approvedPlanDigest!==planDigest)
+      throw new ApiError('E_MEMORY_MERGE_CHARGE_PLAN_STALE','二次合并计划尚未由主人确认，或来源/模型/预算已变化；没有发出付费请求。');
+    const outputs=new Map();
+    for(let i=0;i<chunks.length;i++){
       assertMemoryTaskActive(signal);
-      emitProgress(progress,{phase:'memory_merge',percent:5+Math.round(70*i/Math.max(1,slices.length)),detail:`整理事实记忆 ${i+1}/${slices.length}`});
+      emitProgress(progress,{phase:'memory_merge',percent:5+Math.round(60*i/Math.max(1,chunks.length)),detail:`整理事实记忆 ${i+1}/${chunks.length}`});
       const prompt=[{role:'system',content:'你是咪嘛馆的长期事实记忆整理助手。忠实保留人物、时间顺序、具体经历、对话与细节，不续写，不增加事实。只输出整理后的正文。'},...referenceMessages,
-        {role:'user',content:`请合并下面的事实记忆，消除冗余描述，但保留不同轮次实际重复发生的事件。允许内容详细，目标约${targetChars}字，内容准确优先.\n${slices[i]}`}];
-      pieces.push(await checkedMergeStage('fact_merge_part_'+i,prompt));
+        {role:'user',content:`请整理下面的事实记忆，去除相同事件的冗余描述但保留不同轮次确实重复发生的事情；不得杜撰。\n${chunks[i].text}`}];
+      outputs.set(leaves[i],await checkedMergeStage(leaves[i],prompt));
     }
-    let output=pieces[0];
-    if(pieces.length>1){
-      // Second-pass merge only if intermediary material fits the configured
-      // context. Otherwise concatenate all checked parts without silently dropping.
-      const source=pieces.map((x,i)=>`【第${i+1}部分】\n${x}`).join('\n\n');
-      if(source.length<=16000){
-        output=await checkedMergeStage('fact_merge_final',[{role:'system',content:'把以下多个事实记忆分片合成一份按时间顺序的完整记忆。不要遗漏不同事件；不得杜撰。只输出正文。'},...referenceMessages,
-          {role:'user',content:`${source}\n\n合并重复描述并保留全部独立事件，目标约${targetChars}字；如内容过多可超出字数。`}]);
-      }else output=source;
+    for(const node of graph.stages){
+      assertMemoryTaskActive(signal);
+      const parts=node.dependsOn.map(stage=>{
+        if(!outputs.has(stage))throw new ApiError('E_MEMORY_MERGE_PLAN_DEPENDENCY','事实合并阶段缺少已验证上游，拒绝继续执行');
+        return outputs.get(stage);
+      });
+      emitProgress(progress,{phase:'memory_merge',percent:65+Math.round(30*node.level/Math.max(1,graph.levels.length)),detail:`合并事实记忆层 ${node.level+1}：${node.dependsOn.length} 个阶段`});
+      const prompt=[{role:'system',content:'合并事实记忆上游的所有已发生事件，不遗漏独立事件或更改次数、时间、角色、否定、关系。仅输出合并正文。'+MEMORY_TIME_CONTRACT},...referenceMessages,
+        {role:'user',content:`【预先验证容量的合并节点 ${node.stage}】\n${parts.map((x,i)=>`[${i+1}] ${x}`).join('\n\n')}\n\n准确性高于目标 ${targetChars} 字，不能杜撰或擅自删掉不同事件。`}];
+      outputs.set(node.stage,await checkedMergeStage(node.stage,prompt));
     }
+    const output=outputs.get(graph.finalStage)||outputs.get(leaves[0]);
+    if(!output)throw new ApiError('E_MEMORY_MERGE_NO_OUTPUT','事实合并没有全部已完成阶段，未创建可提交候选');
     assertMemoryTaskActive(signal);
     const draft=await mergeStore.createMergeDraft(id,{content:output,selectedIds:facts.map(f=>f.id),sourceSignature:memoryFactSignature(memory.facts),
       sourceHistoryFingerprint:memorySourceFingerprint(session.messages,session.messages.length),
@@ -1821,11 +2224,11 @@
     // respect the existing persisted setting instead of launching every turn.
     // This is an input-volume gate, never a sleep or a dropped source window.
     const trigger=Number(session.promptSettings?.summaryTriggerMessages||28);
-    return session.promptSettings?.summaryEnabled!==false&&end>8&&pending>0&&(!automatic||pending>=trigger);
+    return (!automatic||session.promptSettings?.autoRollingEnabled===true)&&end>8&&pending>0&&(!automatic||pending>=trigger);
   }
   async function refreshSummary(session,temp,signal,progress,job=null){
     const original=clone(session);
-    if(session.promptSettings?.summaryEnabled===false){if(job)await window.MimaLocalStore.settleMemoryJob(job,'skipped','E_MEMORY_DISABLED');return session;}
+    // Manual rolling is independently permitted even when auto billing is off.
     const msgs=session.messages||[];const safeWindow=Math.max(18,Number(session.promptSettings?.recentMessageLimit||34)-4);const unsummarizedEnd=msgs.length-safeWindow;
     if(unsummarizedEnd<=8||(session.lastSummarizedIndex||0)>=unsummarizedEnd){if(job)await window.MimaLocalStore.settleMemoryJob(job,'skipped','E_MEMORY_ALREADY_COVERED');return session;}
     const start=session.lastSummarizedIndex||0;
@@ -1839,41 +2242,34 @@
     const rollingLengthInstruction='优先完整保留旧摘要里仍由剧情原文支持的事件，并加入本次新增的每一个独立事件；不能为了压缩到 1000 字而丢失人物、物品、先后顺序、否定、承诺或发生次数。仅在完整覆盖能够满足时才尽量控制在 1000 字左右；否则允许更长。';
     const p=[{role:'system',content:'你是独立剧情档案助手。只总结实际发生过的剧情，不添加新事实，不混入其他世界。'+MEMORY_TIME_CONTRACT},{role:'user',content:`【已有长期摘要】\n${session.rollingSummary||'(无)'}\n\n【本次新增旧剧情】\n${chunk}\n\n请输出更新后的剧情摘要，保留：已发生事件、人物关系变化、身体/心理状态、重要物品与地点、未解决伏笔。${rollingLengthInstruction}`}];
     try{
-      const sourceChunks=sourceParts.map(p=>p.text);
+      const plan=job?.workPlan?.rolling;
+      if(!plan)throw new ApiError('E_MEMORY_ROLLING_PLAN_MISSING','自动滚动记忆没有收费前完成的依赖 DAG，未调用模型。');
+      const sourceChunks=plan.chunks.map(x=>x.text);
       if(job){
         job.stageScopes=job.stageScopes||{};
-        // Final rolling model outputs may legitimately include claims from the
-        // previous summary. Their proof must be based on the ORIGINAL covered
-        // History plus the newly covered History, not merely this new slice.
-        // Part stages remain scoped to their own individual source fragments.
-        const all={sourceStartIndex:0,sourceEndExclusive:unsummarizedEnd};
-        job.stageScopes.rolling_summary=all;job.stageScopes.rolling_merge=all;
-        sourceParts.forEach((p,i)=>job.stageScopes['rolling_part_'+i]={sourceStartIndex:p.sourceStartIndex,sourceEndExclusive:p.sourceEndExclusive});
+        const all={sourceStartIndex:0,sourceEndExclusive:unsummarizedEnd,sourceType:'rolling_old_and_new_history'};
+        job.stageScopes.rolling_summary=all;
+        plan.chunks.forEach((x,i)=>job.stageScopes['rolling_part_'+i]={...all,modelVisibleSlice:{startOffset:x.startOffset,endExclusive:x.endExclusive,sourceFingerprint:fingerprint(x.text)}});
         await checkpoint(job,'rolling_source_plan',{sourceStartIndex:start,sourceEndExclusive:unsummarizedEnd,partCount:sourceChunks.length,
           sourceCoverageHash:memorySourceFingerprint(msgs.slice(start,unsummarizedEnd),unsummarizedEnd-start),
-          messageIds:msgs.slice(start,unsummarizedEnd).map(m=>m.id)});
+          messageIds:msgs.slice(start,unsummarizedEnd).map(m=>m.id),plannedMergeStages:plan.mergeGraph.stages.map(x=>x.stage)});
       }
       let summary;
-      if(sourceChunks.length===1)summary=await memoryModel(p,Math.min(clampTemp(temp),0.6),signal,job,'rolling_summary');
-      else{
-        const pieces=[];
+      if(sourceChunks.length===1){
+        summary=await memoryModel([{role:'system',content:'你是独立剧情档案助手。忠实保留已有长期摘要与全部新增旧剧情，禁止新增不存在的事实。'+MEMORY_TIME_CONTRACT},
+          {role:'user',content:`【已确认的完整滚动来源】\n${sourceChunks[0]}\n\n${rollingLengthInstruction}`}],
+            Math.min(clampTemp(temp),0.6),signal,job,'rolling_summary');
+      }else{
+        const leaves=[];
         for(let i=0;i<sourceChunks.length;i++){
           assertMemoryTaskActive(signal);
-          pieces.push(await memoryModel([{role:'system',content:'你是独立剧情档案助手，只总结下列单个原文分片，不新增事实。'+MEMORY_TIME_CONTRACT},
-            {role:'user',content:`【旧剧情原文分片 ${i+1}/${sourceChunks.length}】\n${sourceChunks[i]}\n请给出本分片中发生的事件和对应人物关系。`}],Math.min(clampTemp(temp),0.6),signal,job,'rolling_part_'+i));
+          const stage='rolling_part_'+i;
+          leaves.push(await memoryModel([{role:'system',content:'你是咪嘛馆旧剧情档案整理器。忠实提炼以下模型可见片段；保留完整事件与时间关系，不杜撰、不遗漏独立事件。'+MEMORY_TIME_CONTRACT},
+            {role:'user',content:`【滚动剧情片段 ${i+1}/${sourceChunks.length}】\n${sourceChunks[i]}\n\n完整提炼该片段中真实的角色、事件与关系。`}],
+              Math.min(clampTemp(temp),0.6),signal,job,stage));
         }
-        // Do not send a possibly huge second-pass prompt simply to satisfy
-        // word-overlap verification. When the full intermediate transcript fits,
-        // let the memory model organize it; otherwise retain every part, in order.
-        const assembled=[session.rollingSummary||'',...pieces].filter(Boolean).join('\n\n');
-        if(assembled.length>16000){
-          summary=assembled;
-          if(job)(job.verifiedStages||(job.verifiedStages={})).rolling_merge={memory:summary,verification:{fact:'model_generated'},provenance:[]};
-          await checkpoint(job,'rolling_merge_received',{mode:'preserve_all_parts',chars:summary.length});
-        }else{
-          summary=await memoryModel([{role:'system',content:'你是独立剧情档案整理助手。根据旧摘要和所有新增分片，忠实合并长期剧情，不续写或杜撰。'+MEMORY_TIME_CONTRACT},
-            {role:'user',content:`【已存在的长期摘要和新增剧情摘要】\n${assembled}\n\n请合并重复描述，保留重要事件顺序、人物关系、持续状态及未解决事项；若细节较多允许超出目标字数。`}],Math.min(clampTemp(temp),0.6),signal,job,'rolling_merge');
-        }
+        summary=await executeMemoryMergeGraph(plan.mergeGraph,sourceChunks.map((_,i)=>'rolling_part_'+i),leaves,
+          {job,signal,progress,kind:'rolling',targetChars:1000,temp:Math.min(clampTemp(temp),0.6),rangeScope:{sourceStartIndex:0,sourceEndExclusive:unsummarizedEnd}});
       }
       // Cursor moves only after every source part and the final summary have
       // completed successfully; semantic compression is owner-editable.
@@ -1885,28 +2281,52 @@
   }
   const rollingInFlight=new Set();
   async function resumeExpiredRollingJobs(){
-    const store=window.MimaLocalStore,configs=getApiConfig();if(!configs.apiBase)return;
-    if(!configs.model&&!state.sessions.some(s=>normalizeManualMemory(s.manualMemory).settings.memoryModel))return;
+    // Do not silently buy another attempt after a browser restart. The stored
+    // running lease and durable candidates remain available for owner review;
+    // an explicit billing confirmation is needed to continue them.
+    const store=window.MimaLocalStore;
     for(const session of state.sessions){
       const job=await store.getMemoryJob(session.id,'rolling');
-      if(!job||job.status!=='running'||Number(job.leaseUntilEpoch||0)>Date.now()||Number(job.recoveryCount||0)>=3)continue;
-      if(!summaryNeeded(session,{automatic:true}))continue;
-      if(rollingInFlight.has(session.id))continue;
-      rollingInFlight.add(session.id);
-      runRecordedMemory('rolling',session.id,job.options||{temperature:0.35},null,null)
-        .catch(e=>console.warn('Rolling recovery debt',{sessionId:session.id,jobId:job.id,stage:'startup_recovery',code:e.code||e.message,attemptId:job.attemptId}))
-        .finally(()=>rollingInFlight.delete(session.id));
+      if(job?.status==='running'&&Number(job.leaseUntilEpoch||0)<=Date.now())
+        console.warn('滚动整理中断，等待主人在记忆页确认继续',{sessionId:session.id,jobId:job.id,code:'E_ROLLING_REQUIRES_REAUTH'});
     }
   }
   function queueRollingSummary(id,temp){
     if(rollingInFlight.has(id)||!getSession(id)||!summaryNeeded(getSession(id),{automatic:true}))return;rollingInFlight.add(id);
     setTimeout(async()=>{try{
       const job=await window.MimaLocalStore?.getMemoryJob?.(id,'rolling');
-      // Legacy `needs_review` was produced by the retired semantic gate. It
-      // must not permanently stop automatic rolling summaries. Restart a new
-      // attempt using the canonical source; beginMemoryJob fences any live job.
-      await runRecordedMemory('rolling',id,{temperature:temp},null,null);
-    }catch(e){if(e.code!=='E_MEMORY_JOB_PENDING')console.warn('Rolling summary background debt', {sessionId:id,code:e.code||'E_MEMORY_BACKGROUND',stage:'rolling',settlementError:e.settlementError||''});}
+      // A failed/aborted/needs-review job is a durable billing pause. Do not
+      // retry the same rejected source on every new canonical story commit.
+      if(job && ['failed','aborted','needs_review','interrupted'].includes(job.status))return;
+      // A previous durable pause is itself an owner-action boundary. Do not
+      // rebuild the same DAG or write another pause on each story turn. When
+      // source/config changes the UI labels the old estimate stale; only an
+      // explicit manual preview may re-plan and authorize new paid work.
+      const paused=await window.MimaLocalStore?.getRollingPreflight?.(id);
+      if(paused?.status==='paused_no_charge')return;
+      // Use exactly the same full DAG used by the paid runner, before opening any job.
+      const plan=await previewMemoryPlan('rolling',id,{temperature:temp});
+      const session=getSession(id);
+      if(!session||session.promptSettings.autoRollingEnabled!==true)return;
+      const limit=session.promptSettings.autoRollingMaxRequests;
+      if(plan.requestCount>limit){
+        await window.MimaLocalStore.putRollingPreflight(id,{code:'E_ROLLING_AUTO_BUDGET',requestCount:plan.requestCount,allowedRequests:limit,
+          contextWindowTokens:plan.contextWindowTokens,estimatedInputTokens:plan.estimatedTotalInputTokens,sourceCount:session.messages.length,sourceRevision:session.recordRevision,
+          detail:'完整阶段图需要 '+plan.requestCount+' 次，当前授权最多 '+limit+' 次。须手动查看完整计划并确认，不能自动增加额度。'});
+        window.dispatchEvent?.(new CustomEvent('mima:rolling-preflight',{detail:{sessionId:id}}));
+        return;
+      }
+      await runRecordedMemory('rolling',id,{temperature:temp,autoRolling:true},null,null);
+      await window.MimaLocalStore.clearRollingPreflight(id);
+    }catch(e){
+      if(['E_MEMORY_ROLLING_WINDOW_UNVERIFIED','E_MEMORY_CAPACITY','E_MEMORY_WINDOW_UNVERIFIED','E_ROLLING_AUTO_BUDGET'].includes(e.code)){
+        const session=getSession(id);
+        // The preflight record is durable even when no paid job was ever created.
+        await window.MimaLocalStore.putRollingPreflight(id,{code:e.code,allowedRequests:session?.promptSettings?.autoRollingMaxRequests||1,
+          contextWindowTokens:0,sourceCount:session?.messages?.length||0,sourceRevision:session?.recordRevision||0,detail:e.message});
+        window.dispatchEvent?.(new CustomEvent('mima:rolling-preflight',{detail:{sessionId:id}}));
+      }else if(e.code!=='E_MEMORY_JOB_PENDING')console.warn('Rolling summary background debt', {sessionId:id,code:e.code||'E_MEMORY_BACKGROUND',stage:'rolling',settlementError:e.settlementError||''});
+    }
     finally{rollingInFlight.delete(id);}},0);
   }
   // R11.1: The provider can return a refusal inside ordinary message.content
@@ -1965,6 +2385,14 @@
     const result=classifyStoryReply(reply,meta);
     if(result.blocked&&meta.manualRecovery!==true)throw new ApiError('E_API_REFUSAL_CONTENT','模型返回了拒绝声明，已阻止将其作为角色回复保存或归档。',{hint:'这是模型或网关返回的内容限制，不代表你请求了绘图。可以检查坏回复并手动恢复；不会自动重复付费请求。',details:JSON.stringify({stage:'story_reply_admission',reason:result.reason,finishReason:String(meta.finishReason||'unknown'),receivedChars:String(reply||'').length})});
     if(meta.outputContract?.completeHtml===true)validateCompleteHtml(reply);
+    if(meta.outputContract?.requireHtml===true){
+      const validator=window.MimaHtmlStructure;
+      if(!validator?.inspect)throw new ApiError('E_HTML_CONTRACT_RUNTIME_MISSING','HTML 结构校验模块未加载，拒绝伪成功');
+      const verdict=validator.inspect(reply,meta.outputContract);
+      if(!verdict.ok)throw new ApiError(verdict.status==='plain_text'?'E_HTML_STRUCTURE_MISSING':'E_HTML_REQUIRED_NODE_MISSING',
+        '回复缺少主人指定的 HTML 结构；候选已保留在生成诊断中，不会后台重刷收费模型。',{
+          details:JSON.stringify({missing:verdict.missing,stage:'story_output_contract'})});
+    }
     return reply;
   }
   function validateCompleteHtml(raw){
@@ -2079,26 +2507,41 @@
     // Diagnostics intentionally live outside state, local-store, History,
     // versions, rolling/core/fact memory and the backup/export contract.
     const journal=window.MimaDiagnosticJournal;
-    const diagnosticId=journal?.begin?.({sessionId:id,turnId:options.diagnosticTurnId||'',action});
+    const diagnosticId=journal?.begin?.({sessionId:id,turnId:options.diagnosticTurnId||'',traceId:options.diagnosticTraceId||'',action});
     let diagnosticCandidate='';
+    const storyClock=()=>typeof performance!=='undefined'&&performance.now?performance.now():Date.now(),storyTimelineStart=storyClock();
+    const storyMark=(phase,extra={})=>{if(diagnosticId)void journal.event(diagnosticId,{type:'timing',phase,generationId:pending.id,attempt:pending.attempt,elapsedAfterPreparedMs:Math.round((storyClock()-storyTimelineStart)*100)/100,preparationElapsedMs:Date.now()-preparationStartedAt,...extra});};
+    storyMark('canonical_snapshot_persisted',{messageCount:messages.length});
     try{
     const replyRaw=await callModelWithConfig(messages,cfg,temp,signal,{onProgress:progress,resultMeta:storyResultMeta,requestBody,messageSources:snapshot.messageSources,
       storyContext:{sessionId:id,generationId:pending.id,generationAttempt:pending.attempt,preparationElapsedMs:Date.now()-preparationStartedAt},
       onDiagnostic:event=>{if(diagnosticId)void journal.event(diagnosticId,event);}});
     if(signal?.aborted)throw new DOMException('生成已取消，结果未提交','AbortError');
     diagnosticCandidate=replyRaw;
+    storyMark('provider_reply_parsed',{chars:replyRaw.length});
     const admissionMeta={...storyResultMeta,outputContract:session.promptSettings?.outputContract};
-    validateStoryReply(replyRaw,admissionMeta);
+    // HTML structure is admitted on the canonical post-output-regex text.
+    // Raw transport still checks refusal and the preexisting balanced-HTML
+    // option, but existing output-regex transformations may legitimately add
+    // the explicitly required structure. Do not discard them before running.
+    const rawAdmissionMeta={...admissionMeta,outputContract:{...(admissionMeta.outputContract||{}),requireHtml:false}};
+    validateStoryReply(replyRaw,rawAdmissionMeta);
     // Hard invariant: never persist a blank assistant message.
     if(!text(replyRaw))throw new ApiError('E_API_EMPTY_REPLY','模型返回空白正文，已阻止写入剧情。');
+    storyMark('raw_validated');
     const reply=applyRegexForSession(session,replyRaw,'output');
+    storyMark('output_regex_done',{chars:reply.length});
     // Keep the complete original provider text for manual recovery if an output
     // regex erases/mangles it. The transformed text is not the raw reply.
     // Output regex is a second admission boundary: it must not turn an
     // accepted provider response into an empty or provider-voice refusal.
-    validateStoryReply(reply,admissionMeta);
+    const boundTemplate=session.promptSettings?.outputContract?.templateMessageId
+      ?session.messages.find(m=>m.id===session.promptSettings.outputContract.templateMessageId&&m.role==='assistant') : null;
+    const canonicalAdmissionMeta={...admissionMeta,outputContract:{...(admissionMeta.outputContract||{}),...(boundTemplate?{templateHtml:boundTemplate.content}:{})}};
+    validateStoryReply(reply,canonicalAdmissionMeta);
     if(!text(reply))throw new ApiError('E_API_EMPTY_REPLY','输出正则处理后没有有效角色正文；未提交空白消息。');
     const renderedReply=applyRegexForSession(session,reply,'display');
+    storyMark('display_regex_done',{chars:renderedReply.length});
     emitProgress(progress,{phase:'saving',percent:95,detail:'正在保存角色回复…'});
     if(action==='continue'&&target){
       const i=session.messages.findIndex(m=>m.id===target.id),previousContent=session.messages[i].content,previousRaw=session.messages[i].rawContent||previousContent;archiveVersion(session.messages[i],'continue_before_append');session.messages[i].content=`${previousContent}\n${reply}`;session.messages[i].rawContent=`${previousRaw}\n${replyRaw}`;session.messages[i].renderedContent=applyRegexForSession(session,session.messages[i].content,'display');session.messages[i].metadata={...(session.messages[i].metadata||{}),continuedAt:nowIso()};session.messages[i].tokenEstimate=estimateTokens(session.messages[i].content);
@@ -2126,6 +2569,7 @@
       try{saved=await saveSession({...latest,messages:generatedMessages,pendingGeneration:null,legacyMemoryQuarantined:latest.legacyMemoryQuarantined||session.legacyMemoryQuarantined},{signal});break;}
       catch(e){if(!String(e?.message||'').includes('E_CANONICAL_CONFLICT')||commitAttempt===2)throw e;}
     }
+    storyMark('canonical_committed',{messageCount:saved.messages.length});
     // Auto summary is a lower-priority independent job; never block Direct Reply.
     queueRollingSummary(id,temp);
     emitProgress(progress,{phase:'done',percent:100,detail:'剧情生成完成。'});
@@ -2146,6 +2590,35 @@
       throw e;
     }
   }
+  // An HTML-invalid Provider reply is not a canonical assistant message. This
+  // pathway repairs the durable rejected diagnostic without a second API call,
+  // and still settles the original failed generation exactly once.
+  async function prepareRejectedHtmlRepair(id,diagnosticId){
+    const record=await window.MimaDiagnosticJournal.recoveryCandidate(diagnosticId);
+    if(record.sessionId!==id||String(record.action||'').startsWith('compat_'))throw new ApiError('E_HTML_REPAIR_OWNER','诊断不属于原生剧情。');
+    state=normalizeState(await window.MimaLocalStore.loadState());
+    const session=getSession(id),pending=session?.pendingGeneration;
+    if(!pending||pending.id!==record.generationId||pending.attempt!==record.generationAttempt||pending.status!=='failed'||pending.action!==record.action||
+      pending.canonicalFingerprint!==memorySourceFingerprint(session.messages,session.messages.length))
+      throw new ApiError('E_HTML_REPAIR_RECOVERY_STALE','失败生成已更换或剧情变化，不生成过期候选。');
+    const raw=String(record.rawRejectedReply||'');
+    if(!raw.trim()||record.rejectedReplyTruncated)throw new ApiError('E_HTML_REPAIR_RAW_INCOMPLETE','诊断正文不完整，不允许猜测或补造。');
+    const contract=session.promptSettings?.outputContract||{};
+    const template=session.messages.find(x=>x.id===contract.templateMessageId&&x.role==='assistant');
+    if(!contract.requireHtml||!template)throw new ApiError('E_HTML_REPAIR_TEMPLATE_MISSING','请先选择有效标准 HTML 模板。');
+    const validator=window.MimaHtmlStructure;
+    const attempt=validator.propose(raw,template.content,contract);
+    const templateDigest=await exactDigest({content:template.content,contract});
+    const messageId='rejected_'+record.id;
+    const candidate={version:1,sessionId:id,messageId,recoveryDiagnosticId:record.id,recoveryGenerationId:pending.id,
+      recoveryAttempt:pending.attempt,baseContentDigest:await exactDigest({raw,canonicalFingerprint:pending.canonicalFingerprint}),
+      templateMessageId:template.id,templateDigest,contractDigest:await exactDigest(contract),
+      proposedContent:attempt.proposedContent,oldContent:raw,repairActions:attempt.repairActions,
+      confidence:attempt.confidence,missingFields:attempt.missingFields,provenance:'code_generated_recovery',state:'pending',createdAt:nowIso()};
+    candidate.id=await exactDigest({id,messageId,baseContentDigest:candidate.baseContentDigest,templateDigest,proposedContent:candidate.proposedContent});
+    await window.MimaLocalStore.putHtmlRepairCandidate(candidate);
+    return candidate;
+  }
   async function restoreRejectedReply(id,body={}){
     if(body.confirmed!==true)throw new ApiError('E_REPLY_RECOVERY_CONFIRM','请先确认将已收到的文本手动恢复到原剧情。');
     const record=await window.MimaDiagnosticJournal.recoveryCandidate(body.diagnosticId);
@@ -2160,26 +2633,152 @@
     if(pending.canonicalFingerprint!==memorySourceFingerprint(session.messages,session.messages.length))
       throw new ApiError('E_CANONICAL_CONFLICT','失败后剧情正文或版本已变化，未覆盖当前时间线。');
     const raw=String(record.rawRejectedReply),action=pending.action;
-    validateStoryReply(raw,{manualRecovery:true,outputContract:session.promptSettings?.outputContract});
+    let recoveredContent=raw,htmlRepair=null;
+    if(body.htmlCandidateId){
+      const key='rejected_'+record.id,c=await window.MimaLocalStore.getHtmlRepairCandidate(id,key);
+      if(!c||c.id!==body.htmlCandidateId||c.state!=='pending'||c.recoveryDiagnosticId!==record.id||
+        c.recoveryGenerationId!==pending.id||c.recoveryAttempt!==pending.attempt||c.provenance!=='code_generated_recovery'||
+        c.baseContentDigest!==await exactDigest({raw,canonicalFingerprint:pending.canonicalFingerprint}))
+        throw new ApiError('E_HTML_REPAIR_RECOVERY_STALE','候选或冻结任务发生变化，未覆盖。');
+      const contract=session.promptSettings?.outputContract||{};
+      const template=session.messages.find(x=>x.id===c.templateMessageId);
+      if(!template||c.templateDigest!==await exactDigest({content:template.content,contract})||
+        c.contractDigest!==await exactDigest(contract)||
+        window.MimaHtmlStructure.propose(raw,template.content,contract).proposedContent!==c.proposedContent)
+        throw new ApiError('E_HTML_REPAIR_TEMPLATE_STALE','模板或结构已变化，拒绝修复。');
+      try{recoveredContent=window.MimaHtmlStructure.finalizeProposal(raw,template.content,contract,c.proposedContent,body.dynamicValues||{});}
+      catch(error){throw new ApiError('E_HTML_REPAIR_OWNER_CONFIRMATION_REQUIRED',String(error.message||error));}
+      htmlRepair=c;
+    }
+    validateStoryReply(recoveredContent,{manualRecovery:true,outputContract:session.promptSettings?.outputContract});
     let target=pending.targetMessageId?session.messages.find(m=>m.id===pending.targetMessageId&&m.role==='assistant'):null;
     if((action==='continue'||pending.targetMessageId)&&!target)throw new ApiError('E_REPLY_RECOVERY_TARGET','原回复目标已不存在，未覆盖其他消息。');
     state=persisted;
     if(target&&(action==='continue'||action==='regenerate')){
       archiveVersion(target,'manual_recovery_before_'+action);
       if(action==='continue'){
-        target.rawContent=String(target.rawContent??target.content)+'\n'+raw;target.content+='\n'+raw;
-      }else{target.rawContent=raw;target.content=raw;target.isEdited=false;}
+        target.rawContent=String(target.rawContent??target.content)+'\n'+raw;target.content+='\n'+recoveredContent;
+      }else{target.rawContent=raw;target.content=recoveredContent;target.isEdited=!!htmlRepair;}
     }else{
       if(!['send','regenerate','auto_advance'].includes(action))throw new ApiError('E_REPLY_RECOVERY_ACTION','这个操作类型不能恢复到剧情。');
-      target=makeMessage('assistant',raw,session,{source:'manual_diagnostic_recovery'});session.messages.push(target);
+      target=makeMessage('assistant',recoveredContent,session,{source:'manual_diagnostic_recovery'});target.rawContent=raw;target.isEdited=!!htmlRepair;session.messages.push(target);
     }
-    target.metadata={...(target.metadata||{}),generationSnapshot:action==='continue'?target.metadata?.generationSnapshot:pending.snapshot,
+    target.metadata={...(target.metadata||{}),...(htmlRepair?{htmlCodeRepair:{candidateId:htmlRepair.id,originalRawPreserved:true,approvedAt:nowIso(),recoveryDiagnosticId:record.id}}:{}),generationSnapshot:action==='continue'?target.metadata?.generationSnapshot:pending.snapshot,
       manualRecoveryIds:[...new Set([...arr(target.metadata?.manualRecoveryIds),record.id])],
       manualRecovery:{diagnosticId:record.id,generationId:pending.id,attempt:pending.attempt,action,restoredAt:nowIso(),providerFinishReason:record.finishReason||'',contentFingerprint:manualReplyFingerprint(target)}};
     target.renderedContent=applyRegexForSession(session,target.content,'display');target.tokenEstimate=estimateTokens(target.content);
     // Explicit human action only: no Provider, retry or background summary.
-    const saved=await saveSession({...session,pendingGeneration:null,legacyMemoryQuarantined:true});
+    let saved;
+    if(htmlRepair){
+      const normalized=normalizeSession({...session,pendingGeneration:null,legacyMemoryQuarantined:true,updatedAt:nowIso()});
+      const initialRecordRevision=Number(session.recordRevision)||0;
+      normalized.recordRevision=initialRecordRevision+1;
+      const nextState=clone(persisted),idx=nextState.sessions.findIndex(x=>x.id===id);
+      if(idx<0)throw new ApiError('E_STORY_SESSION_MISSING','恢复目标已不存在');
+      nextState.sessions[idx]=normalized;
+      const committed=await window.MimaLocalStore.commitHtmlRepair(nextState,Number(persisted.storeRevision)||0,id,htmlRepair.messageId,htmlRepair.id,initialRecordRevision);
+      state=normalizeState(committed);saved=normalized;
+    }else saved=await saveSession({...session,pendingGeneration:null,legacyMemoryQuarantined:true});
     return {session:saved,messageId:target.id,alreadyRestored:false,action};
+  }
+  async function prepareHtmlRepair(id,msgId){
+    state=normalizeState(await window.MimaLocalStore.loadState());
+    const session=getSession(id),message=session?.messages.find(x=>x.id===msgId);
+    if(!session||!message||message.role!=='assistant')throw new ApiError('E_HTML_REPAIR_TARGET_MISSING','目标角色回复不存在。');
+    const contract=session.promptSettings?.outputContract||{};
+    if(!contract.requireHtml||!contract.templateMessageId)throw new ApiError('E_HTML_REPAIR_TEMPLATE_MISSING','请先在上下文设置中绑定一条正确的 HTML 模板消息。');
+    const template=session.messages.find(x=>x.id===contract.templateMessageId&&x.role==='assistant');
+    if(!template)throw new ApiError('E_HTML_REPAIR_TEMPLATE_STALE','指定格式参考已不在当前剧情中，不能猜测结构。');
+    const validator=window.MimaHtmlStructure;
+    if(!validator?.propose)throw new ApiError('E_HTML_REPAIR_RUNTIME_MISSING','HTML 代码修复模块未加载。');
+    const targetDigest=await exactDigest({content:message.content,rawContent:message.rawContent,versions:message.versions});
+    const templateDigest=await exactDigest({content:template.content,contract});
+    const attempt=validator.propose(message.content,template.content,contract);
+    const candidate={version:1,sessionId:id,messageId:msgId,branchId:message.branchId||'main',baseMessageVersion:arr(message.versions).length,
+      baseContentDigest:targetDigest,templateMessageId:template.id,templateDigest,contractDigest:await exactDigest(contract),
+      proposedContent:attempt.proposedContent,oldContent:message.content,repairActions:attempt.repairActions,
+      confidence:attempt.confidence,missingFields:attempt.missingFields,provenance:'code_generated',state:'pending',createdAt:nowIso()};
+    candidate.id=await exactDigest({id,msgId,targetDigest,templateDigest,proposedContent:candidate.proposedContent});
+    if(!window.MimaLocalStore?.putHtmlRepairCandidate)throw new ApiError('E_HTML_REPAIR_STORE_MISSING','修复候选存储不可用，未改动剧情。');
+    await window.MimaLocalStore.putHtmlRepairCandidate(candidate);
+    return candidate;
+  }
+  async function prepareAiHtmlRepair(id,msgId,body={}){
+    if(body.confirmedCharge!==true)throw new ApiError('E_HTML_AI_CHARGE_NOT_APPROVED','主人未确认付费重排；请求 0 次。');
+    state=normalizeState(await window.MimaLocalStore.loadState());
+    const session=getSession(id),message=session?.messages.find(x=>x.id===msgId);
+    if(!message||message.role!=='assistant')throw new ApiError('E_HTML_AI_TARGET_MISSING','目标角色回复不存在。');
+    const contract=session.promptSettings?.outputContract||{},template=session.messages.find(x=>x.id===contract.templateMessageId&&x.role==='assistant');
+    if(!contract.requireHtml||!template||!contract.bodySelector)throw new ApiError('E_HTML_AI_TEMPLATE_MISSING','请选择有效 HTML 模板与唯一正文槽。');
+    const validator=window.MimaHtmlStructure;
+    if(!validator?.verifyReformat)throw new ApiError('E_HTML_AI_RUNTIME_MISSING','独立 HTML 安全验证未加载，拒绝付费请求。');
+    // Reject unsupported status data BEFORE the charge. Do not ask a model to
+    // guess missing state values, even when the resulting HTML looks plausible.
+    const admitted=validator.aiAdmission(message.content,template.content,contract);
+    if(admitted.deterministicAvailable)throw new ApiError('E_HTML_AI_CODE_FIRST','当前正文可用免 API 静态代码补全，请先选择代码修复；不会重复消费 API。');
+    const targetDigest=await exactDigest({content:message.content,rawContent:message.rawContent,versions:message.versions});
+    const templateDigest=await exactDigest({content:template.content,contract});
+    const sys='你是严格的 HTML 排版器，不是剧情写手。唯一允许的任务是把原 HTML 中明确位于正文槽的逐字文本按固定模板复原。状态栏每个动态字段必须换成模板标注的【待确认】占位；不得沿用模板的旧状态，不得新增人物事实或改变 CSS、节点、属性。只输出完整 HTML。';
+    const user=`【原始正文】\n${message.content}\n\n【固定模板】\n${template.content}\n\n【正文槽】\n${contract.bodySelector}\n\n严格保持正文每个原始字符不变。`;
+    const cfg=getApiConfig();
+    const returned=await callModelWithConfig([{role:'system',content:sys},{role:'user',content:user}],cfg,0.1,null,{streamOverride:false});
+    // Reopen canonical after the awaited paid request. A concurrent edit is a
+    // conflict, even if a model returned perfectly valid HTML.
+    const fresh=normalizeState(await window.MimaLocalStore.loadState()),current=fresh.sessions.find(x=>x.id===id);
+    const original=current?.messages.find(x=>x.id===msgId),ref=current?.messages.find(x=>x.id===template.id);
+    if(!original||!ref||await exactDigest({content:original.content,rawContent:original.rawContent,versions:original.versions})!==targetDigest||
+       await exactDigest({content:ref.content,contract:current.promptSettings?.outputContract})!==templateDigest)
+      throw new ApiError('E_HTML_AI_SOURCE_STALE','本次付费重排期间原文或模板变化，拒绝旧返回值。');
+    let checkedAi;try{checkedAi=validator.verifyReformat(message.content,returned,template.content,contract);}
+    catch(e){throw new ApiError('E_HTML_AI_RESULT_UNSAFE','模型未能保留精确正文/结构，旧剧情未修改。',{details:String(e.message||e)});}
+    const candidate={version:1,sessionId:id,messageId:msgId,branchId:message.branchId||'main',baseMessageVersion:arr(message.versions).length,
+      baseContentDigest:targetDigest,templateMessageId:template.id,templateDigest,contractDigest:await exactDigest(contract),
+      proposedContent:returned,oldContent:message.content,repairActions:['one_paid_reformat_attempt','exact_content_verification'],
+      confidence:'exact_content_checked',missingFields:checkedAi.missingFields||[],provenance:'ai_reformatted',state:'pending',createdAt:nowIso()};
+    candidate.id=await exactDigest({id,msgId,targetDigest,templateDigest,proposedContent:returned});
+    await window.MimaLocalStore.putHtmlRepairCandidate(candidate);
+    return candidate;
+  }
+  async function applyHtmlRepair(id,msgId,candidateId,dynamicValues={}){
+    const c=await window.MimaLocalStore.getHtmlRepairCandidate(id,msgId);
+    if(!c||c.id!==candidateId||c.state!=='pending')throw new ApiError('E_HTML_REPAIR_CANDIDATE_MISSING','候选不存在或已经结算。');
+    // Read current canonical, not an obsolete UI snapshot; stale tabs fail closed.
+    state=normalizeState(await window.MimaLocalStore.loadState());
+    const session=getSession(id),message=session?.messages.find(x=>x.id===msgId);
+    if(!message||message.role!=='assistant'||(message.branchId||'main')!==c.branchId||arr(message.versions).length!==c.baseMessageVersion||
+      await exactDigest({content:message.content,rawContent:message.rawContent,versions:message.versions})!==c.baseContentDigest)
+      throw new ApiError('E_HTML_REPAIR_CAS_STALE','消息或支线已经变化，禁止用过期修复覆盖。');
+    const contract=session.promptSettings?.outputContract||{},template=session.messages.find(x=>x.id===c.templateMessageId);
+    if(!template||await exactDigest({content:template.content,contract})!==c.templateDigest||await exactDigest(contract)!==c.contractDigest)
+      throw new ApiError('E_HTML_REPAIR_TEMPLATE_STALE','模板或结构合同已变化，拒绝旧候选。');
+    const validator=window.MimaHtmlStructure;
+    let approvedContent;
+    if(c.provenance==='ai_reformatted'){
+      try{
+        const verified=validator.verifyReformat(message.content,c.proposedContent,template.content,contract);
+        for(const field of verified.missingFields||[]){if(!Object.hasOwn(dynamicValues,field.key)||!String(dynamicValues[field.key]).trim())throw new Error('E_HTML_REPAIR_DYNAMIC_FIELD_MISSING: '+field.key);}
+        // AI's output already matches the exact static skeleton. Substitute
+        // only owner-verified dynamic values using the shared validator.
+        approvedContent=validator.finalizeWithProse(validator.aiAdmission(message.content,template.content,contract).expectedProse,
+          template.content,contract,c.proposedContent,dynamicValues);
+      }catch(e){throw new ApiError('E_HTML_AI_RESULT_UNSAFE',String(e.message||e));}
+    }else{
+      try{approvedContent=validator.finalizeProposal(message.content,template.content,contract,c.proposedContent,dynamicValues);}
+      catch(error){throw new ApiError('E_HTML_REPAIR_OWNER_CONFIRMATION_REQUIRED',String(error.message||error));}
+    }
+    archiveVersion(message,'owner_html_code_repair');
+    message.content=approvedContent;message.renderedContent=applyRegexForSession(session,message.content,'display');
+    // The raw provider content remains immutable evidence.
+    message.isEdited=true;message.metadata={...message.metadata,htmlCodeRepair:{candidateId:c.id,originalRawPreserved:true,approvedAt:nowIso()}};
+    message.tokenEstimate=estimateTokens(message.content);session.legacyMemoryQuarantined=true;
+    const initialRecordRevision=Number(session.recordRevision)||0;
+    const normalized=normalizeSession({...session,updatedAt:nowIso(),recordRevision:initialRecordRevision+1});
+    const persisted=clone(state),idx=persisted.sessions.findIndex(x=>x.id===id);
+    if(idx<0)throw new ApiError('E_STORY_SESSION_MISSING','剧情已不存在');
+    persisted.sessions[idx]=normalized;
+    const committed=await window.MimaLocalStore.commitHtmlRepair(persisted,Number(state.storeRevision)||0,id,msgId,c.id,initialRecordRevision);
+    state=normalizeState(committed);
+    return normalized;
   }
   async function editMessage(id,msgId,content,opts={}){const s=getSession(id);if(!s)throw new Error('未找到剧本');const i=s.messages.findIndex(m=>m.id===msgId);if(i<0)throw new Error('未找到消息');const msg=s.messages[i];archiveVersion(msg,'manual_edit');msg.content=String(content||'');msg.rawContent=msg.content;msg.renderedContent=msg.role==='assistant'?applyRegexForSession(s,msg.content,'display'):msg.content;if(msg.role==='user')msg.metadata={...(msg.metadata||{}),inputSemanticMode:inputSemanticMode(s),inputSemanticParserVersion:'1.1.7'};msg.isEdited=true;msg.editedAt=nowIso();msg.tokenEstimate=estimateTokens(msg.content);s.legacyMemoryQuarantined=true;if(opts.truncateAfter){const removed=s.messages.slice(i+1);if(removed.length){s.archivedBranches=arr(s.archivedBranches);s.archivedBranches.push({id:makeId('branch'),fromMessageId:msg.id,reason:'edit_truncate_after',archivedAt:nowIso(),messages:removed});s.messages=s.messages.slice(0,i+1);}}return saveSession(s);}
   async function restoreMessageVersion(id,msgId,versionIndex,body={}){
@@ -2260,24 +2859,38 @@
       nm=path.match(/^\/novels\/([^/]+)\/export\/txt$/);if(nm&&method==='GET'){const p=getNovelProject(nm[1]);return ok({name:`${p.title||'novel'}.txt`,text:window.MimaNovelEngine.exportProjectText(p)});}
       nm=path.match(/^\/novels\/([^/]+)\/export\/json$/);if(nm&&method==='GET'){const p=getNovelProject(nm[1]);return ok({name:`${p.title||'novel'}.json`,project:clone(p)});}
 
+      if(path==='/setting-templates'&&method==='GET')return ok(state.settingTemplates);
+      if(path==='/setting-templates'&&method==='POST')return ok(await editSettingTemplate('save',body||{}));
+      if(path==='/setting-templates/default'&&method==='POST')return ok(await editSettingTemplate('default',body||{}));
+      let templateRoute=path.match(/^\/setting-templates\/([^/]+)$/);
+      if(templateRoute&&method==='PATCH')return ok(await editSettingTemplate('save',{...(body||{}),id:templateRoute[1]}));
+      if(templateRoute&&method==='DELETE')return ok(await editSettingTemplate('delete',{...(body||{}),id:templateRoute[1]}));
       if(path==='/sessions'&&method==='GET')return ok(sessionSummaries());
       if(path==='/sessions/full'&&method==='GET')return ok(state.sessions);
-      if(path==='/sessions'&&method==='POST'){const s=await saveSession(normalizeSession({...body,id:makeId('sess'),createdAt:nowIso(),updatedAt:nowIso(),messages:[]}),{allowCreate:true});return ok(s);}
+      if(path==='/sessions'&&method==='POST'){if(body?.settingTemplateId)return ok(await createSessionUsingTemplate(body));const s=await saveSession(normalizeSession({...body,id:makeId('sess'),createdAt:nowIso(),updatedAt:nowIso(),messages:[]}),{allowCreate:true});return ok(s);}
       if(path==='/sessions/import'&&method==='POST'){const s=normalizeSession({...body,id:makeId('sess'),title:`${text(body?.title||'导入剧情')} · 导入`,createdAt:nowIso(),updatedAt:nowIso()});return ok(await saveSession(s,{allowCreate:true}));}
       let m=path.match(/^\/sessions\/([^/]+)$/);if(m&&method==='GET'){const s=getSession(m[1]);return s?ok(s):fail('未找到剧本');}
       if(m&&method==='PATCH'){const s=getSession(m[1]);return s?ok(await saveSession({...s,...body,id:s.id,createdAt:s.createdAt})):fail('未找到剧本');}
       if(m&&method==='DELETE'){const before=state.sessions.length;state.sessions=state.sessions.filter(x=>x.id!==m[1]);await persist();return ok({deleted:state.sessions.length<before});}
-      m=path.match(/^\/sessions\/([^/]+)\/chat$/);if(m&&method==='POST')return ok(await processStoryTurn(m[1],body?.text,body?.action||'send',signal,body?.temperature,{directorNote:body?.directorNote||'',targetMessageId:body?.targetMessageId||null,diagnosticTurnId:body?.diagnosticTurnId||'',regenerationContext:body?.regenerationContext||'original',retryParameters:body?.retryParameters==='current'?'current':'original'},progress));
+      m=path.match(/^\/sessions\/([^/]+)\/chat$/);if(m&&method==='POST')return ok(await processStoryTurn(m[1],body?.text,body?.action||'send',signal,body?.temperature,{directorNote:body?.directorNote||'',targetMessageId:body?.targetMessageId||null,diagnosticTurnId:body?.diagnosticTurnId||'',diagnosticTraceId:body?.diagnosticTraceId||'',regenerationContext:body?.regenerationContext||'original',retryParameters:body?.retryParameters==='current'?'current':'original'},progress));
       m=path.match(/^\/sessions\/([^/]+)\/recover-reply$/);if(m&&method==='POST')return ok(await restoreRejectedReply(m[1],body||{}));
+      m=path.match(/^\/sessions\/([^/]+)\/recover-reply\/html-repair$/);if(m&&method==='POST')return ok(await prepareRejectedHtmlRepair(m[1],body?.diagnosticId));
       m=path.match(/^\/sessions\/([^/]+)\/prompt-preview$/);if(m&&method==='POST'){state=normalizeState(await window.MimaLocalStore.loadState());return ok(previewPrompt(m[1],body||{}));}
       m=path.match(/^\/sessions\/([^/]+)\/opening$/);if(m&&method==='POST')return ok(await addOpening(m[1],body?.content||''));
+      m=path.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)\/html-repair$/);if(m&&method==='POST')return ok(await prepareHtmlRepair(m[1],m[2]));
+      m=path.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)\/html-repair\/approve$/);if(m&&method==='POST')return ok(await applyHtmlRepair(m[1],m[2],body?.candidateId,body?.dynamicValues||{}));
+      m=path.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)\/html-repair\/ai$/);if(m&&method==='POST')return ok(await prepareAiHtmlRepair(m[1],m[2],body||{}));
       m=path.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)$/);if(m&&method==='PATCH')return ok(await editMessage(m[1],m[2],body?.content,{truncateAfter:!!body?.truncateAfter}));
       if(m&&method==='DELETE')return ok(await deleteMessage(m[1],m[2]));
       m=path.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)\/versions\/(\d+)\/restore$/);if(m&&method==='POST')return ok(await restoreMessageVersion(m[1],m[2],Number(m[3]),body||{}));
       m=path.match(/^\/sessions\/([^/]+)\/memory$/);if(m&&method==='PATCH')return ok(await updateManualMemory(m[1],body||{}));
+      m=path.match(/^\/sessions\/([^/]+)\/memory\/plan$/);if(m&&method==='POST')return ok(await previewMemoryPlan(body?.kind==='facts'?'facts':'core',m[1],body?.options||{}));
       m=path.match(/^\/sessions\/([^/]+)\/memory\/core$/);if(m&&method==='POST')return ok(await runRecordedMemory('core',m[1],body||{},signal,progress));
       if(m&&method==='DELETE')return ok(await deleteCoreMemory(m[1]));
+      m=path.match(/^\/sessions\/([^/]+)\/memory\/rolling\/plan$/);if(m&&method==='POST')return ok(await previewMemoryPlan('rolling',m[1],body||{}));
+      m=path.match(/^\/sessions\/([^/]+)\/memory\/rolling\/run$/);if(m&&method==='POST')return ok(await runRecordedMemory('rolling',m[1],body||{},signal,progress));
       m=path.match(/^\/sessions\/([^/]+)\/memory\/rolling$/);if(m&&method==='POST'){const result=await window.MimaLocalStore.updateRollingMemory(m[1],body?.action||'revoke');await init();return ok(getSession(m[1])||result);}
+      m=path.match(/^\/sessions\/([^/]+)\/memory\/facts\/merge-plan$/);if(m&&method==='POST')return ok(await previewFactMerge(m[1],{...(body||{}),planOnly:true},signal,null));
       m=path.match(/^\/sessions\/([^/]+)\/memory\/facts\/merge-preview$/);if(m&&method==='POST')return ok(await previewFactMerge(m[1],body||{},signal,progress));
       m=path.match(/^\/sessions\/([^/]+)\/memory\/facts\/merge-commit$/);if(m&&method==='POST')return ok(await commitFactMerge(m[1],body||{}));
       m=path.match(/^\/sessions\/([^/]+)\/memory\/facts\/merge-undo$/);if(m&&method==='POST')return ok(await undoFactMerge(m[1]));
@@ -2333,15 +2946,54 @@
     return snapshot;
   }
   function validateLibrary(raw){return window.MimaLocalStore.validateLibrary(raw);}
-  async function importLibrary(raw){
-    const verified=validateLibrary(raw), before=state;
+  async function prepareLibraryImport(raw,{templatePolicy='replace'}={}){
+    const verified=validateLibrary(raw);
+    if(!['replace','preserve','merge'].includes(templatePolicy))throw new ApiError('E_TEMPLATE_IMPORT_POLICY','未知的模板恢复策略，未写入资料库');
+    // A fresh verified read is mandatory. Never take preservation templates from
+    // a stale in-memory state or reinterpret an unreadable library as empty.
+    const before=normalizeState(await window.MimaLocalStore.loadState());
     const next=normalizeState(verified);
-    // All validation happens before any canonical mutation; persist is atomic CAS.
+    if(templatePolicy==='preserve')next.settingTemplates=clone(before.settingTemplates);
+    if(templatePolicy==='merge'){
+      const combined=new Map(before.settingTemplates.map(t=>[t.id,t]));
+      for(const incoming of next.settingTemplates){
+        const old=combined.get(incoming.id);
+        if(old&&JSON.stringify(old)!==JSON.stringify(incoming))throw new ApiError('E_SETTINGS_TEMPLATE_CONFLICT','恢复模板 ID 冲突，未静默覆盖任何模板：'+incoming.id);
+        combined.set(incoming.id,incoming);
+      }
+      next.settingTemplates=[...combined.values()];
+    }
+    if(templatePolicy!=='replace'&&next.settingTemplates.filter(t=>t.isDefault).length>1)
+      throw new ApiError('E_SETTINGS_TEMPLATE_DEFAULT_CONFLICT','当前与备份同时含默认模板，请选择保留或完整覆盖，未写入');
+    // Preserving a template but losing its referenced preset/worldbook/mask/CSS
+    // is not preservation. Reject the complete restore without touching History.
+    if(templatePolicy!=='replace')for(const template of next.settingTemplates){
+      const missing=templateMissing(next,template.config);
+      if(missing.length)throw new ApiError('E_SETTINGS_TEMPLATE_MISSING_RESOURCES',
+        '恢复后模板依赖缺失，整份备份未写入：'+template.name,{details:JSON.stringify(missing)});
+    }
     next.storeRevision=before.storeRevision;
-    state=next;
-    try{await persist();window.MimaThemeEngine?.apply?.(state.themeSettings);return clone(state);}catch(e){state=normalizeState(await window.MimaLocalStore.loadState());throw e;}
+    return {next,beforeRevision:before.storeRevision,templatePolicy};
+  }
+  async function previewLibraryImport(raw,options={}){
+    const plan=await prepareLibraryImport(raw,options);
+    return {valid:true,templatePolicy:plan.templatePolicy,sourceRevision:plan.beforeRevision,templateCount:plan.next.settingTemplates.length};
+  }
+  async function importLibrary(raw,options={}){
+    const plan=await prepareLibraryImport(raw,options);
+    // The final CAS is the authority. A second tab may commit after preflight.
+    state=plan.next;
+    try{await persist();}catch(e){state=normalizeState(await window.MimaLocalStore.loadState());throw e;}
+    // The canonical transaction has already committed. A rendering error must
+    // not be reported as a failed import (nor trigger rollback of other stores).
+    let importWarnings=[];
+    try{window.MimaThemeEngine?.apply?.(state.themeSettings);}catch(e){
+      importWarnings.push('资料库已经提交，但主题应用失败：'+(e?.message||'unknown'));
+      console.error('E_THEME_APPLY_AFTER_CANONICAL_COMMIT',e);
+    }
+    return {...clone(state),...(importWarnings.length?{importWarnings}:{})};
   }
 
   window.MimaMemoryContracts=Object.freeze({normalizeManualMemory});
-  window.MimaStandalone={init,handle,runRecordedMemory,memorySourceFingerprint,memoryFactSignature,manualReplyFingerprint,isManuallyRecoveredReply,getApiConfig,saveApiConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,validateStoryReply,classifyStoryReply,applyRegexForSession,resolveMacrosForSession,compileUserInputForPrompt,exportLibrary,importLibrary,validateLibrary,assemble,getLastUsage,getState:()=>clone(state)};
+  window.MimaStandalone={init,handle,previewMemoryPlan,memorySourceParts,memoryWorkPlan,runRecordedMemory,memorySourceFingerprint,memoryFactSignature,manualReplyFingerprint,isManuallyRecoveredReply,getApiConfig,saveApiConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,validateStoryReply,classifyStoryReply,applyRegexForSession,resolveMacrosForSession,compileUserInputForPrompt,exportLibrary,importLibrary,previewLibraryImport,validateLibrary,assemble,getLastUsage,getState:()=>clone(state)};
 })();

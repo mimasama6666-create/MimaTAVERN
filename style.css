@@ -733,3 +733,24 @@ html[data-mima-theme="eink"] .novel-text-unit[open]>summary,html[data-mima-theme
 /* Resource library filters R3: purely presentational, no effect on resource mounting. */
 .mima-library-filters{display:flex;flex-wrap:wrap;align-items:center;gap:9px;margin:12px 0}.mima-library-filters>.field{width:auto;max-width:100%;flex:1 1 150px;min-width:115px}.mima-library-filters>.check-row{white-space:nowrap;padding:7px 3px;margin:0;font-size:13px}
 @media(max-width:440px){.mima-library-filters>.field{flex-basis:100%;width:100%}.mima-library-filters>.check-row{width:100%}}
+
+/* R4.10 mobile: original ribbon becomes its own expand/collapse control. */
+.context-ribbon.mima-ribbon-collapsed {font-size:0!important;height:8px;min-height:8px;line-height:0;overflow:hidden;padding:0 12px!important;cursor:pointer;}
+.context-ribbon.mima-ribbon-collapsed{overflow:visible;position:relative;z-index:3;touch-action:manipulation;}
+.context-ribbon.mima-ribbon-collapsed > *{visibility:hidden!important;pointer-events:none!important;}
+.context-ribbon.mima-ribbon-collapsed::before{content:'';position:absolute;inset:-18px 0 -18px;pointer-events:auto;background:transparent;}
+.context-ribbon.mima-ribbon-collapsed::after{content:'⌄';font-size:10px;line-height:8px;position:absolute;right:12px;top:auto;}
+.context-ribbon:not(.hidden){cursor:pointer;}
+/* Minimize only excess quick-action shell space; buttons retain original size. */
+.composer-shell{padding-top:5px;}
+.quick-actions{padding-bottom:2px;margin-bottom:1px;}
+#mima-reading-toggle{margin-left:auto;position:sticky;right:0;z-index:2;box-shadow:0 0 0 2px var(--surface,#fff);}
+.mima-reading-hint{position:fixed;bottom:12vh;left:50%;transform:translateX(-50%);border-radius:999px;background:rgba(0,0,0,.84);color:#fff;padding:11px 16px;pointer-events:none;z-index:5000;font-size:13px;white-space:nowrap;max-width:96vw;}
+.mima-reading-hint[hidden]{display:none;}
+body.mima-reading-mode .app-shell>.topbar,body.mima-reading-mode .app-shell>.mima-feature-menu,
+body.mima-reading-mode .app-shell>.context-ribbon,body.mima-reading-mode .app-shell>.composer-shell,
+body.mima-reading-mode .app-shell>.story-follow-stream{display:none;}
+body.mima-reading-mode #story-chat-box .msg-header,
+body.mima-reading-mode #story-chat-box .msg-tools{display:none;}
+body.mima-reading-mode .app-shell{height:100dvh;min-height:100dvh;}
+body.mima-reading-mode #story-chat-box{touch-action:manipulation;height:100%;min-height:0;overflow-y:auto;padding-bottom:calc(28px + env(safe-area-inset-bottom));}

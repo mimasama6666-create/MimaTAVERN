@@ -176,6 +176,68 @@ window.MimaFontManager = (() => {
         applySelected();
         return imported;
     }
+    // Two-phase add-only import for full-settings restores. Never overwrite a
+    // pre-existing ID; the rollback owns only records it inserted. All newly
+    // added fonts are written in one IDB transaction, not a per-font loop.
+    async function planPortableImport(records) {
+        if (!Array.isArray(records)) throw new Error('E_FONT_BACKUP_FORMAT');
+        const current = await all(), existing = new Map(current.map(f => [f.id,f]));
+        const incoming = [], seen = new Set();
+        for (const raw of records) {
+            if (!raw || typeof raw !== 'object' || !raw.bufferBase64) throw new Error('E_FONT_BACKUP_INVALID');
+            // Old portable backups may omit IDs; they used to receive a new one.
+            const id = String(raw.id||('font_import_'+(window.crypto?.randomUUID?.()||Date.now()+'_'+Math.random().toString(36).slice(2)).replace(/[^A-Za-z0-9_-]/g,'')));
+            if (!id || id.length>200 || seen.has(id)) throw new Error('E_FONT_BACKUP_ID_INVALID');
+            seen.add(id);
+            const format = String(raw.format||extension(raw.name)).toLowerCase();
+            if (!['ttf','otf','woff','woff2'].includes(format)) throw new Error('E_FONT_BACKUP_FORMAT');
+            if (!/^[A-Za-z0-9+/]*={0,2}$/.test(raw.bufferBase64)) throw new Error('E_FONT_BACKUP_BASE64');
+            const buffer = base64ToBuffer(raw.bufferBase64);
+            if (!buffer.byteLength) throw new Error('E_FONT_BACKUP_SIZE');
+            if (Number(raw.size)>0 && Number(raw.size)!==buffer.byteLength) throw new Error('E_FONT_BACKUP_SIZE_MISMATCH');
+            const record = {id,name:String(raw.name||'imported.'+format),family:String(raw.family||safeFamily(raw.name)),format,size:buffer.byteLength,createdAt:raw.createdAt||new Date().toISOString(),buffer};
+            const previous=existing.get(id);
+            if(previous){
+                const a=new Uint8Array(previous.buffer||new ArrayBuffer(0)),b=new Uint8Array(buffer);
+                if(a.length!==b.length || a.some((v,i)=>v!==b[i]) || previous.family!==record.family) throw new Error('E_FONT_BACKUP_ID_CONFLICT');
+                continue; // Existing identical ID stays owned by its original user.
+            }
+            incoming.push(record);
+        }
+        return {version:1,records:incoming};
+    }
+    async function commitPortablePlan(plan) {
+        if(plan?.version!==1||!Array.isArray(plan.records))throw new Error('E_FONT_BACKUP_PLAN_UNVERIFIED');
+        const receiptId='font_restore_'+(window.crypto?.randomUUID?.()||Date.now()+'_'+Math.random().toString(36).slice(2));
+        const db=await openDb();
+        const added=await new Promise((resolve,reject)=>{
+            let tx,err;const records=[];
+            try {tx=db.transaction(STORE,'readwrite');const os=tx.objectStore(STORE);
+                for(const record of plan.records){const request=os.add({...record,restoreReceipt:receiptId});
+                    request.onsuccess=()=>records.push(record.id);request.onerror=()=>{err=request.error;};}
+                tx.oncomplete=()=>{db.close();resolve(records);};
+                tx.onabort=()=>{db.close();reject(err||tx.error||new Error('E_FONT_RESTORE_ABORTED'));};
+            }catch(e){db.close();reject(e);}
+        });
+        // On a load error the durable binary still exists and can be restored
+        // at next initialization; this is not a canonical data failure.
+        for(const record of plan.records)try{await loadRecord(record);}catch(e){console.warn('字体已保存，但暂无法加载',record.id,e);}
+        return {receiptId,added};
+    }
+    async function rollbackPortablePlan(receipt) {
+        if(!receipt?.receiptId||!Array.isArray(receipt.added))throw new Error('E_FONT_ROLLBACK_RECEIPT');
+        const db=await openDb();
+        return new Promise((resolve,reject)=>{let tx,issue;
+            try{tx=db.transaction(STORE,'readwrite');const os=tx.objectStore(STORE);
+                for(const id of receipt.added){const r=os.get(id);r.onsuccess=()=>{
+                   if(r.result?.restoreReceipt===receipt.receiptId)os.delete(id);
+                   else {issue=new Error('E_FONT_ROLLBACK_CONFLICT');tx.abort();}
+                };r.onerror=()=>{issue=r.error;tx.abort();};}
+                tx.oncomplete=()=>{db.close();for(const id of receipt.added){const face=loaded.get(id);if(face){document.fonts.delete(face);loaded.delete(id);}}resolve(true);};
+                tx.onabort=()=>{db.close();reject(issue||tx.error||new Error('E_FONT_ROLLBACK_ABORTED'));};
+            }catch(e){db.close();reject(e);}
+        });
+    }
     async function deleteFont(id) {
         const records = await all();
         const record = records.find(x => x.id === id);
@@ -185,5 +247,5 @@ window.MimaFontManager = (() => {
         if (record && getSelected('ui') === record.family) setSelected('ui','');
         if (record && getSelected('story') === record.family) setSelected('story','');
     }
-    return { init, all, importFile, deleteFont, getSelected, setSelected, applySelected, exportPortable, importPortable };
+    return { init, all, importFile, deleteFont, getSelected, setSelected, applySelected, exportPortable, importPortable, planPortableImport, commitPortablePlan, rollbackPortablePlan };
 })();

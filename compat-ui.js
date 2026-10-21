@@ -118,8 +118,8 @@ async function doImport(fileOverride=null){const generation=++scanGeneration,fil
 async function commit(){if(!scan)return;try{const result=await s().importSource({sha256:scan.sha256,filename:scan.filename,format:scan.format,bytes:scan.bytes,versions:scan.versions,warnings:scan.warnings},scan.resources);if(result.projectionChanged)throw Object.assign(new Error('同一原始卡的旧资源清单与新版解析结果不同，已保留原数据；请先备份并在隔离站点确认。'),{code:'E_RESOURCE_PROJECTION_STALE'});message(result.reused?'相同来源包已存在，未重复写入。':`已原子保存来源包与 ${result.resources} 项资源，不写旧版剧情资料。`);await refreshSourceList();}catch(e){message(`${e.code||'E_IMPORT'}: ${e.message}`,'error');}}
 async function create(){if(creating||!scan)return;
  const selectedScan=scan,scanTicket=scanGeneration,button=$('compat-create');
- const selectedIndex=Number($('compat-card-choice').value),selectedGreeting=Number($('compat-greeting-choice').value||0);
- creating=true;button.disabled=true;$('compat-card-choice').disabled=true;$('compat-greeting-choice').disabled=true;
+ const selectedIndex=Number($('compat-card-choice').value),selectedGreeting=Number($('compat-greeting-choice').value||0),settingTemplateId=String($('compat-setting-template')?.value||'');
+ creating=true;button.disabled=true;$('compat-card-choice').disabled=true;$('compat-greeting-choice').disabled=true;if($('compat-setting-template'))$('compat-setting-template').disabled=true;
  try{
   const sourceId='sha256:'+selectedScan.sha256;
   // Always recheck source bytes through the idempotent atomic import. An
@@ -136,14 +136,23 @@ async function create(){if(creating||!scan)return;
   const plan=onboard().make(resources,saved);
   // Check the exact runtime projection BEFORE creating a persistent session.
   // A bad source/selected version must not leave an orphan conversation.
-  const prepared=await r().resourcesFor({sourceId,characterResourceId:saved.id,mountGraph:[]});
+  const templateBinding=settingTemplateId?await r().prepareNativeTemplateBinding(settingTemplateId):null;
+  if(templateBinding?.capabilityContract?.notEquivalent?.length){
+   const details=templateBinding.capabilityContract.notEquivalent.map(item=>item.field+'：'+item.note).join('\n');
+   // Distinguish the native-template projection from a fully native session.
+   // This approval does not grant any background charging rights.
+   if(!window.confirm('兼容引擎无法完全等价执行以下模板设置：\n'+details+'\n\n已明确保留原卡 History/预设/世界书，不复制任何旧记忆和收费授权。接受这些差异并建立剧情吗？'))
+    throw Object.assign(new Error('主人没有确认跨引擎模板差异，本次未创建剧情'),{code:'E_SETTINGS_TEMPLATE_CAPABILITY_UNCONFIRMED'});
+  }
+  const prepared=await r().resourcesFor({sourceId,characterResourceId:saved.id,mountGraph:[],nativeTemplateBinding:templateBinding});
   onboard().assertRuntime(plan,prepared);
-  if(scanGeneration!==scanTicket||scan!==selectedScan)throw Object.assign(new Error('来源卡在挂载前发生切换，本次未创建剧情'),{code:'E_IMPORT_SELECTION_CHANGED'});
-  const ses=await r().createSession(sourceId,{characterResourceId:saved.id,greetingIndex:selectedGreeting,userName:$('compat-player-name')?.value.trim()||'玩家'});
+  if(scanGeneration!==scanTicket||scan!==selectedScan||String($('compat-setting-template')?.value||'')!==settingTemplateId)throw Object.assign(new Error('来源卡或模板在挂载前发生切换，本次未创建剧情'),{code:'E_IMPORT_SELECTION_CHANGED'});
+  const ses=await r().createSession(sourceId,{characterResourceId:saved.id,greetingIndex:selectedGreeting,
+    settingTemplateId,expectedTemplateSnapshot:templateBinding,acceptedCapabilityDigest:templateBinding?.capabilityContract?.notEquivalent?.length?JSON.stringify(templateBinding.capabilityContract):null,userName:$('compat-player-name')?.value.trim()||'玩家'});
   if($('compat-game-drawer'))$('compat-game-drawer').open=false;
   await loadSession(ses.id);$('compat-lab').classList.add('in-chat');$('compat-lab').classList.remove('show-advanced');message('故事已打开。卡内资料与效果可从顶部查看。');
  }catch(e){message(`${e.code||'E_COMPAT'}: ${e.message}`,'error');}
- finally{creating=false;$('compat-card-choice').disabled=false;$('compat-greeting-choice').disabled=false;button.disabled=!scan||!scan.resources?.some(item=>item.kind==='character');}}
+ finally{creating=false;$('compat-card-choice').disabled=false;$('compat-greeting-choice').disabled=false;if($('compat-setting-template'))$('compat-setting-template').disabled=false;button.disabled=!scan||!scan.resources?.some(item=>item.kind==='character');}}
 async function refreshSourceList(){
  const owner=activeId,generation=sessionGeneration;
  const [sources,allResources]=await Promise.all([s().all('source_capsules'),s().all('resource_ir')]);
@@ -436,7 +445,8 @@ async function continueReply(){
   if(activeId===sessionId&&sessionGeneration===generation)await refreshMessages();}
  finally{endSessionAction(sessionId);await refreshSessionList();}
 }
-async function mountStyle(resourceId){const ses=await r().getSession(activeId),res=await s().get('resource_ir',resourceId);if(!res||(res.sourceId!==ses.sourceId&&!(ses.mountGraph||[]).some(m=>m.resourceId===res.id))||res.kind!=='css')throw new Error('CSS 资源未挂载到当前剧情');cssSafe(res.raw);await s().putCAS('compat_sessions',{...ses,styleResourceId:resourceId},ses.revision);await refreshMessages();message('当前剧情的卡片 CSS 已启用，作用于隔离 HTML 和剧情视图；原生主题不变。');}
+async function mountStyle(resourceId){const ses=await r().getSession(activeId),assets=await r().resourcesFor(ses),res=assets.find(x=>x.id===resourceId);
+ if(!res||res.kind!=='css')throw new Error('CSS 资源未挂载到当前剧情');cssSafe(res.raw);await s().putCAS('compat_sessions',{...ses,styleResourceId:resourceId},ses.revision);await refreshMessages();message('当前剧情的卡片 CSS 已启用，作用于隔离 HTML 和剧情视图；原生主题不变。');}
 async function disableStyle(){const ses=await r().getSession(activeId);await s().putCAS('compat_sessions',{...ses,styleResourceId:null},ses.revision);await refreshMessages();message('已取消手动 CSS 指定，恢复卡片原始启用的安全 CSS（若有）；剧情原文未变。');}
 function standalonePluginSource(resource){const v=resource.raw;const sources=Array.isArray(v)?v:[v];return sources.map((x,index)=>({label:String(x?.name||x?.scriptName||('脚本 '+(index+1))),code:typeof x==='string'?x:(x?.script||x?.code||x?.content||'')})).filter(x=>typeof x.code==='string'&&x.code.length>0);}
 async function refreshExtensionUI(){const owner=activeId,generation=sessionGeneration;if(!owner)return;
@@ -613,7 +623,17 @@ async function restoreCompat(apply=false){
 async function nativeAudio(file){try{if(player){player.pause();player.remove();player=null;}for(const uri of assetUrls)URL.revokeObjectURL(uri);assetUrls=[];const uri=URL.createObjectURL(file);assetUrls.push(uri);player=el('audio',{controls:'',preload:'none'},$('compat-media'));player.src=uri;await player.play();message('已由用户手势启动当前剧情的本地音频。');}catch(e){message('媒体播放需要用户手势或此格式不受浏览器支持：'+e.message,'error');}}
 function stopMedia(){if(player){player.pause();player.remove();player=null;}for(const uri of assetUrls)URL.revokeObjectURL(uri);assetUrls=[];}
 function close(){closeSheet();if(activeId)storyDrafts.set(activeId,$('compat-input').value);if(unsubscribeLiveSync){unsubscribeLiveSync();unsubscribeLiveSync=null;}++sessionGeneration;opened=false;clearMvuTemplate();if(cardPreviewUrl){URL.revokeObjectURL(cardPreviewUrl);cardPreviewUrl='';}$('compat-lab').classList.add('hidden');$('compat-lab').classList.remove('in-chat');stopMedia();root.MimaCompatPlugins?.unmountAll();root.MimaAuthorHost?.unmountAll('已离开当前故事；已提交变量保留');}
-function open(){opened=true;listenLiveSync();$('compat-lab').classList.remove('hidden');showLibrary();root.closeDrawer?.();Promise.all([refreshSourceList(),refreshSessionList()]).catch(e=>message('兼容库读取失败，禁止假装无数据：'+e.message,'error'));}
+async function refreshCompatSettingTemplates(){
+ const select=$('compat-setting-template');if(!select)return;
+ const previous=select.value;
+ const state=await root.MimaLocalStore.loadState();
+ if(!Array.isArray(state.settingTemplates))throw new Error('E_SETTINGS_TEMPLATE_STORE_UNVERIFIED');
+ clear(select);el('option',{value:'',text:'不使用模板（角色卡独立配置）'},select);
+ for(const item of state.settingTemplates)el('option',{value:item.id,text:item.name+(item.isDefault?'（默认）':'')},select);
+ if([...select.options].some(o=>o.value===previous))select.value=previous;
+}
+function open(){opened=true;
+ refreshCompatSettingTemplates().catch(e=>message('读取剧情设置模板失败：'+e.message+'，不会假装已挂载','error'));listenLiveSync();$('compat-lab').classList.remove('hidden');showLibrary();root.closeDrawer?.();Promise.all([refreshSourceList(),refreshSessionList()]).catch(e=>message('兼容库读取失败，禁止假装无数据：'+e.message,'error'));}
 async function openWithFile(file){if(!file||typeof file.arrayBuffer!=='function')throw new Error('选中的原始角色卡已不可用，请重新选择');open();await doImport(file);}
 function closeSheet(){const sheet=$('compat-sheet');if(sheet?.open)sheet.close();const drawer=$('compat-game-drawer');if(drawer)drawer.open=false;$('compat-manage-toggle')?.setAttribute('aria-expanded','false');}
 function selectPane(pane){sheetPane=['character','effects','settings','archive'].includes(pane)?pane:'effects';for(const button of document.querySelectorAll('[data-compat-pane]')){const selected=button.dataset.compatPane===sheetPane;button.setAttribute('aria-selected',String(selected));button.tabIndex=selected?0:-1;}for(const section of document.querySelectorAll('.compat-sheet-pane'))section.hidden=section.id!=='compat-pane-'+sheetPane;}

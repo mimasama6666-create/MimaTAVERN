@@ -69,7 +69,11 @@ function worldInfo(entries,history,settings={}){
      if(String(k).startsWith('/'))throw error('E_REGEX_ISOLATION_REQUIRED','斜杠正则关键词需要明确的 use_regex 标志与 Worker');
      return hasKey(text,k,opt);
    };
-   let hit=primary.some(hitKey);
+   // Native worldbook settings use ALL primary keywords only when explicitly
+   // configured; secondary keywords require ANY match. Tavern's selective
+   // logic is different, so preserve both without changing card rules.
+   let hit=e.nativeAllKeywords===true?primary.length>0&&primary.every(hitKey):primary.some(hitKey);
+   if(hit&&e.nativeSecondaryAny===true&&secondary.length)hit=secondary.some(hitKey);
    if(hit&&!regexKey&&e.selective===true&&secondary.length){
      // CCv3: use_regex keys ignore secondary_keys.
      const found=secondary.filter(hitKey).length,logic=Number(e.extensions?.selectiveLogic??e.selectiveLogic??0);
@@ -393,8 +397,161 @@ function resolveCharacterSelection(sourceId,scanned,persisted){
     throw error('E_RESOURCE_VERSION_CONFLICT','角色资源内容与当前原始卡解析不一致，已阻止错误版本进入剧情；现有剧情不受影响');
   return candidate;
 }
+// The native and compatibility engines do not share a runtime. A template is
+// a set of *claims* about requested capabilities, not evidence they all ran.
+// Require an explicit acknowledgement of every non-equivalent field before
+// persisting a compatibility session. Never import another story's memories.
+function templateCapabilityContract(config={}){
+ const ps=config.promptSettings||{},c=ps.outputContract||null,translated=[],notEquivalent=[];
+ const ok=(field,note)=>translated.push({field,note});
+ const gap=(field,note)=>notEquivalent.push({field,note});
+ ok('presetIds','mounted source-bound system messages');
+ if((config.worldbookIds||[]).length)gap('worldbookIds','已挂载来源快照并按兼容世界书规则触发，但部分原生语义与酒馆兼容规则不完全等价');
+ if((config.regexPackIds||[]).length)gap('regexPackIds','已挂载兼容正则执行器；原生输入/输出/显示阶段与兼容投影仍可能存在语义差异');
+ ok('loadedUserMaskId','projected as player persona');
+ ok('customCssId','filtered into compatibility display sandbox');
+ if(c&&(c.requireHtml===true||c.completeHtml===true)){
+   if(c.templateMessageId)gap('outputContract.templateMessageId','原生剧情消息 ID 不能作为新兼容剧情的模板来源');
+   else ok('outputContract','完整 HTML 结构合同写入准入校验和独立格式提示');
+ }
+ if(ps.historyHtmlMode==='semantic')ok('historyHtmlMode','only projected request History; canonical messages remain untouched');
+ if(ps.historyHtmlMode==='raw')ok('historyHtmlMode','raw canonical History is used');
+ if(Object.prototype.hasOwnProperty.call(ps,'recentMessageLimit'))gap('recentMessageLimit','兼容引擎默认完整 History 优先，只在真实模型窗口不足时裁剪；不能保证按原生最近条数限制');
+ if(ps.inputSemanticMode&&ps.inputSemanticMode!=='raw')gap('inputSemanticMode','兼容玩家消息不使用原生 AIRP 改写');
+ if(ps.injectSavedRolling===true)gap('injectSavedRolling','不能将其他角色的已保存剧情摘要移植到本角色');
+ if(ps.pinnedFactsEnabled===true)gap('pinnedFactsEnabled','模板不含固定事实记录，不能假装已经注入');
+ if(config.memoryInject)gap('memoryInject','只携带注入偏好，不复制其他会话的核心/事实记忆');
+ if(config.renderMode)gap('renderMode','兼容渲染有独立隔离 HTML 管线，不能与原生 Safe HTML 完全等价');
+ if(ps.summaryTriggerMessages!==undefined)gap('summaryTriggerMessages','兼容引擎不会在该阈值自动调用模型整理，且不会继承付费授权');
+ if(ps.temperature!==undefined)gap('temperature','兼容请求使用当前全局 Provider 温度，未应用角色模板私有温度');
+ if(ps.autoRollingEnabled===true)gap('autoRollingEnabled','兼容引擎禁止继承后台付费授权');
+ if(ps.worldbookBudgetChars!==undefined)ok('worldbookBudgetChars','兼容世界书在单轮预算范围内筛选');
+ ok('autoRollingEnabled/summaryEnabled','新会话后台付费整理强制关闭，无法继承旧授权');
+ const covered=new Set([...translated,...notEquivalent].flatMap(row=>row.field.split('/')));
+ covered.add('outputContract');covered.add('historyHtmlMode');
+ for(const key of Object.keys(ps)){
+   if(covered.has(key))continue;
+   gap('promptSettings.'+key,'已保留来源快照，但兼容运行没有可证明的同名消费者；新会话不声称此项已经生效');
+ }
+ return {version:1,translated,notEquivalent};
+}
+function compatOutputContract(settings){
+ const src=settings?.outputContract;if(!src||(src.requireHtml!==true&&src.completeHtml!==true))return null;
+ if(src.templateMessageId)throw error('E_SETTINGS_TEMPLATE_INCOMPATIBLE','旧剧情 HTML 模板消息不能直接绑定到新卡；须在新会话中手动指定参考');
+ return {completeHtml:src.completeHtml===true,requireHtml:src.requireHtml===true,
+   requiredSelectors:String(src.requiredSelectors||''),bodySelector:String(src.bodySelector||''),
+   statusSelector:String(src.statusSelector||''),staticSelectors:String(src.staticSelectors||''),
+   staticCssSelectors:String(src.staticCssSelectors||''),staticCommentTexts:String(src.staticCommentTexts||''),
+   staticClassTokens:String(src.staticClassTokens||''),templateMessageId:''};
+}
+function injectFormatContract(out,session){
+ const c=session.outputContract;if(!c?.requireHtml&&!c?.completeHtml)return out;
+ const parts=['本次回复必须满足当前角色独立 HTML 输出合同，缺少结构不能当作正常剧情提交。不要从旧剧情中复制状态数值。'];
+ if(c.completeHtml)parts.push('HTML 标签必须完整闭合。');
+ if(c.requireHtml)parts.push('必须输出真实 HTML 结构，不得只输出纯文本。');
+ if(c.requiredSelectors)parts.push('必需的 CSS 选择器结构：'+c.requiredSelectors);
+ if(c.bodySelector)parts.push('正文容器：'+c.bodySelector);
+ if(c.statusSelector)parts.push('状态栏容器：'+c.statusSelector+'；状态值须来自当前剧情，不可编造旧值。');
+ const text=parts.join('\n');out.messages.unshift({role:'system',content:text});
+ out.messageSources.unshift({kind:'native_template_output_contract',sourceId:session.id,path:'session.outputContract'});
+ out.historyMessageIndices=out.historyMessageIndices.map(x=>x+1);
+ out.estimatedTokens+=(Math.ceil(text.length/3));return out;
+}
+function projectTemplateHistory(out,session){
+ if(session.nativeTemplateBinding?.promptSettings?.historyHtmlMode!=='semantic')return out;
+ const projection=root.MimaHistoryHtmlProjection?.project;
+ if(typeof projection!=='function')throw error('E_HISTORY_HTML_PROJECTION_MISSING','模板要求历史 HTML 语义投影，但组件不可用；已阻止请求');
+ const historical=out.historyMessageIndices||[];
+ const latestAssistant=historical.filter(i=>out.messages[i]?.role==='assistant').at(-1);
+ for(const index of historical){if(index===latestAssistant)continue;const original=out.messages[index];if(!original)continue;
+  const projected=projection(original.content,{enabled:true});
+  if(projected.reason==='parser_unavailable'||projected.reason==='parser_failed'||projected.reason==='unverified_empty_projection')throw error('E_HISTORY_HTML_PROJECTION_UNVERIFIED','HTML 历史投影无法安全验证，已停止请求');
+  original.content=projected.text;
+ }
+ return out;
+}
+async function prepareNativeTemplateBinding(templateId){
+ if(!templateId)return null;
+ if(!root.MimaLocalStore?.loadState)throw error('E_SETTINGS_TEMPLATE_STORE_UNAVAILABLE','原生设置库不可读取，未创建半挂载剧情');
+ const canonical=await root.MimaLocalStore.loadState();
+ if(!Array.isArray(canonical.settingTemplates))throw error('E_SETTINGS_TEMPLATE_STORE_UNVERIFIED','设置模板资料不完整');
+ const template=templateId==='default'?canonical.settingTemplates.find(x=>x.isDefault):canonical.settingTemplates.find(x=>x.id===templateId);
+ if(!template)throw error('E_SETTINGS_TEMPLATE_MISSING','设置模板不存在，未创建剧情');
+ const c=template.config||{},resources=[];
+ const find=(table,id,label)=>{const record=canonical[table]?.find(x=>x.id===id);
+   if(!record)throw error('E_SETTINGS_TEMPLATE_MISSING_RESOURCES',label+' 已删除：'+id);
+   return record;};
+ const sourceId='native-settings:'+template.id;
+ const push=(kind,id,name,raw)=>resources.push({id:'native-template:'+kind+':'+id,kind,
+   sourceId,path:'native.settingTemplates.'+template.id+'.'+kind+'.'+id,name,raw});
+ for(const id of c.presetIds||[]){const p=find('presets',id,'预设');if(p.enabled===false)continue;
+   if(typeof p.content!=='string'||!p.content.trim())throw error('E_SETTINGS_TEMPLATE_INCOMPATIBLE','预设正文为空，未创建半成品剧情：'+p.name);
+   push('preset',id,p.name,{content:p.content,role:'system'});
+ }
+ for(const id of c.worldbookIds||[]){const wb=find('worldbooks',id,'世界书');if(wb.enabled===false)continue;
+   if((wb.entries||[]).some(e=>e.enabled!==false&&e.useRegex===true))
+     throw error('E_SETTINGS_TEMPLATE_INCOMPATIBLE','包含正则关键词的世界书需要独立 Worker 验证：'+wb.name+'；未建立半挂载剧情');
+   const entries=(wb.entries||[]).filter(e=>e.enabled!==false).map(e=>({
+     uid:e.id,comment:e.name,content:e.content,key:e.keywords||[],keysecondary:e.secondaryKeywords||[],
+     constant:e.alwaysActive===true,disable:false,nativeAllKeywords:e.matchMode==='all',
+     nativeSecondaryAny:(e.secondaryKeywords||[]).length>0,caseSensitive:e.caseSensitive===true,
+     use_regex:false,order:100000-Number(e.priority??50),position:e.position==='back'?1:0,
+     scan_depth:Number(e.scanDepth||12),extensions:{depth:e.depth||0}}));
+   push('world_info',id,wb.name,{entries});
+ }
+ for(const id of c.regexPackIds||[]){const pack=find('regexPacks',id,'正则');if(pack.enabled===false)continue;
+   const rules=(pack.rules||[]).filter(x=>x.enabled!==false).map(rule=>{
+     if(!rule.pattern||!['display','prompt','input','output'].includes(rule.phase)||!root.MimaRegexEngine?.compileRule?.(rule)?.ok)
+       throw error('E_SETTINGS_TEMPLATE_INCOMPATIBLE','正则无法安全投影到酒馆兼容模式：'+rule.name);
+     return {scriptName:rule.name,findRegex:rule.pattern,replaceString:rule.replacement,
+       flags:rule.flags||'g',placement:rule.phase==='input'?[1]:rule.phase==='output'?[2]:rule.phase==='prompt'?[1,2]:[2],
+       promptOnly:rule.phase==='prompt',markdownOnly:rule.phase==='display',disabled:false};
+   });
+   push('regex',id,pack.name,rules);
+ }
+ let personaDescription='';
+ if(c.loadedUserMaskId){const mask=find('masks',c.loadedUserMaskId,'玩家面具');
+   if(mask.type!=='user')throw error('E_SETTINGS_TEMPLATE_INCOMPATIBLE','模板引用的不是玩家面具');
+   personaDescription=String(mask.content||'');
+ }
+ let styleResourceId=null;
+ if(c.customCssEnabled!==false&&c.customCssId){const css=find('cssPresets',c.customCssId,'CSS 皮肤');
+   if(typeof css.css!=='string'||!css.css.trim()||!root.MimaCompatSafeHtml?.safeCssText)
+     throw error('E_SETTINGS_TEMPLATE_INCOMPATIBLE','CSS 皮肤无法在兼容沙箱内安全验证');
+   const safe=root.MimaCompatSafeHtml.safeCssText(css.css);
+   if(!safe.trim())throw error('E_SETTINGS_TEMPLATE_INCOMPATIBLE','CSS 在安全沙箱内没有可使用的规则');
+   push('css',css.id,css.name,safe);styleResourceId=resources[resources.length-1].id;
+ }
+ // Snapshot resources, not history, memory contents, keys, debts or old conversation IDs.
+ const promptSettings={...(c.promptSettings||{}),autoRollingEnabled:false,summaryEnabled:false};
+ const capabilityContract=templateCapabilityContract(c);
+ const outputContract=compatOutputContract(promptSettings);
+ return {version:1,templateId:template.id,templateRevision:template.revision,templateName:template.name,
+   resources,personaDescription,styleResourceId,promptSettings,outputContract,capabilityContract,renderMode:c.renderMode||'text',
+   memoryInject:c.memoryInject||null,createdAt:new Date().toISOString()};
+}
 async function createSession(sourceId,options={}){const source=await store().get('source_capsules',sourceId);if(!source)throw error('E_STORE_UNVERIFIED','来源包不存在');const resources=await store().byIndex('resource_ir','sourceId',sourceId);const charCandidates=resources.filter(x=>x.kind==='character');const selection=options.characterResourceId?charCandidates.find(x=>x.id===options.characterResourceId):charCandidates.length===1?charCandidates[0]:null;if(!selection)throw error('E_RESOURCE_SEMANTIC_GAP','发现多个角色版本或没有角色；请先明确选择');
-const idx=Number(options.greetingIndex??0),card=selection.raw||{},alternates=Array.isArray(card.alternate_greetings)?card.alternate_greetings:[];if(!Number.isInteger(idx)||idx<0||idx>alternates.length)throw error('E_RESOURCE_SEMANTIC_GAP','开场白索引无效');const greeting=String(idx===0?card.first_mes||'':alternates[idx-1]||'');const id=store().uid('compat'),now=new Date().toISOString(),session={id,mode:'native_compat',sourceId,characterResourceId:selection.id,title:options.title||selection.name||'兼容剧情',userName:options.userName||'玩家',activeBranchId:'main',greetingIndex:idx,revision:1,turnIndex:0,pendingTurnId:null,worldInfoBudget:16000,createdAt:now,mountGraph:[],readiness:'limited_runtime'};
+const nativeTemplate=await prepareNativeTemplateBinding(String(options.settingTemplateId||''));
+if(nativeTemplate?.capabilityContract?.notEquivalent?.length &&
+   options.acceptedCapabilityDigest!==JSON.stringify(nativeTemplate.capabilityContract))
+ throw error('E_SETTINGS_TEMPLATE_CAPABILITY_UNCONFIRMED','未完整确认兼容引擎和原生模板的能力差异，未创建剧情');
+if(nativeTemplate&&options.expectedTemplateSnapshot){
+ const expected=options.expectedTemplateSnapshot;
+ if(expected.templateId!==nativeTemplate.templateId||expected.templateRevision!==nativeTemplate.templateRevision||
+    JSON.stringify(expected.resources)!==JSON.stringify(nativeTemplate.resources)||
+    JSON.stringify(expected.promptSettings)!==JSON.stringify(nativeTemplate.promptSettings)||
+    expected.personaDescription!==nativeTemplate.personaDescription||
+    JSON.stringify(expected.outputContract)!==JSON.stringify(nativeTemplate.outputContract)||
+    JSON.stringify(expected.capabilityContract)!==JSON.stringify(nativeTemplate.capabilityContract)||
+    expected.renderMode!==nativeTemplate.renderMode||JSON.stringify(expected.memoryInject)!==JSON.stringify(nativeTemplate.memoryInject))
+   throw error('E_SETTINGS_TEMPLATE_SOURCE_STALE','模板预检之后内容或引用资源已改变，未创建剧情，请重新确认');
+}
+const idx=Number(options.greetingIndex??0),card=selection.raw||{},alternates=Array.isArray(card.alternate_greetings)?card.alternate_greetings:[];if(!Number.isInteger(idx)||idx<0||idx>alternates.length)throw error('E_RESOURCE_SEMANTIC_GAP','开场白索引无效');const greeting=String(idx===0?card.first_mes||'':alternates[idx-1]||'');const id=store().uid('compat'),now=new Date().toISOString(),session={id,mode:'native_compat',sourceId,characterResourceId:selection.id,title:options.title||selection.name||'兼容剧情',userName:options.userName||'玩家',activeBranchId:'main',greetingIndex:idx,revision:1,turnIndex:0,pendingTurnId:null,worldInfoBudget:Number(nativeTemplate?.promptSettings?.worldbookBudgetChars)||16000,
+ nativeTemplateBinding:nativeTemplate,personaDescription:nativeTemplate?.personaDescription||'',
+ styleResourceId:nativeTemplate?.styleResourceId||null,
+ outputContract:nativeTemplate?.outputContract||null,templateCapabilities:nativeTemplate?.capabilityContract||null,
+ // Paid background rolling authorization does not migrate to a different engine.
+ autoRollingEnabled:false,createdAt:now,mountGraph:[],readiness:'limited_runtime'};
 const prepared=await resourcesFor(session),spoken=macro(greeting,{char:card.nickname||card.name||'角色',user:session.userName});
 const opening=greeting?[{id:'opening_'+id,role:'assistant',canonicalContent:spoken.value,status:'committed',sequence:-1,opening:true}]:[];
 const readiness=await createEnvelopeAsync(session,prepared,opening,'',{newSessionPreflight:true});
@@ -628,6 +785,14 @@ async function resourcesFor(s){
     if(item.sourceId!=='sha256:'+mount.sha256||item.path!==mount.path||item.kind!==mount.kind)throw error('E_SOURCE_CORRUPT','挂载资源来源指纹或路径被改变');
     if(!base.some(r=>r.id===item.id)&&!external.some(r=>r.id===item.id))external.push(item);
   }
+  const binding=s.nativeTemplateBinding;
+  if(binding){
+    if(binding.version!==1||!Array.isArray(binding.resources)||binding.resources.some(item=>!item?.id||!item?.kind||item.sourceId!=='native-settings:'+binding.templateId))
+      throw error('E_SETTINGS_TEMPLATE_BINDING_UNVERIFIED','本剧情模板快照异常，已停止生成，原始卡片和 History 保留');
+    // Native template resources are explicit session-bound snapshots. Never
+    // fetch their latest mutable content from another story or a stale cache.
+    return [...base,...external,...binding.resources];
+  }
   return [...base,...external];
 }
 // R11 compat projection: this changes provider request copies only. Source
@@ -696,7 +861,7 @@ async function createEnvelopeAsync(session,resources,messages,userText,options={
     if(!root.MimaCompatWorldInfoIsolation?.evaluate)throw error('E_REGEX_ISOLATION_UNAVAILABLE','世界书包含正则关键词，但隔离组件未加载；不会跳过世界书继续生成');
     worldInfoOverride=await root.MimaCompatWorldInfoIsolation.evaluate(entries,[...history,...(options.assistantContinuation?[]:[{role:'user',content:userText}])],worldInfoSettings(session,name,user,userText),{signal:options.signal});
   }
-  const out=createEnvelope(session,resources,messages,userText,{skipRegex:true,worldInfoOverride,assistantContinuation:options.assistantContinuation===true}),regex=readRegex(resources,session);
+  const out=injectFormatContract(createEnvelope(session,resources,messages,userText,{skipRegex:true,worldInfoOverride,assistantContinuation:options.assistantContinuation===true}),session),regex=readRegex(resources,session);
   out.authorHost={version:'mima-author-host/1',active:root.MimaAuthorHost?.state(session.id)||[],capabilityScope:'chat/message/script variables and committed-message snapshot; other Helper APIs are unsupported'};
   if(root.MimaAuthorPrompt?.needs(out)&&options.newSessionPreflight===true)out.gaps.push({slot:'author_variables',reason:'requires_explicit_author_initialization_before_generation'});
   else if(root.MimaAuthorPrompt?.needs(out)){
@@ -707,7 +872,7 @@ async function createEnvelopeAsync(session,resources,messages,userText,options={
   }
   const isolate=root.MimaCompatRegexIsolation;
   const warn=(stage,e)=>{out.gaps.push({reason:e.code||'E_REGEX_WORKER_FAILED',stage,details:e.message,ruleName:e.ruleName||null,ruleKey:e.ruleKey||null,resourceId:e.resourceId||null,path:e.path||null,rawRetained:true});};
-  if(!isolate){if(regex.length)warn('worker',error('E_REGEX_ISOLATION_UNAVAILABLE','无法初始化隔离正则执行器'));return projectCompatHistory(out,userText);}
+  if(!isolate){if(regex.length)warn('worker',error('E_REGEX_ISOLATION_UNAVAILABLE','无法初始化隔离正则执行器'));return projectCompatHistory(projectTemplateHistory(out,session),userText);}
   const macroContext=await regexMacroContext(session,resources);
   // Regex transforms request copies selected by provenance, never by a fixed
   // message index or by the message role of user-owned configuration text.
@@ -728,7 +893,7 @@ async function createEnvelopeAsync(session,resources,messages,userText,options={
     transformed.forEach((item,i)=>{const {msg,idx}=queue[i];msg.content=item.result.output;out.regexTrace.push(...item.result.trace.map(trace=>({...trace,messageIndex:idx})));if(!item.ok)for(const issue of item.result.errors)warn('prompt '+msg.role+' #'+idx,issue);});
   }catch(e){warn('prompt batch',e);}
   out.estimatedTokens=out.messages.reduce((n,m)=>n+Math.ceil(m.content.length/3),0);
-  return projectCompatHistory(out,userText);
+  return projectCompatHistory(projectTemplateHistory(out,session),userText);
 }
 async function previewUnfenced(sessionId,input,options={}){const s=await getSession(sessionId),msgs=await sessionMessages(sessionId),resources=await resourcesFor(s);return createEnvelopeAsync(s,resources,msgs,input,options);}
 async function transition(sessionId,work){const db=await store().open();return new Promise((resolve,reject)=>{const tx=db.transaction(['compat_sessions','messages','events_jobs'],'readwrite'),s=tx.objectStore('compat_sessions'),m=tx.objectStore('messages'),j=tx.objectStore('events_jobs');let result,issue;const q=s.get(sessionId);q.onsuccess=()=>{try{const current=q.result;if(!current)throw error('E_STORE_UNVERIFIED','剧情已不存在');result=work(current,{s,m,j});}catch(e){issue=e;tx.abort();}};q.onerror=()=>{issue=q.error;tx.abort();};tx.oncomplete=()=>{db.close();resolve(result);};tx.onabort=()=>{db.close();reject(issue||tx.error||error('E_CANONICAL_CONFLICT','剧情事务中止'));};});}
@@ -1075,5 +1240,5 @@ function retryTurn(id,turnId,options){return authorOperation(id,()=>retryTurnUnf
 function continueAssistant(id,options){return authorOperation(id,()=>continueAssistantUnfenced(id,options),'continue');}
 function forkSession(id,cutoff,options){return authorOperation(id,()=>forkSessionUnfenced(id,cutoff,options));}
 function preview(id,input,options){return authorOperation(id,()=>previewUnfenced(id,input,options));}
-return Object.freeze({forkSession,currentMvuState,worldInfo,unsupportedWI,applyRegex,regexRules:readRegex,regexMacroContext,regexProjection,saveRegexSettings,macro,createEnvelope,createEnvelopeAsync,createSession,resolveCharacterSelection,getSession,sessionMessages,resourcesFor,mountResource,unmountResource,setPresetCreativeRole,resolveMedia,preview,send,continueAssistant,restoreRejectedReply,abortContinuation,retryTurn,recoverTurn,turnJournal,displayMessages,beginTurn,finishTurn});
+return Object.freeze({forkSession,currentMvuState,worldInfo,unsupportedWI,applyRegex,regexRules:readRegex,regexMacroContext,regexProjection,saveRegexSettings,macro,createEnvelope,createEnvelopeAsync,createSession,prepareNativeTemplateBinding,templateCapabilityContract,resolveCharacterSelection,getSession,sessionMessages,resourcesFor,mountResource,unmountResource,setPresetCreativeRole,resolveMedia,preview,send,continueAssistant,restoreRejectedReply,abortContinuation,retryTurn,recoverTurn,turnJournal,displayMessages,beginTurn,finishTurn});
 });

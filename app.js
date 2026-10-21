@@ -22,6 +22,7 @@ let pngResourceInspection = null;
 let pngResourceBusy = false;
 let fontRecords = [];
 let memoryGenerating = false;
+let factMergePlanning = false;
 let memoryTask = null; // UI-independent, single owner for story-memory requests.
 let memoryMergeDraft = null; // durable candidate mirrored for current UI; canonical facts unchanged until approval
 let memoryMergeSaveTimer=null, memoryMergeWrite=Promise.resolve();
@@ -204,7 +205,62 @@ function renderAppearancePreview(){
     </div></div>`;
 }
 function closeEditor(){qs('editor-modal').classList.add('hidden');editorState=null}
-function openNewSessionModal(){qs('new-session-modal').classList.remove('hidden');setTimeout(()=>qs('new-session-title').focus(),50)}
+function openNewSessionModal(){qs('new-session-modal').classList.remove('hidden');refreshSettingTemplateChoices();setTimeout(()=>qs('new-session-title').focus(),50)}
+let settingTemplateCache=[];
+async function refreshSettingTemplateChoices(){
+    const select=qs('new-session-template');if(!select)return;
+    const res=await fetchStory('/setting-templates');
+    if(!res.success||!Array.isArray(res.data)){toast('设置模板库读取失败，无法确认可用模板');select.disabled=true;return;}
+    settingTemplateCache=res.data;select.disabled=false;
+    const previous=select.value;
+    select.replaceChildren(new Option('不使用模板',''));
+    res.data.forEach(t=>select.add(new Option(`${t.isDefault?'★ ':''}${t.name}`,t.id)));
+    if(res.data.some(x=>x.id===previous))select.value=previous;
+    else if(res.data.some(x=>x.isDefault))select.value=res.data.find(x=>x.isDefault).id;
+    renderSettingTemplatePreview();
+}
+function renderSettingTemplatePreview(){
+    const tpl=settingTemplateCache.find(t=>t.id===qs('new-session-template')?.value),view=qs('new-session-template-preview');if(!view)return;
+    if(!tpl){view.textContent='无模板：保留新剧情默认设置';return;}
+    const c=tpl.config||{};
+    view.textContent=`${tpl.name}：${(c.presetIds||[]).length} 个预设、${(c.worldbookIds||[]).length} 本世界书、${(c.regexPackIds||[]).length} 个正则包；${c.promptSettings?'包含长剧情设置；':''}${c.loadedUserMaskId?'包含用户面具；':''}${c.customCssId?'包含 CSS 皮肤；':''}不复制角色卡、剧情消息、旧记忆或密钥；自动付费旧剧情整理不会继承授权，新剧情需单独确认开启。`;
+}
+function checkedTemplateScopes(){return {presets:qs('tpl-presets').checked,worldbooks:qs('tpl-worldbooks').checked,regex:qs('tpl-regex').checked,userMask:qs('tpl-user-mask').checked,context:qs('tpl-context').checked,memoryInject:qs('tpl-memory').checked,css:qs('tpl-css').checked};}
+async function saveCurrentSettingTemplate(overwrite=false){
+    if(!currentSessionId)return toast('请先进入需要复制设置的剧情');
+    const name=(qs('tpl-name')?.value||'').trim();if(!name)return toast('请填写模板名称');
+    const old=settingTemplateCache.find(t=>t.id===qs('new-session-template')?.value);
+    if(overwrite&&!old)return toast('请先选择要更新的模板');
+    const body={name,fromSessionId:currentSessionId,include:checkedTemplateScopes(),...(overwrite?{id:old.id,expectedRevision:old.revision}:{})};
+    const result=await fetchStory(overwrite?`/setting-templates/${old.id}`:'/setting-templates',overwrite?'PATCH':'POST',body);
+    if(!result.success)return toast('保存模板失败：'+(result.msg||'未知错误'));
+    await refreshSettingTemplateChoices();qs('new-session-template').value=result.data.id;renderSettingTemplatePreview();toast('设置模板已保存，不包含旧剧情、摘要、附件或密钥');
+}
+async function duplicateSettingTemplate(){
+    const src=settingTemplateCache.find(t=>t.id===qs('new-session-template')?.value);if(!src)return toast('请选择模板');
+    const res=await fetchStory('/setting-templates','POST',{name:src.name+' · 副本',config:src.config});
+    if(!res.success)return toast('复制失败：'+res.msg);await refreshSettingTemplateChoices();qs('new-session-template').value=res.data.id;renderSettingTemplatePreview();
+}
+async function setDefaultSettingTemplate(){
+    const id=qs('new-session-template')?.value||'';
+    const res=await fetchStory('/setting-templates/default','POST',{id});
+    if(!res.success)return toast('设置默认模板失败：'+res.msg);await refreshSettingTemplateChoices();toast(id?'已设置默认模板':'已关闭默认模板');
+}
+async function deleteSettingTemplate(){
+    const old=settingTemplateCache.find(t=>t.id===qs('new-session-template')?.value);if(!old||!confirm('删除模板不会删除已创建的剧情。确定删除？'))return;
+    const res=await fetchStory(`/setting-templates/${old.id}`,'DELETE',{expectedRevision:old.revision});
+    if(!res.success)return toast('删除失败：'+res.msg);await refreshSettingTemplateChoices();
+}
+function exportSettingTemplate(){
+    const old=settingTemplateCache.find(t=>t.id===qs('new-session-template')?.value);if(!old)return toast('请先选模板');
+    downloadJson(`咪嘛馆-剧情设置模板-${old.name}.json`,{format:'mima-session-settings-template',version:1,name:old.name,config:old.config});
+}
+async function importSettingTemplate(file){if(!file)return;try{
+    const raw=JSON.parse(await file.text());if(raw.format!=='mima-session-settings-template'||raw.version!==1||!raw.config||typeof raw.config!=='object')throw Error('不是合法的设置模板');
+    const res=await fetchStory('/setting-templates','POST',{name:raw.name,config:raw.config});
+    if(!res.success)throw Error(res.msg);await refreshSettingTemplateChoices();qs('new-session-template').value=res.data.id;renderSettingTemplatePreview();toast('设置模板已导入，资源在创建新剧情时再次校验');
+}catch(e){toast('导入模板失败：'+e.message)}}
+
 function closeNewSessionModal(){qs('new-session-modal').classList.add('hidden')}
 function toggleDirector(){qs('director-wrap').classList.toggle('collapsed')}
 
@@ -254,9 +310,10 @@ function renderSessions() {
 async function createSession(){
     const title=qs('new-session-title').value.trim()||'未命名咪嘛宇宙';
     const mode=qs('new-session-mode').value||'tavern';
-    const res=await fetchStory('/sessions','POST',{title,mode,characterMode:mode,canonLevel:'alternate',enabledPersonaSources:{sandalphonPersona:mode==='sandalphon',userPersona:mode==='sandalphon',telegramContext:false,longTermMemory:false,sandalphonState:false},enabledContextSources:{storySummary:true,recentMessages:true,telegramContext:false,vectorMemory:false},promptSettings:{recentMessageLimit:34,worldbookBudgetChars:16000,summaryEnabled:true,pinnedFactsEnabled:true}});
+    const templateId=qs('new-session-template')?.value||'';
+    const res=await fetchStory('/sessions','POST',{...(templateId?{settingTemplateId:templateId}:{}),title,mode,characterMode:mode,canonLevel:'alternate',enabledPersonaSources:{sandalphonPersona:mode==='sandalphon',userPersona:mode==='sandalphon',telegramContext:false,longTermMemory:false,sandalphonState:false},enabledContextSources:{storySummary:true,recentMessages:true,telegramContext:false,vectorMemory:false},promptSettings:{recentMessageLimit:34,worldbookBudgetChars:16000,summaryEnabled:true,pinnedFactsEnabled:true}});
     if(!res.success)return toast(res.msg||'创建失败');
-    closeNewSessionModal(); qs('new-session-title').value=''; await loadAll(); await openSession(res.data.id,true); openSettings('roles');
+    closeNewSessionModal(); qs('new-session-title').value=''; await loadAll(); await openSession(res.data.id,true); if(!templateId)openSettings('roles');
 }
 async function openSession(id, close=true){
     const epoch=++sessionNavigationEpoch;
@@ -327,6 +384,11 @@ function refreshHeader(){
     const ribbon=qs('context-ribbon');
     if(currentSessionData&&(char||mountedBooks.length)){ribbon.classList.remove('hidden');ribbon.textContent=`独立宇宙 · ${char?`🤍 ${char.name}`:'未挂角色'}${mountedBooks.length?` · 📚 ${mountedBooks.map(w=>w.name).join(' / ')}`:''}`}
     else {ribbon.textContent='';ribbon.classList.add('hidden');}
+    ribbon.setAttribute('role','button');ribbon.setAttribute('tabindex','0');
+    ribbon.setAttribute('aria-label','点击收起或展开独立宇宙信息');ribbon.classList.toggle('mima-ribbon-collapsed',ribbon.dataset.collapsed==='true');
+    ribbon.setAttribute('aria-expanded',String(ribbon.dataset.collapsed!=='true'));
+    ribbon.onclick=e=>{if(e.target.closest('button'))return;toggleContextRibbon();};
+    ribbon.onkeydown=e=>{if((e.key==='Enter'||e.key===' ')&&e.target===ribbon){e.preventDefault();toggleContextRibbon();}};
     // Durable memory jobs are separate from Direct Reply. Never block chat
     // while reading review debt, and never treat a failed IDB read as empty.
     refreshMemoryDebtRibbon(currentSessionId).catch(e=>console.warn('Memory debt UI failed',{sessionId:currentSessionId,error:e.message}));
@@ -350,6 +412,39 @@ async function refreshMemoryDebtRibbon(sessionId){
     open.addEventListener('click',()=>openSettings('memory'));ribbon.appendChild(open);
 }
 
+function toggleContextRibbon(){const ribbon=qs('context-ribbon');if(!ribbon)return;const collapsed=!(ribbon.dataset.collapsed==='true');ribbon.dataset.collapsed=collapsed?'true':'';ribbon.classList.toggle('mima-ribbon-collapsed',collapsed);ribbon.setAttribute('aria-expanded',String(!collapsed));}
+let readingMode=false,readingScroll=0,readingLastTap=0,readingTouchStart=null,readingLastTapPoint=null;
+function setImmersiveReading(on){
+    const box=qs('story-chat-box');if(!box)return;
+    if(on===readingMode)return;
+    if(on){readingScroll=box.scrollTop;
+        // Close iOS soft keyboard without changing or clearing the input draft.
+        if(document.activeElement?.closest?.('.composer-shell'))document.activeElement.blur();
+        readingMode=true;document.body.classList.add('mima-reading-mode');
+        const hint=qs('mima-reading-hint');if(hint){hint.textContent='沉浸阅读中 · 双击屏幕恢复界面';hint.hidden=false;setTimeout(()=>{if(readingMode)hint.hidden=true;},2200);}
+    }else{readingScroll=box.scrollTop;readingMode=false;document.body.classList.remove('mima-reading-mode');qs('mima-reading-hint').hidden=true;}
+    requestAnimationFrame(()=>{box.scrollTop=readingScroll;});
+}
+function setupImmersiveReading(){
+    const root=qs('story-chat-box');if(!root)return;
+    root.addEventListener('dblclick',e=>{if(!readingMode||e.target.closest('a,button,input,textarea,select,[contenteditable]')||window.getSelection()?.toString())return;setImmersiveReading(false);});
+    root.addEventListener('pointerdown',e=>{if(!readingMode||e.pointerType!=='touch')return;
+        readingTouchStart={x:e.clientX,y:e.clientY,scrollTop:root.scrollTop,target:e.target};
+    });
+    root.addEventListener('pointercancel',()=>{readingTouchStart=null;readingLastTap=0;readingLastTapPoint=null;});
+    root.addEventListener('pointerup',e=>{
+        if(!readingMode||e.pointerType!=='touch')return;
+        const start=readingTouchStart;readingTouchStart=null;
+        const forbidden=e.target.closest('a,button,input,textarea,select,[contenteditable]')||window.getSelection()?.toString();
+        if(!start||forbidden||Math.abs(e.clientX-start.x)>12||Math.abs(e.clientY-start.y)>12||Math.abs(root.scrollTop-start.scrollTop)>5){
+            readingLastTap=0;readingLastTapPoint=null;return;
+        }
+        const now=performance.now();
+        if(now-readingLastTap<320&&readingLastTapPoint&&Math.abs(e.clientX-readingLastTapPoint.x)<28&&Math.abs(e.clientY-readingLastTapPoint.y)<28){
+            readingLastTap=0;readingLastTapPoint=null;setImmersiveReading(false);
+        }else{readingLastTap=now;readingLastTapPoint={x:e.clientX,y:e.clientY};}
+    });
+}
 function renderSettings(){
     const renderEpoch=++settingsRenderEpoch;
     qsa('.settings-tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===settingsTab));
@@ -673,7 +768,7 @@ async function importRegexFile(file){if(!file)return;try{const raw=JSON.parse(aw
 function exportRegexPack(id){const p=regexPacks.find(x=>x.id===id);if(p)downloadJson(`${p.name}.mimamao-regex.json`,{format:'mimamao-tavern-regex-pack',version:1,data:p})}
 
 function renderContextTab(box){const ps=currentSessionData.promptSettings||{};box.innerHTML=`<section class="settings-section"><h3>🪐 Session（剧情会话）</h3><div class="form-grid"><div class="form-full"><label class="form-label">标题</label><input id="ctx-title" class="field" value="${escapeHtml(currentSessionData.title||'')}"></div><div><label class="form-label">Canon Level（设定层级）</label><select id="ctx-canon" class="field">${['temporary','alternate','soft','core'].map(x=>`<option value="${x}" ${currentSessionData.canonLevel===x?'selected':''}>${canonLabel(x)}</option>`).join('')}</select></div><div><label class="form-label">Temperature（温度）</label><input id="ctx-temp" class="field" type="number" min="0.1" max="2" step="0.05" value="${getTemp()}"></div></div><p class="helper">Standalone（独立版）中所有 Session（剧情会话）都是浏览器本地独立宇宙，不会写入任何 MIMAMAO / Telegram 世界。</p></section>
-<section class="settings-section"><h3>🧠 长剧情 Context（上下文）</h3><div class="form-grid"><div><label class="form-label">最近原文消息数（条，不是回合；最多 200）</label><input id="ctx-recent" class="field" type="number" min="6" max="200" step="1" value="${Number(ps.recentMessageLimit??34)}"><div class="row-sub">这是自动整理时保留的近期消息窗口；模型容量允许时仍优先提供完整原始 History。修改后请点击下方保存。</div></div><div><label class="form-label">累计多少条旧剧情后自动整理记忆</label><input id="ctx-summary-trigger" class="field" type="number" min="12" max="200" value="${Number(ps.summaryTriggerMessages||28)}"><div class="row-sub">默认 28 条；不删减原始剧情，也不影响手动整理。</div></div><div><label class="form-label">世界书总预算（字符，最多 1,000,000）</label><input id="ctx-wbbudget" class="field" type="number" min="1000" max="1000000" step="1" value="${Number(ps.worldbookBudgetChars??16000)}"><div class="row-sub">这是本轮命中条目允许占用的字符上限，不保证所有条目都触发；实际仍受模型上下文窗口限制。超过窗口会报错，不会暗中删除原始剧情。</div></div><div class="form-full"><label class="form-label">🎭 AIRP 输入语义</label><select id="ctx-airp-mode" class="field"><option value="auto" ${(ps.inputSemanticMode||'raw')==='auto'?'selected':''}>智能自动（主动选择，可能误判）</option><option value="dialogue_first" ${ps.inputSemanticMode==='dialogue_first'?'selected':''}>对话优先：普通文本=台词，括号=动作/心理</option><option value="quote_dialogue" ${ps.inputSemanticMode==='quote_dialogue'?'selected':''}>引号台词：引号=台词，其余普通文本=动作</option><option value="raw" ${(ps.inputSemanticMode||'raw')==='raw'?'selected':''}>原样发送（默认）：关闭语义解析</option></select><div class="row-sub">默认按原文发送；已存消息保留当时的解析模式。选择并保存非原样模式才会对新消息启用语义改写，可能误判。智能自动会兼容两种常见 AIRP：有明确引号时把引号当台词、周围当动作；没有引号时普通文本默认台词，括号永远不是台词。括号中的明确“心想/内心/OS”等会标记为私密想法。</div></div><div class="form-full"><label class="check-row"><input id="ctx-history-html-projection" type="checkbox" ${ps.historyHtmlMode!=='raw'?'checked':''}> 历史剧情 HTML 转纯文本（仅新模型请求和记忆总结，不改存档、渲染或预设）</label><div class="row-sub">保留 HTML 正文/状态栏文字与数值，去除布局标签、CSS 和装饰代码。预设/世界书/玩家输入不转换；按原请求重说保持旧快照。含真正代码示例的剧情可关闭。</div></div><div class="form-full"><label class="check-row"><input id="ctx-summary" type="checkbox" ${ps.summaryEnabled!==false?'checked':''}> 自动 Rolling Summary（滚动摘要）</label><label class="check-row"><input id="ctx-complete-html" type="checkbox" ${ps.outputContract?.completeHtml===true?'checked':''}> 明确要求回复 HTML 标签完整闭合（普通文本不受限制）</label><label class="check-row"><input id="ctx-pinned-on" type="checkbox" ${ps.pinnedFactsEnabled!==false?'checked':''}> 注入 Pinned Facts（固定事实）</label></div><div class="form-full"><label class="form-label">📌 Pinned Facts（固定事实，一行一条）</label><textarea id="ctx-pinned" class="field textarea">${escapeHtml(arr(currentSessionData.pinnedFacts).join('\n'))}</textarea></div><div class="form-full"><label class="form-label">玩家备注</label><textarea id="ctx-usernotes" class="field textarea">${escapeHtml(currentSessionData.userNotes||'')}</textarea></div><div class="form-full"><label class="form-label">AI（人工智能）备注</label><textarea id="ctx-ainotes" class="field textarea">${escapeHtml(currentSessionData.aiNotes||'')}</textarea></div></div></section>
+<section class="settings-section"><h3>🧠 长剧情与记忆</h3><div class="form-grid"><div><label class="form-label">自动整理时，最近多少条剧情保持原样（按消息计）</label><input id="ctx-recent" class="field" type="number" min="6" max="100000" step="1" value="${Number(ps.recentMessageLimit??34)}"><div class="row-sub">这是自动整理时保留的近期消息窗口；模型容量允许时仍优先提供完整原始 History。修改后请点击下方保存。</div></div><div><label class="form-label">较早剧情每积累多少条后可自动整理</label><input id="ctx-summary-trigger" class="field" type="number" min="12" max="200" value="${Number(ps.summaryTriggerMessages||28)}"><div class="row-sub">默认 28 条；不删减原始剧情，也不影响手动整理。</div></div><div><label class="form-label">世界书总预算（字符，最多 1,000,000）</label><input id="ctx-wbbudget" class="field" type="number" min="1000" max="1000000" step="1" value="${Number(ps.worldbookBudgetChars??16000)}"><div class="row-sub">这是本轮命中条目允许占用的字符上限，不保证所有条目都触发；实际仍受模型上下文窗口限制。超过窗口会报错，不会暗中删除原始剧情。</div></div><div class="form-full"><label class="form-label">🎭 AIRP 输入语义</label><select id="ctx-airp-mode" class="field"><option value="auto" ${(ps.inputSemanticMode||'raw')==='auto'?'selected':''}>智能自动（主动选择，可能误判）</option><option value="dialogue_first" ${ps.inputSemanticMode==='dialogue_first'?'selected':''}>对话优先：普通文本=台词，括号=动作/心理</option><option value="quote_dialogue" ${ps.inputSemanticMode==='quote_dialogue'?'selected':''}>引号台词：引号=台词，其余普通文本=动作</option><option value="raw" ${(ps.inputSemanticMode||'raw')==='raw'?'selected':''}>原样发送（默认）：关闭语义解析</option></select><div class="row-sub">默认按原文发送；已存消息保留当时的解析模式。选择并保存非原样模式才会对新消息启用语义改写，可能误判。智能自动会兼容两种常见 AIRP：有明确引号时把引号当台词、周围当动作；没有引号时普通文本默认台词，括号永远不是台词。括号中的明确“心想/内心/OS”等会标记为私密想法。</div></div><div class="form-full"><label class="check-row"><input id="ctx-history-html-projection" type="checkbox" ${ps.historyHtmlMode!=='raw'?'checked':''}> 历史剧情 HTML 转纯文本（仅新模型请求和记忆总结，不改存档、渲染或预设）</label><div class="row-sub">保留 HTML 正文/状态栏文字与数值，去除布局标签、CSS 和装饰代码。预设/世界书/玩家输入不转换；按原请求重说保持旧快照。含真正代码示例的剧情可关闭。</div></div><div class="form-full"><label class="check-row"><input id="ctx-summary" type="checkbox" ${ps.autoRollingEnabled===true?'checked':''}> 自动整理较早剧情（会调用模型，可能收费）</label><label class="check-row"><input id="ctx-inject-saved-rolling" type="checkbox" ${ps.injectSavedRolling!==false?'checked':''}> 让 AI 参考以前保存的剧情摘要（与自动生成独立）</label><div class="row-sub">首次自动整理一般要积累至少 ${Math.max(0,Math.max(18,Number(ps.recentMessageLimit??34)-4)+Number(ps.summaryTriggerMessages||28))} 条消息（当前尚未总结时）；消息不等于问答轮。原始剧情不会删除。曾经失败的任务将暂停，需手动确认才继续。</div><label class="form-label">自动整理单次最多允许多少次模型请求</label><input id="ctx-auto-rolling-budget" class="field" type="number" min="1" max="20" value="${Number(ps.autoRollingMaxRequests||1)}"><label class="check-row"><input id="ctx-complete-html" type="checkbox" ${ps.outputContract?.completeHtml===true?'checked':''}> 明确要求回复 HTML 标签完整闭合（普通文本不受限制）</label><label class="check-row"><input id="ctx-require-html" type="checkbox" ${ps.outputContract?.requireHtml===true?'checked':''}> 独立 HTML 结构合同：必须包含 HTML 及下面的必需结构（默认关闭）</label><div class="row-sub">缺失结构将保护性拒绝自动入库，不会后台重复调用 API；可通过坏回复诊断和手动代码修复处理。</div><label class="form-label">必需 CSS 选择器（每行或逗号分隔）</label><textarea id="ctx-html-selectors" class="field textarea" rows="2">${escapeHtml(ps.outputContract?.requiredSelectors||'')}</textarea><label class="form-label">标准 HTML 参考消息（手动选择，仅角色回复）</label><select id="ctx-html-template-message" class="field"><option value="">不绑定模板</option>${arr(currentSessionData.messages).filter(m=>m.role==='assistant'&&/[<][A-Za-z]/.test(m.content||'')).map(m=>`<option value="${escapeHtml(m.id)}" ${ps.outputContract?.templateMessageId===m.id?'selected':''}>${escapeHtml((m.content||'').replace(/<[^>]*>/g,' ').trim().slice(0,70)||m.id)}</option>`).join('')}</select><label class="form-label">模板的正文容器 CSS 选择器（唯一插槽，手动代码修复必填）</label><input id="ctx-html-body-slot" class="field" value="${escapeHtml(ps.outputContract?.bodySelector||'')}" placeholder="例如 .story-body"><label class="form-label">状态容器 CSS 选择器（含实时数据时不可自动伪造）</label><input id="ctx-html-status-slot" class="field" value="${escapeHtml(ps.outputContract?.statusSelector||'')}" placeholder="例如 .status-panel"><label class="form-label">允许继承固定文字的静态容器选择器（每行一个；仅授权固定标题/说明，不得包含正文槽或状态栏）</label><textarea id="ctx-html-static-slots" class="field textarea" rows="2">${escapeHtml(ps.outputContract?.staticSelectors||'')}</textarea><label class="form-label">允许自动继承固定 CSS 的规则选择器（每行一个；仅当该规则确实不含动态状态时授权）</label><textarea id="ctx-html-static-css" class="field textarea" rows="2">${escapeHtml(ps.outputContract?.staticCssSelectors||'')}</textarea><label class="form-label">明确属于固定布局的 class / 动画名（用空格或换行分隔；例如 card-wrapper，动态状态类不要填）</label><textarea id="ctx-html-static-classes" class="field textarea" rows="2">${escapeHtml(ps.outputContract?.staticClassTokens||'')}</textarea><label class="form-label">固定 HTML/CSS 注释精确白名单（每行一个，仅填写注释内部文字）</label><textarea id="ctx-html-static-comments" class="field textarea" rows="2">${escapeHtml(ps.outputContract?.staticCommentTexts||'')}</textarea><label class="check-row"><input id="ctx-pinned-on" type="checkbox" ${ps.pinnedFactsEnabled!==false?'checked':''}> 注入 Pinned Facts（固定事实）</label></div><div class="form-full"><label class="form-label">📌 Pinned Facts（固定事实，一行一条）</label><textarea id="ctx-pinned" class="field textarea">${escapeHtml(arr(currentSessionData.pinnedFacts).join('\n'))}</textarea></div><div class="form-full"><label class="form-label">玩家备注</label><textarea id="ctx-usernotes" class="field textarea">${escapeHtml(currentSessionData.userNotes||'')}</textarea></div><div class="form-full"><label class="form-label">AI（人工智能）备注</label><textarea id="ctx-ainotes" class="field textarea">${escapeHtml(currentSessionData.aiNotes||'')}</textarea></div></div></section>
 <div class="toolbar"><button id="ctx-save" class="primary-btn" type="button" onclick="saveContextSettings()">保存长剧情与会话设置</button><span class="row-sub">保存成功后，重新打开此页面仍会显示你设定的数值。</span></div>
 <section class="settings-section"><h3>💾 本地档案</h3><p class="helper">剧情、角色卡、世界书、预设、正则包保存在当前浏览器 IndexedDB（本地数据库）。分享剧情请选“纯剧情 TXT/JSON”，不含预设与历史请求快照；“原始会话存档”和“完整剧情资料备份”保留生成请求快照等私密上下文，仅用于自己的恢复与迁移。字体与 API Key（接口密钥）不会被打进这份“剧情资料备份”。</p><div class="toolbar"><button class="primary-btn" onclick="exportStoryTranscript('txt')">⇩ 纯剧情 TXT</button><button class="ghost-btn" onclick="exportStoryTranscript('json')">⇩ 纯剧情 JSON</button><button class="ghost-btn" onclick="exportCurrentSession()">⇩ 原始会话存档（可导回）</button><button class="ghost-btn" onclick="exportWholeLibrary()">⇩ 完整剧情资料备份</button><button class="ghost-btn" onclick="chooseLibraryImport()">⇧ 导入剧情资料备份</button><button class="danger-btn" onclick="deleteCurrentSession()">删除当前剧情</button></div></section>`}
 async function saveContextSettings(){
@@ -688,7 +783,7 @@ async function saveContextSettings(){
         }
         return n;
     };
-    const recent=numeric('ctx-recent','近期原文消息数',6,200);
+    const recent=numeric('ctx-recent','近期保留原文消息数',6,100000);
     if(recent===null)return null;
     const trigger=numeric('ctx-summary-trigger','自动整理间隔',12,200);
     if(trigger===null)return null;
@@ -700,11 +795,25 @@ async function saveContextSettings(){
     if(!['auto','dialogue_first','quote_dialogue','raw'].includes(mode)){
         toast('无效的 AIRP 输入模式，未保存');return null;
     }
+    const rollingMax=numeric('ctx-auto-rolling-budget','自动整理单次请求上限',1,20);
+    if(rollingMax===null)return null; // A failed field invalidates the ENTIRE form before confirmation or CAS.
+    // Validate all form text BEFORE calling patchCurrent. Backend normalization
+    // truncates these fields by contract; truncation after a write is not atomic validation.
+    for(const [field,max] of Object.entries({'ctx-html-selectors':600,'ctx-html-template-message':200,
+      'ctx-html-body-slot':200,'ctx-html-status-slot':200,'ctx-html-static-slots':600,
+      'ctx-html-static-css':2000,'ctx-html-static-comments':4000,'ctx-html-static-classes':4000})){
+        const input=qs(field);if(String(input?.value||'').length>max){toast('HTML 合同字段超过 '+max+' 字符，全部设置未保存');input?.focus?.();return null;}
+    }
+    const wasAuto=currentSessionData.promptSettings?.autoRollingEnabled===true;
+    if(qs('ctx-summary').checked&&!wasAuto&&!window.confirm('启用后会在达到剧情阈值时调用模型，可能收费；每个任务最多使用下面设置的请求次数。失败会停止自动重试。确定启用吗？'))return null;
     const expected={...(currentSessionData.promptSettings||{}),recentMessageLimit:recent,
         summaryTriggerMessages:trigger,worldbookBudgetChars:worldBudget,
-        inputSemanticMode:mode,inputSemanticExplicit:true,historyHtmlMode:qs('ctx-history-html-projection').checked?'semantic':'raw',summaryEnabled:qs('ctx-summary').checked,
+        inputSemanticMode:mode,inputSemanticExplicit:true,historyHtmlMode:qs('ctx-history-html-projection').checked?'semantic':'raw',summaryEnabled:qs('ctx-summary').checked,autoRollingEnabled:qs('ctx-summary').checked,injectSavedRolling:qs('ctx-inject-saved-rolling').checked,autoRollingMaxRequests:rollingMax,
         pinnedFactsEnabled:qs('ctx-pinned-on').checked};
-    expected.outputContract=qs('ctx-complete-html').checked?{completeHtml:true}:null;
+    expected.outputContract=(qs('ctx-complete-html').checked||qs('ctx-require-html')?.checked)?{
+       completeHtml:qs('ctx-complete-html').checked,requireHtml:!!qs('ctx-require-html')?.checked,
+       requiredSelectors:qs('ctx-html-selectors')?.value||'',templateMessageId:qs('ctx-html-template-message')?.value||'',
+       bodySelector:qs('ctx-html-body-slot')?.value||'',statusSelector:qs('ctx-html-status-slot')?.value||'',staticSelectors:qs('ctx-html-static-slots')?.value||'',staticCssSelectors:qs('ctx-html-static-css')?.value||'',staticCommentTexts:qs('ctx-html-static-comments')?.value||'',staticClassTokens:qs('ctx-html-static-classes')?.value||''}:null;
     // Do not overwrite unrelated Persona/source switches while saving context.
     const saved=await patchCurrent({
         title:qs('ctx-title').value||'未命名咪嘛宇宙',
@@ -728,7 +837,7 @@ async function saveContextSettings(){
 
 function memoryStore(){
     const m=currentSessionData?.manualMemory||{};
-    return {core:m.core||{content:'',source:'context',targetChars:1000,temperature:.35},facts:arr(m.facts),settings:{injectCore:m.settings?.injectCore!==false,injectFacts:m.settings?.injectFacts!==false,factInjectionLimit:Number(m.settings?.factInjectionLimit??12),factChunkRounds:Number(m.settings?.factChunkRounds??10),factTargetChars:Number(m.settings?.factTargetChars??1800),factScope:m.settings?.factScope==='all'?'all':'recent',factRecentRounds:Number(m.settings?.factRecentRounds??25),summaryTemperature:Number(m.settings?.summaryTemperature??.35),memoryModel:String(m.settings?.memoryModel||''),summaryContext:{version:1,userPersona:m.settings?.summaryContext?.userPersona===true,characterPersona:m.settings?.summaryContext?.characterPersona===true,presetIds:arr(m.settings?.summaryContext?.presetIds),worldbookMode:m.settings?.summaryContext?.worldbookMode||'none',worldbookIds:arr(m.settings?.summaryContext?.worldbookIds),worldbookEntryIds:arr(m.settings?.summaryContext?.worldbookEntryIds),worldbookEntryRefs:arr(m.settings?.summaryContext?.worldbookEntryRefs)}}};
+    return {core:m.core||{content:'',source:'context',targetChars:1000,temperature:.35},facts:arr(m.facts),settings:{injectCore:m.settings?.injectCore!==false,injectFacts:m.settings?.injectFacts!==false,factInjectionLimit:Number(m.settings?.factInjectionLimit??12),factChunkRounds:Number(m.settings?.factChunkRounds??10),factTargetChars:Number(m.settings?.factTargetChars??1800),factScope:m.settings?.factScope==='all'?'all':'recent',factRecentRounds:Number(m.settings?.factRecentRounds??25),summaryTemperature:Number(m.settings?.summaryTemperature??.35),memoryModel:String(m.settings?.memoryModel||''),memoryStreamMode:['inherit','on','off'].includes(m.settings?.memoryStreamMode)?m.settings.memoryStreamMode:'inherit',summaryContext:{version:1,userPersona:m.settings?.summaryContext?.userPersona===true,characterPersona:m.settings?.summaryContext?.characterPersona===true,presetIds:arr(m.settings?.summaryContext?.presetIds),worldbookMode:m.settings?.summaryContext?.worldbookMode||'none',worldbookIds:arr(m.settings?.summaryContext?.worldbookIds),worldbookEntryIds:arr(m.settings?.summaryContext?.worldbookEntryIds),worldbookEntryRefs:arr(m.settings?.summaryContext?.worldbookEntryRefs)}}};
 }
 function storyRoundCount(){return arr(currentSessionData?.messages).filter(m=>m?.role==='user').length}
 function memoryDateLabel(v){if(!v)return'尚未生成';try{return new Date(v).toLocaleString('zh-CN',{hour12:false})}catch(_){return String(v)}}
@@ -798,20 +907,53 @@ function renderMemoryTab(box){
     box.innerHTML=`
     <section class="settings-section memory-overview"><h3>🗃️ 手动记忆总结</h3><p class="helper">使用当前 API 配置与所选记忆模型整理这个 Session（剧情会话）的长期记忆。这里的“1 轮”= 一次 User 发言 + 随后的角色回复；角色开场白会作为第 1 轮之前的前置信息纳入摘要，但不会单独占一轮。</p><div class="memory-stats"><div class="stat-card"><div class="stat-num">${rounds}</div><div class="stat-label">当前剧情轮数</div></div><div class="stat-card"><div class="stat-num">${facts.length}</div><div class="stat-label">事实记忆片段</div></div><div class="stat-card"><div class="stat-num">${core.content?'✓':'—'}</div><div class="stat-label">核心记忆</div></div></div>
     ${memoryWarnings.length?`<p class="helper" role="status">⚠ ${memoryWarnings.map(escapeHtml).join('　')}</p>`:''}<div class="form-grid memory-global-grid"><div><label class="form-label">Summary Temperature（总结温度）</label><input id="memory-temp" class="field" type="number" min="0.1" max="2" step="0.05" value="${escapeHtml(String(memoryFormDraftValue('memory-temp',temp.toFixed(2))))}"><div class="row-sub">独立于剧情温度；若 API 关闭发送温度则请求不会带温度。</div></div><div class="form-full"><label class="form-label">记忆模型（留空沿用剧情模型）</label><div class="inline-field-row"><select id="memory-model-list" class="field" onchange="selectMemoryModel()"><option value="">沿用剧情模型</option>${mem.settings.memoryModel?`<option selected value="${escapeHtml(mem.settings.memoryModel)}">${escapeHtml(mem.settings.memoryModel)}</option>`:''}</select><button class="ghost-btn" type="button" onclick="loadMemoryModels()">拉取模型</button></div><input id="memory-model" class="field" value="${escapeHtml(String(memoryFormDraftValue('memory-model',mem.settings.memoryModel)))}" placeholder="留空沿用剧情模型，也可手填模型 ID"><div class="row-sub">核心、事实、手动合并及后台滚动摘要共用独立记忆模型，具体请求绑定当次模型；不会改 API 页的剧情模型。</div></div><div><label class="form-label">后续剧情注入</label><label class="check-row"><input id="memory-inject-core" type="checkbox" ${memoryFormDraftChecked('memory-inject-core',mem.settings.injectCore)?'checked':''}> 注入核心记忆</label><label class="check-row"><input id="memory-inject-facts" type="checkbox" ${memoryFormDraftChecked('memory-inject-facts',mem.settings.injectFacts)?'checked':''}> 注入事实记忆</label></div><div><label class="form-label">最多注入最近几段事实记忆</label><input id="memory-inject-limit" class="field" type="number" min="0" step="1" value="${escapeHtml(String(memoryFormDraftNumber('memory-inject-limit',mem.settings.factInjectionLimit)))}"><div class="row-sub">填 0 = 注入全部事实记忆；正整数 = 最近指定条数。没有人为 100 条上限，实际请求仍受所用模型上下文容量约束。</div></div></div>
-    <div class="toolbar"><button class="ghost-btn" onclick="saveMemorySettings()" >保存记忆设置</button></div><div id="memory-progress" class="memory-progress ${memoryTask?.sessionId===currentSessionId?'':'hidden'}"><div class="memory-progress-head"><span id="memory-progress-label">正在调用 LLM（大语言模型）…</span><span id="memory-progress-percent">0%</span></div><div class="memory-progress-track"><div id="memory-progress-bar" class="memory-progress-bar"></div></div><div id="memory-progress-detail" class="row-sub"></div><button class="tool-mini" onclick="stopMemorySummary()">停止总结</button></div></section>
+    <div class="form-full"><label class="form-label">记忆生成 Streaming（流式预览，不等于正式保存）</label><select id="memory-stream-mode" class="field"><option value="inherit" ${memoryFormDraftValue('memory-stream-mode',mem.settings.memoryStreamMode||'inherit')==='inherit'?'selected':''}>继承 API 设置</option><option value="on" ${memoryFormDraftValue('memory-stream-mode',mem.settings.memoryStreamMode||'inherit')==='on'?'selected':''}>打开</option><option value="off" ${memoryFormDraftValue('memory-stream-mode',mem.settings.memoryStreamMode||'inherit')==='off'?'selected':''}>关闭</option></select></div><div class="toolbar"><button class="ghost-btn" onclick="saveMemorySettings()" >保存记忆设置</button></div><div id="memory-progress" class="memory-progress ${memoryTask?.sessionId===currentSessionId?'':'hidden'}"><div class="memory-progress-head"><span id="memory-progress-label">正在调用 LLM（大语言模型）…</span><span id="memory-progress-percent">0%</span></div><div class="memory-progress-track"><div id="memory-progress-bar" class="memory-progress-bar"></div></div><div id="memory-progress-detail" class="row-sub"></div><label class="form-label">正在接收的记忆草稿（只读，非已提交）</label><textarea id="memory-stage-draft" class="field textarea tall" readonly style="user-select:text"></textarea><button class="tool-mini" onclick="stopMemorySummary()">停止总结</button></div></section>
 
     ${memoryReferenceControls}
     <section class="settings-section"><h3>💎 核心记忆</h3><p class="helper">不是流水账。它会从第一轮开始提炼真正影响长期剧情的东西，尤其优先保存关系转变、承诺/约定、重要选择及后果、持续状态变化和未解决事项。也可以直接用已经生成的事实记忆再压缩一次。</p><div class="form-grid"><div><label class="form-label">总结来源</label><select id="core-memory-source" class="field"><option value="context" ${core.source!=='facts'?'selected':''}>从第一轮剧情原文开始总结</option><option value="facts" ${core.source==='facts'?'selected':''}>根据事实记忆总结核心记忆</option></select></div><div><label class="form-label">目标字数</label><input id="core-memory-target" class="field" type="number" min="100" max="12000" step="100" value="${memoryFormDraftNumber('core-memory-target',Number(core.targetChars||1000))}"><div class="memory-quick-targets"><button class="tool-mini" onclick="setCoreMemoryTarget(500)">500</button><button class="tool-mini" onclick="setCoreMemoryTarget(1000)">1000</button><button class="tool-mini" onclick="setCoreMemoryTarget(2000)">2000</button></div></div><div class="form-full"><label class="form-label">核心记忆正文 · ${escapeHtml(memorySourceLabel(core.source))} · ${escapeHtml(memoryDateLabel(core.updatedAt))}</label><textarea id="core-memory-content" class="field textarea tall" placeholder="生成后会显示在这里，也可以手工修订。">${escapeHtml(core.content||'')}</textarea></div></div><div class="toolbar"><button class="primary-btn memory-action" onclick="generateCoreMemory()" ${memoryGenerating?'disabled':''}>✨ 生成 / 重做核心记忆</button><button class="ghost-btn" onclick="saveCoreMemoryEdit()" >保存手工修改</button>${core.content?'<button class="danger-btn" onclick="clearCoreMemory()" '+(memoryGenerating?'disabled':'')+'>清空核心记忆</button>':''}</div></section>
 
-    <section class="settings-section"><h3>🕰️ 滚动剧情摘要（可撤销）</h3><p class="helper">只影响模型收到的旧剧情摘要，不会删除原始 History。错误摘要可撤销并从第一条重新总结；撤销前的版本暂存供恢复。正在运行的总结任务不能抢占。</p><div class="row-sub">已总结至消息索引 ${Number(currentSessionData?.lastSummarizedIndex||0)}；旧摘要备份 ${Array.isArray(currentSessionData?.rollingArchive)?currentSessionData.rollingArchive.length:0} 份</div><details><summary>查看当前滚动摘要</summary><pre class="memory-review-source">${escapeHtml(currentSessionData?.rollingSummary||currentSessionData?.summary||'(尚未生成)')}</pre></details><div class="toolbar"><button type="button" class="danger-btn" onclick="revokeRollingMemory()" ${memoryGenerating?'disabled':''}>撤销错误滚动摘要（保留原文）</button>${currentSessionData?.rollingArchive?.length?`<button type="button" class="ghost-btn" onclick="restoreRollingMemory()" ${memoryGenerating?'disabled':''}>恢复上一份摘要</button>`:''}</div></section>
+    <section class="settings-section"><h3>🕰️ 旧剧情自动整理（可撤销）</h3><p id="rolling-auto-status" class="helper">正在核对后台状态…</p><p class="helper">${currentSessionData?.promptSettings?.autoRollingEnabled===true?'自动生成已授权；失败后暂停自动收费':'自动生成当前关闭；已有摘要仍可独立选择注入'}。最近保留 ${Number(currentSessionData?.promptSettings?.recentMessageLimit||34)} 条，整理间隔 ${Number(currentSessionData?.promptSettings?.summaryTriggerMessages||28)} 条；首次大约 ${Math.max(18,Number(currentSessionData?.promptSettings?.recentMessageLimit||34)-4)+Number(currentSessionData?.promptSettings?.summaryTriggerMessages||28)} 条消息才触发。完整原始剧情不删除。</p><div class="toolbar"><button type="button" class="ghost-btn" onclick="manualRollingSummary()">查看请求计划并手动整理/恢复</button></div><p class="helper">只影响模型收到的旧剧情摘要，不会删除原始 History。错误摘要可撤销并从第一条重新总结；撤销前的版本暂存供恢复。正在运行的总结任务不能抢占。</p><div class="row-sub">已总结至消息索引 ${Number(currentSessionData?.lastSummarizedIndex||0)}；旧摘要备份 ${Array.isArray(currentSessionData?.rollingArchive)?currentSessionData.rollingArchive.length:0} 份</div><details><summary>查看当前滚动摘要</summary><pre class="memory-review-source">${escapeHtml(currentSessionData?.rollingSummary||currentSessionData?.summary||'(尚未生成)')}</pre></details><div class="toolbar"><button type="button" class="danger-btn" onclick="revokeRollingMemory()" ${memoryGenerating?'disabled':''}>撤销错误滚动摘要（保留原文）</button>${currentSessionData?.rollingArchive?.length?`<button type="button" class="ghost-btn" onclick="restoreRollingMemory()" ${memoryGenerating?'disabled':''}>恢复上一份摘要</button>`:''}</div></section>
     <section class="settings-section"><h3>🧾 事实记忆</h3><p class="helper">把剧情按轮次忠实整理为详细的小段记忆。事件、具体行为、重要对话和关系变化尽量保留；不强制字面审判。已有内容可随时编辑、删除、手动合并。</p><div class="form-grid"><div><label class="form-label">每 X 轮总结一段</label><input id="fact-memory-chunk" class="field" type="number" min="1" max="200" value="${memoryFormDraftNumber('fact-memory-chunk',mem.settings.factChunkRounds)}"></div><div><label class="form-label">每段目标字数</label><input id="fact-memory-target" class="field" type="number" min="80" max="12000" step="20" value="${memoryFormDraftNumber('fact-memory-target',mem.settings.factTargetChars)}"></div><div><label class="form-label">总结范围</label><select id="fact-memory-scope" class="field" onchange="syncFactMemoryScope()"><option value="recent" ${memoryFormDraftValue('fact-memory-scope',mem.settings.factScope)==='recent'?'selected':''}>只总结最近 X 轮</option><option value="all" ${memoryFormDraftValue('fact-memory-scope',mem.settings.factScope)==='all'?'selected':''}>从头到尾全部总结</option></select></div><div id="fact-memory-recent-wrap"><label class="form-label">最近多少轮</label><input id="fact-memory-recent" class="field" type="number" min="1" max="100000" value="${memoryFormDraftNumber('fact-memory-recent',mem.settings.factRecentRounds)}"></div><div class="form-full" id="fact-memory-replace-wrap"><label class="check-row"><input id="fact-memory-replace" type="checkbox" ${memoryFormDraftChecked('fact-memory-replace',false)?'checked':''}> 从头到尾完成后，用新事实记忆整体顶掉旧事实记忆</label><div class="row-sub">只在“从头到尾”模式生效。生成过程中如果 API 失败，旧记忆不会被提前删除。</div></div></div><div class="toolbar"><button class="primary-btn memory-action" onclick="generateFactMemories()" ${memoryGenerating?'disabled':''}>🧠 开始事实总结</button>${facts.length?'<button class="danger-btn" onclick="clearAllFactMemories()" '+(memoryGenerating?'disabled':'')+'>清空全部事实记忆</button>':''}</div><div class="memory-card"><h4>🧩 AI 二次合并事实记忆</h4><p class="helper">勾选下方需要合并的事实记忆（可一次合并 100 条以上），生成候选后手动检查或修改；确认前旧记忆完全不变。</p><label class="form-label">合并后目标字数（软目标，保留细节优先）</label><input class="field" type="number" id="memory-merge-target" min="100" max="250000" value="6000"><div class="toolbar"><button type="button" class="primary-btn" onclick="previewFactMemoryMerge()" ${memoryGenerating||facts.length<2?'disabled':''}>AI 合并已选记忆（仅预览）</button><button type="button" class="ghost-btn" onclick="toggleMergeFactSelection(true)">全选</button><button type="button" class="ghost-btn" onclick="toggleMergeFactSelection(false)">取消全选</button>${facts.length?'<button type="button" class="ghost-btn" onclick="undoFactMemoryMerge()">撤销上一次合并</button>':''}</div></div>${preview}<div class="memory-list">${factCards}</div></section>`;
     box.dataset.memoryFormSessionId=currentSessionId||'';
     syncFactMemoryScope();
     paintMemoryProgress();
+    if(qs('memory-stage-draft'))qs('memory-stage-draft').value=memoryTask?.previewText||'';
     refreshDurableMemoryJobs().catch(e=>console.error('Memory journal UI:',e));
+    refreshAutoRollingStatus().catch(e=>console.error('Rolling status UI:',e));
     if(!memoryMergeDraft||memoryMergeDraft.sessionId!==currentSessionId)
       restoreFactMergeDraft(currentSessionId).catch(e=>console.error('Durable merge draft read:',e));
 }
+async function refreshAutoRollingStatus(){
+    const el=qs('rolling-auto-status'),s=currentSessionData;if(!el||!s)return;
+    const msgCount=(s.messages||[]).length,ps=s.promptSettings||{},safe=Math.max(18,Number(ps.recentMessageLimit||34)-4),trigger=Number(ps.summaryTriggerMessages||28);
+    const pending=Math.max(0,msgCount-safe-Math.max(0,Number(s.lastSummarizedIndex)||0));
+    const sessionId=s.id;
+    let job,preflight;try{[job,preflight]=await Promise.all([MimaLocalStore.getMemoryJob(sessionId,'rolling'),MimaLocalStore.getRollingPreflight(sessionId)])}
+    catch(e){if(currentSessionId===sessionId)el.textContent='旧剧情整理状态读取失败（不是没有任务）：'+e.message;return;}
+    if(currentSessionId!==sessionId||!el.isConnected)return;
+    if(job?.status==='running'&&Number(job.leaseUntilEpoch||0)<=Date.now())el.textContent='旧剧情整理中断：已暂停收费；已有阶段候选可在任务记录中查看，手动继续前会再次确认计划';
+    else if(job&&['failed','aborted','needs_review','interrupted'].includes(job.status))el.textContent=`整理失败已暂停 · ${job.code||job.stage||'查看任务诊断'} · 原文和旧摘要保留；不会因下一条剧情自动重新付费`;
+    else if(job?.status==='running')el.textContent='整理进行中 · '+String(job.stage||'正在生成');
+    else if(preflight?.status==='paused_no_charge'&&ps.autoRollingEnabled&&pending>=trigger){
+        const cfg=MimaStandalone.getApiConfig();
+        const stale=Number(preflight.sourceRevision)!==Number(s.recordRevision||0)||Number(preflight.sourceCount)!==msgCount||
+          Number(preflight.allowedRequests)!==Number(ps.autoRollingMaxRequests||1)||
+          (preflight.contextWindowTokens!==null && Number(preflight.contextWindowTokens)!==Number(cfg.contextWindowTokens||0));
+        if(stale){el.textContent='旧剧情整理：之前的免费暂停记录已因剧情来源或预算变化而过期，未在后台重新收费或规划。请手动点击「查看请求计划并手动整理/恢复」重新核对。';return;}
+        const count=preflight.requestCount?`完整计划预计 ${preflight.requestCount} 次请求`:'模型窗口或完整计划尚未核实';
+        const tokens=preflight.estimatedInputTokens?`、预计输入约 ${preflight.estimatedInputTokens} tokens（离线估算）`:'';
+        el.textContent=`自动整理已免费暂停：${count}${tokens}；授权上限 ${preflight.allowedRequests} 次。原因：${preflight.detail||preflight.code}。继续可能收费；目前没有发起付费请求。请点击下方「查看请求计划并手动整理/恢复」来决定是否付费。`;
+    }else if(!ps.autoRollingEnabled)el.textContent='自动整理：关（已保存的旧摘要仍可按注入开关使用）';
+    else if(pending<trigger){
+        const configuredWindow=Number(MimaStandalone.getApiConfig()?.contextWindowTokens);
+        el.textContent=`等待整理：还差约 ${trigger-pending} 条消息；当前 ${pending}/${trigger} 条较早剧情`+
+          (!(configuredWindow>=4096)?'。注意：未声明可核实的模型上下文窗口，达到阈值时将免费暂停，不能直接自动收费。':'');
+    }
+    else el.textContent=`已满足整理条件：当前 ${pending} 条待整理；最多 ${ps.autoRollingMaxRequests||1} 次 API 请求/任务`;
+}
+window.addEventListener('mima:rolling-preflight',event=>{
+    if(event.detail?.sessionId===currentSessionId)refreshAutoRollingStatus().catch(e=>console.error('Rolling preflight UI:',e));
+});
 function setCoreMemoryTarget(n){const el=qs('core-memory-target');if(el)el.value=String(n)}
 function syncFactMemoryScope(){const scope=qs('fact-memory-scope')?.value||'recent',recent=qs('fact-memory-recent-wrap'),replace=qs('fact-memory-replace-wrap');if(recent)recent.style.display=scope==='recent'?'block':'none';if(replace)replace.style.display=scope==='all'?'block':'none'}
 function getMemoryTemperature(){const n=Number(qs('memory-temp')?.value??memoryStore().settings.summaryTemperature??.35);return Number.isFinite(n)?Math.max(.1,Math.min(2,n)):.35}
@@ -857,9 +999,30 @@ function handleMemoryProgress(payload={}){
     // Progress belongs to the task, not to the currently mounted settings DOM.
     const prev=Number(memoryTask.progress?.percent)||0;
     memoryTask.progress={...memoryTask.progress,...payload,percent:Math.max(prev,Number(payload.percent)||0)};
+    if(typeof payload.streamText==='string')memoryTask.previewText=payload.streamText;
+    if(typeof payload.stageContent==='string')memoryTask.previewText=payload.stageContent;
+    const draft=qs('memory-stage-draft');if(draft)draft.value=memoryTask.previewText||'';
     paintMemoryProgress();
 }
 // Read-only owner diagnostics; never duplicate prompt text, API keys or the canonical history.
+async function manualRollingSummary(){
+    if(!currentSessionId||memoryGenerating)return toast('请先选择空闲的剧情');
+    const sessionId=currentSessionId,options={temperature:getMemoryTemperature()};
+    const plan=await fetchStory(`/sessions/${sessionId}/memory/rolling/plan`,'POST',options);
+    if(!plan.success)return toast('无法规划旧剧情整理：'+(plan.msg||'来源/容量不可验证'));
+    const d=plan.data;
+    if(!window.confirm(`本次整理预计调用 ${d.requestCount} 次模型请求，可能收费。输入约 ${d.estimatedTotalInputTokens} tokens；保留原始剧情。是否确认？`))return;
+    if(memoryGenerating)return toast('已有记忆任务正在运行');
+    memoryGenerating=true;
+    try{
+        const res=await fetchStory(`/sessions/${sessionId}/memory/rolling/run`,'POST',{...options,approvedPlanDigest:d.digest});
+        if(!res.success)throw Error(res.msg||'旧剧情整理失败');
+        await MimaLocalStore.clearRollingPreflight(sessionId);
+        toast('旧剧情整理完成，摘要已安全保存');
+        if(currentSessionId===sessionId){currentSessionData=res.data;renderSettings();}
+    }catch(e){toast('整理失败，旧摘要仍在：'+e.message)}
+    finally{memoryGenerating=false;}
+}
 function memoryJobDiagnostic(job){
     const checks=Array.isArray(job?.checkpoints)?job.checkpoints:[];
     const failures=checks.filter(p=>/_error$/.test(p.stage||''));
@@ -867,7 +1030,8 @@ function memoryJobDiagnostic(job){
     let transport={};try{if(typeof latest.details==='string')transport=JSON.parse(latest.details);}catch(_){}
     const output={
         task:{id:job.id,kind:job.kind,status:job.status,stage:job.stage,code:job.code||latest.errorCode||'',startedAt:job.startedAt,updatedAt:job.updatedAt,attemptId:job.attemptId,sourceCount:job.sourceCount,sourceHash:job.sourceHash},
-        request:{model:transport.model||job.options?.model||'(沿用当时剧情模型)',httpStatus:Number(latest.httpStatus||transport.httpStatus)||0,endpointOrigin:transport.endpointOrigin||'',requestId:transport.requestId||'',providerRequestId:transport.providerRequestId||transport.providerError?.requestId||'',requestBytes:transport.requestBytes||null,stage:transport.stage||latest.stage||job.stage,requestFields:transport.requestFields||[],providerError:transport.providerError||null},
+        request:{model:transport.model||job.options?.model||'(沿用当时剧情模型)',httpStatus:Number(latest.httpStatus||transport.httpStatus)||null,endpointOrigin:transport.endpointOrigin||'',requestId:transport.requestId||'',providerRequestId:transport.providerRequestId||transport.providerError?.requestId||'',requestBytes:transport.requestBytes||null,stage:transport.stage||latest.stage||job.stage,requestFields:transport.requestFields||[],providerError:transport.providerError||null,
+          failureSource:transport.errorSource||'未记录',finishKind:transport.finishKind||'未记录',finishReason:transport.finishReason||'未记录',responseObserved:!!Number(latest.httpStatus||transport.httpStatus)},
         lastError:{stage:latest.stage||'',time:latest.time||'',code:latest.errorCode||job.code||'',message:latest.errorMessage||'',hint:latest.hint||'',details:latest.details||''},
         checkpoints:checks.slice(-35).map(p=>({stage:p.stage,time:p.time,errorCode:p.errorCode,elapsedMs:p.elapsedMs,chars:p.chars,partCount:p.partCount,finishReason:p.finishReason}))
     };
@@ -878,7 +1042,10 @@ function showMemoryJobDetails(job,root){
     root.replaceChildren();
     const data=memoryJobDiagnostic(job);
     const summary=document.createElement('p');summary.className='helper';
-    summary.textContent=`${data.task.kind} · ${data.task.status} · ${data.lastError.code||'无错误码'} · HTTP ${data.request.httpStatus||'未收到响应'} · ${data.request.model}`;
+    const kindLabels={http:'网关 HTTP 错误',transport:'网络请求未取得可读取响应',stream:'已连接后流式响应出错',provider_refusal:'模型明确拒绝返回正文',provider_terminal_admission:'模型终止原因拒绝/拦截',response_shape:'模型返回内容不可用',response_body_parse:'响应正文解析失败'};
+    const observed=data.request.responseObserved;
+    const source=data.request.failureSource;
+    summary.textContent=`${data.task.kind} · ${data.task.status} · ${data.lastError.code||'无错误码'} · ${observed?'HTTP '+data.request.httpStatus:'HTTP 状态未记录'} · ${kindLabels[source]||'失败来源待核实'} · ${data.request.model}`;
     const pre=document.createElement('pre');pre.className='memory-review-source';pre.style.cssText='white-space:pre-wrap;word-break:break-word;max-height:40vh;overflow:auto;user-select:text';
     pre.textContent=JSON.stringify(data,null,2);
     const buttons=document.createElement('div');buttons.className='toolbar';
@@ -920,6 +1087,30 @@ async function refreshDurableMemoryJobs(){
         }
         line.append(actions,pane);host.appendChild(line);
     }
+    // Display verified persisted stage bodies, NOT just bounded diagnostic checkpoints.
+    try{
+      const parts=[];
+      for(const kind of ['core','facts']){
+        const job=rows.find(x=>x.kind===kind);
+        if(!job)continue;
+        const stages=await MimaLocalStore.listMemoryStages(sessionId,kind);
+        for(const stage of stages)parts.push({...stage,fromCurrentSource:stage.sourceHash===job.sourceHash});
+      }
+      if(currentSessionId!==sessionId||settingsTab!=='memory')return;
+      if(parts.length){
+        const section=document.createElement('section');section.className='entry-card';
+        const title=document.createElement('h4');title.textContent=`独立耐久记忆候选（${parts.length} 段）`;section.appendChild(title);
+        const note=document.createElement('p');note.className='helper';note.textContent='已通过原任务持久化的阶段正文，可以查看、复制和导出；不等于正式核心/事实已提交。旧阶段不会因停止而清零。';section.appendChild(note);
+        for(const stage of parts){
+          const group=document.createElement('details');const label=document.createElement('summary');label.textContent=`${stage.fromCurrentSource?'当前来源':'历史来源，仅供查看'} · ${stage.kind} · ${stage.stage} · ${stage.outputLength} 字 · ${stage.createdAt||''}`;group.appendChild(label);
+          const body=document.createElement('textarea');body.readOnly=true;body.className='field textarea tall';body.style.userSelect='text';body.value=stage.outputText;group.appendChild(body);
+          const buttons=document.createElement('div');buttons.className='toolbar';
+          const copy=document.createElement('button');copy.type='button';copy.className='tool-mini';copy.textContent='复制阶段正文';copy.onclick=()=>navigator.clipboard?.writeText(stage.outputText).then(()=>toast('已复制候选')).catch(()=>toast('复制失败，请长按选择文本'));buttons.append(copy);
+          const exportButton=document.createElement('button');exportButton.type='button';exportButton.className='tool-mini';exportButton.textContent='导出 TXT';exportButton.onclick=()=>{const blob=new Blob([stage.outputText],{type:'text/plain;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`mima-memory-${stage.kind}-${stage.stage}.txt`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};buttons.append(exportButton);group.appendChild(buttons);section.appendChild(group);
+        }
+        host.appendChild(section);
+      }
+    }catch(e){const n=document.createElement('p');n.className='helper';n.textContent='耐久记忆候选读取失败，未当作空数据：'+e.message;host.appendChild(n);}
     // Independent durable candidates; only exact complete ranges can be
     // approved, and all+replace keeps its original all-or-nothing contract.
     try{
@@ -1017,7 +1208,7 @@ async function saveMemorySettings(){
     const factTargetChars=validatedSettingNumber('fact-memory-target','每段事实记忆目标字数',80,12000);
     const factRecentRounds=validatedSettingNumber('fact-memory-recent','事实记忆最近轮数',1,100000);
     if(factChunkRounds===null||factTargetChars===null||factRecentRounds===null)return null;
-    const requested={injectCore:!!qs('memory-inject-core')?.checked,injectFacts:!!qs('memory-inject-facts')?.checked,factInjectionLimit:limit,summaryTemperature:temperature,memoryModel:qs('memory-model')?.value.trim()||'',factChunkRounds,factTargetChars,factScope:qs('fact-memory-scope')?.value==='all'?'all':'recent',factRecentRounds,
+    const requested={injectCore:!!qs('memory-inject-core')?.checked,injectFacts:!!qs('memory-inject-facts')?.checked,factInjectionLimit:limit,summaryTemperature:temperature,memoryModel:qs('memory-model')?.value.trim()||'',factChunkRounds,factTargetChars,factScope:qs('fact-memory-scope')?.value==='all'?'all':'recent',factRecentRounds,memoryStreamMode:qs('memory-stream-mode')?.value||'inherit',
       summaryContext:{version:1,userPersona:!!qs('memory-ref-user')?.checked,characterPersona:!!qs('memory-ref-char')?.checked,
         presetIds:Array.from(document.querySelectorAll('#settings-content [data-memory-ref="preset"]:checked')).map(n=>n.value),
         worldbookMode:qs('memory-ref-mode')?.value||'none',
@@ -1054,6 +1245,16 @@ async function runMemorySummary(kind,sessionId,options){
     if(isSettingsOpen()&&settingsTab==='memory'&&currentSessionId===sessionId)renderMemoryTab(qs('settings-content'));
     paintMemoryProgress();
     try{
+        // Preview the identical frozen source/reference/window contract BEFORE the first paid POST.
+        const planned=await fetchStory(`/sessions/${sessionId}/memory/plan`,'POST',{kind,options},false);
+        if(!planned.success){toast('记忆规划失败，没有请求模型：'+(planned.msg||planned.code));return;}
+        const plan=planned.data;
+        const first=plan.stages.slice(0,12).map(x=>x.stage).join(', ');
+        const warning=plan.unknownCapacityWarning?'模型实际窗口未声明；无法保证这一次完整输入被网关接受。\n':'';
+        const split=plan.requiresSplit?'已按来源及窗口规划多阶段，每次会重复选中的参考信息。\n':'';
+        const approved=confirm(`记忆任务付费前计划（不保证实际费用）\n${warning}${split}预计 API 请求：${plan.requestCount} 次\n输入估算：${plan.estimatedTotalInputTokens} tokens\n输出最大预算估算：${plan.estimatedOutputTokens} tokens\n每次重复参考约：${plan.referenceTokensPerRequest} tokens\n阶段：${first}${plan.requestCount>12?' …':''}\n\n确认才会开始请求；取消不花费本轮 API。`);
+        if(!approved){toast('已取消记忆生成，未请求模型。');return;}
+        options={...options,approvedPlanDigest:plan.digest};
         const endpoint=`/sessions/${sessionId}/memory/${kind==='core'?'core':'facts'}`;
         const res=await fetchStory(endpoint,'POST',options,false,handleMemoryProgress,task.controller.signal);
         if(!res.success && (res.aborted || task.controller.signal.aborted)){toast('记忆总结已停止，已保存的旧记忆未删除。');return;}
@@ -1089,7 +1290,7 @@ async function generateCoreMemory(){
     const sessionId=currentSessionId,source=qs('core-memory-source')?.value||'context',targetChars=Number(qs('core-memory-target')?.value||1000),temperature=getMemoryTemperature(),model=qs('memory-model')?.value.trim()||'';
     if(source==='facts'&&!memoryStore().facts.length)return toast('还没有事实记忆，请先生成事实记忆。');
     if(!await saveMemorySettings())return;
-    await runMemorySummary('core',sessionId,{source,targetChars,temperature,model});
+    await runMemorySummary('core',sessionId,{source,targetChars,temperature,model,memoryStreamMode:qs('memory-stream-mode')?.value||'inherit'});
 }
 async function generateFactMemories(){
     if(memoryGenerating)return toast('当前已有一个记忆任务；剧情生成不受限制。');
@@ -1106,7 +1307,7 @@ async function generateFactMemories(){
     const savedSettings=await fetchStory(`/sessions/${sessionId}/memory`,'PATCH',{settings:{...values,factScope:scope,summaryTemperature:temperature,memoryModel:model}});
     if(!savedSettings.success){toast('事实总结参数未能保存，本次未启动：'+(savedSettings.msg||savedSettings.code||'未知错误'));return;}
     if(currentSessionId===sessionId)currentSessionData=savedSettings.data;
-    await runMemorySummary('facts',sessionId,{scope,chunkRounds:values.factChunkRounds,recentRounds:values.factRecentRounds,targetChars:values.factTargetChars,temperature,model,replaceExisting});
+    await runMemorySummary('facts',sessionId,{scope,chunkRounds:values.factChunkRounds,recentRounds:values.factRecentRounds,targetChars:values.factTargetChars,temperature,model,replaceExisting,memoryStreamMode:qs('memory-stream-mode')?.value||'inherit'});
 }
 async function loadMemoryModels(){
     const select=qs('memory-model-list'),input=qs('memory-model');if(!select||!input)return;
@@ -1184,16 +1385,29 @@ window.addEventListener('pagehide',()=>{
         queueFactMergeDraftSave(memoryMergeDraft.content);
 });
 async function previewFactMemoryMerge(){
-    if(memoryGenerating)return toast('另一个记忆任务尚未结束');
+    if(memoryGenerating||factMergePlanning)return toast('另一个记忆任务尚未结束');
     const sessionId=currentSessionId,selectedIds=qsa('.memory-merge-select',qs('settings-content')).filter(x=>x.checked).map(x=>x.dataset.factId);
     if(selectedIds.length<2)return toast('请勾选至少两条事实记忆');
     const targetChars=validatedSettingNumber('memory-merge-target','合并目标字数',100,250000);
     if(targetChars===null)return;
     const temperature=getMemoryTemperature(),model=qs('memory-model')?.value.trim()||'';
+    // Zero-provider-call preflight. The same backend recomputes this digest
+    // immediately before the first paid request; a changed source fails shut.
+    const selections={factIds:selectedIds,targetChars,temperature,model};
+    factMergePlanning=true;
+    let planRes;try{planRes=await fetchStory(`/sessions/${sessionId}/memory/facts/merge-plan`,'POST',selections,false);}
+    catch(error){toast('付费前计划获取失败，未发出模型请求：'+(error?.message||error));return;}
+    finally{factMergePlanning=false;}
+    if(!planRes.success){toast('无法在收费前验证合并计划：'+(planRes.msg||planRes.code||'错误'));return;}
+    const plan=planRes.data;
+    if(!plan?.planDigest||!Number.isInteger(plan.requestCount)||!plan.requestCount){toast('费用计划无效，已拒绝请求');return;}
+    const approved=confirm(`🧠 手动事实二次合并付费前确认\n模型：${plan.model||'当前配置'}\n选中 ${plan.selectedCount} 条事实\n完整阶段数：${plan.requestCount}，最多 ${plan.requestCount} 次模型调用\n预计输入 token 总量约 ${plan.estimatedInputTokens}（离线估算）\n容量：${plan.contextWindowTokens||'未知'} token ${plan.capacityVerifiedForAllStages?'（声明容量内）':'（未验证）'}\n已保存且合同一致的阶段将复用。\n确定批准执行此完整阶段计划？`);
+    if(!approved)return toast('主人未批准合并费用：0 次付费请求');
+    if(sessionId!==currentSessionId)return toast('已切换剧情，拒绝在旧剧情上执行付费合并');
     const task={kind:'merge',sessionId,sessionTitle:currentSessionData?.title||'当前剧情',controller:new AbortController(),progress:{percent:2,detail:'正在准备合并候选…'}};
     memoryTask=task;memoryGenerating=true;paintMemoryProgress();
     try{
-      const res=await fetchStory(`/sessions/${sessionId}/memory/facts/merge-preview`,'POST',{factIds:selectedIds,targetChars,temperature,model},false,handleMemoryProgress,task.controller.signal);
+      const res=await fetchStory(`/sessions/${sessionId}/memory/facts/merge-preview`,'POST',{...selections,approvedPlanDigest:plan.planDigest},false,handleMemoryProgress,task.controller.signal);
       if(!res.success){toast(res.aborted?'已停止合并，旧记忆未改动':res.msg||res.code||'合并候选生成失败');return;}
       memoryMergeDraft={...res.data,sessionId,_persistedContent:String(res.data.content||'')};memoryMergeWriteError=null;
       if(currentSessionId===sessionId&&isSettingsOpen()&&settingsTab==='memory')renderMemoryTab(qs('settings-content'));
@@ -1232,14 +1446,22 @@ async function deleteFactMemory(id){if(!confirm('删除这一段事实记忆？'
 async function clearAllFactMemories(){if(!confirm('清空全部事实记忆？核心记忆和剧情原文不会被删除。'))return;const res=await fetchStory(`/sessions/${currentSessionId}/memory/facts`,'DELETE');if(res.success){currentSessionData=res.data;toast('事实记忆已清空');renderMemoryTab(qs('settings-content'))}else toast(res.msg||'清空失败')}
 async function exportWholeLibrary(){const data=await MimaStandalone.exportLibrary();downloadJson('mimamao-tavern-full-backup.json',{format:'mimamao-tavern-standalone',version:1,exportedAt:new Date().toISOString(),data});}
 function chooseLibraryImport(){qs('library-file-input').value='';qs('library-file-input').click()}
+function chooseTemplateRestorePolicy(current,incoming){
+    const mine=Array.isArray(current?.settingTemplates)?current.settingTemplates:[];
+    const theirs=Array.isArray(incoming?.settingTemplates)?incoming.settingTemplates:[];
+    if(!mine.length)return 'replace';
+    const choice=window.prompt(`当前有 ${mine.length} 套剧情设置模板，备份包含 ${theirs.length} 套。\n输入 1：完整覆盖（当前模板可能被删除）\n输入 2：保留当前全部模板（备份中的模板不导入）\n输入 3：合并无冲突模板（同 ID 不同内容拒绝）\n取消：不恢复`, '2');
+    return ({'1':'replace','2':'preserve','3':'merge'})[String(choice||'').trim()]||null;
+}
 async function importWholeLibrary(file){
     if(!file)return;
     try{
         const raw=JSON.parse(await file.text()),valid=MimaStandalone.validateLibrary(raw);
         const current=await MimaStandalone.exportLibrary();
         const describe=data=>`会话 ${data.sessions.length} / 小说 ${data.novelProjects?.length||0} / 角色卡 ${data.masks.length} / 世界书 ${data.worldbooks.length} / 预设 ${data.presets.length}`;
+        const templatePolicy=chooseTemplateRestorePolicy(current,valid);if(!templatePolicy)return toast('已取消恢复：未写入资料库');
         if(!confirm(`已通过资料库结构校验。\n当前：${describe(current)}\n导入：${describe(valid)}\n\n这会替换当前资料库，建议先导出应急备份。确认覆盖吗？`))return;
-        await MimaStandalone.importLibrary(raw);currentSessionId=null;currentSessionData=null;await loadAll();toast('完整酒馆备份已导入');
+        await MimaStandalone.importLibrary(raw,{templatePolicy});currentSessionId=null;currentSessionData=null;await loadAll();toast('完整酒馆备份已导入');
     }catch(e){toast(`备份导入失败（未清空现有资料）：${e.message}`)}
 }
 
@@ -1293,7 +1515,7 @@ async function exportFullSettingsBackup(){
     }catch(e){toast(`导出失败：${e.message}`)}
 }
 function chooseFullSettingsImport(){const input=qs('full-settings-file-input');input.value='';input.click()}
-async function applyFullSettingsBackup(raw,{fromSnapshot=false}={}){
+async function applyFullSettingsBackup(raw,{fromSnapshot=false,templatePolicy='replace'}={}){
     if(!raw||raw.format!==FULL_SETTINGS_FORMAT||Number(raw.version)>FULL_SETTINGS_VERSION)throw new Error('不是受支持的咪嘛馆完整设置备份');
     const src=raw.data;
     if(!src||typeof src!=='object'||!src.library)throw new Error('备份里缺少剧情资料 library（资料库）');
@@ -1301,12 +1523,19 @@ async function applyFullSettingsBackup(raw,{fromSnapshot=false}={}){
     MimaStandalone.validateLibrary(src.library);
     if(src.localPrefs!==undefined&&(!src.localPrefs||typeof src.localPrefs!=='object'||Array.isArray(src.localPrefs)))throw new Error('localPrefs 结构无效');
     if(src.fonts!==undefined&&!Array.isArray(src.fonts))throw new Error('fonts 结构无效');
+    // Validate canonical template preservation/merge against the CURRENT DB,
+    // and decode/validate every font before any irreversible write.
+    if(!MimaStandalone.previewLibraryImport)throw new Error('E_BACKUP_PREFLIGHT_UNAVAILABLE');
+    await MimaStandalone.previewLibraryImport(src.library,{templatePolicy});
+    const fontPlan=Array.isArray(src.fonts)&&src.fonts.length
+      ? await MimaFontManager.planPortableImport(src.fonts) : null;
     const previousApi=MimaStandalone.getApiConfig(),previousPrefs=collectPortableLocalPrefs();
+    let fontReceipt=null;
     const selected={ui:MimaFontManager.getSelected('ui'),story:MimaFontManager.getSelected('story')};
     try{
         // Prepare external assets before the final canonical commit. Font imports only add assets;
         // they must never trigger an empty library write on partial import failure.
-        if(Array.isArray(src.fonts)&&src.fonts.length&&MimaFontManager.importPortable)await MimaFontManager.importPortable(src.fonts,{replace:false});
+        if(fontPlan)fontReceipt=await MimaFontManager.commitPortablePlan(fontPlan);
         if(src.api&&typeof src.api==='object'){
             const incoming={...src.api};if(!incoming.apiKey)incoming.apiKey=previousApi.apiKey||'';
             MimaStandalone.saveApiConfig({...previousApi,...incoming});
@@ -1314,12 +1543,16 @@ async function applyFullSettingsBackup(raw,{fromSnapshot=false}={}){
         restorePortableLocalPrefs(src.localPrefs||{});
         if(src.selectedFonts?.ui!==undefined)MimaFontManager.setSelected('ui',src.selectedFonts.ui||'');
         if(src.selectedFonts?.story!==undefined)MimaFontManager.setSelected('story',src.selectedFonts.story||'');
-        await MimaStandalone.importLibrary(src.library); // last; atomic compare-and-swap
+        const restored=await MimaStandalone.importLibrary(src.library,{templatePolicy}); // last; atomic compare-and-swap
+        if(restored.importWarnings?.length)toast('资料库已保存，但外观未完全应用：'+restored.importWarnings.join('；'));
     }catch(e){
+        let rollbackError=null;
+        if(fontReceipt)try{await MimaFontManager.rollbackPortablePlan(fontReceipt);}catch(issue){rollbackError=issue;}
         MimaStandalone.saveApiConfig(previousApi);
         for(const key of FULL_SETTINGS_KEYS){if(Object.prototype.hasOwnProperty.call(previousPrefs,key))localStorage.setItem(key,previousPrefs[key]);else localStorage.removeItem(key)}
         MimaFontManager.setSelected('ui',selected.ui||'');MimaFontManager.setSelected('story',selected.story||'');
         applyStoryTypography();restoreLegacyFont();
+        if(rollbackError){const partial=new Error('E_FULL_RESTORE_PARTIAL: 字体回滚失败，本次恢复未完成；请保留网站数据并检查诊断：'+rollbackError.message);partial.cause=e;throw partial;}
         throw e;
     }
     applyStoryTypography();restoreLegacyFont();
@@ -1330,14 +1563,15 @@ async function applyFullSettingsBackup(raw,{fromSnapshot=false}={}){
 async function importFullSettingsFile(file){
     if(!file)return;
     if(!confirm('导入完整设置会用备份中的剧情/角色卡/世界书/预设/CSS 数据覆盖当前资料库，并恢复外观与 API 配置。继续吗？'))return;
-    try{const raw=JSON.parse(await file.text());await applyFullSettingsBackup(raw);toast('完整咪嘛馆设置数据已恢复')}catch(e){toast(`完整设置导入失败：${e.message}`)}
+    try{const raw=JSON.parse(await file.text());const policy=chooseTemplateRestorePolicy(await MimaStandalone.exportLibrary(),raw?.data?.library);if(!policy)return;await applyFullSettingsBackup(raw,{templatePolicy:policy});toast('完整咪嘛馆设置数据已恢复')}catch(e){toast(`完整设置导入失败：${e.message}`)}
 }
 async function restoreSavedSettingsSnapshot(){
     try{
         const snap=await MimaLocalStore.loadSettingsSnapshot();
         if(!snap)return toast('当前浏览器还没有保存过咪嘛馆设置快照');
         if(!confirm(`恢复本机设置快照？\n保存时间：${snap.savedAt||snap.exportedAt||'未知'}\n\n这会覆盖当前剧情资料库。`))return;
-        await applyFullSettingsBackup(snap,{fromSnapshot:true});
+        const policy=chooseTemplateRestorePolicy(await MimaStandalone.exportLibrary(),snap?.data?.library);if(!policy)return;
+        await applyFullSettingsBackup(snap,{fromSnapshot:true,templatePolicy:policy});
         openSettings('data');toast('本机设置快照已恢复');
     }catch(e){toast(`恢复快照失败：${e.message}`)}
 }
@@ -1643,6 +1877,40 @@ async function recoverDiagnosticReply(diagnosticId){
     }catch(e){toast((restored?'回复已保存，后续操作失败：':'无法恢复：')+e.message);}
     finally{diagnosticRecoveryBusy.delete(diagnosticId);if(settingsTab==='diagnostics')await refreshDiagnosticsView();}
 }
+async function reviewRejectedDiagnosticHtml(record){
+    if(!record?.id||String(record.action||'').startsWith('compat_'))return toast('本入口仅支持原生剧情的失败输出。');
+    const result=await fetchStory('/sessions/'+encodeURIComponent(record.sessionId)+'/recover-reply/html-repair','POST',{diagnosticId:record.id},false);
+    if(!result.success)return toast('无法安全修复：'+(result.code||result.msg||'未知原因')+'；没有调用 API。');
+    const candidate=result.data;
+    editorState={type:'rejected_html_code_repair',sessionId:record.sessionId,msg:{id:candidate.messageId},candidate,record};
+    qs('editor-title').textContent='拒绝的模型正文 · 手动代码补全预览';
+    qs('editor-eyebrow').textContent='原始生成任务 · 0 API 请求 · 待主人确认';
+    const body=qs('editor-body');body.replaceChildren();
+    const intro=document.createElement('p');intro.textContent='源自失败生成诊断。不会重新采样或续写；确认后将按原生成 ID 保存同一条消息，并保留原始 rawContent 与诊断证据。';body.appendChild(intro);
+    for(const [name,txt] of [['未通过 HTML 合同的原始正文',candidate.oldContent],['按固定模板生成的候选',candidate.proposedContent]]){
+        const lbl=document.createElement('label');lbl.textContent=name;lbl.className='form-label';
+        const area=document.createElement('textarea');area.className='field textarea tall';area.value=txt;area.readOnly=true;body.append(lbl,area);
+    }
+    appendHtmlRepairDynamicFields(body,candidate);
+    setupEditorButtons(null,async()=>{
+      if(!confirm('确认使用零 API 代码补全结果恢复原失败生成？旧诊断保留。'))return;
+      const e=editorState;
+      let dynamicValues;try{dynamicValues=readHtmlRepairDynamicFields();}catch(error){return toast(error.message);}
+      const done=await fetchStory('/sessions/'+encodeURIComponent(e.sessionId)+'/recover-reply','POST',
+        {diagnosticId:e.record.id,confirmed:true,htmlCandidateId:e.candidate.id,dynamicValues},false);
+      if(!done.success)return toast('恢复未提交：'+(done.code||done.msg));
+      qs('editor-modal').classList.add('hidden');
+      if(currentSessionId===e.sessionId){currentSessionData=done.data.session;refreshChatBox({scrollToBottom:false});}
+      await refreshSessionSummaryList();toast('原失败正文已按 HTML 结构修复并恢复，没有再次调用模型。');
+      if(settingsTab==='diagnostics')await refreshDiagnosticsView();
+    });
+    qs('editor-save').textContent='确认恢复修复版';qs('editor-modal').classList.remove('hidden');
+}
+function diagnosticHtmlCodeRepairButton(record){
+    const b=document.createElement('button');b.type='button';b.className='ghost-btn';b.textContent='HTML 免 API 补全';
+    b.disabled=!!record.manualRecovery||!record.rawRejectedReply||!!record.rejectedReplyTruncated;
+    b.onclick=()=>void reviewRejectedDiagnosticHtml(record);return b;
+}
 function diagnosticRecoveryButton(record){
     const b=document.createElement('button');b.type='button';b.className='ghost-btn diag-recover-button';
     b.textContent=record.manualRecovery?'♻ 已手动恢复':diagnosticRecoveryBusy.has(record.id)?'正在恢复…':'♻ 手动恢复';
@@ -1673,7 +1941,7 @@ async function refreshDiagnosticsView(){
         b.textContent=`${label} · ${new Date(record.createdAt).toLocaleString()} · ${record.action||'send'} · ${record.model||'模型未请求'} · ${record.error?.code||record.finishReason||''}`;
         b.onclick=()=>{diagnosticViewState.selectedId=record.id;void refreshDiagnosticsView();};
         const row=document.createElement('div');row.className='diag-list-row';row.appendChild(b);
-        if(['rejected','aborted','conflict'].includes(record.status))row.appendChild(diagnosticRecoveryButton(record));
+        if(['rejected','aborted','conflict'].includes(record.status)){row.appendChild(diagnosticRecoveryButton(record));if(['E_HTML_STRUCTURE_MISSING','E_HTML_REQUIRED_NODE_MISSING','E_STORY_OUTPUT_INCOMPLETE'].includes(record.error?.code))row.appendChild(diagnosticHtmlCodeRepairButton(record));}
         root.appendChild(row);
     }
     if(!records.length)root.textContent='当前范围没有诊断记录。正常剧情可继续使用；只有真实生成操作才会产生记录。';
@@ -1694,6 +1962,7 @@ async function refreshDiagnosticsView(){
       ${record.error?`<h4>错误与拒绝/截断诊断</h4><pre class="prompt-pre">${escapeHtml(JSON.stringify(record.error,null,2))}</pre><h4>未采纳的模型文本（仅诊断）</h4><pre class="prompt-pre">${escapeHtml(record.rawRejectedReply||'没有可保存的失败正文。')}${record.rejectedReplyTruncated?'\n[诊断副本超过上限，后半段未保存]':''}</pre>`:'<div class="row-sub">本条没有失败正文；成功回复仅存于原有剧情，不在此复制第二份。</div>'}`;
     if(['rejected','aborted','conflict'].includes(record.status)){
         wrap.querySelector('.toolbar').appendChild(diagnosticRecoveryButton(record));
+        if(['E_HTML_STRUCTURE_MISSING','E_HTML_REQUIRED_NODE_MISSING','E_STORY_OUTPUT_INCOMPLETE'].includes(record.error?.code))wrap.querySelector('.toolbar').appendChild(diagnosticHtmlCodeRepairButton(record));
         const note=document.createElement('p');note.className='helper';
         note.textContent=record.manualRecovery?'这条文本已由你手动恢复。上面的原始错误与结束标记仍作为证据保留。':'确认误拦截后可手动恢复，不重新消耗模型额度。没有正文、日志副本已被裁剪，或原任务已被替换时，系统会说明无法恢复的原因。';
         wrap.querySelector('.toolbar').after(note);
@@ -1747,15 +2016,37 @@ function isStoryNearBottom(box,threshold=96){return !box||((box.scrollHeight-box
 function updateStoryFollowButton(){const b=qs('story-follow-stream');if(!b)return;b.classList.toggle('hidden',!liveStreamState||liveStreamState.followTail!==false)}
 function resumeStoryStreamFollow(){if(!liveStreamState)return;liveStreamState.followTail=true;const box=qs('story-chat-box');if(box)box.scrollTop=box.scrollHeight;updateStoryFollowButton()}
 function bindStoryStreamScroll(){const box=qs('story-chat-box');if(!box||box.dataset.streamFollowBound==='1')return;box.dataset.streamFollowBound='1';box.addEventListener('scroll',()=>{if(!liveStreamState)return;liveStreamState.followTail=isStoryNearBottom(box);updateStoryFollowButton()},{passive:true})}
+function newGenerationTraceId(){
+    // Durable cross-tab identity. UI clock/counter is not a trace identity.
+    const uuid=globalThis.crypto?.randomUUID?.();
+    if(uuid)return 'gen_'+uuid;
+    const bytes=new Uint8Array(20);
+    if(!globalThis.crypto?.getRandomValues)throw new Error('E_DIAGNOSTIC_SECURE_ID_UNAVAILABLE');
+    globalThis.crypto.getRandomValues(bytes);
+    return 'gen_'+Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
+}
+function persistStoryUiTiming(owner,phase,st=null){
+    if(!owner||!MimaDiagnosticJournal?.uiTiming)return;
+    const timing={sessionId:owner.sessionId,turnId:String(owner.turnId),traceId:owner.traceId,phase,
+      elapsedSinceUiSubmitMs:Math.round((performance.now()-owner.uiStartedAt)*100)/100,
+      paintDurationMs:st?.lastPaintDurationMs||0,paintCount:st?.paints||0,chars:st?.displayText?.length||0};
+    void MimaDiagnosticJournal.uiTiming(timing).catch(e=>console.error('剧情 UI 时间诊断持久化失败',{sessionId:owner.sessionId,turnId:owner.turnId,phase,error:e}));
+}
+// Latest-snapshot rendering: decouple SSE arrival from the browser's paint budget.
+// A completed generation still goes through the original full renderer unchanged.
 function renderLiveStreamText(){
     const st=liveStreamState;
     if(!st?.contentNode||!ownsVisibleGeneration(st.owner))return;
     const raw=st.displayText||'';
+    const started=performance.now();
     const rendered=MimaStandalone.applyRegexForSession?MimaStandalone.applyRegexForSession(st.owner.sessionId,raw,'display'):raw;
     const allowHtml=currentSessionData?.renderMode==='safe_html';
     st.contentNode.className=`msg-content tavern-story-content live-stream-content${allowHtml?' safe-html-content':''}`;
-    st.contentNode.innerHTML='';appendRenderedContent(st.contentNode,rendered,allowHtml,true);
+    st.contentNode.replaceChildren();appendRenderedContent(st.contentNode,rendered,allowHtml,true);
     const box=qs('story-chat-box');if(box&&st.followTail!==false)box.scrollTop=box.scrollHeight;
+    st.lastPaintDurationMs=Math.round((performance.now()-started)*100)/100;
+    st.paints=(st.paints||0)+1;
+    if(st.paints===1)persistStoryUiTiming(st.owner,'ui_first_visible',st);
     updateStoryFollowButton();
 }
 function ensureLiveStreamBubble(owner=currentGenerationOwner()){
@@ -1766,38 +2057,46 @@ function ensureLiveStreamBubble(owner=currentGenerationOwner()){
     const header=document.createElement('div');header.className='msg-header';header.textContent=`${currentChar()?.name||'角色'} · 流式生成中`;
     const content=document.createElement('div');content.className='msg-content tavern-story-content live-stream-content';
     div.append(header,content);box.appendChild(div);
-    liveStreamState={owner,node:div,contentNode:content,targetText:'',displayText:'',timer:null,followTail:isStoryNearBottom(box)};
+    liveStreamState={owner,node:div,contentNode:content,targetText:'',displayText:'',timer:null,followTail:isStoryNearBottom(box),lastPaintAt:0,paints:0};
     updateStoryFollowButton();return liveStreamState;
 }
 function pumpLiveStream(){
     const st=liveStreamState;if(!st||st.timer)return;
-    st.timer=setInterval(()=>{
-        if(liveStreamState!==st||!ownsVisibleGeneration(st.owner)){clearInterval(st.timer);st.timer=null;return;}
+    // Never rebuild an entire HTML tree one character/12 ms. Skip stale visual
+    // snapshots, not bytes: the last received SSE body always wins.
+    st.timer=requestAnimationFrame(function drawFrame(now){
+        st.timer=null;
+        if(liveStreamState!==st||!ownsVisibleGeneration(st.owner))return;
         if(isSettingsOpen()||st.visualPaused)return;
-        const gap=st.targetText.length-st.displayText.length;if(gap<=0)return;
-        const step=gap>500?6:gap>220?4:gap>80?2:1;
-        st.displayText=st.targetText.slice(0,st.displayText.length+step);renderLiveStreamText();
-    },12);
+        if(st.targetText===st.displayText)return;
+        const minPaintInterval=currentSessionData?.renderMode==='safe_html'?Math.min(350,96+Math.floor(st.targetText.length/6000)*36):Math.min(160,48+Math.floor(st.targetText.length/15000)*18);
+        if(now-st.lastPaintAt<minPaintInterval){st.timer=requestAnimationFrame(drawFrame);return;}
+        st.displayText=st.targetText;st.lastPaintAt=now;
+        renderLiveStreamText();
+        if(st.targetText!==st.displayText)pumpLiveStream();
+    });
 }
 function handleGenerationProgress(payload,owner=currentGenerationOwner()){
     if(!owner||generationOwners.get(owner.sessionId)!==owner)return;
     owner.lastProgress=payload;
     if(payload?.phase==='saved_user'){owner.userSaved=true;clearSubmittedDraft(owner);}
+    let blocked=false;
     if(payload?.streamText!==undefined){
         const snippet=String(payload.streamText||'');
-        const blocked=MimaStandalone.classifyStoryReply?.(snippet)?.blocked===true;
+        blocked=MimaStandalone.classifyStoryReply?.(snippet)?.blocked===true;
         owner.streamText=blocked?'':snippet;
         if(blocked&&ownsVisibleGeneration(owner))clearLiveStream();
     }
     if(!ownsVisibleGeneration(owner))return;
     if(isSettingsOpen())deferredGenerationProgress={owner,payload};else setGenerationProgress(payload);
-    if(payload?.streamText!==undefined&&!MimaStandalone.classifyStoryReply?.(String(payload.streamText||''))?.blocked){
+    if(payload?.streamText!==undefined&&!blocked){
         const st=ensureLiveStreamBubble(owner);
         if(st){st.targetText=owner.streamText;st.visualPaused=isSettingsOpen();pumpLiveStream();}
     }
 }
 function clearLiveStream(){
-    if(liveStreamState?.timer)clearInterval(liveStreamState.timer);
+    if(liveStreamState?.timer)cancelAnimationFrame(liveStreamState.timer);
+    if(liveStreamState?.paints)persistStoryUiTiming(liveStreamState.owner,'ui_last_visible',liveStreamState);
     if(liveStreamState?.node?.isConnected)liveStreamState.node.remove();
     liveStreamState=null;updateStoryFollowButton();
 }
@@ -1853,8 +2152,8 @@ async function triggerChat(text,actionType='send',generationOptions={}){
         for(let i=msgs.length-1;i>=0&&(lastUser<0||lastAssistant<0);i--){if(lastUser<0&&msgs[i]?.role==='user')lastUser=i;if(lastAssistant<0&&msgs[i]?.role==='assistant')lastAssistant=i}
         if(lastAssistant>=0&&(lastUser<0||lastAssistant>lastUser))targetMessageId=msgs[lastAssistant]?.id||null;
     }
-    const owner={turnId:++generationSerial,sessionId:targetSessionId,action:actionType,text:String(text||''),
-        controller:new AbortController(),lastProgress:null,streamText:'',userSaved:false,inputCleared:false};
+    const owner={turnId:++generationSerial,traceId:newGenerationTraceId(),sessionId:targetSessionId,action:actionType,text:String(text||''),
+        controller:new AbortController(),lastProgress:null,streamText:'',userSaved:false,inputCleared:false,uiStartedAt:performance.now()};
     generationOwners.set(targetSessionId,owner);generationFailures.delete(targetSessionId);
     clearLiveStream();
     if(actionType==='send'&&owner.text.trim())renderPendingUserMessage(owner.text);
@@ -1862,7 +2161,7 @@ async function triggerChat(text,actionType='send',generationOptions={}){
     try{
         // Distinct sessions must never abort each other's Direct Reply.
         const res=await fetchStory(`/sessions/${targetSessionId}/chat`,'POST',
-            {text,action:actionType,temperature:getTemp(),directorNote,targetMessageId,regenerationContext:generationOptions.regenerationContext||'original',retryParameters:generationOptions.retryParameters||'original',diagnosticTurnId:String(owner.turnId)},false,
+            {text,action:actionType,temperature:getTemp(),directorNote,targetMessageId,regenerationContext:generationOptions.regenerationContext||'original',retryParameters:generationOptions.retryParameters||'original',diagnosticTurnId:String(owner.turnId),diagnosticTraceId:owner.traceId},false,
             payload=>handleGenerationProgress(payload,owner),owner.controller.signal);
         if(!res.success&&!res.aborted&&generationOwners.get(targetSessionId)===owner){
             generationFailures.set(targetSessionId,{...describeApiError(res),action:actionType});
@@ -1885,6 +2184,7 @@ async function triggerChat(text,actionType='send',generationOptions={}){
                 clearSubmittedDraft(owner);
                 currentSessionData=res.data;
                 refreshChatBox(preserveReading?{scrollTop:preservedScrollTop}:{scrollToBottom:true});
+                requestAnimationFrame(()=>{if(currentSessionId===targetSessionId)persistStoryUiTiming(owner,'ui_final_stable');});
                 refreshHeader();finishGenerationProgress();
             }else{
                 showGenerationError(res,actionType);toast(`生成失败 · ${res.code||'E_UNKNOWN'}`);
@@ -1922,10 +2222,79 @@ function autoAdvance(){triggerChat(qs('director-note').value,'auto_advance')}
 function syncComposerContentState(){const el=qs('story-input');if(el)el.classList.toggle('has-content',!!el.value)}
 function autoResizeInput(){const el=qs('story-input');el.style.height='auto';el.style.height=Math.min(170,Math.max(46,el.scrollHeight))+'px';syncComposerContentState()}
 
-function refreshChatBox(options={}){const box=qs('story-chat-box'),renderedSessionId=currentSessionId,renderedEpoch=sessionNavigationEpoch;box.innerHTML='';if(!currentSessionData||!currentSessionData.messages?.length){box.innerHTML=`<div class="empty-state"><div class="empty-icon">${currentChar()?'🤍':'🍷'}</div><h2>${escapeHtml(currentChar()?.name||'这个宇宙还是空的')}</h2><p>${currentChar()?.firstMessage?'角色卡里有开场白，可以在角色设置中插入。':'写下第一句话，剧情从这里开始。'}</p><button class="ghost-btn" onclick="MimaCompatUI.open()">🎴 或者用酒馆角色卡开始聊天</button></div>`;return}currentSessionData.messages.forEach(renderMessageToUI);requestAnimationFrame(()=>{if(renderedSessionId!==currentSessionId||renderedEpoch!==sessionNavigationEpoch)return;if(Number.isFinite(Number(options.scrollTop)))box.scrollTop=Number(options.scrollTop);else if(options.scrollToBottom!==false)box.scrollTop=box.scrollHeight})}
+function refreshChatBox(options={}){const box=qs('story-chat-box'),renderedSessionId=currentSessionId,renderedEpoch=sessionNavigationEpoch,readScroll=readingMode?box.scrollTop:null;box.innerHTML='';if(!currentSessionData||!currentSessionData.messages?.length){box.innerHTML=`<div class="empty-state"><div class="empty-icon">${currentChar()?'🤍':'🍷'}</div><h2>${escapeHtml(currentChar()?.name||'这个宇宙还是空的')}</h2><p>${currentChar()?.firstMessage?'角色卡里有开场白，可以在角色设置中插入。':'写下第一句话，剧情从这里开始。'}</p><button class="ghost-btn" onclick="MimaCompatUI.open()">🎴 或者用酒馆角色卡开始聊天</button></div>`;return}currentSessionData.messages.forEach(renderMessageToUI);requestAnimationFrame(()=>{if(renderedSessionId!==currentSessionId||renderedEpoch!==sessionNavigationEpoch)return;if(readingMode&&Number.isFinite(readScroll))box.scrollTop=readScroll;else if(Number.isFinite(Number(options.scrollTop)))box.scrollTop=Number(options.scrollTop);else if(options.scrollToBottom!==false)box.scrollTop=box.scrollHeight})}
 function renderPendingUserMessage(text){const box=qs('story-chat-box');if(!box)return;const div=document.createElement('article');div.className='message user-msg pending-user-message';div.dataset.msgId='pending_'+Date.now();const header=document.createElement('div');header.className='msg-header';header.textContent=`${currentUser()?.name||'你'} · 正在提交`;const content=document.createElement('div');content.className='msg-content tavern-story-content';appendRenderedContent(content,cleanCorruptText(text),false);div.append(header,content);box.appendChild(div);box.scrollTop=box.scrollHeight}
-function renderMessageToUI(msg){const box=qs('story-chat-box');const role=msg.role||'system';const div=document.createElement('article');div.className=`message ${role}-msg`;div.dataset.msgId=msg.id||'';const header=document.createElement('div');header.className='msg-header';const roleName=role==='user'?(currentUser()?.name||'你'):(role==='assistant'?(currentChar()?.name||(currentSessionData?.mode==='sandalphon'?'圣德芬':'角色')):'系统');header.textContent=`${roleName}${msg.isEdited?' · 已编辑':''}${msg.versions?.length?` · ${msg.versions.length} 个旧版本`:''}`;div.appendChild(header);const content=document.createElement('div');const allowHtml=role==='assistant'&&currentSessionData?.renderMode==='safe_html';content.className=`msg-content tavern-story-content${allowHtml?' safe-html-content':''}`;const displayText=role==='assistant'&&MimaStandalone.applyRegexForSession?MimaStandalone.applyRegexForSession(currentSessionId,msg.content||'','display'):msg.content||'';appendRenderedContent(content,cleanCorruptText(displayText),allowHtml,role==='assistant');div.appendChild(content);if(role==='user'||role==='assistant'){const tools=document.createElement('div');tools.className='msg-tools';tools.append(makeToolButton('编辑',()=>openMessageEditor(msg,false)),makeToolButton('从这里分支',()=>openMessageEditor(msg,true)),makeToolButton('删除',()=>deleteStoryMessage(msg),true));if(role==='assistant'&&msg.versions?.length)tools.append(makeToolButton('看旧版本',()=>showVersions(msg)));div.appendChild(tools)}box.appendChild(div)}
+function renderMessageToUI(msg){const box=qs('story-chat-box');const role=msg.role||'system';const div=document.createElement('article');div.className=`message ${role}-msg`;div.dataset.msgId=msg.id||'';const header=document.createElement('div');header.className='msg-header';const roleName=role==='user'?(currentUser()?.name||'你'):(role==='assistant'?(currentChar()?.name||(currentSessionData?.mode==='sandalphon'?'圣德芬':'角色')):'系统');header.textContent=`${roleName}${msg.isEdited?' · 已编辑':''}${msg.versions?.length?` · ${msg.versions.length} 个旧版本`:''}`;div.appendChild(header);const content=document.createElement('div');const allowHtml=role==='assistant'&&currentSessionData?.renderMode==='safe_html';content.className=`msg-content tavern-story-content${allowHtml?' safe-html-content':''}`;const displayText=role==='assistant'&&MimaStandalone.applyRegexForSession?MimaStandalone.applyRegexForSession(currentSessionId,msg.content||'','display'):msg.content||'';appendRenderedContent(content,cleanCorruptText(displayText),allowHtml,role==='assistant');div.appendChild(content);if(role==='user'||role==='assistant'){const tools=document.createElement('div');tools.className='msg-tools';tools.append(makeToolButton('编辑',()=>openMessageEditor(msg,false)),makeToolButton('从这里分支',()=>openMessageEditor(msg,true)),makeToolButton('删除',()=>deleteStoryMessage(msg),true));if(role==='assistant'&&currentSessionData?.promptSettings?.outputContract?.requireHtml)tools.append(makeToolButton('HTML检测 / 代码补全',()=>reviewStoryHtmlRepair(msg)));if(role==='assistant'&&currentSessionData?.promptSettings?.outputContract?.requireHtml)tools.append(makeToolButton('AI重排（另收费）',()=>reviewStoryAiHtmlRepair(msg)));if(role==='assistant'&&msg.versions?.length)tools.append(makeToolButton('看旧版本',()=>showVersions(msg)));div.appendChild(tools)}box.appendChild(div)}
 function makeToolButton(text,fn,danger=false){const b=document.createElement('button');b.className=`tool-mini${danger?' danger':''}`;b.textContent=text;b.onclick=fn;return b}
+function appendHtmlRepairDynamicFields(body,candidate){
+    if(!Array.isArray(candidate.missingFields)||!candidate.missingFields.length)return;
+    const alert=document.createElement('p');alert.className='helper';alert.textContent='模板中未经证明可继承的文字、注释、样式、CSS 选择器及状态属性都必须确认来源；旧例子不代表本轮事实。只会提交你明确填写并通过校验的值。';body.appendChild(alert);
+    for(const field of candidate.missingFields){
+        const wrap=document.createElement('div'),lab=document.createElement('label'),input=document.createElement('input');
+        lab.className='form-label';lab.textContent=String(field.label||field.key)+'（原模板例子：'+String(field.previousExample||'')+'，非本轮真实值）';
+        input.className='field';input.dataset.htmlDynamicKey=field.key;input.placeholder=field.kind==='css_selector'?'填写本轮 CSS 选择器（完整）':'填写本轮确认值';input.autocomplete='off';
+        wrap.append(lab,input);body.appendChild(wrap);
+    }
+}
+function readHtmlRepairDynamicFields(){const result={};for(const el of qs('editor-body').querySelectorAll('[data-html-dynamic-key]')){
+    if(!el.value.trim())throw new Error('状态值尚未全部填写，请先确认本轮事实：'+el.dataset.htmlDynamicKey);
+    result[el.dataset.htmlDynamicKey]=el.value.trim();
+}return result;}
+async function reviewStoryHtmlRepair(msg){
+    if(!msg?.id||currentGenerationOwner())return toast('当前生成任务尚未完成，不能修复其消息。');
+    const sessionId=currentSessionId,contract=currentSessionData?.promptSettings?.outputContract;
+    if(!contract?.requireHtml)return toast('请先在长剧情设置里开启独立 HTML 结构合同。');
+    const valid=window.MimaHtmlStructure.inspect(msg.content,contract);
+    if(valid.ok)return toast('这条消息已满足 HTML 结构合同；未修改原文。');
+    if(!contract.templateMessageId)return toast('缺少标准 HTML 模板。请先在长剧情设置里选择一条格式正确的角色回复。');
+    const result=await fetchStory(`/sessions/${sessionId}/messages/${msg.id}/html-repair`,'POST',{},false);
+    if(!result.success)return toast('代码修复停止：'+(result.code||result.msg||'结构不明确')+'（无额外 API 请求）');
+    const candidate=result.data;
+    editorState={type:'html_code_repair',msg,candidate,sessionId};
+    qs('editor-title').textContent='HTML 免 API 代码补全 · 差异审阅';
+    qs('editor-eyebrow').textContent='CODE GENERATED / UNCOMMITTED · 不生成新状态事实';
+    const body=qs('editor-body');body.replaceChildren();
+    const intro=document.createElement('p');intro.className='helper';intro.textContent='下面是当前原文和按已绑定模板组装的候选。仅主人确认后才归档原版本并应用；关闭不会修改任何剧情。缺失动态状态一律拒绝自动生成。';body.appendChild(intro);
+    for(const [label,text] of [['原正文（不变）',candidate.oldContent],['候选 HTML（未提交）',candidate.proposedContent]]){
+      const title=document.createElement('label');title.className='form-label';title.textContent=label;
+      const area=document.createElement('textarea');area.className='field textarea tall';area.readOnly=true;area.value=text;area.style.userSelect='text';body.append(title,area);
+    }
+    appendHtmlRepairDynamicFields(body,candidate);
+    setupEditorButtons(null,()=>approveStoryHtmlRepair());
+    qs('editor-save').textContent='确认应用代码修复';qs('editor-modal').classList.remove('hidden');
+}
+async function reviewStoryAiHtmlRepair(msg){
+    if(!msg?.id||currentGenerationOwner())return toast('当前生成未结算，请先完成原任务。');
+    const contract=currentSessionData?.promptSettings?.outputContract;
+    if(!contract?.requireHtml||!contract.templateMessageId||!contract.bodySelector)
+      return toast('请先绑定 HTML 标准模板和唯一正文槽，再使用 AI 重排。');
+    if(!confirm('只有混合 HTML 等代码不能直接恢复、且正文可逐字核验时才尝试。优先使用免费代码补全。这是额外的付费模型请求，明确确认后最多请求一次，不会自动重试。费用取决于当前配置的网关费率，无法在此可靠报价。若原文/模板不能逐字验证，结果会被拒收，仍可能产生一次费用。继续吗？'))return;
+    const sessionId=currentSessionId;
+    const response=await fetchStory(`/sessions/${sessionId}/messages/${msg.id}/html-repair/ai`,'POST',{confirmedCharge:true},false);
+    if(!response.success)return toast('AI 重排失败（不会自动重试）：'+(response.code||response.msg));
+    const candidate=response.data;
+    editorState={type:'html_code_repair',msg,candidate,sessionId};
+    qs('editor-title').textContent='AI HTML 重排 · 严格逐字验证通过 · 未提交';
+    qs('editor-eyebrow').textContent='EXPLICIT PAID SINGLE REQUEST / OWNER APPROVAL REQUIRED';
+    const body=qs('editor-body');body.replaceChildren();
+    const note=document.createElement('p');note.textContent='模型仅完成排版；原文字节及模板静态节点通过了代码核验。主人确认后才写入，原始 rawContent 与版本保留。';body.appendChild(note);
+    for(const [label,text] of [['现有正文',candidate.oldContent],['AI 排版候选',candidate.proposedContent]]){
+      const title=document.createElement('label');title.className='form-label';title.textContent=label;
+      const area=document.createElement('textarea');area.className='field textarea tall';area.readOnly=true;area.value=text;body.append(title,area);
+    }
+    appendHtmlRepairDynamicFields(body,candidate);
+    setupEditorButtons(null,()=>approveStoryHtmlRepair());
+    qs('editor-save').textContent='确认应用已验证排版';qs('editor-modal').classList.remove('hidden');
+}
+async function approveStoryHtmlRepair(){
+    const e=editorState;if(e?.type!=='html_code_repair')return;
+    if(!confirm('确定应用这份经主人确认状态值的 HTML 修复？原回复仍会在旧版本中保留。'))return;
+    let dynamicValues;try{dynamicValues=readHtmlRepairDynamicFields();}catch(err){return toast(err.message);}
+    const result=await fetchStory(`/sessions/${e.sessionId}/messages/${e.msg.id}/html-repair/approve`,'POST',{candidateId:e.candidate.id,dynamicValues},false);
+    if(!result.success)return toast('代码修复未能提交：'+(result.code||result.msg));
+    if(currentSessionId===e.sessionId){currentSessionData=result.data;closeEditor();refreshChatBox();}
+    toast('主人已批准代码修复；原始模型回复及旧版本保留。');
+}
 function openMessageEditor(msg,truncateAfter=false){editorState={type:'message',msg,truncateAfter};qs('editor-title').textContent=truncateAfter?'编辑并从这里建立新时间线':'编辑消息';qs('editor-eyebrow').textContent='STORY MESSAGE（剧情消息）';qs('editor-body').innerHTML=`<label class="form-label">消息内容</label><textarea id="message-edit-content" class="field textarea tall">${escapeHtml(msg.content||'')}</textarea>${truncateAfter?'<p class="helper">保存后，这条消息之后的旧剧情会进入 archivedBranches（归档分支），不会直接丢失。</p>':'<p class="helper">如果这是角色错误输出，也可以直接删除这一条；删除只影响当前剧情历史，不会删除角色卡、预设或其他资料库。</p>'}`;setupEditorButtons(truncateAfter?null:()=>deleteStoryMessage(msg),saveMessageEditor);qs('editor-modal').classList.remove('hidden')}
 async function saveMessageEditor(){const {msg,truncateAfter}=editorState;const res=await fetchStory(`/sessions/${currentSessionId}/messages/${msg.id}`,'PATCH',{content:qs('message-edit-content').value,truncateAfter});if(res.success){currentSessionData=res.data;closeEditor();refreshChatBox();if(truncateAfter&&msg.role==='user'&&confirm('现在从这条玩家消息重新生成后续吗？'))await triggerChat('','regenerate')}else toast(res.msg||'编辑失败')}
 async function deleteStoryMessage(msg){
@@ -2024,7 +2393,9 @@ function hydrateSafeHtmlDynamicMeters(root){
     }
 }
 function appendSafeHtmlWithProse(node,text,inlineMarkdown=false){
-    const template=document.createElement('template');template.innerHTML=sanitizeAllowedHtml(text||'');
+    const template=document.createElement('template');
+    if(!node.dataset.mimaHtmlScope)node.dataset.mimaHtmlScope='mima_'+Math.random().toString(36).slice(2,12);
+    template.innerHTML=sanitizeAllowedHtml(text||'',node.dataset.mimaHtmlScope);
     hydrateSafeHtmlDynamicMeters(template.content);
     let prose='';
     const flush=()=>{if(prose.trim())appendProseText(node,prose,inlineMarkdown);prose=''};
@@ -2054,14 +2425,62 @@ function sanitizeSafeInlineStyle(styleText){
     }
     return kept.join(';');
 }
-function sanitizeAllowedHtml(html){
+// Preserve benign template CSS only inside its own story message. Unlike an
+// unscoped <style> in the host page, these rules cannot restyle other messages,
+// the composer, settings, or the app shell. Unsafe/network CSS is stripped by
+// the existing shared CSSOM sanitizer before scoped reconstruction.
+function scopedStoryCss(raw,scope){
+    if(!/^[a-zA-Z0-9_]{1,48}$/.test(String(scope)))throw new Error('E_HTML_SCOPE_INVALID');
+    const safe=window.MimaCompatSafeHtml?.safeCssText;
+    if(typeof safe!=='function'||typeof CSSStyleSheet!=='function')throw new Error('E_HTML_SCOPED_CSS_PARSER_MISSING');
+    const sheet=new CSSStyleSheet();sheet.replaceSync(safe(raw));
+    const parent=`[data-mima-html-scope="${scope}"]`;
+    // Selector lists can contain commas inside :is(), :not(), attribute
+    // selectors or quoted strings. Splitting on each comma broadens scopes.
+    const splitSelectorList=value=>{
+        const out=[];let current='',round=0,square=0,quote='',escaped=false;
+        for(const char of String(value||'')){
+            if(escaped){current+=char;escaped=false;continue;}
+            if(char==='\\'){current+=char;escaped=true;continue;}
+            if(quote){current+=char;if(char===quote)quote='';continue;}
+            if(char==='\"'||char==="'"){quote=char;current+=char;continue;}
+            if(char==='(')round++;else if(char===')')round--;
+            else if(char==='[')square++;else if(char===']')square--;
+            if(round<0||square<0)throw new Error('E_HTML_SCOPE_SELECTOR_INVALID');
+            if(char===','&&round===0&&square===0){if(current.trim())out.push(current.trim());current='';}
+            else current+=char;
+        }
+        if(round||square||quote)throw new Error('E_HTML_SCOPE_SELECTOR_INVALID');
+        if(current.trim())out.push(current.trim());
+        return out;
+    };
+    const convert=rules=>Array.from(rules).map(rule=>{
+        if(rule.type===1){const selector=splitSelectorList(rule.selectorText).filter(Boolean)
+          .map(x=>/^(?:html|body|:root)$/i.test(x)?parent:`${parent} ${x}`).join(', ');
+          return selector?selector+' {'+rule.style.cssText+'}':'';
+        }
+        if(rule.type===4||rule.type===12){const head=rule.cssText.slice(0,rule.cssText.indexOf('{'));
+          const nested=convert(rule.cssRules||[]);return nested?head+'{'+nested+'}':'';
+        }
+        return ''; // Other at-rules need dedicated isolation; do not import them.
+    }).filter(Boolean).join('\n');
+    return convert(sheet.cssRules);
+}
+function sanitizeAllowedHtml(html,htmlScope=''){
     const template=document.createElement('template');template.innerHTML=cleanCorruptText(html);
-    const allowedTags=new Set(['SYSTEM','DIV','SPAN','P','BR','STRONG','B','EM','I','SMALL','MARK','S','U','SUB','SUP','KBD','SECTION','ARTICLE','HEADER','FOOTER','MAIN','ASIDE','NAV','DETAILS','SUMMARY','BLOCKQUOTE','PRE','CODE','H1','H2','H3','H4','H5','H6','UL','OL','LI','DL','DT','DD','TABLE','CAPTION','COLGROUP','COL','THEAD','TBODY','TFOOT','TR','TD','TH','HR','PROGRESS','METER']);
-    const blockedTags=new Set(['SCRIPT','STYLE','IFRAME','OBJECT','EMBED','FORM','INPUT','BUTTON','SELECT','TEXTAREA','OPTION','META','LINK','BASE','SVG','MATH','VIDEO','AUDIO','SOURCE','TRACK','CANVAS','NOSCRIPT']);
+    const allowedTags=new Set(['SYSTEM','DIV','SPAN','P','BR','STRONG','B','EM','I','SMALL','MARK','S','U','SUB','SUP','KBD','SECTION','ARTICLE','HEADER','FOOTER','MAIN','ASIDE','NAV','DETAILS','SUMMARY','BLOCKQUOTE','PRE','CODE','H1','H2','H3','H4','H5','H6','UL','OL','LI','DL','DT','DD','TABLE','CAPTION','COLGROUP','COL','THEAD','TBODY','TFOOT','TR','TD','TH','HR','PROGRESS','METER','STYLE']);
+    const blockedTags=new Set(['SCRIPT','IFRAME','OBJECT','EMBED','FORM','INPUT','BUTTON','SELECT','TEXTAREA','OPTION','META','LINK','BASE','SVG','MATH','VIDEO','AUDIO','SOURCE','TRACK','CANVAS','NOSCRIPT']);
     const allowedAttrs=new Set(['class','title','role','open','colspan','rowspan','scope','value','max','min','low','high','optimum']);
     const nodes=[...template.content.querySelectorAll('*')];
     for(const el of nodes){
         if(blockedTags.has(el.tagName)){el.remove();continue}
+        if(el.tagName==='STYLE'){
+            if(!htmlScope){el.remove();continue}
+            try{el.textContent=scopedStoryCss(el.textContent||'',htmlScope);}catch(error){
+                console.error('HTML 静态样式隔离失败，拒绝不安全 CSS；正文保留',error);el.remove();
+            }
+            continue;
+        }
         if(!allowedTags.has(el.tagName)){el.replaceWith(...[...el.childNodes]);continue}
         for(const a of [...el.attributes]){
             const n=a.name.toLowerCase(),v=String(a.value||'');
@@ -2092,7 +2511,7 @@ function restoreLegacyFont(){
 }
 
 // Expose inline handlers
-Object.assign(window,{mimaFilterLibrary,mimaToggleFavorite,goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,choosePngResourceInspection,playInspectedPngInCompat,savePngSelectedResources,exportPngInspection,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,exportStoryTranscript,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,loadMemoryModels,selectMemoryModel,startFactMemoryEdit,cancelFactMemoryEdit,saveFactMemoryEdit,toggleMergeFactSelection,previewFactMemoryMerge,cancelFactMemoryMerge,confirmFactMemoryMerge,undoFactMemoryMerge,clearCoreMemory,deleteFactMemory,clearAllFactMemories,revokeRollingMemory,restoreRollingMemory,discardMemoryCandidate,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,mimaLoadLargeCssForEdit,stopAtelierAndRestoreCss,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,syncTemperature,updateStoryTypography,resetStoryTypography,setAppearancePreviewSurface,setBuiltInTheme,dismissGenerationPanel,retryFailedGeneration,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,regenerateCurrentMsg,continueMsg,autoAdvance,restoreMessageVersion,stopGeneration});
+Object.assign(window,{setImmersiveReading,saveCurrentSettingTemplate,duplicateSettingTemplate,setDefaultSettingTemplate,deleteSettingTemplate,exportSettingTemplate,importSettingTemplate,refreshSettingTemplateChoices,renderSettingTemplatePreview,manualRollingSummary,mimaFilterLibrary,mimaToggleFavorite,goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,choosePngResourceInspection,playInspectedPngInCompat,savePngSelectedResources,exportPngInspection,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,exportStoryTranscript,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,loadMemoryModels,selectMemoryModel,startFactMemoryEdit,cancelFactMemoryEdit,saveFactMemoryEdit,toggleMergeFactSelection,previewFactMemoryMerge,cancelFactMemoryMerge,confirmFactMemoryMerge,undoFactMemoryMerge,clearCoreMemory,deleteFactMemory,clearAllFactMemories,revokeRollingMemory,restoreRollingMemory,discardMemoryCandidate,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,mimaLoadLargeCssForEdit,stopAtelierAndRestoreCss,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,syncTemperature,updateStoryTypography,resetStoryTypography,setAppearancePreviewSurface,setBuiltInTheme,dismissGenerationPanel,retryFailedGeneration,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,regenerateCurrentMsg,continueMsg,autoAdvance,restoreMessageVersion,stopGeneration});
 
 
 window.MimaTavernBridge={
@@ -2151,7 +2570,7 @@ async function mimaBoot(){
             restoreLegacyFont();
             try{fontRecords=await MimaFontManager.init()}catch(e){console.warn('本地字体库启动失败',e)}
             qs('story-input').addEventListener('input',autoResizeInput);
-    bindStoryStreamScroll();
+    bindStoryStreamScroll();setupImmersiveReading();
     syncComposerContentState();
     qs('session-file-input').addEventListener('change',e=>importSessionFile(e.target.files?.[0]));
     qs('png-inspector-input').addEventListener('change',e=>inspectPngResources(e.target.files?.[0]));
