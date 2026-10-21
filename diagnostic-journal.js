@@ -40,12 +40,18 @@
    return id;
  }
  function event(id,data={}){
-   if(!id||!data||!['request','transport_response','provider_result','settlement','manual_recovery','timing'].includes(data.type))return Promise.resolve();
+   if(!id||!data||!['request','transport_response','provider_result','settlement','manual_recovery','timing','preflight_failure'].includes(data.type))return Promise.resolve();
    return transact(async()=>{
      const db=await open();const tx=db.transaction(STORE,'readwrite'),st=tx.objectStore(STORE),row=await waitRequest(st.get(id));
      // Deleting a record is final, even if a request still runs.
      if(row){
-       if(data.type==='request'){
+       if(data.type==='preflight_failure'){
+         row.status='rejected';row.phase='preflight';row.requestSent=false;row.settledAt=new Date().toISOString();
+         row.model=pickString(data.model,160);row.endpointOrigin=pickString(data.endpointOrigin,260);
+         row.configuredWindow=Number(data.configuredWindow)||0;row.sourceCount=Number(data.sourceCount)||0;
+         row.preparationElapsedMs=Number(data.preparationElapsedMs)||0;
+         row.error={code:pickString(data.code,120),message:pickString(data.message,3000),details:pickString(data.details,6000),status:0};
+       }else if(data.type==='request'){
          const req=data.request||{},safe={model:String(req.model??''),messages:Array.isArray(req.messages)?req.messages.map(m=>({role:String(m.role??''),content:String(m.content??''),...(m.prefix===true?{prefix:true}:{})})):[]};
          for(const key of ['stream','temperature','max_tokens'])if(Object.hasOwn(req,key))safe[key]=req[key];
          // Exact protocol body, plus source metadata outside the messages. No credentials or headers.

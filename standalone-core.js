@@ -959,8 +959,38 @@
   // V1.0.2 patch: keep the old OpenAI-compatible route, but add strict empty-reply protection,
   // structured diagnostics, real streaming, and a persisted temperature setting.
   function defaultApiConfig(){return{apiBase:'',apiKey:'',model:'',chatEndpoint:'',modelsEndpoint:'',extraHeaders:'',sendTemperature:true,temperature:0.85,stream:false,maxTokens:0,contextWindowTokens:0,continuationMode:'assistant_tail',prefixReturnsSuffix:false};}
-  function getApiConfig(){try{return{...defaultApiConfig(),...JSON.parse(localStorage.getItem(API_CONFIG_KEY)||'{}')}}catch(_){return defaultApiConfig();}}
-  function saveApiConfig(cfg){const next={...defaultApiConfig(),...cfg};next.temperature=clampTemp(next.temperature);next.stream=!!next.stream;localStorage.setItem(API_CONFIG_KEY,JSON.stringify(next));return next;}
+  // An API window is a declaration for an exact endpoint + model, not a global
+  // entitlement. Preserve the legacy configuration for its ORIGINAL identity.
+  // Never silently carry a 1M window over to another channel or model.
+  function apiCapacityIdentity(cfg){return JSON.stringify([String(cfg?.apiBase||'').trim().replace(/\/+$/,''),String(cfg?.chatEndpoint||'').trim(),String(cfg?.model||'').trim()]);}
+  function apiCapacityEntries(raw){
+    const profiles=raw?.modelCapacityProfiles&&typeof raw.modelCapacityProfiles==='object'&&!Array.isArray(raw.modelCapacityProfiles)?{...raw.modelCapacityProfiles}:{};
+    const identity=String(raw?.contextWindowIdentity||apiCapacityIdentity(raw));
+    const n=Number(raw?.contextWindowTokens);
+    if(n>=4096&&Number.isSafeInteger(n)&&!Object.hasOwn(profiles,identity))profiles[identity]=n;
+    return profiles;
+  }
+  function getApiConfig(){
+    try{
+      const raw=JSON.parse(localStorage.getItem(API_CONFIG_KEY)||'{}');const profiles=apiCapacityEntries(raw),identity=apiCapacityIdentity(raw);
+      const n=Number(profiles[identity]);return{...defaultApiConfig(),...raw,contextWindowTokens:Number.isSafeInteger(n)&&n>=4096?n:0,
+        contextWindowIdentity:identity,modelCapacityProfiles:profiles};
+    }catch(_){return defaultApiConfig();}
+  }
+  function saveApiConfig(cfg){
+    const old=getApiConfig(),next={...defaultApiConfig(),...cfg},identity=apiCapacityIdentity(next),previousIdentity=apiCapacityIdentity(old);
+    const profiles={...old.modelCapacityProfiles,...(cfg?.modelCapacityProfiles||{})};
+    const explicit=cfg?.capacityExplicit===true||!localStorage.getItem(API_CONFIG_KEY);
+    const submitted=Number(next.contextWindowTokens);
+    if(explicit){
+      if(!Number.isSafeInteger(submitted)||submitted<0||submitted>100000000)throw new ApiError('E_API_CAPACITY_INVALID','模型上下文窗口必须是有效的非负整数。');
+      if(submitted>=4096)profiles[identity]=submitted;else delete profiles[identity];
+    }else if(identity===previousIdentity&&Number.isSafeInteger(submitted)&&submitted>=4096){profiles[identity]=submitted;}
+    const known=Number(profiles[identity]);next.contextWindowTokens=Number.isSafeInteger(known)&&known>=4096?known:0;
+    next.contextWindowIdentity=identity;next.modelCapacityProfiles=profiles;delete next.capacityExplicit;
+    next.temperature=clampTemp(next.temperature);next.stream=!!next.stream;
+    localStorage.setItem(API_CONFIG_KEY,JSON.stringify(next));return next;
+  }
   function baseWithoutSlash(s){return String(s||'').trim().replace(/\/+$/,'');}
 
   class ApiError extends Error {
@@ -2508,6 +2538,12 @@
       options={...options,targetMessageId:retryPending.targetMessageId};
     }
     emitProgress(progress,{phase:'preparing',percent:8,detail:'正在整理本轮上下文…'});
+    // Start a diagnostic BEFORE prompt assembly. Otherwise capacity errors
+    // never appear in the owner's request diagnostics at all.
+    const journal=window.MimaDiagnosticJournal;
+    const diagnosticId=journal?.begin?.({sessionId:id,turnId:options.diagnosticTurnId||'',traceId:options.diagnosticTraceId||'',action,
+      attemptId:retryPending?.id||''});
+    let diagnosticCandidate='';
     let unsavedUserInput=false,commitStarted=false;
     if(action==='send'&&!retryPending){
       if(!String(userText||'').trim())throw new ApiError('E_STORY_EMPTY_INPUT','还没有输入内容猫！',{hint:'请输入动作、语言或剧情后再发送。'});
@@ -2559,6 +2595,14 @@
       const detail=action==='regenerate'&&target&&options.regenerationContext!=='current'?'旧记录没有请求快照，已明确使用当前挂载重建原轮。':action==='continue'?(cfg.continuationMode==='deepseek_prefix'?'按已声明的 prefix 协议请求续写。':'普通 Chat 后续 assistant 生成；接口未声明原文前缀补全，连续性由上下文和玩家预设决定。'):`Prompt（提示词）已组装 · ${requestBody.messages.length} 条消息`;
       emitProgress(progress,{phase:'prompt_ready',percent:34,detail});
     }
+    // "Original request" carries its ORIGINAL model. The currently selected
+    // channel/model must not silently turn an old replay into a different,
+    // unapproved charge or appear as if the new model were being used.
+    if(originalSnapshot&&String(requestBody.model)!==String(cfg.model)){
+      throw new ApiError('E_GENERATION_FROZEN_MODEL_MISMATCH','旧生成快照绑定的模型与当前 API 设置不同，未发送旧模型请求。',{
+        details:JSON.stringify({frozenModel:String(requestBody.model),currentModel:String(cfg.model),requestSent:false,action}),
+        hint:'如需使用新模型，请选择「按当前挂载重说」或「按当前 API 参数重试」，不要使用「按原请求重试」；旧剧情和快照保留。'});
+    }
     // Frozen retries/regenerations bypass assemble(); capacity checks must not.
     // This only fences requests, never edits their historical frozen content.
     const frozenBudget=promptBudget();
@@ -2581,6 +2625,17 @@
     session=await saveSession({...session,pendingGeneration:pending});
     if(unsavedUserInput){unsavedUserInput=false;emitProgress(progress,{phase:'saved_user',percent:38,detail:'主人消息与本轮请求已安全写入本地剧情。'});}
     }catch(preparationError){
+      // Distinguish local, zero-Provider-call rejection from network/Provider
+      // failure and retain it by traceId even if the prompt never existed.
+      if(diagnosticId){
+        const liveCfg=getApiConfig();
+        try{await journal.event(diagnosticId,{type:'preflight_failure',code:preparationError?.code||'E_STORY_PREFLIGHT',
+          message:preparationError?.message||String(preparationError),details:preparationError?.details||'',
+          model:liveCfg.model,endpointOrigin:(()=>{try{return new URL(liveCfg.apiBase).origin}catch{return ''}})(),
+          configuredWindow:Number(liveCfg.contextWindowTokens)||0,sourceCount:session.messages.length,
+          requestSent:false,preparationElapsedMs:Date.now()-preparationStartedAt});}
+        catch(diagnosticError){console.error('本地预检失败日志保存失败，但保留原始预检错误',{code:preparationError?.code,diagnosticError});}
+      }
       // Invalid presets/budget/assembly must not discard a submitted player
       // message. A failed CAS is never retried against newer canonical data.
       if(unsavedUserInput&&!commitStarted){
@@ -2592,9 +2647,6 @@
     const storyResultMeta={};
     // Diagnostics intentionally live outside state, local-store, History,
     // versions, rolling/core/fact memory and the backup/export contract.
-    const journal=window.MimaDiagnosticJournal;
-    const diagnosticId=journal?.begin?.({sessionId:id,turnId:options.diagnosticTurnId||'',traceId:options.diagnosticTraceId||'',action});
-    let diagnosticCandidate='';
     const storyClock=()=>typeof performance!=='undefined'&&performance.now?performance.now():Date.now(),storyTimelineStart=storyClock();
     const storyMark=(phase,extra={})=>{if(diagnosticId)void journal.event(diagnosticId,{type:'timing',phase,generationId:pending.id,attempt:pending.attempt,elapsedAfterPreparedMs:Math.round((storyClock()-storyTimelineStart)*100)/100,preparationElapsedMs:Date.now()-preparationStartedAt,...extra});};
     storyMark('canonical_snapshot_persisted',{messageCount:messages.length});
@@ -3081,5 +3133,5 @@
   }
 
   window.MimaMemoryContracts=Object.freeze({normalizeManualMemory});
-  window.MimaStandalone={init,handle,previewMemoryPlan,memorySourceParts,memoryWorkPlan,runRecordedMemory,memorySourceFingerprint,memoryFactSignature,manualReplyFingerprint,isManuallyRecoveredReply,getApiConfig,saveApiConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,validateStoryReply,classifyStoryReply,applyRegexForSession,resolveMacrosForSession,compileUserInputForPrompt,exportLibrary,importLibrary,previewLibraryImport,validateLibrary,assemble,getLastUsage,getState:()=>clone(state)};
+  window.MimaStandalone={init,handle,previewMemoryPlan,memorySourceParts,memoryWorkPlan,runRecordedMemory,memorySourceFingerprint,memoryFactSignature,manualReplyFingerprint,isManuallyRecoveredReply,getApiConfig,saveApiConfig,apiCapacityIdentity,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,validateStoryReply,classifyStoryReply,applyRegexForSession,resolveMacrosForSession,compileUserInputForPrompt,exportLibrary,importLibrary,previewLibraryImport,validateLibrary,assemble,getLastUsage,getState:()=>clone(state)};
 })();
