@@ -1,0 +1,72 @@
+MimaTAVERN Personal Use and Independent Extensions License v1.0
+Effective for covered copies first released with this notice on or after 2026-10-21.
+
+Copyright © 2026 mimasama6666-create
+All Rights Reserved, except as expressly licensed.
+
+IMPORTANT: This is a restrictive SOURCE-AVAILABLE license. It is NOT an open-source license approved by the Open Source Initiative (OSI). It is NOT MIT, Apache, GPL, or a Creative Commons license. Read the entire agreement before exercising permissions not otherwise granted by law.
+
+1. DEFINITIONS AND SCOPE
+1.1 “Project” means the original MimaTAVERN (咪嘛馆) application code and original project-owned materials distributed with this License, but excludes Third-Party Materials and independently authored materials belonging to other creators. Copyright ownership is asserted only in the material owned or lawfully licensable by the Licensor.
+1.2 “Licensor” means the copyright holder identified above or a successor with lawful authority to license the relevant material.
+1.3 “Core” means the Project's principal application, its substantial source-code portions, and the Project's protected original assets. “Independent Extension” means a separately authored plugin, theme, skin, CSS, preset, character card, configuration, tutorial, or other interoperable work that does not contain or redistribute protected Core code or assets beyond what applicable law independently permits.
+1.4 “Personal Noncommercial Use” means use by an individual primarily for private entertainment, learning, experimentation, and personal projects, without selling, licensing for a fee, providing paid access to, or operating a commercial service based on the Core. Work-related, institutional, or revenue-generating uses of the Core require separate permission unless permitted by applicable law.
+1.5 “Covered Version” means a copy of the Project first made available by the Licensor under this License. A previous release legitimately offered under different terms is governed by the license(s) validly applicable to that release; this License does not retroactively revoke rights already granted.
+
+2. LIMITED PERMISSIONS
+Provided that the user complies with this License, the Licensor grants a worldwide, no-fee, nonexclusive, nontransferable and nonsublicensable permission, for the term of copyright protection, to:
+(a) access and play a lawful online deployment of the Project free of charge, subject to the host's separate lawful conditions;
+(b) download, install, retain and run unmodified copies of a Covered Version on the user's own devices for Personal Noncommercial Use;
+(c) inspect, debug and modify the Core locally for the user's own Personal Noncommercial Use, without publicly redistributing that modified Core;
+(d) create, run and noncommercially share independently authored compatible plugins, themes, skins, CSS, configurations, presets, character cards, and other Independent Extensions without seeking additional permission from the Core author, so long as the extension does not incorporate or distribute protected Core material without authorization; and
+(e) link to the official Project, discuss or review the Project, and create lawful independent tutorials and descriptions.
+Permissions in this Section do not grant permission to republish the Project or substantial derivatives of the Core, including under a new name. A recipient may obtain an official copy directly from the authorized distribution source.
+
+3. RESTRICTIONS ON THE CORE
+Without the Licensor's prior written authorization, the user may not, except to the extent expressly permitted by applicable law or another valid license:
+(a) sell, rent, charge for distribution of, sublicense or commercially exploit the Core; operate a revenue-generating service whose offering includes access to, hosting of, or delivery of the Core;
+(b) publish, mirror, redistribute, rebrand, repackage, or offer a full or substantial copy of the Core, whether modified or not, or an adaptation of substantially the same application under another title;
+(c) transplant protected Core code or original Core assets into another distributed product, including one presented as a plugin, port, skin, extension, or rewrite;
+(d) misrepresent authorship, falsely claim original development of protected Core code, impersonate the Licensor or falsely imply official sponsorship, endorsement or authorization;
+(e) remove or falsify required copyright, attribution or license notices from copies of the Core; or
+(f) bypass the above by bundling, embedding, automatically installing, or covertly redistributing the Core as part of an extension or another package.
+A private personal modification is not itself a prohibited public derivative distribution. Reproducing only unprotectable ideas or implementing independently developed functionality is not prohibited by this License where copyright law does not grant exclusive rights.
+
+4. INDEPENDENT CREATOR RIGHTS
+4.1 All copyright and other applicable rights in an independently created extension, theme, CSS, character card, preset, or tutorial remain with its respective creator. Compatibility with or execution by MimaTAVERN does not transfer those rights to the Licensor.
+4.2 Noncommercial sharing of a genuinely Independent Extension does not require an additional Project license. An extension author may set separate terms for the independently authored work, provided those terms do not purport to license protected Core materials without authority.
+4.3 Independent Extensions may have their own commercial rights. The commercial sale of a genuinely independent work is not automatically prohibited merely because it interoperates with the Core; however, this License does not grant any right to distribute, operate commercially, bundle or monetize the Core. Such Core uses require separate written permission when not otherwise lawful.
+4.4 This License does not claim ownership of user-authored prompts, roleplay sessions, model outputs, independent presets, or user data solely because they are used in the Project.
+
+5. THIRD-PARTY MATERIALS AND OTHER RIGHTS
+5.1 Third-Party Materials—including third-party libraries, dependency code, fonts, images, illustrations, character likenesses, vendor bundles, and separately licensed files—remain governed by their respective licenses or rights holders' terms. This License neither replaces those terms nor imposes extra restrictions on material distributed under a separate applicable license.
+5.2 Copyright, trademark, privacy, publicity, contractual and other rights of others remain unaffected. Permissions granted for the Core do not grant rights in third-party artwork, characters, logos, model services, or other external materials.
+5.3 The notices under licenses/ and vendor/, and SECURITY-AND-LICENSES.md where supplied, are retained for attribution and compliance. Where rights overlap, the applicable separate license and mandatory law govern the relevant material; no ownership of Third-Party Materials is claimed.
+
+6. ADULT USE; USER AND MODEL CONTENT
+6.1 The Project is intended solely for adults aged 18 or older. Minors are not authorized to use Covered Versions under this License. Local age-of-majority laws and any higher age requirement applicable to a model service must also be respected.
+6.2 MimaTAVERN is a client-side/front-end application. It is not itself a language model or content publisher and does not independently determine every generated response. Outputs depend on the user's inputs, installed extensions, selected model or provider and their behavior. Requests and generated content may be processed by the third-party model provider selected by the user, according to that provider's terms; the Project does not guarantee that content or user data will remain only on the device.
+6.3 Users are responsible for choosing lawful providers and prompts, securing their own credentials, obtaining appropriate permissions for their content and obeying applicable law and service terms. Model-generated material may be inaccurate, objectionable, unlawful, or infringe rights; the user should review it before relying on, publishing or sharing it.
+6.4 To the fullest extent permitted by applicable law, the Licensor does not endorse, supervise, warrant or assume responsibility for content generated by a user's selected model or provided by the user or third parties merely because it appears within the Project. Nothing in this Section excludes liability that applicable law makes non-excludable.
+
+7. NO WARRANTY; LIMITATION OF LIABILITY
+7.1 TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE PROJECT IS PROVIDED “AS IS” AND “AS AVAILABLE”, WITHOUT EXPRESS OR IMPLIED WARRANTIES, INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AVAILABILITY, SECURITY, NON-INFRINGEMENT OR ACCURACY. THIRD-PARTY MODEL SERVICES ARE NOT CONTROLLED BY THE LICENSOR.
+7.2 TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE LICENSOR SHALL NOT BE LIABLE FOR INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL OR EXEMPLARY DAMAGES OR LOSS OF PROFITS, DATA OR BUSINESS ARISING FROM USE OF THE PROJECT OR USER/MODEL CONTENT, EVEN IF ADVISED OF THEIR POSSIBILITY. THIS DOES NOT EXCLUDE OR LIMIT LIABILITY THAT CANNOT LAWFULLY BE EXCLUDED OR LIMITED.
+7.3 Users should maintain their own backups; this License makes no guarantee of data integrity, model quality, continuous service, or compatibility with all extensions or environments.
+
+8. TERMINATION
+8.1 Permissions under this License automatically terminate for a user upon a material breach of its terms, subject to any nonwaivable cure or other rights under applicable law.
+8.2 Upon termination the user must cease the uses requiring this License and stop unauthorized distribution of the Core. The Licensor may reinstate rights by express written notice. Valid licenses belonging to third parties and rights already granted under earlier licenses are not extinguished by this Section.
+8.3 Sections concerning copyright ownership, third-party rights, disclaimers, liability, prior rights and interpretation survive termination insofar as legally permitted.
+
+9. HISTORICAL VERSIONS, STATUTORY RIGHTS AND INTERPRETATION
+9.1 This License applies prospectively only to Covered Versions and materials the Licensor can lawfully license. It does not purport to rescind valid grants attached to earlier copies or to relicenses materials owned by others.
+9.2 Nothing here restricts mandatory statutory exceptions, fair use or fair dealing, interoperability, independent implementation, exhaustion rights or any other legal right that cannot lawfully be waived or restricted by contract.
+9.3 If a provision is unenforceable, the remainder applies to the extent permitted by law. The License grants no trademark rights other than reasonable identification of the Project or lawful attribution.
+
+10. COMMERCIAL AUTHORIZATION AND CHANGES
+10.1 Written permission from the Licensor is required for Core commercialization, public redistribution or other uses not expressly allowed above, unless independently permitted by law or another valid license. For inquiries, use an officially published contact method associated with https://github.com/mimasama6666-create ; opening an issue or sending a request does not itself grant authorization. Do not assume a public email address exists.
+10.2 An amendment to this License requires an expressly identified new version, a dated change record and affirmative authorization by the rights holder. Ordinary Core updates do not silently amend this License. The canonical text for the Covered Version is the root LICENSE distributed with that release; a machine-checked web viewer or summary is informational and must not override this text.
+10.3 This is a custom source-available personal-use permission, not an OSI-approved open-source license. No additional rights are implied beyond this License and the law.
+
+END OF LICENSE — MimaTAVERN Personal Use and Independent Extensions License v1.0

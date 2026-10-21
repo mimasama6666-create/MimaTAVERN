@@ -1,0 +1,22 @@
+{
+  "name": "MimaTAVERN Personal Use and Independent Extensions License",
+  "version": "1.0",
+  "effective_date": "2026-10-21",
+  "licensor": "mimasama6666-create",
+  "canonical_file": "LICENSE",
+  "sha256": "50073ec82e788af2d62bdc79f814ad3033110affd9fc53255e30ec9662a49e37",
+  "summary_zh": "**版权与许可（2026-10-21 起适用的受许可版本）**：Copyright © 2026 mimasama6666-create。咪嘛馆核心代码为源码可见的限制性软件，并非 OSI 开源。允许成年人免费游玩、下载、本地安装及私人非商业修改；欢迎独立创作、非商业分享插件、主题、CSS、预设、角色卡及教程，独立作品版权仍属其作者。未经书面授权禁止转售/商业经营核心程序，或复制、改名、打包、重新发布咪嘛馆整体或实质性核心衍生版本；不得冒充作者或抹除授权声明。独立扩展本身的商业权利不等同于获得核心程序的商业授权。第三方素材/依赖仍遵循原有许可证，历史有效授权不追溯撤销。完整英文协议以根目录 [LICENSE](./LICENSE) 为准；[网页版/离线版查看](./license-view.html)。咪嘛馆仅供 18 岁及以上成年人使用，是前端而非模型，内容由用户与选定模型/提供商产生；制作者在法律允许范围内不对这些内容提供担保或承担由其生成所当然引起的责任。",
+  "changelog_file": "LICENSE-CHANGELOG.md",
+  "viewer_file": "license-view.html",
+  "historical_rights_notice": "This license does not retroactively revoke prior valid grants.",
+  "authorized_initial_release": "mimasama6666-create; formal signed authorization or owner-controlled commit required for subsequent license changes",
+  "third_party_sha256": {
+    "SECURITY-AND-LICENSES.md": "3c8cabaa48272b5c0b9947896d7bdde7b5afe592092bb7ac9314376f8549b962",
+    "licenses/STYLEKIT-MIT.txt": "dcd1e458e3d212d23f54c63dddf91dee8c1b09339f60c44afedf3be1e078c828",
+    "vendor/marked-LICENSE.md": "8e3a3f82f59a60958f56ca08f445647c32a4733dc7ca6c2c46f6eb898471ab9c",
+    "vendor/author-LICENSE-jquery.txt": "efa33a4b7b8c44f85224b5c416adc14d08091fbfa9ed0ca9fda4ac123c9e4041",
+    "vendor/author-LICENSE-lodash.txt": "6a6a2ccc514bc700f161025cde84de061c727378c21fd330c63038863ee7466f",
+    "vendor/author-LICENSE-vue.txt": "2a618b9af7ad9abb6ce911ffa61052f90a8401655c623e9de552e809fa11753b",
+    "vendor/author-LICENSE-zod.txt": "a159a31226ee8a2f68c26b3e4903dd4e7336900ea5426c6f5f5ff96bbe8701f9"
+  }
+}

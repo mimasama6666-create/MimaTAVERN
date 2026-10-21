@@ -1,0 +1,34 @@
+name: MimaTAVERN License Integrity
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  canonical-license-gate:
+    name: Canonical LICENSE + release archive
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify copyright, third-party notices, UI viewer and provenance
+        run: node scripts/verify-license.mjs .
+      - name: Build only validated production archive
+        run: node scripts/package-release.mjs ./MimaTAVERN-validated.zip
+      - name: Recheck final release archive and source
+        run: |
+          node scripts/verify-release-archive.mjs ./MimaTAVERN-validated.zip
+          node scripts/verify-license.mjs .
+      - name: Publish validated download artifact only
+        uses: actions/upload-artifact@v4
+        with:
+          name: MimaTAVERN-verified-release
+          path: ./MimaTAVERN-validated.zip
+# IMPORTANT: A direct-branch GitHub Pages site may publish even if this status check fails.
+# Make this job required via branch protection, or migrate Pages source to a gated
+# actions-based deployment after owner authorization; don't change Pages settings here.

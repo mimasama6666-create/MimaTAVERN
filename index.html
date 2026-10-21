@@ -37,6 +37,7 @@
     <div class="drawer-footer">
         <button class="ghost-btn" onclick="openSettings('api')">🔌 API（接口）设置</button>
         <button class="ghost-btn" onclick="MimaThemeAtelier.open();closeDrawer()">🎨 主题工坊</button>
+        <button class="ghost-btn" id="mima-license-open" type="button" onclick="openMimaLicenseDialog()" title="阅读完整软件授权与免责声明">© 版权与许可 · 18+</button>
         <div class="standalone-note">Standalone（独立版） · 数据仅保存在本机浏览器</div>
     </div>
 </aside>
@@ -62,6 +63,7 @@
       <button onclick="openSettings('worldbook');MimaR6Nav.close()">📚 世界书</button>
       <button onclick="openSettings('memory');MimaR6Nav.close()">🧠 剧情记忆</button>
       <button onclick="MimaThemeAtelier.open();MimaR6Nav.close()">🎨 可视化主题工坊</button>
+      <button type="button" onclick="openMimaLicenseDialog();MimaR6Nav.close()">© 版权与许可 · 软件免责声明</button>
     </nav>
 
     <div id="context-ribbon" class="context-ribbon hidden"></div>
@@ -102,6 +104,22 @@
     </footer>
 </div>
 <div id="mima-reading-hint" class="mima-reading-hint" hidden aria-live="polite"></div>
+<!-- The license viewer is generated from the canonical LICENSE, and loaded only when requested. -->
+<dialog id="mima-license-dialog" aria-label="咪嘛馆版权与许可协议" style="box-sizing:border-box;position:fixed;z-index:2147483000;width:min(96vw,990px);max-width:96vw;height:min(87dvh,900px);max-height:87dvh;margin:auto;padding:0;border:1px solid #b99e82;border-radius:12px;background:#faf7f2;color:#29231d;box-shadow:0 1rem 4rem #0007;overflow:hidden">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 13px;border-bottom:1px solid #d9c8b5;font:15px system-ui,sans-serif">
+    <strong>© 咪嘛馆 · 版权与许可（仅限 18+）</strong>
+    <form method="dialog" style="margin:0"><button type="submit" aria-label="关闭版权与许可" style="min-width:56px;min-height:40px;border:1px solid #a88e72;border-radius:8px;padding:5px 10px;background:#fff;color:#30251c;cursor:pointer">关闭</button></form>
+  </div>
+  <iframe src="./license-view.html" title="MimaTAVERN 完整软件许可与免责声明" loading="lazy" style="display:block;border:0;width:100%;height:calc(100% - 62px);background:#f6f2eb" referrerpolicy="no-referrer"></iframe>
+  <a href="./license-view.html" target="_blank" rel="noopener noreferrer" style="position:absolute;right:75px;top:16px;color:#704a34;font:12px system-ui,sans-serif">独立打开全文</a>
+</dialog>
+<script>
+function openMimaLicenseDialog() {
+  var dialog = document.getElementById('mima-license-dialog');
+  if (dialog && typeof dialog.showModal === 'function') { if (!dialog.open) dialog.showModal(); }
+  else { window.location.href = './license-view.html'; }
+}
+</script>
 
 <!-- 设置中心 -->
 <div id="settings-modal" class="modal hidden">
