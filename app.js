@@ -1179,16 +1179,30 @@ async function manualRollingSummary(){
 function memoryJobDiagnostic(job){
     const checks=Array.isArray(job?.checkpoints)?job.checkpoints:[];
     const failures=checks.filter(p=>/_error$/.test(p.stage||''));
-    const latest=failures[failures.length-1]||{};
+    const committed=job.status==='committed';
+    const discarded=job.status==='discarded';
+    const inactive=committed||discarded;
+    const activeFailureStatuses=new Set(['failed','aborted','interrupted','needs_review']);
+    const hasAttemptMarkers=checks.some(p=>p.stage==='attempt_started');
+    // Previous failed attempts stay in the immutable journal, but are NEVER
+    // presented as the current outcome after a different attempt committed.
+    const currentErrors=hasAttemptMarkers?failures.filter(p=>p.attemptId===job.attemptId):failures;
+    const latest=!committed&&activeFailureStatuses.has(job.status)?(currentErrors[currentErrors.length-1]||{}):{};
+    const priorErrors=failures.map(p=>({stage:p.stage,time:p.time||'',code:p.errorCode||'',attemptId:p.attemptId||'legacy_unstamped',httpStatus:Number(p.httpStatus)||null,message:p.errorMessage||'',hint:p.hint||'',details:p.details||''}));
     let transport={};try{if(typeof latest.details==='string')transport=JSON.parse(latest.details);}catch(_){}
-    const output={
-        task:{id:job.id,kind:job.kind,status:job.status,stage:job.stage,code:job.code||latest.errorCode||'',startedAt:job.startedAt,updatedAt:job.updatedAt,attemptId:job.attemptId,sourceCount:job.sourceCount,sourceHash:job.sourceHash},
-        request:{model:transport.model||job.options?.model||'(沿用当时剧情模型)',httpStatus:Number(latest.httpStatus||transport.httpStatus)||null,endpointOrigin:transport.endpointOrigin||'',requestId:transport.requestId||'',providerRequestId:transport.providerRequestId||transport.providerError?.requestId||'',requestBytes:transport.requestBytes||null,stage:transport.stage||latest.stage||job.stage,requestFields:transport.requestFields||[],providerError:transport.providerError||null,
+    const audit=[...checks].reverse().find(p=>p.stage==='source_audit')||{};
+    const lastReceived=[...checks].reverse().find(p=>/_received$/.test(p.stage||''))||{};
+    const currentCode=inactive?'':(job.code||latest.errorCode||'');
+    return {
+        task:{id:job.id,kind:job.kind,status:job.status,stage:job.stage,code:currentCode,startedAt:job.startedAt,updatedAt:job.updatedAt,attemptId:job.attemptId,sourceCount:job.sourceCount,sourceHash:job.sourceHash},
+        outcome:{committed,discarded,lastCommittedAttemptId:job.lastCommittedAttemptId|| (committed?job.attemptId:null),finishedAt:job.finishedAt||null,lastReceivedStage:lastReceived.stage||null,lastReceivedChars:lastReceived.chars||null,lastReceivedFinishReason:lastReceived.finishReason||null},
+        sourceAudit:Object.keys(audit).length?{mode:audit.sourceMode||'unknown',canonicalHistoryCount:audit.canonicalHistoryCount??null,timelineMessageCount:audit.timelineMessageCount??null,timelineRoundCount:audit.timelineRoundCount??null,openingMessageCount:audit.openingMessageCount??null,sourceTextChars:audit.sourceTextChars??null,sourceTextEstimatedTokens:audit.sourceTextEstimatedTokens??null,sourceProjection:audit.sourceProjection||null,referenceRecords:audit.referenceRecords??null,referenceMessageChars:audit.referenceMessageChars??null,fullEligibleTimelineIncluded:audit.fullEligibleTimelineIncluded??null,stageCount:audit.stageCount??null,sourceParts:audit.sourceParts||[]}:null,
+        request:{model:transport.model||job.options?.model||'(沿用当时剧情模型)',httpStatus:Number(latest.httpStatus||transport.httpStatus)||null,endpointOrigin:transport.endpointOrigin||'',requestId:transport.requestId||'',providerRequestId:transport.providerRequestId||transport.providerError?.requestId||'',requestBytes:transport.requestBytes||null,stage:transport.stage||latest.stage||'',requestFields:transport.requestFields||[],providerError:transport.providerError||null,
           failureSource:transport.errorSource||'未记录',finishKind:transport.finishKind||'未记录',finishReason:transport.finishReason||'未记录',responseObserved:!!Number(latest.httpStatus||transport.httpStatus)},
-        lastError:{stage:latest.stage||'',time:latest.time||'',code:latest.errorCode||job.code||'',message:latest.errorMessage||'',hint:latest.hint||'',details:latest.details||''},
-        checkpoints:checks.slice(-35).map(p=>({stage:p.stage,time:p.time,errorCode:p.errorCode,elapsedMs:p.elapsedMs,chars:p.chars,partCount:p.partCount,finishReason:p.finishReason}))
+        lastError:{stage:latest.stage||'',time:latest.time||'',code:inactive?'':(latest.errorCode||job.code||''),message:latest.errorMessage||'',hint:latest.hint||'',details:latest.details||''},
+        historicalFailures:priorErrors,
+        checkpoints:checks.slice(-45).map(p=>({stage:p.stage,time:p.time,attemptId:p.attemptId||null,errorCode:p.errorCode,elapsedMs:p.elapsedMs,chars:p.chars,partCount:p.partCount,finishReason:p.finishReason}))
     };
-    return output;
 }
 function showMemoryJobDetails(job,root){
     if(!root)return;
@@ -1198,7 +1212,11 @@ function showMemoryJobDetails(job,root){
     const kindLabels={http:'网关 HTTP 错误',transport:'网络请求未取得可读取响应',stream:'已连接后流式响应出错',provider_refusal:'模型明确拒绝返回正文',provider_terminal_admission:'模型终止原因拒绝/拦截',response_shape:'模型返回内容不可用',response_body_parse:'响应正文解析失败'};
     const observed=data.request.responseObserved;
     const source=data.request.failureSource;
-    summary.textContent=`${data.task.kind} · ${data.task.status} · ${data.lastError.code||'无错误码'} · ${observed?'HTTP '+data.request.httpStatus:'HTTP 状态未记录'} · ${kindLabels[source]||'失败来源待核实'} · ${data.request.model}`;
+    summary.textContent=data.outcome.discarded
+        ?`${data.task.kind} · 已废弃的历史记忆任务 · ${data.historicalFailures.length} 条失败记录仅供回溯，不代表当前请求失败`
+        :data.outcome.committed
+        ?`${data.task.kind} · 已成功保存 · ${data.outcome.lastReceivedChars||'已收到'} 字 · ${data.historicalFailures.length?`历史有 ${data.historicalFailures.length} 次失败（不代表当前失败）`:'无失败记录'}`
+        :`${data.task.kind} · ${data.task.status} · ${data.lastError.code||data.task.code||'本次未记录错误'} · ${observed?'HTTP '+data.request.httpStatus:'HTTP 状态未记录'} · ${kindLabels[source]||'失败来源待核实'} · ${data.request.model}`;
     const pre=document.createElement('pre');pre.className='memory-review-source';pre.style.cssText='white-space:pre-wrap;word-break:break-word;max-height:40vh;overflow:auto;user-select:text';
     pre.textContent=JSON.stringify(data,null,2);
     const buttons=document.createElement('div');buttons.className='toolbar';
@@ -1219,13 +1237,16 @@ async function refreshDurableMemoryJobs(){
     if(currentSessionId!==sessionId||settingsTab!=='memory')return;
     host.replaceChildren();
     const title=document.createElement('h4');title.textContent='记忆任务诊断与安全恢复';host.appendChild(title);
-    const intro=document.createElement('p');intro.className='helper';intro.textContent='显示核心、事实、滚动记忆的最近一次任务，包括失败和成功记录。HTTP 400 拦截并没有产生可恢复的总结文本；查看详情可确认失败阶段和所用模型。所有失败任务不会修改原始剧情及已保存的旧记忆。';host.appendChild(intro);
+    const intro=document.createElement('p');intro.className='helper';intro.textContent='已成功保存的任务优先展示正式结算，旧 attempt 的拒绝/拦截仅在历史记录中保留。新任务同时记录原文范围、语义投影及实际选择的参考资料；历史旧记录缺少这些字段时不伪称已完整证明。';host.appendChild(intro);
     if(!rows.length){const empty=document.createElement('p');empty.className='helper';empty.textContent='当前会话没有持久化的记忆任务记录。';host.appendChild(empty);return;}
     for(const job of rows){
         const line=document.createElement('div');line.className='entry-card';
-        const label=document.createElement('div');label.textContent=`${job.kind} · ${job.status} · ${job.stage} · ${job.code||''}`;line.appendChild(label);
+        const label=document.createElement('div');label.textContent=job.status==='committed'
+          ?`${job.kind} · 已成功保存 · ${job.stage}${(job.checkpoints||[]).some(p=>/_error$/.test(p.stage||''))?' · 早期尝试曾失败（可查看历史）':''}`
+          :job.status==='discarded'?`${job.kind} · 历史任务已废弃（非当前错误）`
+          :`${job.kind} · ${job.status} · ${job.stage} · ${job.code||''}`;line.appendChild(label);
         const actions=document.createElement('div');actions.className='toolbar';
-        const detail=document.createElement('button');detail.type='button';detail.className='tool-mini';detail.textContent='查看详细错误 / 请求摘要';
+        const detail=document.createElement('button');detail.type='button';detail.className='tool-mini';detail.textContent=job.status==='committed'?'查看来源与历史执行记录':'查看详细错误 / 请求摘要';
         const pane=document.createElement('div');pane.hidden=true;detail.onclick=()=>{pane.hidden=!pane.hidden;if(!pane.hidden)showMemoryJobDetails(job,pane);};actions.appendChild(detail);
         const recoverable=['failed','interrupted','aborted','needs_review','running'].includes(job.status);
         if(recoverable){

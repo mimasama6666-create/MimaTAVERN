@@ -704,10 +704,11 @@
         recoverCommittedRanges:old?.status==='partially_committed'||old?.recoverCommittedRanges===true,
         id:resumeIdentity?old.id:`mem_${Date.now()}_${Math.random().toString(36).slice(2)}`,
         attemptId:`a_${Date.now()}_${Math.random().toString(36).slice(2)}`,sessionId,kind,options,sourceHash,sourceCount,
-        status:'running',stage:recovering?'recovered_pending':'prepared',startedAt:recovering?old.startedAt:now,updatedAt:now,
-        checkpoints:resumeIdentity?(old.checkpoints||[]):[],revision:(old?.revision||0)+1,
+        status:'running',stage:recovering?'recovered_pending':'prepared',code:'',startedAt:resumeIdentity?old.startedAt:now,updatedAt:now,
+        checkpoints:[...(resumeIdentity?(old.checkpoints||[]):[]),{stage:'attempt_started',time:now,attemptId:null,previousAttemptId:resumeIdentity?old.attemptId:null,priorStatus:old?.status||null}].slice(-300),revision:(old?.revision||0)+1,
         leaseUntilEpoch:Date.now()+MEMORY_LEASE_MS,recoveryCount:recovering?(Number(old.recoveryCount||0)+1):0,
         recoveredFromAttemptId:resumeIdentity?old.attemptId:null};
+      job.checkpoints[job.checkpoints.length-1].attemptId=job.attemptId;
       const sr=kv.get(STATE_KEY);
       sr.onerror=()=>tx.abort();
       sr.onsuccess=()=>{
@@ -732,7 +733,7 @@
   async function checkpointMemoryJob(job,stage,extra={}){
     return memoryJobTransaction(job.sessionId,job.kind,(old,kv)=>{
       if(old?.id!==job.id||old?.attemptId!==job.attemptId||old.status!=='running')throw new Error('E_MEMORY_JOB_FENCED');
-      const next={...old,stage,updatedAt:new Date().toISOString(),leaseUntilEpoch:Date.now()+MEMORY_LEASE_MS,revision:old.revision+1,checkpoints:[...(old.checkpoints||[]),{stage,time:new Date().toISOString(),...extra}].slice(-300)};
+      const next={...old,stage,updatedAt:new Date().toISOString(),leaseUntilEpoch:Date.now()+MEMORY_LEASE_MS,revision:old.revision+1,checkpoints:[...(old.checkpoints||[]),{stage,time:new Date().toISOString(),...extra,attemptId:job.attemptId}].slice(-300)};
       kv.put(next,jobKey(job.sessionId,job.kind));return next;
     });
   }
@@ -792,7 +793,7 @@
           const sessions=current.sessions.slice();sessions[index]=changed;
           committed={...current,sessions,storeRevision:(Number(current.storeRevision)||0)+1,savedAt:new Date().toISOString()};
           kv.put(committed,STATE_KEY);
-          kv.put({...active,status:'committed',stage:'saved',revision:active.revision+1,updatedAt:new Date().toISOString(),finishedAt:new Date().toISOString()},jobKey(job.sessionId,job.kind));
+          kv.put({...active,status:'committed',stage:'saved',code:'',lastCommittedAttemptId:job.attemptId,revision:active.revision+1,updatedAt:new Date().toISOString(),finishedAt:new Date().toISOString()},jobKey(job.sessionId,job.kind));
         };
       };
       tx.oncomplete=()=>{db.close();resolve(committed);};tx.onabort=()=>{db.close();reject(problem||tx.error||new Error('E_MEMORY_COMMIT_ABORTED'));};

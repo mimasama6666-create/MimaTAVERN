@@ -1830,6 +1830,26 @@
       job=await store.beginMemoryJob({sessionId:id,kind,options:opts,sourceHash,sourceCount:original.messages.length,sourceFingerprint,targetBaseline,configSignature,expectedReferenceContract:referenceContract});
       job.referenceMessages=referenceMessages;job.referenceDigest=referenceDigest;job.workPlan=proposed;
       await store.checkpointMemoryJob(job,'reference_snapshot',{digest:referenceDigest,selected:referenceRecords.map(x=>({kind:x.kind,id:x.id,authority:x.authority})),chars:referenceMessages.reduce((n,x)=>n+x.content.length,0)});
+      // Proof of what this summary ACTUALLY reads. The all-story mode reads
+      // every nonempty user/assistant timeline entry, applying configured
+      // user-input semantics / HTML semantic projection; it is not the same as
+      // injecting ALL story-play system instructions or a byte-identical backup.
+      if(kind==='core'){
+        const timeline=storyRoundData(original),included=[...timeline.opening,...timeline.rounds.flatMap(r=>r.messages)];
+        const source=proposed.core?.source||'';
+        await store.checkpointMemoryJob(job,'source_audit',{
+          sourceMode:opts.source==='facts'?'saved_facts':'full_eligible_story_timeline',
+          canonicalHistoryCount:original.messages.length,timelineMessageCount:included.length,
+          timelineRoundCount:timeline.rounds.length,openingMessageCount:timeline.opening.length,
+          sourceTextChars:source.length,sourceTextEstimatedTokens:estimateTokens(source),
+          sourceProjection:original.promptSettings?.historyHtmlMode==='raw'?'raw_html':'semantic_html_projection',
+          userInputSemanticProjection:true,referenceRecords:referenceRecords.length,
+          referenceMessageChars:referenceMessages.reduce((n,x)=>n+x.content.length,0),
+          fullEligibleTimelineIncluded:opts.source!=='facts',
+          stageCount:proposed.summary?.requestCount||0,
+          ...(proposed.core?.chunks?{sourceParts:proposed.core.chunks.map(x=>({startOffset:x.startOffset,endExclusive:x.endExclusive}))}:{})
+        });
+      }
       if(typeof store.heartbeatMemoryJob==='function'&&typeof setInterval==='function'){
         heartbeat=setInterval(()=>store.heartbeatMemoryJob(job).catch(e=>{
           job.leaseError=new ApiError('E_MEMORY_HEARTBEAT_FAILED','记忆任务租约无法续期，已停止当前生成：'+(e?.message||'unknown'));
