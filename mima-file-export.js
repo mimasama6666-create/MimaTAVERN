@@ -41,7 +41,12 @@
   function save(name,content,type='application/octet-stream'){
     if(!root.document?.body)throw new Error('E_EXPORT_PAGE_UNAVAILABLE');
     const filename=safeName(name);const mime=String(type||'application/octet-stream');
-    const blob=content instanceof Blob?content:new Blob([content],{type:mime});
+    // Certain mobile/Windows text viewers ignore the charset MIME of saved files.
+    // A UTF-8 BOM is safe for CSS/TXT/CSV, while JSON and binary exports stay
+    // byte-identical to their standards (no BOM before JSON.parse or ZIP magic).
+    const legacyText=/^(?:text\/(?:plain|css|csv))(?:;|$)/i.test(mime);
+    const payload=typeof content==='string'&&legacyText&&!content.startsWith('\uFEFF')?'\uFEFF'+content:content;
+    const blob=content instanceof Blob?content:new Blob([payload],{type:mime});
     if(!blob.size)throw new Error('E_EXPORT_EMPTY_FILE: 文件内容为空，未生成假下载');
     const job={name:filename,blob};
     // Must invoke navigator.share directly in the original click stack when possible.

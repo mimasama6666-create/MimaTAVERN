@@ -2479,6 +2479,13 @@
   function validateStoryReply(reply,meta={}){
     const result=classifyStoryReply(reply,meta);
     if(result.blocked&&meta.manualRecovery!==true)throw new ApiError('E_API_REFUSAL_CONTENT','模型返回了拒绝声明，已阻止将其作为角色回复保存或归档。',{hint:'这是模型或网关返回的内容限制，不代表你请求了绘图。可以检查坏回复并手动恢复；不会自动重复付费请求。',details:JSON.stringify({stage:'story_reply_admission',reason:result.reason,finishReason:String(meta.finishReason||'unknown'),receivedChars:String(reply||'').length})});
+    // Explicitly confirmed recovery of a retained provider response is a human
+    // override, NOT an automatic model admission. The original rejection,
+    // contract settings and raw diagnostic remain intact. Re-running the same
+    // (possibly false-positive) format gate here made recovery impossible.
+    // All canonical ownership/fingerprint/one-time settlement checks remain in
+    // restoreRejectedReply; display still uses the existing Safe HTML sanitizer.
+    if(meta.manualRecovery===true)return reply;
     if(meta.outputContract?.completeHtml===true)validateCompleteHtml(reply);
     if(meta.outputContract?.requireHtml===true){
       const validator=window.MimaHtmlStructure;
@@ -2653,7 +2660,11 @@
     // Raw transport still checks refusal and the preexisting balanced-HTML
     // option, but existing output-regex transformations may legitimately add
     // the explicitly required structure. Do not discard them before running.
-    const rawAdmissionMeta={...admissionMeta,outputContract:{...(admissionMeta.outputContract||{}),requireHtml:false}};
+    // Format admission belongs to the post-output-regex canonical reply.
+    // A raw transport fragment may be completed by the user's output regex;
+    // reject only if the final would-be stored reply violates the contract.
+    // Refusal and nonempty response checks still run on the raw transport.
+    const rawAdmissionMeta={...admissionMeta,outputContract:{...(admissionMeta.outputContract||{}),completeHtml:false,requireHtml:false}};
     validateStoryReply(replyRaw,rawAdmissionMeta);
     // Hard invariant: never persist a blank assistant message.
     if(!text(replyRaw))throw new ApiError('E_API_EMPTY_REPLY','模型返回空白正文，已阻止写入剧情。');
@@ -2794,7 +2805,7 @@
     }
     target.metadata={...(target.metadata||{}),...(htmlRepair?{htmlCodeRepair:{candidateId:htmlRepair.id,originalRawPreserved:true,approvedAt:nowIso(),recoveryDiagnosticId:record.id}}:{}),generationSnapshot:action==='continue'?target.metadata?.generationSnapshot:pending.snapshot,
       manualRecoveryIds:[...new Set([...arr(target.metadata?.manualRecoveryIds),record.id])],
-      manualRecovery:{diagnosticId:record.id,generationId:pending.id,attempt:pending.attempt,action,restoredAt:nowIso(),providerFinishReason:record.finishReason||'',contentFingerprint:manualReplyFingerprint(target)}};
+      manualRecovery:{diagnosticId:record.id,generationId:pending.id,attempt:pending.attempt,action,restoredAt:nowIso(),providerFinishReason:record.finishReason||'',formatCheckOwnerOverride:!htmlRepair,originalRejectionCode:String(record.error?.code||''),contentFingerprint:manualReplyFingerprint(target)}};
     target.renderedContent=applyRegexForSession(session,target.content,'display');target.tokenEstimate=estimateTokens(target.content);
     // Explicit human action only: no Provider, retry or background summary.
     let saved;

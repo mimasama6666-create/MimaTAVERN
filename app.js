@@ -560,21 +560,164 @@ async function refreshMemoryDebtRibbon(sessionId){
 }
 
 function toggleContextRibbon(){const ribbon=qs('context-ribbon');if(!ribbon)return;const collapsed=!(ribbon.dataset.collapsed==='true');ribbon.dataset.collapsed=collapsed?'true':'';ribbon.classList.toggle('mima-ribbon-collapsed',collapsed);ribbon.setAttribute('aria-expanded',String(!collapsed));}
-let readingMode=false,readingScroll=0,readingLastTap=0,readingTouchStart=null,readingLastTapPoint=null;
-function setImmersiveReading(on){
-    const box=qs('story-chat-box');if(!box)return;
-    if(on===readingMode)return;
-    if(on){readingScroll=box.scrollTop;
-        // Close iOS soft keyboard without changing or clearing the input draft.
-        if(document.activeElement?.closest?.('.composer-shell'))document.activeElement.blur();
-        readingMode=true;document.body.classList.add('mima-reading-mode');
-        const hint=qs('mima-reading-hint');if(hint){hint.textContent='沉浸阅读中 · 双击屏幕恢复界面';hint.hidden=false;setTimeout(()=>{if(readingMode)hint.hidden=true;},2200);}
-    }else{readingScroll=box.scrollTop;readingMode=false;document.body.classList.remove('mima-reading-mode');qs('mima-reading-hint').hidden=true;}
-    requestAnimationFrame(()=>{box.scrollTop=readingScroll;});
+// R19 semantic reading position: scrollTop is only a last-resort fallback.
+// Switching modes changes grid rows, padding and the visibility of message headers.
+// One owner coordinates the layout change and invalidates stale scroll writes.
+let readingMode=false,readingLastTap=0,readingTouchStart=null,readingLastTapPoint=null;
+let readingLayoutEpoch=0,readingGestureSuppression=null,readingHintTimer=null;
+function r19ReaderMessage(box,id){
+    const fromRender=r19RenderState.nodes.get(id)?.el;
+    if(fromRender?.parentElement===box)return fromRender;
+    for(const child of box.children)if(child.matches?.('article.message')&&child.dataset.msgId===id)return child;
+    return null;
 }
+function r19ReaderTextPath(node,article){
+    const path=[];for(let p=node;p&&p!==article;p=p.parentNode){
+        const parent=p.parentNode;if(!parent)return null;
+        path.push(Array.prototype.indexOf.call(parent.childNodes,p));
+    }
+    return path.reverse();
+}
+function r19ReaderResolveText(article,path){
+    if(!Array.isArray(path))return null;
+    let node=article;for(const i of path){node=node?.childNodes?.[i];if(!node)return null;}
+    return node?.nodeType===Node.TEXT_NODE?node:null;
+}
+function r19ReaderCharRect(node,offset,range){
+    if(!node?.length)return null;
+    const at=Math.min(node.length-1,Math.max(0,offset));
+    range.setStart(node,at);range.setEnd(node,at+1);
+    const rect=range.getBoundingClientRect();
+    return rect.height>0&&Number.isFinite(rect.top)?rect:null;
+}
+function r19ReaderCharNearY(node,targetY,range){
+    let lo=0,hi=node.length-1,found=hi;
+    // A binary search over text positions is bounded even for long Safe HTML prose.
+    while(lo<=hi){const mid=(lo+hi)>>>1,rect=r19ReaderCharRect(node,mid,range);
+        if(!rect)return null;
+        if(rect.bottom>=targetY){found=mid;hi=mid-1;}else lo=mid+1;
+    }
+    return found;
+}
+function r19CaptureImmersiveAnchor(box){
+    const rect=box.getBoundingClientRect(),y=rect.top+Math.min(85,Math.max(24,rect.height*.15));
+    const base=r19CaptureReadingAnchor(box),anchor={sessionId:currentSessionId,navEpoch:sessionNavigationEpoch,
+        messageId:base?.id||null,messageOffset:base?.offset||0,scrollTop:box.scrollTop,
+        textPath:null,textOffset:null,textViewportY:null,textWitness:null};
+    const x=rect.left+rect.width*.52;
+    for(const hit of document.elementsFromPoint?.(x,y)||[]){
+        const article=hit.closest?.('article.message');
+        if(article?.parentElement===box&&article.dataset.msgId){anchor.messageId=article.dataset.msgId;
+            anchor.messageOffset=article.getBoundingClientRect().top-rect.top;break;}
+    }
+    const article=r19ReaderMessage(box,anchor.messageId);if(!article)return anchor;
+    const content=article.querySelector('.msg-content')||article;
+    const caret=document.caretPositionFromPoint?.(x,y)||document.caretRangeFromPoint?.(x,y);
+    const caretNode=caret?.offsetNode||caret?.startContainer;
+    if(caretNode?.nodeType===Node.TEXT_NODE&&content.contains(caretNode)&&caretNode.length){
+        const range=document.createRange(),offset=Math.min(caretNode.length-1,Math.max(0,caret.offset??caret.startOffset??0));
+        const c=r19ReaderCharRect(caretNode,offset,range),path=r19ReaderTextPath(caretNode,article);
+        if(c&&path&&c.bottom>=rect.top&&c.top<=rect.bottom){
+            anchor.textPath=path;anchor.textOffset=offset;anchor.textViewportY=c.top-rect.top;
+            anchor.textWitness=caretNode.textContent.slice(Math.max(0,offset-12),offset+16);
+            anchor.textWitnessLead=Math.min(12,offset);
+            return anchor;
+        }
+    }
+    // A background, image, or author-defined overlay can hide the caret hit.
+    // The fallback checks only the visible message, not all 600 history records.
+    const walker=document.createTreeWalker(content,NodeFilter.SHOW_TEXT);
+    const range=document.createRange();let best=null,bestDistance=Infinity,scanned=0;
+    for(let node=walker.nextNode();node&&scanned<12000;node=walker.nextNode(),scanned++){
+        if(!node.length||!node.textContent.trim()||node.parentElement?.closest('script,style,[hidden]'))continue;
+        range.selectNodeContents(node);
+        const r=range.getBoundingClientRect();
+        if(!r.height||r.bottom<rect.top||r.top>rect.bottom)continue;
+        const distance=r.top>y?r.top-y:r.bottom<y?y-r.bottom:0;
+        if(distance<bestDistance){best=node;bestDistance=distance;if(!distance)break;}
+    }
+    if(best){const index=r19ReaderCharNearY(best,y,range);
+        const c=index===null?null:r19ReaderCharRect(best,index,range);
+        const path=r19ReaderTextPath(best,article);
+        if(c&&path){anchor.textPath=path;anchor.textOffset=index;anchor.textViewportY=c.top-rect.top;
+            anchor.textWitness=best.textContent.slice(Math.max(0,index-12),index+16);
+            anchor.textWitnessLead=Math.min(12,index);
+        }
+    }
+    return anchor;
+}
+function r19RestoreImmersiveAnchor(box,anchor){
+    if(!anchor||anchor.sessionId!==currentSessionId||anchor.navEpoch!==sessionNavigationEpoch)return false;
+    const article=r19ReaderMessage(box,anchor.messageId),rect=box.getBoundingClientRect();
+    if(article&&anchor.textPath){
+        const node=r19ReaderResolveText(article,anchor.textPath);
+        if(node&&node.length){const range=document.createRange();let offset=anchor.textOffset;
+            // A regenerated/edited paragraph must not silently turn a text offset
+            // into an unrelated passage. Prefer a matching witness, else message fallback.
+            if(anchor.textWitness){const lead=anchor.textWitnessLead||0;
+                if(node.textContent.slice(Math.max(0,offset-lead),Math.max(0,offset-lead)+anchor.textWitness.length)!==anchor.textWitness){
+                    const at=node.textContent.indexOf(anchor.textWitness);
+                    if(at>=0)offset=at+lead;else offset=null;
+                }
+            }
+            const c=offset===null?null:r19ReaderCharRect(node,offset,range);
+            if(c){box.scrollTop+=c.top-rect.top-anchor.textViewportY;return true;}
+        }
+    }
+    // The renderer can wrap the same prose in new Safe HTML nodes. Resolve by
+    // a short text witness before falling back to the top of a long message.
+    if(article&&anchor.textWitness){
+        const walker=document.createTreeWalker(article.querySelector('.msg-content')||article,NodeFilter.SHOW_TEXT);
+        let visited=0;for(let node=walker.nextNode();node&&visited++<12000;node=walker.nextNode()){
+            const at=node.textContent.indexOf(anchor.textWitness);
+            if(at<0)continue;
+            const range=document.createRange(),c=r19ReaderCharRect(node,at+(anchor.textWitnessLead||0),range);
+            if(c){box.scrollTop+=c.top-rect.top-anchor.textViewportY;return true;}
+        }
+    }
+    if(article){box.scrollTop+=article.getBoundingClientRect().top-rect.top-anchor.messageOffset;return true;}
+    // No matching canonical message (e.g. deleted while transitioning).
+    // Never read a stale previous-session offset as if it were a new message.
+    if(!anchor.messageId){box.scrollTop=anchor.scrollTop;return true;}
+    return false;
+}
+function setImmersiveReading(on){
+    const box=qs('story-chat-box');if(!box||on===readingMode)return;
+    const anchor=r19CaptureImmersiveAnchor(box),owner=++readingLayoutEpoch;
+    readingLastTap=0;readingLastTapPoint=null;readingTouchStart=null;
+    if(on&&document.activeElement?.closest?.('.composer-shell'))document.activeElement.blur();
+    readingMode=!!on;document.body.classList.toggle('mima-reading-mode',readingMode);
+    const hint=qs('mima-reading-hint');if(readingHintTimer)clearTimeout(readingHintTimer);
+    if(hint){hint.hidden=!readingMode;if(readingMode){hint.textContent='沉浸阅读中 · 双击屏幕恢复界面';
+        readingHintTimer=setTimeout(()=>{if(readingMode&&owner===readingLayoutEpoch)hint.hidden=true;},2200);}}
+    // Force the actual CSS layout before restoring the *same passage*.
+    // This is not a delayed scrollTop replay and runs at most once per mode change.
+    r19RestoreImmersiveAnchor(box,anchor);
+    const restoredTop=box.scrollTop,sessionId=currentSessionId,navEpoch=sessionNavigationEpoch;
+    requestAnimationFrame(()=>{
+        if(owner!==readingLayoutEpoch||sessionId!==currentSessionId||navEpoch!==sessionNavigationEpoch)return;
+        // A user scroll, live update or navigation after the synchronous restore owns the view.
+        if(Math.abs(box.scrollTop-restoredTop)>2)return;
+        r19RestoreImmersiveAnchor(box,anchor);
+        window.MimaHistoryNavigator?.refreshProgress?.();
+    });
+}
+function r19ReaderInteractiveTarget(target){return target?.closest?.('a,button,input,textarea,select,[contenteditable],label,summary,[role="button"]');}
 function setupImmersiveReading(){
     const root=qs('story-chat-box');if(!root)return;
-    root.addEventListener('dblclick',e=>{if(!readingMode||e.target.closest('a,button,input,textarea,select,[contenteditable]'))return;setImmersiveReading(false);});
+    // Prevent the synthetic click/dblclick of a completed touch gesture from
+    // landing on newly unhidden controls. Do not block unrelated later clicks.
+    document.addEventListener('click',e=>{
+        const guard=readingGestureSuppression;
+        if(!guard||performance.now()>guard.until){readingGestureSuppression=null;return;}
+        if(Math.abs(e.clientX-guard.x)<32&&Math.abs(e.clientY-guard.y)<32){
+            e.preventDefault();e.stopImmediatePropagation();readingGestureSuppression=null;
+        }
+    },true);
+    root.addEventListener('dblclick',e=>{
+        if(!readingMode||r19ReaderInteractiveTarget(e.target)||window.getSelection()?.toString())return;
+        e.preventDefault();e.stopPropagation();setImmersiveReading(false);
+    });
     root.addEventListener('pointerdown',e=>{if(!readingMode||e.pointerType!=='touch')return;
         readingTouchStart={x:e.clientX,y:e.clientY,scrollTop:root.scrollTop,target:e.target};
     });
@@ -582,13 +725,14 @@ function setupImmersiveReading(){
     root.addEventListener('pointerup',e=>{
         if(!readingMode||e.pointerType!=='touch')return;
         const start=readingTouchStart;readingTouchStart=null;
-        const forbidden=e.target.closest('a,button,input,textarea,select,[contenteditable]')||window.getSelection()?.toString();
-        if(!start||forbidden||Math.abs(e.clientX-start.x)>12||Math.abs(e.clientY-start.y)>12||Math.abs(root.scrollTop-start.scrollTop)>5){
+        if(!start||r19ReaderInteractiveTarget(e.target)||r19ReaderInteractiveTarget(start.target)||window.getSelection()?.toString()||
+            Math.abs(e.clientX-start.x)>12||Math.abs(e.clientY-start.y)>12||Math.abs(root.scrollTop-start.scrollTop)>5){
             readingLastTap=0;readingLastTapPoint=null;return;
         }
         const now=performance.now();
         if(now-readingLastTap<320&&readingLastTapPoint&&Math.abs(e.clientX-readingLastTapPoint.x)<28&&Math.abs(e.clientY-readingLastTapPoint.y)<28){
-            readingLastTap=0;readingLastTapPoint=null;setImmersiveReading(false);
+            e.preventDefault();e.stopPropagation();readingGestureSuppression={x:e.clientX,y:e.clientY,until:now+420};
+            setImmersiveReading(false);
         }else{readingLastTap=now;readingLastTapPoint={x:e.clientX,y:e.clientY};}
     });
 }
@@ -2056,7 +2200,7 @@ async function recoverDiagnosticReply(diagnosticId){
     let restored=false;
     try{
         const record=await MimaDiagnosticJournal.recoveryCandidate(diagnosticId);
-        if(!confirm('请先核对详情里的“未采纳的模型文本”。\n\n手动恢复会采用日志已保存的正文，不重新请求模型，不重跑输出正则；显示正则仍生效。\n发送将补回角色回复；重说将替换原目标并归档旧版本；续写将追加到原回复并保留旧版本。\n\n服务端的拦截或截断标记仍保留，手动恢复不保证内容完整。确定恢复到原剧情吗？'))return;
+        if(!confirm('请先核对详情里的“未采纳的模型文本”。\n\n手动恢复会采用日志已保存的完整原文，跳过自动 HTML 闭合及结构合同复检；不重新请求模型，也不重跑输出正则。显示仍经过原有安全 HTML 渲染及显示正则。\n发送将补回角色回复；重说将替换原目标并归档旧版本；续写将追加到原回复并保留旧版本。\n\n服务端的拦截或截断标记仍保留，手动恢复不保证内容完整。确定恢复到原剧情吗？'))return;
         const selectedAtStart=currentSessionId,navigationAtStart=sessionNavigationEpoch;
         let result;
         if(String(record.action||'').startsWith('compat_')){
@@ -2114,7 +2258,7 @@ async function reviewRejectedDiagnosticHtml(record){
     qs('editor-save').textContent='确认恢复修复版';qs('editor-modal').classList.remove('hidden');
 }
 function diagnosticHtmlCodeRepairButton(record){
-    const b=document.createElement('button');b.type='button';b.className='ghost-btn';b.textContent='HTML 免 API 补全';
+    const b=document.createElement('button');b.type='button';b.className='ghost-btn';b.textContent='HTML 免 API 补全';b.title='需启用结构合同并绑定模板。若原文已经完整，请使用「手动恢复」，不必补代码。';
     b.disabled=!!record.manualRecovery||!record.rawRejectedReply||!!record.rejectedReplyTruncated;
     b.onclick=()=>void reviewRejectedDiagnosticHtml(record);return b;
 }
@@ -2254,7 +2398,7 @@ function renderLiveStreamText(){
     const allowHtml=currentSessionData?.renderMode==='safe_html';
     st.contentNode.className=`msg-content tavern-story-content live-stream-content${allowHtml?' safe-html-content':''}`;
     st.contentNode.replaceChildren();appendRenderedContent(st.contentNode,rendered,allowHtml,true);
-    const box=qs('story-chat-box');if(box&&st.followTail!==false)box.scrollTop=box.scrollHeight;
+    const box=qs('story-chat-box');if(box&&st.followTail!==false&&!readingMode)box.scrollTop=box.scrollHeight;
     st.lastPaintDurationMs=Math.round((performance.now()-started)*100)/100;
     st.paints=(st.paints||0)+1;
     if(st.paints===1)persistStoryUiTiming(st.owner,'ui_first_visible',st);
@@ -2438,7 +2582,8 @@ async function triggerChat(text,actionType='send',generationOptions={}){
         }
         const visible=ownsVisibleGeneration(owner);
         const storyBox=visible?qs('story-chat-box'):null;
-        const preserveReading=visible&&liveStreamState?.owner===owner&&liveStreamState.followTail===false;
+        const preserveReading=visible&&(readingMode||(liveStreamState?.owner===owner&&liveStreamState.followTail===false));
+        const preservedReaderAnchor=readingMode&&storyBox?r19CaptureImmersiveAnchor(storyBox):null;
         const preservedScrollTop=preserveReading&&storyBox?storyBox.scrollTop:null;
         // Final settlement precedes UI unlock; original persisted session is never rewritten to the selected one.
         if(generationOwners.get(targetSessionId)===owner)generationOwners.delete(targetSessionId);
@@ -2453,14 +2598,14 @@ async function triggerChat(text,actionType='send',generationOptions={}){
                 if(res.data?.id!==targetSessionId)throw new Error('E_GENERATION_WRONG_SESSION: 回复的会话身份不匹配');
                 clearSubmittedDraft(owner);
                 currentSessionData=res.data;
-                refreshChatBox(preserveReading?{scrollTop:preservedScrollTop}:{scrollToBottom:true});
+                refreshChatBox(preservedReaderAnchor?{readerAnchor:preservedReaderAnchor,scrollToBottom:false}:preserveReading?{scrollTop:preservedScrollTop}:{scrollToBottom:true});
                 requestAnimationFrame(()=>{if(currentSessionId===targetSessionId)persistStoryUiTiming(owner,'ui_final_stable');});
                 refreshHeader();finishGenerationProgress();
             }else{
                 showGenerationError(res,actionType);toast(`生成失败 · ${res.code||'E_UNKNOWN'}`);
                 await openSession(targetSessionId,false);
             }
-            if(preserveReading&&storyBox&&preservedScrollTop!==null)
+            if(preserveReading&&!preservedReaderAnchor&&storyBox&&preservedScrollTop!==null)
                 requestAnimationFrame(()=>{if(currentSessionId===targetSessionId)storyBox.scrollTop=preservedScrollTop});
         }else if(res.success){
             clearSubmittedDraft(owner);
@@ -2492,9 +2637,67 @@ function autoAdvance(){triggerChat(qs('director-note').value,'auto_advance')}
 function syncComposerContentState(){const el=qs('story-input');if(el)el.classList.toggle('has-content',!!el.value)}
 function autoResizeInput(){const el=qs('story-input');el.style.height='auto';el.style.height=Math.min(170,Math.max(46,el.scrollHeight))+'px';syncComposerContentState()}
 
-function refreshChatBox(options={}){const box=qs('story-chat-box'),renderedSessionId=currentSessionId,renderedEpoch=sessionNavigationEpoch,readScroll=readingMode?box.scrollTop:null;box.innerHTML='';if(!currentSessionData||!currentSessionData.messages?.length){box.innerHTML=`<div class="empty-state"><div class="empty-icon">${currentChar()?'🤍':'🍷'}</div><h2>${escapeHtml(currentChar()?.name||'这个宇宙还是空的')}</h2><p>${currentChar()?.firstMessage?'角色卡里有开场白，可以在角色设置中插入。':'写下第一句话，剧情从这里开始。'}</p><button class="ghost-btn" onclick="MimaCompatUI.open()">🎴 或者用酒馆角色卡开始聊天</button></div>`;return}currentSessionData.messages.forEach(renderMessageToUI);requestAnimationFrame(()=>{if(renderedSessionId!==currentSessionId||renderedEpoch!==sessionNavigationEpoch)return;if(readingMode&&Number.isFinite(readScroll))box.scrollTop=readScroll;else if(Number.isFinite(Number(options.scrollTop)))box.scrollTop=Number(options.scrollTop);else if(options.scrollToBottom!==false)box.scrollTop=box.scrollHeight})}
+// UI reconciliation never mutates canonical History. Store render snapshots outside session data.
+let r19RenderState={sessionId:null,renderMode:null,roleNames:'',regexToken:'',nodes:new Map()};
+function r19MsgSnapshot(msg){return {role:msg.role||'system',content:msg.content||'',edited:!!msg.isEdited,versions:JSON.stringify(msg.versions||[])};}
+function r19Unchanged(a,b){return a&&a.role===b.role&&a.content===b.content&&a.edited===b.edited&&a.versions===b.versions;}
+function r19CaptureReadingAnchor(box){
+ if(!box)return null;
+ const view=box.getBoundingClientRect(),children=box.children;
+ const display=getComputedStyle(box).display||'';let candidate=null;
+ if(!display.includes('flex')&&!display.includes('grid')){
+  let lo=0,hi=children.length;
+  while(lo<hi){const mid=(lo+hi)>>>1;if(children[mid].getBoundingClientRect().bottom>view.top)hi=mid;else lo=mid+1;}
+  for(let i=lo;i<children.length&&i<lo+8;i++){const el=children[i],r=el.getBoundingClientRect();if(el.classList.contains('message')&&r.bottom>view.top&&r.top<view.bottom){candidate=el;break;}}
+ }
+ if(!candidate){
+  const xs=[view.left+view.width*.25,view.left+view.width*.5,view.left+view.width*.75];
+  const ys=[view.top+12,view.top+34,view.top+Math.min(72,view.height*.35),view.top+view.height*.5];
+  for(const y of ys){if(candidate)break;if(y<0||y>=Math.min(innerHeight,view.bottom))continue;
+   for(const x of xs){if(x<0||x>=innerWidth)continue;for(const node of document.elementsFromPoint?.(x,y)||[]){const el=node.closest?.('article.message');if(el?.parentElement===box){candidate=el;break;}}if(candidate)break;}}
+ }
+ return candidate?{id:candidate.dataset.msgId,offset:candidate.getBoundingClientRect().top-view.top,scrollTop:box.scrollTop}:{id:null,offset:0,scrollTop:box.scrollTop};
+}
+function refreshChatBox(options={}){
+ const box=qs('story-chat-box'),renderedSessionId=currentSessionId,renderedEpoch=sessionNavigationEpoch,renderedLayoutEpoch=readingLayoutEpoch;
+ if(!box)return;
+ const messages=currentSessionData?.messages||[];
+ if(!messages.length){r19RenderState={sessionId:currentSessionId,renderMode:null,roleNames:'',regexToken:'',nodes:new Map()};box.innerHTML=`<div class="empty-state"><div class="empty-icon">${currentChar()?'🤍':'🍷'}</div><h2>${escapeHtml(currentChar()?.name||'这个宇宙还是空的')}</h2><p>${currentChar()?.firstMessage?'角色卡里有开场白，可以在角色设置中插入。':'写下第一句话，剧情从这里开始。'}</p><button class="ghost-btn" onclick="MimaCompatUI.open()">🎴 或者用酒馆角色卡开始聊天</button></div>`;window.MimaHistoryNavigator?.sync(currentSessionId,messages);return;}
+ const start=performance.now(),oldScroll=box.scrollTop,oldBottom=box.scrollHeight-box.clientHeight-oldScroll<80;
+ // The viewport boundary is monotone across the direct message siblings.
+ // Binary-search bounding boxes instead of measuring every earlier message.
+ const capture=window.MimaHistoryNavigator?.captureAnchor?.(box)||r19CaptureReadingAnchor(box);
+ const anchorId=capture?.id||null,anchorOffset=capture?.offset||0;
+ const roles=[currentUser()?.name||'你',currentChar()?.name||'',!!currentSessionData?.promptSettings?.outputContract?.requireHtml].join('|');
+ const regexToken=JSON.stringify([currentSessionData?.regexPackIds||[],regexPacks]);
+ const contextChange=r19RenderState.sessionId!==currentSessionId||r19RenderState.renderMode!==currentSessionData?.renderMode||r19RenderState.roleNames!==roles||r19RenderState.regexToken!==regexToken;
+ const prior=contextChange?new Map():r19RenderState.nodes,next=new Map();let cursor=box.firstChild,created=0,reused=0;
+ for(const msg of messages){
+   const id=typeof msg.id==='string'&&msg.id?msg.id:null,snapshot=r19MsgSnapshot(msg);
+   const existing=id?prior.get(id):null;
+   let el;
+   if(existing&&r19Unchanged(existing.snapshot,snapshot)&&existing.el.isConnected){el=existing.el;reused++;}
+   else {el=renderMessageToUI(msg,document.createDocumentFragment());created++;if(contextChange||prior.size===0)el.dataset.mimaHistorical='1';else el.dataset.mimaNew='1';}
+   if(el!==cursor)box.insertBefore(el,cursor);else cursor=cursor.nextSibling;
+   if(id)next.set(id,{el,snapshot});
+ }
+ while(cursor){const following=cursor.nextSibling;cursor.remove();cursor=following;}
+ r19RenderState={sessionId:currentSessionId,renderMode:currentSessionData?.renderMode,roleNames:roles,regexToken,nodes:next};
+ window.__mimaR19RenderStats={count:messages.length,created,reused,durationMs:Math.round((performance.now()-start)*100)/100};
+ window.MimaHistoryNavigator?.sync(currentSessionId,messages);
+ requestAnimationFrame(()=>{
+  if(renderedSessionId!==currentSessionId||renderedEpoch!==sessionNavigationEpoch||renderedLayoutEpoch!==readingLayoutEpoch)return;
+  if(options.readerAnchor&&r19RestoreImmersiveAnchor(box,options.readerAnchor)){}
+  else if(Number.isFinite(Number(options.scrollTop)))box.scrollTop=Number(options.scrollTop);
+  else if(options.scrollToBottom!==false&&!readingMode&&(contextChange||oldBottom))box.scrollTop=box.scrollHeight;
+  else if(anchorId){const replacement=next.get(anchorId)?.el;if(replacement)box.scrollTop+=replacement.getBoundingClientRect().top-box.getBoundingClientRect().top-anchorOffset;else box.scrollTop=oldScroll;}
+  else box.scrollTop=oldScroll;
+  if(!oldBottom&&options.scrollToBottom===false)window.MimaHistoryNavigator?.refreshProgress();
+ });
+}
+
 function renderPendingUserMessage(text){const box=qs('story-chat-box');if(!box)return;const div=document.createElement('article');div.className='message user-msg pending-user-message';div.dataset.msgId='pending_'+Date.now();const header=document.createElement('div');header.className='msg-header';header.textContent=`${currentUser()?.name||'你'} · 正在提交`;const content=document.createElement('div');content.className='msg-content tavern-story-content';appendRenderedContent(content,cleanCorruptText(text),false);div.append(header,content);box.appendChild(div);box.scrollTop=box.scrollHeight}
-function renderMessageToUI(msg){const box=qs('story-chat-box');const role=msg.role||'system';const div=document.createElement('article');div.className=`message ${role}-msg`;div.dataset.msgId=msg.id||'';const header=document.createElement('div');header.className='msg-header';const roleName=role==='user'?(currentUser()?.name||'你'):(role==='assistant'?(currentChar()?.name||(currentSessionData?.mode==='sandalphon'?'圣德芬':'角色')):'系统');header.textContent=`${roleName}${msg.isEdited?' · 已编辑':''}${msg.versions?.length?` · ${msg.versions.length} 个旧版本`:''}`;div.appendChild(header);const content=document.createElement('div');const allowHtml=role==='assistant'&&currentSessionData?.renderMode==='safe_html';content.className=`msg-content tavern-story-content${allowHtml?' safe-html-content':''}`;const displayText=role==='assistant'&&MimaStandalone.applyRegexForSession?MimaStandalone.applyRegexForSession(currentSessionId,msg.content||'','display'):msg.content||'';appendRenderedContent(content,cleanCorruptText(displayText),allowHtml,role==='assistant');div.appendChild(content);if(role==='user'||role==='assistant'){const tools=document.createElement('div');tools.className='msg-tools';tools.append(makeToolButton('编辑',()=>openMessageEditor(msg,false)),makeToolButton('从这里分支',()=>openMessageEditor(msg,true)),makeToolButton('删除',()=>deleteStoryMessage(msg),true));if(role==='assistant'&&currentSessionData?.promptSettings?.outputContract?.requireHtml)tools.append(makeToolButton('HTML检测 / 代码补全',()=>reviewStoryHtmlRepair(msg)));if(role==='assistant'&&currentSessionData?.promptSettings?.outputContract?.requireHtml)tools.append(makeToolButton('AI重排（另收费）',()=>reviewStoryAiHtmlRepair(msg)));if(role==='assistant'&&msg.versions?.length)tools.append(makeToolButton('看旧版本',()=>showVersions(msg)));div.appendChild(tools)}box.appendChild(div)}
+function renderMessageToUI(msg,renderTarget=null){const box=renderTarget||qs('story-chat-box');const liveMsg=()=>currentSessionData?.messages?.find(m=>m.id===msg.id)||msg;const role=msg.role||'system';const div=document.createElement('article');div.className=`message ${role}-msg`;div.dataset.msgId=msg.id||'';const header=document.createElement('div');header.className='msg-header';const roleName=role==='user'?(currentUser()?.name||'你'):(role==='assistant'?(currentChar()?.name||(currentSessionData?.mode==='sandalphon'?'圣德芬':'角色')):'系统');header.textContent=`${roleName}${msg.isEdited?' · 已编辑':''}${msg.versions?.length?` · ${msg.versions.length} 个旧版本`:''}`;div.appendChild(header);const content=document.createElement('div');const allowHtml=role==='assistant'&&currentSessionData?.renderMode==='safe_html';content.className=`msg-content tavern-story-content${allowHtml?' safe-html-content':''}`;const displayText=role==='assistant'&&MimaStandalone.applyRegexForSession?MimaStandalone.applyRegexForSession(currentSessionId,msg.content||'','display'):msg.content||'';appendRenderedContent(content,cleanCorruptText(displayText),allowHtml,role==='assistant');div.appendChild(content);if(role==='user'||role==='assistant'){const tools=document.createElement('div');tools.className='msg-tools';tools.append(makeToolButton('编辑',()=>openMessageEditor(liveMsg(),false)),makeToolButton('从这里分支',()=>openMessageEditor(liveMsg(),true)),makeToolButton('删除',()=>deleteStoryMessage(liveMsg()),true));if(role==='assistant'&&currentSessionData?.promptSettings?.outputContract?.requireHtml)tools.append(makeToolButton('HTML检测 / 代码补全',()=>reviewStoryHtmlRepair(liveMsg())));if(role==='assistant'&&currentSessionData?.promptSettings?.outputContract?.requireHtml)tools.append(makeToolButton('AI重排（另收费）',()=>reviewStoryAiHtmlRepair(liveMsg())));if(role==='assistant'&&msg.versions?.length)tools.append(makeToolButton('看旧版本',()=>showVersions(liveMsg())));div.appendChild(tools)}box.appendChild(div);return div}
 function makeToolButton(text,fn,danger=false){const b=document.createElement('button');b.className=`tool-mini${danger?' danger':''}`;b.textContent=text;b.onclick=fn;return b}
 function appendHtmlRepairDynamicFields(body,candidate){
     if(!Array.isArray(candidate.missingFields)||!candidate.missingFields.length)return;

@@ -9,7 +9,8 @@ const TARGETS={
   button:{label:'主要按钮',real:'.app-shell .primary-btn,.app-shell .send-btn',preview:'.atl-demo-primary,.atl-demo-send'},
   secondary:{label:'次要按钮',real:'.app-shell .ghost-btn,.app-shell .chip-btn,.app-shell .nav-label',preview:'.atl-demo-secondary'},
   field:{label:'输入框',real:'.app-shell .field,.app-shell .composer-row textarea',preview:'.atl-demo-field'},
-  message:{label:'剧情消息外观（不改正文字体）',real:'.app-shell .assistant-msg > .msg-content,.app-shell .user-msg > .msg-content',preview:'.atl-demo-message'},
+  message:{label:'普通剧情消息材质（不含 HTML 状态栏）',real:'.app-shell .assistant-msg > .msg-content:not(.safe-html-content),.app-shell .user-msg > .msg-content:not(.safe-html-content)',preview:'.atl-demo-message:not(.atl-demo-safe-host)'},
+  safeHtmlHost:{label:'接管 Safe HTML 消息外宿主（须显式授权）',real:'.app-shell .assistant-msg > .msg-content.tavern-story-content.safe-html-content,.app-shell .user-msg > .msg-content.tavern-story-content.safe-html-content',preview:'.atl-demo-safe-host'},
   panel:{label:'弹窗/卡片（不改设置分组）',real:'.modal-panel,.session-drawer .session-item,.library-card',preview:'.atl-demo-card'},
   status:{label:'HTML 状态栏（默认不接管）',real:'.app-shell .tavern-story-content.safe-html-content > details,.app-shell .tavern-story-content.safe-html-content > system',preview:'.atl-demo-status'}
 };
@@ -33,6 +34,15 @@ function resolvePresentationPlan(project,legacyAvailable=true,previewLayer='comb
    order:mode==='mix-legacy'?'atelier-then-legacy':'legacy-then-atelier',
    stickersEnabled:mode!=='legacy-only',regions:{...project?.regions}};
 }
+// Single presentation ordering contract for live and the isolated structural preview.
+// Caller supplies mounted legacy layer records; the function never reads user data or writes Store.
+function presentationLayers(project,legacyLayers=[],previewLayer='combined'){
+ const existing=legacyLayers.filter(x=>x&&typeof x.css==='string'&&x.css.length&&x.enabled!==false);
+ const plan=resolvePresentationPlan(project,existing.length>0,previewLayer);
+ const legacy=plan.legacyEnabled?existing.map(x=>({id:x.id,css:x.css,media:x.media||'all',kind:'legacy'})):[];
+ const atelier=plan.themeEnabled?[{id:'mima-atelier-runtime-style',kind:'atelier'}]:[];
+ return {plan,layers:plan.order==='atelier-then-legacy'?[...atelier,...legacy]:[...legacy,...atelier]};
+}
 function normalizeTextPolicy(raw,legacyTypography=false){
  const pol=raw&&typeof raw==='object'?raw:{};
  const story=pol.storyProse||{},surface=pol.messageSurface||{},status=pol.statusHtml||{};
@@ -42,7 +52,7 @@ function normalizeTextPolicy(raw,legacyTypography=false){
      typographyMode:mode(story.typographyMode||(legacyTypography?'explicit':'inherit'))},
    statusHtml:{inkMode:mode(status.inkMode)}};
 }
-const defaultRegions=()=>Object.fromEntries(REGION_KEYS.map(k=>[k,k!=='status']));
+const defaultRegions=()=>Object.fromEntries(REGION_KEYS.map(k=>[k,k!=='status'&&k!=='safeHtmlHost']));
 const PATTERNS=['dots','grid','stripes','diagonal','checker','waves','rings','radial','diamond','cross','halftone','none'];
 const clone=x=>JSON.parse(JSON.stringify(x));
 const clamp=(n,a,b)=>Math.max(a,Math.min(b,Number.isFinite(+n)?+n:a));
@@ -95,7 +105,7 @@ function atlasEffect(s){
  }
 }
 function styleRules(s0,pattern=[],key='',options={}){const s={...DEFAULT,...s0},bg=rgba(s.fill,s.alpha),bd=rgba(s.borderColor,s.borderAlpha);
-  const structural=['topbar','composer','panel','status'].includes(key),prose=key==='message',shapeSafe=['button','secondary'].includes(key);
+  const structural=['topbar','composer','panel','status','safeHtmlHost'].includes(key),prose=key==='message',shapeSafe=['button','secondary'].includes(key);
   let images=patternLayers(pattern,'image'),sizes=patternLayers(pattern,'size'),positions=patternLayers(pattern,'position');const effect=atlasEffect(s);if(effect){const layerCount=effect.image.split(/,(?=\s*(?:radial-gradient|linear-gradient|repeating-|conic-gradient))/).length;images.push(effect.image);sizes.push(effect.size);positions.push('0 0');}
   let gradientImage='';if(s.gradient!=='none'){const to=rgba(s.gradientTo,s.alpha);const gradient=s.gradient==='radial'?`radial-gradient(circle at 28% 20%,${to},${bg})`:s.gradient==='conic'?`conic-gradient(from ${clamp(s.angle,0,360)}deg,${bg},${to},${bg})`:`linear-gradient(${clamp(s.angle,0,360)}deg,${to},${bg})`;gradientImage=gradient;}
   if(s.image){
@@ -145,6 +155,7 @@ function baseTheme(id='liquid-frost'){
  elements.secondary={...base,fill:'#ffffff',alpha:55};
  elements.field={...base,fill:'#ffffff',alpha:78,blur:3};
  elements.message={...base,fill:'#ffffff',alpha:kind==='glass'?58:kind==='aqua'?62:24,border:kind==='glass'||kind==='aqua'?1:0,blur:kind==='glass'?14:kind==='aqua'?10:0,shadow:0};
+ elements.safeHtmlHost={...elements.message}; // Data survives even when not authorized; legacy project remains editable.
  return {id:uid(),name:`${name} · 自定义`,format:'mima-atl-project',schema:1,template:id,originPreset:'',layoutRecipe:'story',cssPriority:'atelier-only',regions:defaultRegions(),proseTypography:false,textPolicy:normalizeTextPolicy(null,false),nightMode:'app',elements,patterns:[],stickers:[],fonts:[],favorites:[],variants:{},extraCss:'',draftVersion:0,createdAt:Date.now(),updatedAt:Date.now()};
 }
 function normalized(raw){if(!raw||raw.format!=='mima-atl-project'||raw.schema!==1||!raw.elements||typeof raw.elements!=='object')throw new Error('不支持或损坏的主题工程格式');const obj=baseTheme(raw.template||'minimal-clear');obj.id=String(raw.id||uid());obj.name=safeName(raw.name);obj.originPreset=/^[a-z][a-z0-9-]{0,100}$/.test(String(raw.originPreset||''))?String(raw.originPreset):'';obj.layoutRecipe=/^[a-z][a-z0-9-]{0,80}$/.test(String(raw.layoutRecipe||''))?String(raw.layoutRecipe):'story';obj.cssPriority=PRESENTATION.includes(raw.cssPriority)?raw.cssPriority:raw.cssPriority==='regions-first'?'mix-atelier':raw.cssPriority==='legacy-first'?'mix-legacy':'atelier-only';obj.proseTypography=raw.proseTypography===true;obj.textPolicy=normalizeTextPolicy(raw.textPolicy,obj.proseTypography);obj.nightMode=['app','system','light','dark'].includes(raw.nightMode)?raw.nightMode:'app';obj.regions=defaultRegions();if(raw.regions&&typeof raw.regions==='object')for(const k of REGION_KEYS)if(Object.prototype.hasOwnProperty.call(raw.regions,k))obj.regions[k]=raw.regions[k]===true;obj.createdAt=Number(raw.createdAt)||Date.now();obj.updatedAt=Number(raw.updatedAt)||Date.now();obj.draftVersion=Math.max(0,Number(raw.draftVersion)||0);obj.linkedCssId=/^css[-_a-zA-Z0-9]+$/.test(String(raw.linkedCssId||''))?String(raw.linkedCssId):'';for(const k of Object.keys(TARGETS)){if(raw.elements[k]&&typeof raw.elements[k]==='object'){
@@ -294,7 +305,10 @@ function computeStickerRect(rect,sticker){
 }
 function stickerRegionKey(sticker){return sticker.anchor+'::'+((sticker.anchor==='message'||sticker.anchor==='status')?(sticker.targetMessageId||''):'');}
 function getStickerTarget(key,messageId=''){
- const selectors=TARGETS[key]?.real;if(!selectors)return null;
+ // Sticker anchor targeting is independent of material-CSS authorization: preserve legacy
+ // attachments on Safe HTML message hosts without giving their surfaces new borders.
+ const selectors=key==='message'?'.app-shell .assistant-msg > .msg-content,.app-shell .user-msg > .msg-content':TARGETS[key]?.real;
+ if(!selectors)return null;
  if(messageId&&(key==='message'||key==='status')){
   return [...document.querySelectorAll(selectors)].find(el=>el.closest('article.message')?.dataset.msgId===messageId)||null;
  }
@@ -331,7 +345,7 @@ function viewportStickerRoot(plane){
  document.body.appendChild(el);if(plane==='front')decorFront=el;else decor=el;return el;
 }
 function drawDecor(project){
- removeDecor();if(!project?.stickers?.length||bypass())return;
+ removeDecor();if(!project?.stickers?.length||bypass()){syncDecorObserver();return;}
  for(const sticker of project.stickers.filter(s=>!s.hidden)){
   const root=sticker.anchor==='shell'?viewportStickerRoot(sticker.plane):regionStickerRoot(sticker);
   if(!root)continue; // A late-mounted region is retried by positionDecor's observer.
@@ -339,37 +353,49 @@ function drawDecor(project){
   el.style.cssText=`position:${sticker.anchor==='shell'?'fixed':'absolute'};max-width:none;pointer-events:none;user-select:none;opacity:${clamp(sticker.opacity,0,100)/100};transform:translate(-50%,-50%) rotate(${sticker.rotate}deg);`;
   root.appendChild(el);
  }
- positionDecor();
+ syncDecorObserver();positionDecor();
 }
 function positionDecor(){
  if(!applied||bypass())return;
- const shell={left:0,top:0,width:innerWidth,height:innerHeight};let detached=false;
+ const shell={left:0,top:0,width:innerWidth,height:innerHeight};let detached=false;const writes=[];const measured=new Map();
  for(const sticker of applied.stickers||[]){
   if(sticker.hidden)continue;
   const regionKey=stickerRegionKey(sticker),record=regionDecor.get(regionKey);
   const root=sticker.anchor==='shell'?(sticker.plane==='front'?decorFront:decor):record?.roots.get(sticker.plane);
-  if(sticker.anchor!=='shell'&&(!root?.isConnected||record?.target!==getStickerTarget(sticker.anchor,sticker.targetMessageId))){
+  if(sticker.anchor!=='shell'&&(!root?.isConnected||!record?.target?.isConnected)){
    if(getStickerTarget(sticker.anchor,sticker.targetMessageId))detached=true;continue;
   }
   const el=Array.from(root?.querySelectorAll('img[data-atl-sticker]')||[]).find(x=>x.dataset.atlSticker===sticker.id);
   if(!el){if(root)detached=true;continue;}
-  const r=sticker.anchor==='shell'?shell:record.target.getBoundingClientRect();
-  if(r.width<=0||r.height<=0){el.style.display='none';continue;}
-  const pixel=computeStickerRect(sticker.anchor==='shell'?r:{left:0,top:0,width:r.width,height:r.height},sticker);
-  el.style.display='';el.style.left=pixel.left+'px';el.style.top=pixel.top+'px';el.style.width=pixel.width+'px';
+  let r;if(sticker.anchor==='shell')r=shell;else{if(!measured.has(record.target))measured.set(record.target,record.target.getBoundingClientRect());r=measured.get(record.target)}
+  if(r.width<=0||r.height<=0){writes.push([el,null]);continue;}
+  const pixel=computeStickerRect(sticker.anchor==='shell'?r:{left:0,top:0,width:r.width,height:r.height},sticker);writes.push([el,pixel]);
  }
+ // Batched DOM writes after all bounding boxes have been read.
+ for(const [el,pixel] of writes){if(!pixel){if(el.style.display!=='none')el.style.display='none';continue;}if(el.style.display)el.style.display='';const x=pixel.left+'px',y=pixel.top+'px',w=pixel.width+'px';if(el.style.left!==x)el.style.left=x;if(el.style.top!==y)el.style.top=y;if(el.style.width!==w)el.style.width=w;}
  if(detached&&!positionDecor.resyncing){positionDecor.resyncing=true;try{drawDecor(applied);}finally{positionDecor.resyncing=false;}}
 }
 const pausedStyles=new Map();
+function liveLegacyLayers(){
+ return ['mima-custom-css-style','mima-global-css-style'].map(id=>document.getElementById(id)).filter(Boolean).map(el=>{
+  const media=pausedStyles.has(el)?pausedStyles.get(el):(el.getAttribute('media')||'all');
+  let enabled=true;
+  try{enabled=!media||media==='all'||(typeof window.matchMedia==='function'&&window.matchMedia(media).matches);}catch(e){console.warn('[Atelier] invalid CSS media condition',id,media,e);enabled=false;}
+  if(media==='not all')enabled=false;
+  return {id:el.id,css:el.textContent||'',media:media||'all',enabled};
+ });
+}
+
 function syncPriority(){if(!style?.isConnected)return;
- const mode=resolvePresentationPlan(applied).mode,legacy=['mima-custom-css-style','mima-global-css-style'].map(id=>document.getElementById(id)).filter(Boolean);
- const pause=!!applied&&!resolvePresentationPlan(applied).legacyEnabled;
+ const legacy=['mima-custom-css-style','mima-global-css-style'].map(id=>document.getElementById(id)).filter(Boolean);
+ const {plan}=presentationLayers(applied,liveLegacyLayers()); 
+ const pause=!!applied&&!plan.legacyEnabled;
  for(const el of legacy){if(pause){if(!pausedStyles.has(el))pausedStyles.set(el,el.getAttribute('media'));el.setAttribute('media','not all');}else if(pausedStyles.has(el)){const prior=pausedStyles.get(el);if(prior===null)el.removeAttribute('media');else el.setAttribute('media',prior);pausedStyles.delete(el);}}
  for(const [el,prior] of pausedStyles){if(!legacy.includes(el)){if(prior===null)el.removeAttribute('media');else el.setAttribute('media',prior);pausedStyles.delete(el);}}
- const after=resolvePresentationPlan(applied).order==='legacy-then-atelier';
+ const after=plan.order==='legacy-then-atelier';
  if(after)document.head.appendChild(style);
  else {const first=legacy.find(el=>el.parentNode===document.head);if(first)document.head.insertBefore(style,first);else document.head.appendChild(style);}
- style.media=resolvePresentationPlan(applied).themeEnabled?'':'not all';
+ style.media=plan.themeEnabled?'':'not all';
 }
 function activate(project){if(bypass()){deactivate();return;}
  const result=compiledWithAssets(project,'live','atelier');
@@ -389,16 +415,168 @@ function renderAudit(){
  }
  return {kind:'read_only_atelier_render',projectId:applied?.id||null,version:active?.version||0,cssPriority:plan.mode,themeEnabled:plan.themeEnabled,legacyEnabled:plan.legacyEnabled,styleMounted:!!runtime?.isConnected&&runtime.media!=='not all'&&!!runtime.textContent,viewport:{width:innerWidth,height:innerHeight},styles,regions,stickerPlanes:applied?.stickers?.map(x=>({anchor:x.anchor,targetMessageId:x.targetMessageId||'',plane:x.plane||'front'}))||[]};
 }
-function deactivate(){ensureStyle().textContent='';ensureStyle().media='';document.documentElement.removeAttribute('data-mima-atelier-active');applied=null;removeDecor();releaseAssets('atelier');syncPriority();window.dispatchEvent(new Event('mima-atelier-presentation-change'));}
+// On-demand trace only: diagnostic CSSOM walk is never attached to scrolling or chat rendering.
+// No author CSS contents, image bytes, History or credentials are returned.
+function traceAppearanceRules(){
+ const targets={page:'body',pageOverlay:'body',pageAfter:'body',wallpaper:'#story-chat-box',chatOverlay:'#story-chat-box',chatAfter:'#story-chat-box',safeHtmlAfter:'.app-shell .msg-content.safe-html-content',topbar:'.app-shell > header.topbar',composer:'.app-shell > footer.composer-shell',safeHtmlHost:'.app-shell .msg-content.safe-html-content'};
+ const pseudo={pageOverlay:'::before',pageAfter:'::after',chatOverlay:'::before',chatAfter:'::after',safeHtmlAfter:'::after'};
+ const watched=['background','background-color','background-image','opacity','filter','backdrop-filter','-webkit-backdrop-filter','box-shadow','border','border-radius','mask-image','-webkit-mask-image','mix-blend-mode'];
+ const result={};const elements={};
+ for(const [key,selector] of Object.entries(targets)){
+  const el=document.querySelector(selector);elements[key]=el;
+  if(!el){result[key]={mounted:false};continue;}
+  const c=getComputedStyle(el,pseudo[key]||null);
+  result[key]={mounted:true,pseudo:pseudo[key]||null,effective:{backgroundColor:c.backgroundColor,backgroundImage:c.backgroundImage==='none'?'none':'image-present',opacity:c.opacity,filter:c.filter,backdropFilter:c.backdropFilter||c.webkitBackdropFilter||'none',mask:c.maskImage||c.webkitMaskImage||'none',display:c.display},rules:[]};
+ }
+ const omitted=[];let checked=0;
+ const matches=(el,selector,pseudoName)=>{
+  if(!el)return false;
+  if(pseudoName&&!selector.includes(pseudoName))return false;
+  if(!pseudoName&&/::(?:before|after)\b/.test(selector))return false;
+  try{return el.matches(selector.replace(/::(?:before|after)\b/g,''));}catch(e){return false;}
+ };
+ const walk=(rules,source,mediaActive,depth=0)=>{
+  if(depth>8||!rules)return;
+  for(const rule of rules){
+   if(++checked>30000){if(!omitted.includes('rule_limit'))omitted.push('rule_limit');return;}
+   if(rule.type===1){const decl=rule.style;
+    const props=watched.filter(prop=>decl.getPropertyValue(prop)).map(prop=>prop+(decl.getPropertyPriority(prop)?' !important':''));
+    if(!props.length)continue;
+    for(const [key,record] of Object.entries(result)){
+     if(!record.mounted||record.rules.length>=60||!matches(elements[key],rule.selectorText,pseudo[key]))continue;
+     record.rules.push({source,selector:rule.selectorText.slice(0,180),properties:props,mediaActive});
+    }
+   }else if(rule.cssRules){
+    let active=mediaActive;
+    if(rule.type===4){try{active=active&&matchMedia(rule.conditionText).matches;}catch(e){active=false;}}
+    if(rule.type===12){try{active=active&&CSS.supports(rule.conditionText);}catch(e){active=false;}}
+    walk(rule.cssRules,source,active,depth+1);
+   }
+  }
+ };
+ for(const sheet of document.styleSheets){
+  const owner=sheet.ownerNode,source=owner?.id||sheet.href?.split('?')[0]||'inline-style';
+  let active=!sheet.disabled;
+  try{const media=owner?.getAttribute?.('media')||sheet.media?.mediaText||'all';active=active&&(media==='all'||!media||matchMedia(media).matches);}catch(e){active=false;}
+  try{walk(sheet.cssRules,source,active);}catch(e){omitted.push(source+': inaccessible CSSOM');}
+ }
+ return {checkedRuleCount:checked,omitted,targets:result};
+}
+async function appearanceDiagnostics(){
+ const installed=[...document.querySelectorAll('link[rel="stylesheet"],style')].map((el,i)=>({
+  id:el.id||null,kind:el.tagName.toLowerCase(),order:i,enabled:el.media!=='not all',
+  href:el.tagName==='LINK'?(el.getAttribute('href')||'').split('?')[0]:null,
+  bytes:el.tagName==='STYLE'?(el.textContent||'').length:null
+ }));
+ // SHA only: diagnostic export never contains authored CSS, conversation content, images or secrets.
+ for(const layer of installed){
+  if(layer.kind!=='style')continue;
+  const element=layer.id?document.getElementById(layer.id):null;
+  const css=element?.textContent||'';
+  if(!element){layer.sha256=null;layer.shaNote='anonymous inline style skipped';continue;}
+  try{if(!crypto?.subtle)throw Error('Web Crypto unavailable');
+   const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(css));
+   layer.sha256=[...new Uint8Array(digest)].map(x=>x.toString(16).padStart(2,'0')).join('');
+  }catch(e){layer.sha256=null;layer.shaNote='SHA unavailable on this origin';}
+ }
+ const selectors={safeHtmlHost:'.app-shell .msg-content.safe-html-content',prose:'.app-shell .msg-content:not(.safe-html-content)',topbar:'.app-shell > header.topbar',composer:'.app-shell > footer.composer-shell',wallpaper:'#story-chat-box'};
+ const computed={};for(const [key,selector] of Object.entries(selectors)){
+  const el=document.querySelector(selector);if(!el){computed[key]={mounted:false};continue;}
+  const c=getComputedStyle(el),r=el.getBoundingClientRect();
+  computed[key]={mounted:true,border:c.border,backgroundColor:c.backgroundColor,backdropFilter:c.backdropFilter||c.webkitBackdropFilter||'none',filter:c.filter,opacity:c.opacity,animation:c.animationName,shadow:c.boxShadow,rect:[Math.round(r.x),Math.round(r.y),Math.round(r.width),Math.round(r.height)]};
+ }
+ const wall=document.getElementById('story-chat-box');const wallMask=wall?.style.getPropertyValue('--mima-wallpaper-mask')||null;
+ const visibleAnimated=[...document.querySelectorAll('.app-shell *')].filter(el=>{const c=getComputedStyle(el);return c.animationName!=='none'&&el.getBoundingClientRect().width>0}).length;
+ return {cssSourceTrace:traceAppearanceRules(),kind:'MIMA_APPEARANCE_DIAGNOSTICS_READ_ONLY',collectedAt:new Date().toISOString(),projectId:applied?.id||null,activeVersion:active?.version||0,theme:document.documentElement.dataset.mimaTheme||null,presentation:resolvePresentationPlan(applied),layers:installed,computed,wallpaper:{enabled:wall?.hasAttribute('data-mima-chat-wallpaper')||false,maskOpacity:wallMask},visibleAnimationCount:visibleAnimated,messageDomCount:wall?.querySelectorAll('article.message').length||0,stickerCount:applied?.stickers?.filter(s=>!s.hidden).length||0,visualPixelVerified:false,iosThermalVerified:false,livePreviewTemporary:!!livePreviewOrigin};
+}
+// A single observable authority owns try-on and recovery. The UI never infers
+// canonical trust from whether its own awaited call resolved.
+let publishInFlight=false,livePreviewOrigin=null, previewEpoch=0, previewPhase='IDLE',previewError=null,
+    pendingExternalRevision=0,previewSettlement=null;
+const previewSnapshot=()=>({phase:previewPhase,opId:livePreviewOrigin?.opId||null,
+  canonicalVerified:!livePreviewOrigin&&!!active,activeVersion:active?.version||0,
+  pendingExternalRevision,reason:previewError?.code||previewError?.message||null});
+function reportPreview(phase,error=null){previewPhase=phase;previewError=error;
+ window.dispatchEvent(new Event('mima-atelier-preview-state-change'));
+}
+function recoveryError(err){return Object.assign(new Error('正式主题核验未完成，请使用「重试核对正式主题」；原有存档未修改。'),
+ {code:'E_ATL_RESTORE_UNVERIFIED',cause:err,previewState:previewSnapshot()});}
+async function beginLivePreview(project){
+ await ready;
+ if(publishInFlight)throw Object.assign(new Error('正式主题正在提交，暂时不能启动试穿'),{code:'E_ATL_RELEASE_BUSY'});
+ if(livePreviewOrigin){await endLivePreview();}
+ // A publication can start while an earlier preview is settling.
+ if(publishInFlight)throw Object.assign(new Error('正式主题正在提交，不能同时启动试穿'),{code:'E_ATL_RELEASE_BUSY'});
+ if(bypass())throw Object.assign(new Error('安全禁用 CSS 模式不能试穿'),{code:'E_ATL_SAFE_MODE'});
+ const origin={opId:'preview-'+(++previewEpoch),active:clone(active||{id:null,version:0}),
+   verifiedVisual:applied?clone(applied):null};
+ livePreviewOrigin=origin;pendingExternalRevision=0;reportPreview('STARTING');
+ try{
+   // An external broadcast is advisory; the canonical read on exit is mandatory.
+   activate(normalized(project));reportPreview('TEMPORARY');
+   return {status:'TEMPORARY_LIVE_PREVIEW',storageCommitted:false,activeVersion:origin.active.version,opId:origin.opId};
+ }catch(err){
+   // Share one recovery authority with the normal exit path. A failed mount
+   // cannot strand a different, invisible recovery state in the editor.
+   try{await endLivePreview();}
+   catch(recovery){console.error('[Atelier] preview start and canonical recovery failed',origin.opId,err,recovery);}
+   err.previewState=previewSnapshot();throw err;
+ }
+}
+function restoreKnownVisualDuringStorageFailure(snapshot){
+ // A visual snapshot is never an authoritative active pointer.
+ try{if(snapshot)activate(normalized(snapshot));else deactivate();}
+ catch(e){console.error('[Atelier] last-known visual could not be restored',e);}
+}
+async function endLivePreview(){
+ if(previewSettlement)return previewSettlement;
+ if(!livePreviewOrigin)return {status:'NOT_PREVIEWING',canonicalVerified:true};
+ const origin=livePreviewOrigin;
+ reportPreview('RESTORING');
+ previewSettlement=(async()=>{
+  try{
+   let latest;
+   // A broadcast may arrive after the first read: never settle onto a known
+   // stale revision. Bound the handshake; persistent contention needs a visible retry.
+   for(let check=0;check<3;check++){
+     latest=await restoreLatestCommittedTheme();
+     if(latest.version>=pendingExternalRevision)break;
+     if(check===2)throw Object.assign(new Error('其他标签持续发布，正式版本仍待确认'),{code:'E_ATL_EXTERNAL_REVISION_PENDING'});
+   }
+   // Notices arriving after settlement are handled by the channel handler.
+   if(livePreviewOrigin===origin){livePreviewOrigin=null;pendingExternalRevision=0;reportPreview('RESTORED_VERIFIED');}
+   return {status:'RESTORED_VERIFIED',version:latest.version,opId:origin.opId};
+  }catch(cause){
+   restoreKnownVisualDuringStorageFailure(origin.verifiedVisual);
+   reportPreview('RECOVERY_REQUIRED',cause);
+   console.error('[Atelier] canonical read failed on preview exit',origin.opId,cause);
+   throw recoveryError(cause);
+  }finally{previewSettlement=null;}
+ })();
+ return previewSettlement;
+}
+function deactivate(){observer.disconnect();ensureStyle().textContent='';ensureStyle().media='';document.documentElement.removeAttribute('data-mima-atelier-active');applied=null;removeDecor();releaseAssets('atelier');syncPriority();window.dispatchEvent(new Event('mima-atelier-presentation-change'));}
 function disabled(){sessionStorage.setItem('mima-atl-safe-disabled','1');deactivate();}
 function reaffirm(){syncPriority();}
-async function initialize(){if(initialized)return;initialized=true;try{active=await get('active')||{id:null,version:0};if(active.id&&!bypass()){const p=await get(active.releaseKey||('release:'+active.id+':'+active.version));if(!p)throw Error('激活版本的固定快照不存在；保留原始界面且不覆盖任何资料');activate(normalized(p));} if(typeof BroadcastChannel!=='undefined'){channel=new BroadcastChannel(DB);channel.onmessage=async e=>{if(e.data?.kind==='activated'){try{const a=await get('active');if(!a||a.version<=(active?.version||0))return;const p=a.id?await get(a.releaseKey||('release:'+a.id+':'+a.version)):null;if(a.id&&!p)throw new Error('跨窗口主题内容丢失');if(p&&!bypass())activate(normalized(p));else deactivate();active=a;}catch(err){console.error('[Theme Atelier] cross-tab sync',err)}}};}}
+async function initialize(){if(initialized)return;initialized=true;try{active=await get('active')||{id:null,version:0};if(active.id&&!bypass()){const p=await get(active.releaseKey||('release:'+active.id+':'+active.version));if(!p)throw Error('激活版本的固定快照不存在；保留原始界面且不覆盖任何资料');activate(normalized(p));} if(typeof BroadcastChannel!=='undefined'){channel=new BroadcastChannel(DB);channel.onmessage=async e=>{if(e.data?.kind==='activated'){
+  try{const a=await get('active');if(!a||a.version<=(active?.version||0))return;
+   // Both checks are needed: a try-on can begin while the DB reads are pending.
+   if(livePreviewOrigin||publishInFlight){pendingExternalRevision=Math.max(pendingExternalRevision,a.version);if(livePreviewOrigin)reportPreview(previewPhase,previewError);return;}
+   const p=a.id?await get(a.releaseKey||('release:'+a.id+':'+a.version)):null;
+   if(a.id&&!p)throw new Error('跨窗口主题内容丢失');
+   if(livePreviewOrigin||publishInFlight){pendingExternalRevision=Math.max(pendingExternalRevision,a.version);if(livePreviewOrigin)reportPreview(previewPhase,previewError);return;}
+   if(a.version<=(active?.version||0))return;
+   if(p&&!bypass())activate(normalized(p));else deactivate();active=a;
+  }catch(err){console.error('[Theme Atelier] cross-tab sync',err);}
+ }};}}
  catch(e){console.error('[Theme Atelier] startup failed; legacy theme unchanged',e);deactivate();throw e;}}
 ready=initialize();ready.catch(()=>{});
-window.addEventListener('resize',positionDecor);document.addEventListener('scroll',positionDecor,true);window.visualViewport?.addEventListener('resize',positionDecor);
+let positionQueued=false;function schedulePositionDecor(){if(positionQueued||!applied?.stickers?.some(s=>!s.hidden))return;positionQueued=true;requestAnimationFrame(()=>{positionQueued=false;positionDecor()});}
+ window.addEventListener('resize',schedulePositionDecor);window.visualViewport?.addEventListener('resize',schedulePositionDecor); // Anchored stickers move with their DOM owner during scroll; no read/write measurement on every scroll.
 // App renders portions of the UI asynchronously; keep attachments in sync without touching source containers.
-let lastPosition=0;const observer=new MutationObserver(()=>{if(applied?.stickers?.length){const now=Date.now();if(now-lastPosition>100){lastPosition=now;requestAnimationFrame(positionDecor)}}});
-window.addEventListener('DOMContentLoaded',()=>{observer.observe(document.body,{childList:true,subtree:true});});
+const observer=new MutationObserver(()=>schedulePositionDecor());
+function syncDecorObserver(){observer.disconnect();if(applied?.stickers?.some(s=>!s.hidden)&&document.body)observer.observe(document.body,{childList:true,subtree:true});}
+ window.addEventListener('DOMContentLoaded',syncDecorObserver);
 async function saveHistory(key,project){await putMany([[key,normalized(project)]]);}
 async function latestHistory(id){const found=(await keys()).filter(k=>String(k).startsWith('history:'+id+':')).sort();return found.length?await get(found[found.length-1]):null;}
 async function saveDraft(project){
@@ -460,9 +638,24 @@ async function restoreLatestCommittedTheme(){
  active=latest;
  return latest;
 }
+async function drainPendingExternalRelease(){
+ if(livePreviewOrigin||!pendingExternalRevision)return;
+ const notice=pendingExternalRevision;
+ if(notice<=(active?.version||0)){pendingExternalRevision=0;return;}
+ try{const latest=await restoreLatestCommittedTheme();
+  if(latest.version>=notice)pendingExternalRevision=0;
+ }catch(err){console.error('[Theme Atelier] queued cross-tab revision needs recovery',notice,err);
+  if(lastApplyReceipt)lastApplyReceipt.warnings.push({reason:'external_visual_sync_unverified',revision:notice,error:String(err.message||err)});
+ }
+}
 async function apply(project){
- await ready;const p=normalized(project);
+ await ready;
+ if(livePreviewOrigin)throw Object.assign(new Error('试穿后正式主题尚未完成版本核验，请先重试返回。'),{code:'E_ATL_PREVIEW_UNVERIFIED'});
+ if(publishInFlight)throw Object.assign(new Error('已有正式主题事务正在执行'),{code:'E_ATL_RELEASE_BUSY'});
+ publishInFlight=true;try{
+ const p=normalized(project);
  if(bypass())throw Object.assign(new Error('当前处于 ?noCss=1 安全停用模式，请退出后应用主题；草稿仍可保存。'),{code:'E_ATL_SAFE_MODE'});
+ const previousVisual=applied?clone(applied):null;
  const previous=await get('active')||{id:null,version:0};
  if(previous.version!==(active?.version||0))throw Object.assign(new Error('其他窗口已更改主题，请先刷新当前主题后再应用。'),{code:'E_ATL_ACTIVE_CONFLICT'});
  const next={id:p.id,version:previous.version+1,releaseKey:'release:'+p.id+':'+(previous.version+1)+':'+uid(),updatedAt:Date.now()};
@@ -478,18 +671,37 @@ async function apply(project){
    if(check.conflicts.length)throw Object.assign(new Error('主题样式结构核验失败；未发布新主题'),{code:'E_ATL_COMPUTED_CONFLICT'});
    receipt.status='COMPUTED_CHECKED';
    try{await putMany([['active',next]],previous.version);}catch(err){err.code=err.code||'E_ATL_ACTIVE_CONFLICT';throw err;}
-   active=next;receipt.storageCommitted=true;receipt.status=check.warnings.length?'APPLIED_WITH_WARNINGS':'APPLIED_VISUAL_UNVERIFIED';
+   active=next;livePreviewOrigin=null;receipt.storageCommitted=true;receipt.status=check.warnings.length?'APPLIED_WITH_WARNINGS':'APPLIED_VISUAL_UNVERIFIED';
    try{channel?.postMessage({kind:'activated'});}catch(err){receipt.warnings.push({reason:'broadcast_failed',details:String(err?.message||err)});}
    window.dispatchEvent(new Event('mima-atelier-presentation-change'));
    return {...next,receipt};
  }catch(e){
    receipt.status='FAILED_WITH_EVIDENCE';receipt.reason=e.code||e.message;
    try{const latest=await restoreLatestCommittedTheme();receipt.restoredVersion=latest.version;}
-   catch(recoveryError){receipt.recoveryError=String(recoveryError.message||recoveryError);deactivate();console.error('[Theme Atelier] failed to restore latest verified pointer',recoveryError);}
+   catch(recoveryError){receipt.recoveryError=String(recoveryError.message||recoveryError);restoreKnownVisualDuringStorageFailure(previousVisual);receipt.visualStatus='LAST_KNOWN_ONLY_CANONICAL_UNVERIFIED';console.error('[Theme Atelier] failed to restore latest verified pointer',recoveryError);}
    throw e;
  }
+ }finally{publishInFlight=false;await drainPendingExternalRelease();}
 }
-async function unapply(){await ready;const previous=active||{id:null,version:0},next={id:null,version:previous.version+1,updatedAt:Date.now()};await putMany([['active',next]],previous.version);deactivate();active=next;channel?.postMessage({kind:'activated'});}
+async function unapply(){
+ await ready;
+ if(livePreviewOrigin)throw Object.assign(new Error('试穿恢复尚未通过版本核验，禁止改写正式主题。'),{code:'E_ATL_PREVIEW_UNVERIFIED'});
+ if(publishInFlight)throw Object.assign(new Error('已有正式主题事务正在执行'),{code:'E_ATL_RELEASE_BUSY'});
+ publishInFlight=true;
+ try{
+  const previous=await get('active')||{id:null,version:0};
+  if(previous.version!==(active?.version||0))throw Object.assign(new Error('其他窗口已更改主题'),{code:'E_ATL_ACTIVE_CONFLICT'});
+  const next={id:null,version:previous.version+1,updatedAt:Date.now()};
+  await putMany([['active',next]],previous.version);
+  active=next;
+  try{deactivate();}
+  catch(err){console.error('[Theme Atelier] unapply committed; visual cleanup failed',err);
+   try{await restoreLatestCommittedTheme();}catch(recovery){console.error('[Theme Atelier] committed unapply recovery unverified',recovery);}
+   throw Object.assign(new Error('正式停用指针已提交，但外观清理失败，需重新核对'),{code:'E_ATL_UNAPPLY_VISUAL_UNVERIFIED',cause:err});}
+  try{channel?.postMessage({kind:'activated',version:next.version});}catch(err){console.error('[Theme Atelier] unapply broadcast failed',err);}
+  return {status:'UNAPPLIED_COMMITTED',version:next.version};
+ }finally{publishInFlight=false;await drainPendingExternalRelease();}
+}
 async function resolveLibraryCss(preset,owner='library-global'){if(!preset?.atelierReleaseKey)return preset?.css||'';
  const p=await get(preset.atelierReleaseKey);if(!p)throw Error('工坊 CSS 引用的独立资源快照不存在，原 CSS 预设未被修改');
  const checked=normalized(p),compiled=compiledWithAssets(checked,'standalone',owner);
@@ -499,6 +711,8 @@ async function resolveLibraryCss(preset,owner='library-global'){if(!preset?.atel
 function portableBundle(project){const files={},seen=new Map();let n=0;
  const css=compile(normalized(project),'portable',{assetUrl(src,kind,font){if(!src?.startsWith('data:'))return src;let p=seen.get(src);if(!p){const ext=kind==='font'?(font?.format||'woff2'):/^data:image\/([^;]+)/.exec(src)?.[1]||'png';p=`assets/asset_${++n}.${String(ext).replace(/[^a-z0-9]/gi,'')}`;const raw=atob(src.slice(src.indexOf(',')+1));const bytes=new Uint8Array(raw.length);for(let i=0;i<raw.length;i++)bytes[i]=raw.charCodeAt(i);files[p]=bytes;seen.set(src,p);}return p;}});
  return {css,files};}
-window.addEventListener('pagehide',()=>{for(const owner of assetOwners.keys())releaseAssets(owner);});
-window.MimaAtelierCore={resolvePresentationPlan,normalizeTextPolicy,computeStickerRect,renderAudit,getLastApplyReceipt:()=>lastApplyReceipt&&clone(lastApplyReceipt),TARGETS,DEFAULT,STYLES,PATTERNS,baseTheme,normalized,clone,clamp,hex,esc,rgba,uid,patternCSS,compile,get,saveDraft,apply,unapply,disabled,reaffirm,bypass,ready,_historySave:saveHistory,_historyLatest:latestHistory,listProjects,saveManual,listManual,forkDraft,exportPresetCss,resolveLibraryCss,releaseAssets,portableBundle,previewCss,getActive:()=>clone(active||{id:null,version:0}),getApplied:()=>applied&&clone(applied),getPresentationMode:()=>applied?.cssPriority||'',positionDecor};
+// Blob URLs are document-scoped. BFCache pagehide keeps this document and CSS alive.
+// Never revoke its live resources on pagehide; normal owner changes still reclaim stale URLs,
+// and the browser reclaims all object URLs when the document is actually destroyed.
+window.MimaAtelierCore={resolvePresentationPlan,presentationLayers,liveLegacyLayers,beginLivePreview,endLivePreview,appearanceDiagnostics,normalizeTextPolicy,computeStickerRect,renderAudit,getLastApplyReceipt:()=>lastApplyReceipt&&clone(lastApplyReceipt),getPreviewState:()=>previewSnapshot(),getPublishState:()=>({busy:publishInFlight,receipt:lastApplyReceipt&&clone(lastApplyReceipt),activeVersion:active?.version||0}),TARGETS,DEFAULT,STYLES,PATTERNS,baseTheme,normalized,clone,clamp,hex,esc,rgba,uid,patternCSS,compile,get,saveDraft,apply,unapply,disabled,reaffirm,bypass,ready,_historySave:saveHistory,_historyLatest:latestHistory,listProjects,saveManual,listManual,forkDraft,exportPresetCss,resolveLibraryCss,releaseAssets,portableBundle,previewCss,getActive:()=>clone(active||{id:null,version:0}),getApplied:()=>applied&&clone(applied),getPresentationMode:()=>applied?.cssPriority||'',positionDecor};
 })();

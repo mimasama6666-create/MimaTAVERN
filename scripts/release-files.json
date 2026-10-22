@@ -44,6 +44,8 @@
   "font-manager.js",
   "history-html-projection.js",
   "history-search.js",
+  "history-navigator.css",
+  "history-navigator.js",
   "html-structure-contract.js",
   "index.html",
   "license-policy.json",

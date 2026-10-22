@@ -982,7 +982,10 @@ body.mima-reading-mode #story-chat-box[data-mima-chat-wallpaper="1"]::before{
   -webkit-backdrop-filter:none;
   backdrop-filter:none;
 }
-#story-chat-box .message{animation:none;}
+/* Do not animate history during a full hydration, but retain the normal
+   fadeUp animation for newly appended messages. Author CSS may still override. */
+#story-chat-box > .message[data-mima-historical="1"]{animation:none;}
+#story-chat-box > .message[data-mima-new="1"]{animation:fadeUp .18s ease;}
 #story-chat-box{scroll-behavior:auto;}
 /* Keep the single scene background but avoid an offscreen GPU blur layer at 0px. */
 /* Compact, legible drawer footer: do not make buttons taller than the title. */
@@ -1045,7 +1048,8 @@ body.mima-reading-mode #story-chat-box[data-mima-chat-wallpaper="1"]::before{
 .app-shell>.composer-shell>.generation-panel #generation-diagnostic-link::after{content:none;}
 .app-shell>.composer-shell>.generation-panel #generation-diagnostic-link{width:auto;height:auto;}
 .app-shell>.composer-shell>.generation-panel #generation-retry,.app-shell>.composer-shell>.generation-panel #generation-retry-current{min-height:30px;padding:6px 10px;font-size:.72rem;white-space:nowrap;}
-.app-shell>.composer-shell>.generation-panel.error:not(.hidden){max-height:min(48dvh,320px);bottom:calc(100% + 12px);display:flex!important;}
+/* Do not override the explicit minimized/hidden state with display:flex!important. */
+.app-shell>.composer-shell>.generation-panel.error:not(.hidden):not(.minimized){max-height:min(48dvh,320px);bottom:calc(100% + 12px);display:flex;}
 .app-shell>.composer-shell>.generation-panel.error .generation-detail{max-height:min(22dvh,145px);white-space:pre-wrap;overflow-y:auto;}
 .generation-minimized-badge{position:absolute;right:max(10px,env(safe-area-inset-right));bottom:calc(100% + 10px);width:54px;height:54px;border-radius:50%;border:1px solid color-mix(in srgb,var(--accent) 32%,var(--line));background:linear-gradient(180deg,color-mix(in srgb,var(--panel-solid) 88%,transparent),color-mix(in srgb,var(--panel) 84%,transparent));box-shadow:0 9px 26px rgba(38,25,26,.16);display:grid;place-items:center;z-index:7;-webkit-backdrop-filter:blur(15px) saturate(1.15);backdrop-filter:blur(15px) saturate(1.15);}
 .generation-minimized-ring{position:absolute;inset:5px;border-radius:50%;background:conic-gradient(var(--accent) var(--generation-mini-progress,0%),rgba(255,255,255,.38) 0);-webkit-mask:radial-gradient(circle,transparent 58%,#000 60%);mask:radial-gradient(circle,transparent 58%,#000 60%);animation:mimaMiniSpinner 1.6s linear infinite;}
@@ -1070,3 +1074,13 @@ body.mima-reading-mode #story-chat-box[data-mima-chat-wallpaper="1"]::before{
 .generation-capacity-recovery:not([open]){display:block!important;border-top:1px solid var(--line);padding:7px 0 0;margin:0;}
 .generation-capacity-recovery summary{cursor:pointer;font-size:.78rem;font-weight:730;list-style-position:inside;color:var(--accent-strong);min-height:30px;}
 .generation-capacity-recovery[open]{display:grid;}
+
+/* R19: hydration and new-message animations are governed by the rules above. */
+
+/* Highlight only the actual rendered search text when CSS Highlight is available. */
+::highlight(mima-history-match){background:rgba(244,187,74,.62);color:inherit;}
+
+/* Explicit close affordance; diagnosis remains saved after dismissal. */
+.app-shell>.composer-shell>.generation-panel .generation-error-dismiss{display:none;}
+.app-shell>.composer-shell>.generation-panel.error .generation-error-dismiss{display:inline-flex;align-items:center;justify-content:center;flex:none;width:40px;height:40px;min-width:40px;min-height:40px;padding:0;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--text);font-size:23px;line-height:1;cursor:pointer;touch-action:manipulation;}
+.app-shell>.composer-shell>.generation-panel.error.minimized{display:none!important;}

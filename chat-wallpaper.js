@@ -2,8 +2,8 @@
 (()=>{'use strict';
 const DB='mima-chat-wallpaper-v1',STORE='wallpapers';
 let sessionId=null,current=null,url=null,seq=0,dbTask=null;
-const defaults=()=>({fit:'cover',focusX:50,focusY:50,mask:24,blur:0});
-const safeOpts=v=>({fit:v?.fit==='contain'?'contain':'cover',focusX:limit(v?.focusX,0,100,50),focusY:limit(v?.focusY,0,100,50),mask:limit(v?.mask,0,95,24),blur:limit(v?.blur,0,30,0)});
+const defaults=()=>({fit:'cover',focusX:50,focusY:50,mask:0,blur:0});
+const safeOpts=v=>({fit:v?.fit==='contain'?'contain':'cover',focusX:limit(v?.focusX,0,100,50),focusY:limit(v?.focusY,0,100,50),mask:limit(v?.mask,0,95,v?24:0),blur:limit(v?.blur,0,30,0)});
 function limit(x,a,b,f){x=Number(x);return Number.isFinite(x)?Math.min(b,Math.max(a,x)):f;}
 function database(){return dbTask||(dbTask=new Promise((resolve,reject)=>{const q=indexedDB.open(DB,1);q.onupgradeneeded=()=>{if(!q.result.objectStoreNames.contains(STORE))q.result.createObjectStore(STORE)};q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error||Error('背景图数据库打开失败'));q.onblocked=()=>reject(Error('背景数据库被其他页面占用'));}).catch(e=>{dbTask=null;throw e}));}
 async function read(key){const db=await database();return new Promise((resolve,reject)=>{const tx=db.transaction(STORE,'readonly'),q=tx.objectStore(STORE).get(key);q.onsuccess=()=>resolve(q.result||null);q.onerror=()=>reject(q.error);tx.onerror=()=>reject(tx.error);});}
