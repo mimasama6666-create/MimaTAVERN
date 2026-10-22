@@ -286,7 +286,25 @@ function prepareAssets(project,owner){const used=new Set();return {used,url(src)
 function commitAssetOwner(owner,used){assetOwners.set(owner,used);for(const [src,url] of assetPool){if(![...assetOwners.values()].some(set=>set.has(src))){URL.revokeObjectURL(url);assetPool.delete(src);}}}
 function releaseAssets(owner){commitAssetOwner(owner,new Set());}
 function compiledWithAssets(p,mode,owner){const t=prepareAssets(p,owner);const css=compile(p,mode,{assetUrl:t.url});return {css,used:t.used};}
-function previewCss(project){const data=compiledWithAssets(project,'preview','preview');commitAssetOwner('preview',data.used);return data.css;}
+function previewCss(project){
+ // The lightweight material sketch intentionally has no legacy CSS or arbitrary authored extraCss.
+ // Its state must never be confused with the authoritative real-page try-on.
+ const plan=resolvePresentationPlan(project);
+ const data=compiledWithAssets(project,'preview','preview');commitAssetOwner('preview',data.used);
+ return plan.themeEnabled?data.css:'';
+}
+function appearanceWarnings(project){
+ const issues=[],plan=resolvePresentationPlan(project);
+ if(!plan.themeEnabled)issues.push('当前是「仅使用旧 CSS」：工坊材质草图不会作用到正式页面。请切换到结构估计或真实页面试穿。');
+ if(project.extraCss?.trim())issues.push('高级 CSS 只在真实页面试穿与正式应用中完整生效；材质草图不模拟任意用户 CSS。');
+ for(const [key,style] of Object.entries(project.elements||{})){
+  if(project.regions?.[key]===false)continue;
+  if(key==='shell'&&Number(style.blur)>0&&!style.image)issues.push('整体背景图模糊当前无对象：请先导入页面背景图；模糊值已经保留。');
+  if(key!=='shell'&&Number(style.blur)>0&&Number(style.alpha)>=92)issues.push((TARGETS[key]?.label||key)+' 的表面较不透明，真实磨砂可能不易看到；可降低「背景不透明度」，不会自动替您改值。');
+ }
+ if(project.regions?.safeHtmlHost===false)issues.push('角色 HTML 外宿主受保护：工坊普通消息材质不会修改它；需要时须单独授权。');
+ return issues;
+}
 let active=null,applied=null,style=null,decor=null,decorFront=null,channel=null,initialized=false,ready=null,lastApplyReceipt=null;
 const regionDecor=new Map();
 function bypass(){return new URLSearchParams(location.search).get('noCss')==='1'||sessionStorage.getItem('mima-atl-safe-disabled')==='1';}
@@ -357,7 +375,12 @@ function drawDecor(project){
 }
 function positionDecor(){
  if(!applied||bypass())return;
- const shell={left:0,top:0,width:innerWidth,height:innerHeight};let detached=false;const writes=[];const measured=new Map();
+ const shell={left:0,top:0,width:innerWidth,height:innerHeight};let detached=false;const writes=[];const measured=new Map(),imagesByRoot=new Map();
+ const findSticker=(root,id)=>{if(!root)return null;
+  let map=imagesByRoot.get(root);
+  if(!map){map=new Map(Array.from(root.querySelectorAll('img[data-atl-sticker]'),node=>[node.dataset.atlSticker,node]));imagesByRoot.set(root,map);}
+  return map.get(id)||null;
+ };
  for(const sticker of applied.stickers||[]){
   if(sticker.hidden)continue;
   const regionKey=stickerRegionKey(sticker),record=regionDecor.get(regionKey);
@@ -365,7 +388,7 @@ function positionDecor(){
   if(sticker.anchor!=='shell'&&(!root?.isConnected||!record?.target?.isConnected)){
    if(getStickerTarget(sticker.anchor,sticker.targetMessageId))detached=true;continue;
   }
-  const el=Array.from(root?.querySelectorAll('img[data-atl-sticker]')||[]).find(x=>x.dataset.atlSticker===sticker.id);
+  const el=findSticker(root,sticker.id);
   if(!el){if(root)detached=true;continue;}
   let r;if(sticker.anchor==='shell')r=shell;else{if(!measured.has(record.target))measured.set(record.target,record.target.getBoundingClientRect());r=measured.get(record.target)}
   if(r.width<=0||r.height<=0){writes.push([el,null]);continue;}
@@ -523,6 +546,24 @@ async function beginLivePreview(project){
    err.previewState=previewSnapshot();throw err;
  }
 }
+// In-place revision of a verified try-on. This never creates a second preview,
+// changes the canonical active pointer, or settles a publication.
+function updateLivePreview(project,expectedOpId){
+ const current=livePreviewOrigin;
+ if(!current||previewPhase!=='TEMPORARY'||previewSettlement||publishInFlight||
+    !expectedOpId||current.opId!==expectedOpId){
+  throw Object.assign(new Error('试穿状态已改变；拒绝覆盖新的正式主题或其他试穿'),{code:'E_ATL_PREVIEW_REVISION_STALE'});
+ }
+ try{
+  activate(normalized(project));
+  return {status:'TEMPORARY_UPDATED',storageCommitted:false,opId:current.opId};
+ }catch(error){
+  restoreKnownVisualDuringStorageFailure(current.verifiedVisual);
+  reportPreview('RECOVERY_REQUIRED',error);
+  error.previewState=previewSnapshot();
+  throw error;
+ }
+}
 function restoreKnownVisualDuringStorageFailure(snapshot){
  // A visual snapshot is never an authoritative active pointer.
  try{if(snapshot)activate(normalized(snapshot));else deactivate();}
@@ -648,7 +689,7 @@ async function drainPendingExternalRelease(){
   if(lastApplyReceipt)lastApplyReceipt.warnings.push({reason:'external_visual_sync_unverified',revision:notice,error:String(err.message||err)});
  }
 }
-async function apply(project){
+async function apply(project,options={}){
  await ready;
  if(livePreviewOrigin)throw Object.assign(new Error('试穿后正式主题尚未完成版本核验，请先重试返回。'),{code:'E_ATL_PREVIEW_UNVERIFIED'});
  if(publishInFlight)throw Object.assign(new Error('已有正式主题事务正在执行'),{code:'E_ATL_RELEASE_BUSY'});
@@ -670,7 +711,9 @@ async function apply(project){
    receipt.pixelVerified=check.pixelVerified;receipt.warnings=check.warnings;receipt.conflicts=check.conflicts;
    if(check.conflicts.length)throw Object.assign(new Error('主题样式结构核验失败；未发布新主题'),{code:'E_ATL_COMPUTED_CONFLICT'});
    receipt.status='COMPUTED_CHECKED';
-   try{await putMany([['active',next]],previous.version);}catch(err){err.code=err.code||'E_ATL_ACTIVE_CONFLICT';throw err;}
+   try{await putMany(options.syncCssLibrary===true
+     ?[['active',next],['css-sync:'+next.releaseKey,{releaseKey:next.releaseKey,projectId:p.id,phase:'LIBRARY_SYNC_PENDING',attempt:0,updatedAt:Date.now()}]]
+     :[['active',next]],previous.version);}catch(err){err.code=err.code||'E_ATL_ACTIVE_CONFLICT';throw err;}
    active=next;livePreviewOrigin=null;receipt.storageCommitted=true;receipt.status=check.warnings.length?'APPLIED_WITH_WARNINGS':'APPLIED_VISUAL_UNVERIFIED';
    try{channel?.postMessage({kind:'activated'});}catch(err){receipt.warnings.push({reason:'broadcast_failed',details:String(err?.message||err)});}
    window.dispatchEvent(new Event('mima-atelier-presentation-change'));
@@ -682,6 +725,36 @@ async function apply(project){
    throw e;
  }
  }finally{publishInFlight=false;await drainPendingExternalRelease();}
+}
+async function cssSyncStatus(releaseKey){
+ await ready;
+ if(typeof releaseKey!=='string'||!releaseKey.startsWith('release:'))throw Error('同步记录缺少正式主题 releaseKey');
+ return await get('css-sync:'+releaseKey);
+}
+async function settleCssSync(releaseKey,phase,meta={}){
+ await ready;
+ if(typeof releaseKey!=='string'||!releaseKey.startsWith('release:'))throw Error('CSS 库同步缺少正式主题版本');
+ if(!['LIBRARY_SYNC_COMMITTED','LIBRARY_SYNC_FAILED_REPAIRABLE','LIBRARY_SYNC_UNKNOWN'].includes(phase))throw Error('CSS 库同步结算状态无效');
+ const db=await getDB();
+ // One readwrite IDB transaction is the sole settlement authority for this record.
+ // A concurrent failed attempt cannot overwrite an already committed successful receipt.
+ return await new Promise((resolve,reject)=>{
+  const tx=db.transaction(STORE,'readwrite'),store=tx.objectStore(STORE),key='css-sync:'+releaseKey;
+  let result=null,failure=null;
+  const req=store.get(key);
+  req.onsuccess=()=>{
+   const original=req.result;
+   if(!original){failure=new Error('缺少 CSS 库同步意图；禁止伪造成功');tx.abort();return;}
+   if(original.phase==='LIBRARY_SYNC_COMMITTED'){result=original;return;}
+   result={...original,phase,attempt:(original.attempt||0)+1,
+    cssPresetId:String(meta.cssPresetId||'').slice(0,180),error:String(meta.error||'').slice(0,500),updatedAt:Date.now()};
+   store.put(result,key);
+  };
+  req.onerror=()=>{failure=req.error||Error('同步状态读取失败');tx.abort();};
+  tx.oncomplete=()=>resolve(result);
+  tx.onabort=()=>reject(failure||tx.error||Error('CSS 同步结算已中止'));
+  tx.onerror=()=>{failure=tx.error||failure;};
+ });
 }
 async function unapply(){
  await ready;
@@ -714,5 +787,5 @@ function portableBundle(project){const files={},seen=new Map();let n=0;
 // Blob URLs are document-scoped. BFCache pagehide keeps this document and CSS alive.
 // Never revoke its live resources on pagehide; normal owner changes still reclaim stale URLs,
 // and the browser reclaims all object URLs when the document is actually destroyed.
-window.MimaAtelierCore={resolvePresentationPlan,presentationLayers,liveLegacyLayers,beginLivePreview,endLivePreview,appearanceDiagnostics,normalizeTextPolicy,computeStickerRect,renderAudit,getLastApplyReceipt:()=>lastApplyReceipt&&clone(lastApplyReceipt),getPreviewState:()=>previewSnapshot(),getPublishState:()=>({busy:publishInFlight,receipt:lastApplyReceipt&&clone(lastApplyReceipt),activeVersion:active?.version||0}),TARGETS,DEFAULT,STYLES,PATTERNS,baseTheme,normalized,clone,clamp,hex,esc,rgba,uid,patternCSS,compile,get,saveDraft,apply,unapply,disabled,reaffirm,bypass,ready,_historySave:saveHistory,_historyLatest:latestHistory,listProjects,saveManual,listManual,forkDraft,exportPresetCss,resolveLibraryCss,releaseAssets,portableBundle,previewCss,getActive:()=>clone(active||{id:null,version:0}),getApplied:()=>applied&&clone(applied),getPresentationMode:()=>applied?.cssPriority||'',positionDecor};
+window.MimaAtelierCore={cssSyncStatus,settleCssSync,appearanceWarnings,resolvePresentationPlan,presentationLayers,liveLegacyLayers,beginLivePreview,updateLivePreview,endLivePreview,appearanceDiagnostics,normalizeTextPolicy,computeStickerRect,renderAudit,getLastApplyReceipt:()=>lastApplyReceipt&&clone(lastApplyReceipt),getPreviewState:()=>previewSnapshot(),getPublishState:()=>({busy:publishInFlight,receipt:lastApplyReceipt&&clone(lastApplyReceipt),activeVersion:active?.version||0}),TARGETS,DEFAULT,STYLES,PATTERNS,baseTheme,normalized,clone,clamp,hex,esc,rgba,uid,patternCSS,compile,get,saveDraft,apply,unapply,disabled,reaffirm,bypass,ready,_historySave:saveHistory,_historyLatest:latestHistory,listProjects,saveManual,listManual,forkDraft,exportPresetCss,resolveLibraryCss,releaseAssets,portableBundle,previewCss,getActive:()=>clone(active||{id:null,version:0}),getApplied:()=>applied&&clone(applied),getPresentationMode:()=>applied?.cssPriority||'',positionDecor};
 })();

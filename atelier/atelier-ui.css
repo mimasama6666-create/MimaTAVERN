@@ -46,3 +46,36 @@
 
 /* Atlas R2: ownership selector and scope controls in the existing shadow editor */
 .atl-region-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:3px 9px;margin-top:8px}.atl-region-grid .atl-check{padding:5px 0;font-size:11px}.atl-preview-toolbar select{max-width:134px}@media(max-width:370px){.atl-region-grid{grid-template-columns:1fr}}
+
+/* R19 atelier fidelity: persistent capability notices and readable mobile entry. */
+.atl-effect-warnings{flex:none;max-height:118px;overflow:auto;padding:8px 11px;background:#fff6e7;border-bottom:1px solid #dfc397;color:#5d401f;font:11px/1.45 system-ui}
+.atl-effect-warnings[hidden]{display:none!important}
+.atl-effect-warnings p{margin:3px 0}
+.atl-getting-started{background:#f4edf8;border:1px solid #d4bcdf}
+.atl-getting-started p{font-size:12px;line-height:1.6}
+.atl-getting-started button{min-height:42px;border:1px solid #a789b4;background:white;border-radius:10px;padding:7px 12px}
+@media(max-width:850px){.atl-effect-warnings{max-height:86px}.atl-getting-started button{width:100%}}
+
+/* R19 real-DOM editing dock: live story is rendered by the existing production page. */
+:host(.atl-live-dock){border-top:2px solid #7e648e;box-shadow:0 -7px 30px #160a2840;max-height:65dvh;}
+:host(.atl-live-dock) .atl-app{height:100%;min-height:0;}
+:host(.atl-live-dock) .atl-main{display:flex;flex-direction:column;min-height:0;}
+:host(.atl-live-dock) .atl-preview-section{display:none!important;}
+:host(.atl-live-dock) .atl-editor{flex:1;min-height:0;border:0;}
+:host(.atl-live-dock) .atl-heading small::after{content:' · 真实页面实时试穿（未发布）';color:#765185;}
+.atl-exit-live{display:none;}
+:host(.atl-live-dock) .atl-exit-live{display:block;border-color:#9978b4;background:#f2e9f5;color:#402749;font-size:12px;}
+/* Old material preview is still a sketch; give its story/status enough room on phones. */
+@media(max-width:850px){
+ .atl-main{grid-template-rows:minmax(290px,56%) minmax(0,44%);}
+ .atl-preview-frame{min-height:215px;}
+ .atl-demo-chat{justify-content:flex-start;}
+ :host(.atl-live-dock) .atl-header{min-height:52px;padding:5px 7px;}
+ :host(.atl-live-dock) .atl-heading b{font-size:11px;}
+ :host(.atl-live-dock) .atl-heading small{font-size:9px;}
+ :host(.atl-live-dock) .atl-header button{min-height:38px;padding:6px;}
+}
+@media(max-height:580px) and (max-width:850px){.atl-main{grid-template-rows:minmax(190px,47%) minmax(0,53%);}}
+.atl-pick-real{display:none}
+:host(.atl-live-dock) .atl-pick-real{display:block;border-color:#987ca6;background:#fff;color:#61456b;font-size:11px}
+:host(.atl-live-dock) .atl-pick-real[aria-pressed="true"]{background:#774d89;color:#fff;border-color:#774d89}
