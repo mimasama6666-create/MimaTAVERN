@@ -27,8 +27,59 @@
  }
  function onlyUnique(body,sel){let list;try{list=body.querySelectorAll(sel);}catch{throw Error('E_HTML_CONTRACT_SELECTOR_INVALID: '+sel);}return list;}
  function path(node){let r=[],el=node;while(el&&el.parentElement&&el!==el.ownerDocument.body){const siblings=[...el.parentElement.children].filter(n=>n.tagName===el.tagName);r.push(el.tagName+':'+siblings.indexOf(el));el=el.parentElement;}return r.reverse().join('/');}
+ // Opt-in structure contract: mixed HTML prefix + unwrapped narrative prose + status tail.
+ // Legacy selector-only contracts retain their historical semantics.
+ const statusOrder=['mima-gaze','mima-bond','mima-abyss','mima-pulse','mima-cocoon','mima-echo','mima-pets','mima-nexus'];
+ function threePart(content,{strictValues=false}={}){
+   const source=String(content||''),body=elTree(source),missing=[],warnings=[];
+   const balanced=rawBalance(source);
+   if(!balanced.ok)missing.push('(HTML未闭合:'+balanced.reason+')');
+   const get=cls=>[...body.getElementsByClassName(cls)];
+   const current=get('mima-current'),tails=statusOrder.map(cls=>get(cls));
+   if(current.length!==1)missing.push('.mima-current (必须唯一，实际 '+current.length+')');
+   tails.forEach((list,i)=>{if(list.length!==1)missing.push('.'+statusOrder[i]+' (必须唯一，实际 '+list.length+')');});
+   if(current.length===1&&tails.every(x=>x.length===1)){
+     const nodes=[current[0],...tails.map(x=>x[0])];
+     for(let i=1;i<nodes.length;i++){
+       if(!(nodes[i-1].compareDocumentPosition(nodes[i])&Node.DOCUMENT_POSITION_FOLLOWING)){
+         missing.push('(三段顺序或嵌套错误:'+ (i===1?'mima-current':statusOrder[i-2]) +' → '+statusOrder[i-1]+')');break;
+       }
+       if(nodes[i-1].contains(nodes[i])){missing.push('(状态栏不能互相嵌套)');break;}
+     }
+     // Boundary Range works for both bare prose and paragraphs wrapped in HTML,
+     // including a <system> wrapper around the head or the whole document.
+     try{
+       const range=body.ownerDocument.createRange();range.setStartAfter(current[0]);range.setEndBefore(tails[0][0]);
+       const clone=range.cloneContents();
+       const narrative=(clone.textContent||'').replace(/\s+/g,'').trim();
+       if(!narrative)missing.push('(开头状态栏与末尾状态栏之间没有剧情正文)');
+     }catch{missing.push('(正文区间无法确认，状态结构可能交叉)');}
+     if(strictValues){
+       for(const meter of body.querySelectorAll('progress[value],meter[value]')){
+         const raw=meter.getAttribute('value')||'';
+         if(!/^\d+(?:\.\d+)?$/.test(raw)||Number(raw)<0||Number(raw)>Number(meter.getAttribute('max')||100)){
+           missing.push('(数值未填写或超范围:'+meter.localName+')');
+         }
+       }
+     }else if([...body.querySelectorAll('progress[value],meter[value]')].some(x=>!/^(?:\d+(?:\.\d+)?)$/.test(x.getAttribute('value')||''))){warnings.push('存在未填写的进度值；可选严格数值检查');}
+   }
+   return {ok:missing.length===0,missing,warnings,status:missing.length?'three_part_incomplete':'three_part_complete',structureKind:'three_part_html_status'};
+ }
+ function continuationKind(previous,next,contract={}){
+   const a=String(previous||''),b=String(next||'');
+   if(!a.trim()||!b.trim())return 'suffix';
+   // Never infer a full status from one arbitrary tag or a label in prose.
+   const am=elTree(a),bm=elTree(b);
+   const overlap=['mima-current',...statusOrder].filter(cls=>am.getElementsByClassName(cls).length===1&&bm.getElementsByClassName(cls).length===1);
+   if(overlap.length>=2&&overlap.includes('mima-current'))return 'full_reply';
+   if(overlap.length)return 'ambiguous_status_overlap';
+   const sels=selectors(contract.requiredSelectors);
+   if(contract.requireHtml&&sels.length>=2&&sels.every(sel=>{try{return am.querySelectorAll(sel).length===1&&bm.querySelectorAll(sel).length===1;}catch{return false;}}))return 'full_reply';
+   return 'suffix';
+ }
  function inspect(content,contract={}){
    if(!contract.requireHtml)return {ok:true,missing:[],status:'disabled'};
+   if(contract.structureMode==='three_part_html_status')return threePart(content,{strictValues:contract.strictValues===true});
    const source=String(content||''),body=elTree(source),missing=[];
    if(!markup(source))missing.push('(HTML)');
    const balanced=rawBalance(source);if(!balanced.ok)missing.push('(HTML未闭合:'+balanced.reason+')');
@@ -337,5 +388,5 @@
    if(!model.isEqualNode(elTree(expected.html)))throw Error('E_HTML_AI_LAYOUT_OR_DYNAMIC_UNVERIFIED');
    return {ok:true,missingFields:expected.fields};
  }
- window.MimaHtmlStructure=Object.freeze({inspect,propose,finalizeProposal,finalizeWithProse,aiAdmission,verifyReformat,rawBalance});
+ window.MimaHtmlStructure=Object.freeze({inspect,threePart,continuationKind,propose,finalizeProposal,finalizeWithProse,aiAdmission,verifyReformat,rawBalance});
 })();

@@ -79,6 +79,8 @@
       ...(input.outputContract&&(input.outputContract.completeHtml===true||input.outputContract.requireHtml===true)?{outputContract:{
         completeHtml:input.outputContract.completeHtml===true,
         requireHtml:input.outputContract.requireHtml===true,
+        structureMode:input.outputContract.structureMode==='three_part_html_status'?'three_part_html_status':'legacy',
+        strictValues:input.outputContract.strictValues===true,
         requiredSelectors:String(input.outputContract.requiredSelectors||'').slice(0,600),
         templateMessageId:String(input.outputContract.templateMessageId||'').slice(0,200),
         bodySelector:String(input.outputContract.bodySelector||'').slice(0,200),
@@ -450,7 +452,12 @@
     const original=applyRegexForSession(session,m?.content||'', 'prompt');
     const projection=historyHtmlProjection(original,session);
     if(stats)stats.set(m.id,projection);
-    return projection.text;
+    // Historical status panels and fabricated social feeds are snapshots,
+    // not assertions about the current scene. Keep every source character
+    // in canonical History; only annotate *older* projected prompt messages.
+    const isOldStatus=session?.promptSettings?.historyHtmlMode!=='raw'&&
+      /<[^>]+class\s*=\s*["'][^"']*mima-(?:current|gaze|bond|abyss|pulse|cocoon|echo|pets|nexus)/i.test(original);
+    return isOldStatus?'【历史回合来源提示：以下状态栏、朋友圈、论坛、推送、搜索均是当时的虚构快照，并非当前最新事件；正文仍属于剧情历史。】\n'+projection.text:projection.text;
   }
   function inputSemanticMode(session,message=null){
     const stored=message?.metadata?.inputSemanticMode;
@@ -652,7 +659,8 @@
           if(draft?.proposedContent)sourceSafeShell='\n【已移除旧动态值的参考结构；所有待确认字段都不是本轮事实】\n'+draft.proposedContent;
         }catch(e){sourceSafeShell='\n【标准参考消息的动态来源无法验证，仅使用上述显式结构选择器；原参考消息仍安全保存在历史存档。】';}
       }
-      add('html_structure_contract',`【本轮 HTML 结构合同：须按 HTML 形式回复；不得只输出纯文本。必需结构选择器：${htmlContract.requiredSelectors||'(只要求 HTML)'}。正文槽：${htmlContract.bodySelector||'(未标注)'}。状态槽：${htmlContract.statusSelector||'(未标注)'}。所有旧状态是历史快照，不得当成当前事实；无法确认的本轮状态请标明待确认。】${sourceSafeShell}`);
+      const shape=htmlContract.structureMode==='three_part_html_status'?'明确启用三段式：先 .mima-current 环境栏，中间保留非空剧情正文，末尾依次且各仅一个 .mima-gaze、.mima-bond、.mima-abyss、.mima-pulse、.mima-cocoon、.mima-echo、.mima-pets、.mima-nexus。':'旧版自定义选择器结构模式；';
+      add('html_structure_contract',`【本轮 HTML 结构合同：须按 HTML 形式回复；不得只输出纯文本。${shape}必需结构选择器：${htmlContract.requiredSelectors||'(无额外选择器)'}。正文槽：${htmlContract.bodySelector||'(未标注)'}。状态槽：${htmlContract.statusSelector||'(未标注)'}。所有旧状态是历史快照，不得当成当前事实；无法确认的本轮状态请标明待确认。】${sourceSafeShell}`);
     }
     if(options.directorNote||session.directorNote)add('director_note',options.directorNote||session.directorNote);
     return {prompt:chunks.join('\n\n'),sections,memoryTrace};
@@ -2681,9 +2689,39 @@
     validateStoryReply(reply,canonicalAdmissionMeta);
     if(!text(reply))throw new ApiError('E_API_EMPTY_REPLY','输出正则处理后没有有效角色正文；未提交空白消息。');
     const renderedReply=applyRegexForSession(session,reply,'display');
+    if(diagnosticId){
+      // Diagnostic work has no right to cancel an already successful Speech Turn.
+      // Keep raw/canonical/display hashes off History, Memory and the critical path.
+      void (async()=>{
+        try{
+          const regexVersions=activeRegexPacks(session).map(p=>({id:p.id,updatedAt:p.updatedAt||'',rules:arr(p.rules).length}));
+          const hashes=await Promise.all([replyRaw,reply,renderedReply].map(v=>exactDigest(v)));
+          await journal.event(diagnosticId,{type:'transformation_provenance',generationId:pending.id,attempt:pending.attempt,
+            regexVersions,raw:{chars:replyRaw.length,sha256:hashes[0]},canonical:{chars:reply.length,sha256:hashes[1]},
+            display:{chars:renderedReply.length,sha256:hashes[2]},admissionStage:'post_output_regex',
+            contractMode:session.promptSettings?.outputContract?.structureMode||'legacy'});
+        }catch(error){console.warn('HTML 阶段诊断失败，不影响原生成提交',{sessionId:id,generationId:pending.id,error});}
+      })();
+    }
     storyMark('display_regex_done',{chars:renderedReply.length});
+    if(session.promptSettings?.outputContract?.requireHtml&&window.MimaHtmlStructure?.inspect){
+      const displayVerdict=window.MimaHtmlStructure.inspect(renderedReply,canonicalAdmissionMeta.outputContract);
+      if(!displayVerdict.ok){
+        storyMark('display_structure_mismatch',{stage:'display',canonicalValid:true,missing:displayVerdict.missing,
+          rawChars:replyRaw.length,canonicalChars:reply.length,displayChars:renderedReply.length});
+        // A display-only regex must never delete a committed canonical reply or charge a retry.
+      }
+    }
     emitProgress(progress,{phase:'saving',percent:95,detail:'正在保存角色回复…'});
-    if(action==='continue'&&target){
+    const continuationKind=action==='continue'&&target?window.MimaHtmlStructure?.continuationKind?.(target.content,reply,session.promptSettings?.outputContract):'suffix';
+    if(action==='continue'&&target&&continuationKind!=='suffix'){
+      // A complete next reply is a *new* message; appending two complete status shells
+      // would corrupt both. Preserve raw and canonical sources with stable lineage.
+      const full=makeMessage('assistant',reply,session,{source:'continue_full_reply',continuedFromMessageId:target.id,generationSnapshot:snapshot});
+      full.rawContent=replyRaw;full.renderedContent=renderedReply;full.metadata={...(full.metadata||{}),continuationMode:continuationKind==='full_reply'?'separate_complete_reply':'separate_ambiguous_status_overlap',previousMessageId:target.id};
+      session.messages.push(full);
+      storyMark('full_reply_continuation_separated',{previousMessageId:target.id});
+    }else if(action==='continue'&&target){
       const i=session.messages.findIndex(m=>m.id===target.id),previousContent=session.messages[i].content,previousRaw=session.messages[i].rawContent||previousContent;archiveVersion(session.messages[i],'continue_before_append');session.messages[i].content=`${previousContent}\n${reply}`;session.messages[i].rawContent=`${previousRaw}\n${replyRaw}`;session.messages[i].renderedContent=applyRegexForSession(session,session.messages[i].content,'display');session.messages[i].metadata={...(session.messages[i].metadata||{}),continuedAt:nowIso()};session.messages[i].tokenEstimate=estimateTokens(session.messages[i].content);
     }else if(action==='regenerate'&&target){
       const i=session.messages.findIndex(m=>m.id===target.id);
@@ -2794,7 +2832,13 @@
     let target=pending.targetMessageId?session.messages.find(m=>m.id===pending.targetMessageId&&m.role==='assistant'):null;
     if((action==='continue'||pending.targetMessageId)&&!target)throw new ApiError('E_REPLY_RECOVERY_TARGET','原回复目标已不存在，未覆盖其他消息。');
     state=persisted;
-    if(target&&(action==='continue'||action==='regenerate')){
+    const recoveryContinuationKind=action==='continue'&&target?window.MimaHtmlStructure?.continuationKind?.(target.content,recoveredContent,session.promptSettings?.outputContract):'suffix';
+    if(target&&action==='continue'&&recoveryContinuationKind!=='suffix'){
+      const originalTarget=target;
+      target=makeMessage('assistant',recoveredContent,session,{source:'manual_diagnostic_recovery',continuedFromMessageId:originalTarget.id});
+      target.rawContent=raw;target.isEdited=!!htmlRepair;target.metadata={...(target.metadata||{}),continuationMode:recoveryContinuationKind==='full_reply'?'separate_complete_reply':'separate_ambiguous_status_overlap',previousMessageId:originalTarget.id};
+      session.messages.push(target);
+    }else if(target&&(action==='continue'||action==='regenerate')){
       archiveVersion(target,'manual_recovery_before_'+action);
       if(action==='continue'){
         target.rawContent=String(target.rawContent??target.content)+'\n'+raw;target.content+='\n'+recoveredContent;
