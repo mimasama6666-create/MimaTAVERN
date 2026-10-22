@@ -79,3 +79,25 @@
 .atl-pick-real{display:none}
 :host(.atl-live-dock) .atl-pick-real{display:block;border-color:#987ca6;background:#fff;color:#61456b;font-size:11px}
 :host(.atl-live-dock) .atl-pick-real[aria-pressed="true"]{background:#774d89;color:#fff;border-color:#774d89}
+
+/* R19 independently audited: two-level touch toolbar; primary actions never collapse to vertical glyphs. */
+.atl-header{display:flex;flex-direction:column;align-items:stretch;justify-content:center;gap:5px;min-width:0}
+.atl-toolbar-primary,.atl-toolbar-secondary{display:flex;align-items:center;gap:7px;min-width:0;width:100%}
+.atl-toolbar-primary .atl-heading{min-width:0;flex:1 1 auto;overflow:hidden}
+.atl-toolbar-primary .atl-heading b,.atl-toolbar-primary .atl-heading small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.atl-toolbar-secondary{justify-content:flex-end;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:thin}
+.atl-toolbar-secondary button{white-space:nowrap;flex:0 0 auto;font-size:12px;min-height:38px}
+.atl-toolbar-primary button{flex:0 0 auto;white-space:nowrap;min-height:40px;touch-action:manipulation}
+:host(.atl-live-dock) .atl-close{display:none}
+:host(.atl-live-dock) .atl-exit-live{display:inline-flex;align-items:center;justify-content:center}
+@media(max-width:850px){
+ .atl-header{padding:calc(4px + env(safe-area-inset-top,0px)) 8px 4px;min-height:0;gap:4px}
+ .atl-toolbar-primary{gap:5px}
+ .atl-toolbar-primary .atl-close{min-width:42px}
+ .atl-toolbar-primary .atl-exit-live{font-size:11px;padding:6px 8px;min-width:102px}
+ .atl-toolbar-primary .atl-apply{padding:7px 8px;min-width:90px;font-size:12px}
+ .atl-toolbar-secondary{justify-content:flex-start;padding-bottom:2px;gap:6px}
+ .atl-toolbar-secondary button{min-height:44px;font-size:12px;padding:6px 10px}
+ :host(.atl-live-dock) .atl-header{min-height:0;padding:4px 7px}
+}
+@media(max-width:345px){.atl-toolbar-primary .atl-heading small{display:none}.atl-toolbar-primary .atl-heading b{font-size:10px}}

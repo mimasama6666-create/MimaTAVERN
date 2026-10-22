@@ -1149,5 +1149,66 @@
       tx.oncomplete=()=>{db.close();resolve(result);};tx.onabort=()=>{db.close();reject(issue||tx.error||new Error('E_MEMORY_MERGE_UNDO_ABORTED'));};
     });
   }
-  window.MimaLocalStore={getRollingPreflight,putRollingPreflight,clearRollingPreflight,commitHtmlRepair,putHtmlRepairCandidate,getHtmlRepairCandidate,setHtmlRepairCandidateState,listMemoryStages,inspectLegacyMemoryStages,memoryReferenceContract,putFactRangeCandidate,listFactRangeCandidates,commitVerifiedFactRanges,getMergeStage,putMergeStage,getMergeDraft,createMergeDraft,updateMergeDraft,commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,clearSettingsSnapshot,getMemoryJob,getMemoryStage,putMemoryStage,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
+  // R19 crash recovery diagnostics: separate keys under the existing DB/kv schema.
+  // No generation sidecar is authoritative over canonical Session + CAS revision.
+  const generationKey=(id)=>'r19-generation:'+String(id.sessionId)+':'+String(id.generationId)+':'+String(id.attempt);
+  function verifiedGenerationId(id){
+    if(!id||!id.sessionId||!id.generationId||!Number.isSafeInteger(Number(id.attempt))||Number(id.attempt)<1)
+      throw new Error('E_GENERATION_IDENTITY_INVALID');
+    return {sessionId:String(id.sessionId),generationId:String(id.generationId),attempt:Number(id.attempt)};
+  }
+  async function generationReceipt(id,stage,extra={}){
+    const identity=verifiedGenerationId(id),key=generationKey(identity),db=await openDb();
+    return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readwrite'),store=tx.objectStore(STORE);let outcome,issue=null;
+      const request=store.get(key);
+      request.onsuccess=()=>{
+        const old=request.result;
+        if(old!==undefined&&(!old||old.generationId!==identity.generationId||old.attempt!==identity.attempt||old.sessionId!==identity.sessionId)){
+          issue=new Error('E_GENERATION_RECEIPT_CORRUPT');tx.abort();return;
+        }
+        outcome={...identity,stage:String(stage),ownerId:String(extra.ownerId||old?.ownerId||''),
+          startedAt:old?.startedAt||Date.now(),lastSeenAt:Date.now(),
+          fragmentCount:old?.fragmentCount||0,persistedChars:old?.persistedChars||0,
+          ...Object.fromEntries(Object.entries(extra).filter(([k])=>['sourceFingerprint','recordRevision','ownerId','finishKind','errorCode','requestDispatchAttempted'].includes(k)))};
+        store.put(outcome,key);
+      };
+      request.onerror=()=>{issue=request.error;tx.abort()};
+      tx.oncomplete=()=>{db.close();resolve(outcome)};
+      tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_GENERATION_RECEIPT_ABORT'))};
+    });
+  }
+  async function generationAppendFragment(id,ordinal,offset,piece){
+    const identity=verifiedGenerationId(id),key=generationKey(identity),db=await openDb();
+    return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readwrite'),store=tx.objectStore(STORE);let result,issue=null;
+      const req=store.get(key);
+      req.onsuccess=()=>{
+        const old=req.result;
+        if(!old||old.sessionId!==identity.sessionId||old.generationId!==identity.generationId||old.attempt!==identity.attempt){issue=new Error('E_GENERATION_RECEIPT_MISSING');tx.abort();return;}
+        if(ordinal!==old.fragmentCount||offset!==old.persistedChars||typeof piece!=='string'||!piece.length){issue=new Error('E_GENERATION_FRAGMENT_ORDER');tx.abort();return;}
+        result={...old,fragmentCount:ordinal+1,persistedChars:offset+piece.length,lastSeenAt:Date.now(),stage:'RESPONSE_IN_PROGRESS'};
+        store.put({identity,ordinal,offset,piece},key+':fragment:'+ordinal);store.put(result,key);
+      };
+      req.onerror=()=>{issue=req.error;tx.abort()};
+      tx.oncomplete=()=>{db.close();resolve(result)};
+      tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_GENERATION_FRAGMENT_ABORT'))};
+    });
+  }
+  async function generationRead(id){
+    const identity=verifiedGenerationId(id),key=generationKey(identity),receipt=await get(key);
+    if(!receipt)return {receipt:null,text:'',complete:false};
+    if(receipt.sessionId!==identity.sessionId||receipt.generationId!==identity.generationId||receipt.attempt!==identity.attempt)
+      throw new Error('E_GENERATION_RECEIPT_CORRUPT');
+    let text='';
+    for(let i=0;i<receipt.fragmentCount;i++){
+      const f=await get(key+':fragment:'+i);
+      if(!f||f.ordinal!==i||f.offset!==text.length||f.identity?.generationId!==identity.generationId||f.identity?.attempt!==identity.attempt)
+        throw new Error('E_GENERATION_FRAGMENT_INCOMPLETE');
+      text+=f.piece;
+    }
+    if(text.length!==receipt.persistedChars)throw new Error('E_GENERATION_FRAGMENT_INCOMPLETE');
+    return {receipt,text,complete:true};
+  }
+  window.MimaLocalStore={generationReceipt,generationAppendFragment,generationRead,getRollingPreflight,putRollingPreflight,clearRollingPreflight,commitHtmlRepair,putHtmlRepairCandidate,getHtmlRepairCandidate,setHtmlRepairCandidateState,listMemoryStages,inspectLegacyMemoryStages,memoryReferenceContract,putFactRangeCandidate,listFactRangeCandidates,commitVerifiedFactRanges,getMergeStage,putMergeStage,getMergeDraft,createMergeDraft,updateMergeDraft,commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,clearSettingsSnapshot,getMemoryJob,getMemoryStage,putMemoryStage,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
 })();

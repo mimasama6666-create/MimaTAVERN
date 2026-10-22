@@ -416,13 +416,19 @@ function syncPriority(){if(!style?.isConnected)return;
  for(const el of legacy){if(pause){if(!pausedStyles.has(el))pausedStyles.set(el,el.getAttribute('media'));el.setAttribute('media','not all');}else if(pausedStyles.has(el)){const prior=pausedStyles.get(el);if(prior===null)el.removeAttribute('media');else el.setAttribute('media',prior);pausedStyles.delete(el);}}
  for(const [el,prior] of pausedStyles){if(!legacy.includes(el)){if(prior===null)el.removeAttribute('media');else el.setAttribute('media',prior);pausedStyles.delete(el);}}
  const after=plan.order==='legacy-then-atelier';
- if(after)document.head.appendChild(style);
- else {const first=legacy.find(el=>el.parentNode===document.head);if(first)document.head.insertBefore(style,first);else document.head.appendChild(style);}
- style.media=plan.themeEnabled?'':'not all';
+ // Moving an already correctly ordered STYLE node can invalidate computed
+ // style and reset author animation lifetimes. Reorder only when necessary.
+ if(after){const last=[...legacy].reverse().find(el=>el.parentNode===document.head);
+  if(style.parentNode!==document.head||(last&&!(last.compareDocumentPosition(style)&Node.DOCUMENT_POSITION_FOLLOWING)))document.head.appendChild(style);
+ }else{const first=legacy.find(el=>el.parentNode===document.head);
+  if(first){if(style.parentNode!==document.head||!(style.compareDocumentPosition(first)&Node.DOCUMENT_POSITION_FOLLOWING))document.head.insertBefore(style,first);}
+  else if(style.parentNode!==document.head)document.head.appendChild(style);
+ }
+ const nextMedia=plan.themeEnabled?'':'not all';if(style.media!==nextMedia)style.media=nextMedia;
 }
 function activate(project){if(bypass()){deactivate();return;}
  const result=compiledWithAssets(project,'live','atelier');
- try{ensureStyle().textContent=result.css;document.documentElement.setAttribute('data-mima-atelier-active','1');applied=clone(project);commitAssetOwner('atelier',result.used);syncPriority();if(applied.cssPriority==='legacy-only')removeDecor();else drawDecor(applied);window.dispatchEvent(new Event('mima-atelier-presentation-change'));}
+ try{const style=ensureStyle();if(style.textContent!==result.css)style.textContent=result.css;document.documentElement.setAttribute('data-mima-atelier-active','1');applied=clone(project);commitAssetOwner('atelier',result.used);syncPriority();if(applied.cssPriority==='legacy-only')removeDecor();else drawDecor(applied);window.dispatchEvent(new Event('mima-atelier-presentation-change'));}
  catch(e){for(const [src,url] of assetPool)if(![...assetOwners.values()].some(set=>set.has(src))){URL.revokeObjectURL(url);assetPool.delete(src)}throw e;}
 }
 function renderAudit(){
@@ -615,6 +621,7 @@ ready=initialize();ready.catch(()=>{});
 let positionQueued=false;function schedulePositionDecor(){if(positionQueued||!applied?.stickers?.some(s=>!s.hidden))return;positionQueued=true;requestAnimationFrame(()=>{positionQueued=false;positionDecor()});}
  window.addEventListener('resize',schedulePositionDecor);window.visualViewport?.addEventListener('resize',schedulePositionDecor); // Anchored stickers move with their DOM owner during scroll; no read/write measurement on every scroll.
 // App renders portions of the UI asynchronously; keep attachments in sync without touching source containers.
+// Preserve original anchor semantics for arbitrary author CSS and evolving HTML.
 const observer=new MutationObserver(()=>schedulePositionDecor());
 function syncDecorObserver(){observer.disconnect();if(applied?.stickers?.some(s=>!s.hidden)&&document.body)observer.observe(document.body,{childList:true,subtree:true});}
  window.addEventListener('DOMContentLoaded',syncDecorObserver);
@@ -659,6 +666,34 @@ function verifyMountedTheme(project){
       const pseudo=getComputedStyle(document.body,'::before');
       const effective=pseudo.filter||pseudo.webkitFilter||'none';
       if(!effective.includes('blur(')||pseudo.content==='none')conflicts.push({region:'shell',property:'imageBlur',reason:'layer_not_rendered',effective});
+   }
+   // These checks are observational. A user-authored !important rule may
+   // intentionally override the visual field: report the conflict, but never
+   // block canonical publication or edit the author's CSS to enforce parity.
+   const inkRegions=['topbar','composer','button','secondary','field','panel'];
+   for(const key of inkRegions){
+      if(project.regions?.[key]===false)continue;
+      const selectors=TARGETS[key]?.real||'';
+      for(const selector of selectors.split(',').map(v=>v.trim()).filter(Boolean)){
+       const el=document.querySelector(selector);if(!el)continue;
+       const expected=hexToComputedColor(project.elements[key].ink);
+       const actual=getComputedStyle(el).color;
+       if(actual.replace(/\s+/g,'').toLowerCase()!==expected.replace(/\s+/g,'').toLowerCase())
+         warnings.push({region:key,selector,property:'color',reason:'computed_override',expected,effective:actual});
+       break;
+      }
+   }
+   for(const key of ['topbar','composer','button','secondary','field','panel','message']){
+     if(project.regions?.[key]===false)continue;
+     const selector=TARGETS[key]?.real.split(',')[0];const el=selector&&document.querySelector(selector);
+     if(!el)continue;
+     const radius=project.elements[key]?.radius;
+     const blur=Number(project.elements[key]?.blur||0);
+     const cs=getComputedStyle(el);
+     if(blur>0&&!/blur\(/i.test(cs.backdropFilter||cs.webkitBackdropFilter||''))
+       warnings.push({region:key,property:'backdrop-filter',reason:'computed_override',expected:`blur(${blur}px)`,effective:cs.backdropFilter||cs.webkitBackdropFilter||'none'});
+     if(project.elements[key]?.shape==='pill'&&!parseFloat(cs.borderTopLeftRadius))
+       warnings.push({region:key,property:'border-radius',reason:'computed_override',expected:'pill',effective:cs.borderTopLeftRadius});
    }
    const pol=normalizeTextPolicy(project.textPolicy,project.proseTypography);
    if(pol.storyProse.inkMode==='explicit'&&project.regions?.message!==false){

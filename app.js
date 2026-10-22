@@ -37,7 +37,84 @@ let appearancePreviewSurface = 'chat';
 // A generation owns exactly one original session; a selected tab is merely a view.
 const generationOwners = new Map();
 const generationFailures = new Map();
+// Canonical Session verification is distinct from the generation/UI owner.
+const generationReconcileStates = new Map();
 const sessionComposerDrafts = new Map();
+const r19ActiveProbes=new Map();
+const r19GenerationChannel=typeof BroadcastChannel==='function'?new BroadcastChannel('mima-r19-generation-presence'):null;
+if(r19GenerationChannel)r19GenerationChannel.onmessage=event=>{
+ const data=event.data||{};
+ if(data.type==='presence_probe'){
+  const owner=generationOwners.get(data.sessionId);
+  if(owner?.generationId===data.generationId&&owner?.generationAttempt===data.attempt&&owner.traceId){
+   r19GenerationChannel.postMessage({type:'presence_ack',nonce:data.nonce,sessionId:data.sessionId,
+    generationId:data.generationId,attempt:data.attempt,ownerId:owner.traceId});
+  }
+ }else if(data.type==='presence_ack'){
+  const probe=r19ActiveProbes.get(data.nonce);
+  if(probe&&data.sessionId===probe.sessionId&&data.generationId===probe.generationId&&data.attempt===probe.attempt){
+   probe.responses.push(data.ownerId);
+  }
+ }
+};
+async function r19ProbeOtherWindow(identity,ownerId){
+ if(!r19GenerationChannel||!ownerId)return false;
+ const nonce=newGenerationTraceId(),probe={...identity,responses:[]};r19ActiveProbes.set(nonce,probe);
+ try{r19GenerationChannel.postMessage({type:'presence_probe',nonce,...identity});
+  // Lack of an ACK never proves an upstream request is dead; we only display verified positive evidence.
+  await new Promise(resolve=>setTimeout(resolve,350));
+  return probe.responses.includes(ownerId);
+ }finally{r19ActiveProbes.delete(nonce);}
+}
+const R19_LAST_SESSION='mima-r19-last-session-v1',R19_DRAFT_PREFIX='mima-r19-unsent-v1:',R19_POSITION_PREFIX='mima-r19-reader-v1:';
+let r19DraftTimer=null,r19ScrollTimer=null;
+const r19DraftReadBlocked=new Set();
+let r19LastUnknown=null;
+const r19DraftStatus=message=>{const el=qs('r19-draft-status');if(el)el.textContent=message;};
+function r19PersistDraft(id,immediate=true){
+ if(!id||r19DraftReadBlocked.has(id))return;
+ if(r19DraftTimer){clearTimeout(r19DraftTimer);r19DraftTimer=null;}
+ const draft=sessionComposerDrafts.get(id);
+ if(!draft)return;
+ if(!immediate){r19DraftStatus('草稿待保存');r19DraftTimer=setTimeout(()=>r19PersistDraft(id,true),120);return;}
+ try{localStorage.setItem(R19_DRAFT_PREFIX+id,JSON.stringify({version:1,text:draft.text,director:draft.director,updatedAt:Date.now()}));r19DraftStatus('草稿已保存');}
+ catch(err){r19DraftStatus('草稿保存失败');console.error('草稿持久化失败；没有更改剧情',{sessionId:id,stage:'draft_save',error:err});}
+}
+function r19ComposerInput(){if(!currentSessionId||r19DraftReadBlocked.has(currentSessionId))return;const text=qs('story-input')?.value||'',director=qs('director-note')?.value||'';
+ sessionComposerDrafts.set(currentSessionId,{text,director});r19PersistDraft(currentSessionId,false);}
+function r19SavedDraft(id){
+ if(sessionComposerDrafts.has(id)&&!r19DraftReadBlocked.has(id))return sessionComposerDrafts.get(id);
+ try{const raw=localStorage.getItem(R19_DRAFT_PREFIX+id);if(!raw){r19DraftReadBlocked.delete(id);return {text:'',director:''};}
+  const parsed=JSON.parse(raw);if(parsed?.version!==1||typeof parsed.text!=='string'||typeof parsed.director!=='string')throw new Error('E_UI_DRAFT_INVALID');
+  r19DraftReadBlocked.delete(id);return {text:parsed.text,director:parsed.director};
+ }catch(e){r19DraftReadBlocked.add(id);r19DraftStatus('草稿读取失败');console.error('草稿读取失败；保留已有剧情，不写空草稿',{sessionId:id,error:e});return null;}
+}
+function r19PersistReading(id=currentSessionId){
+ if(!id||id!==currentSessionId)return;
+ const box=qs('story-chat-box'),anchor=r19CaptureReadingAnchor(box);
+ if(!anchor||!anchor.id||!arr(currentSessionData?.messages).some(m=>m.id===anchor.id))return;
+ try{localStorage.setItem(R19_POSITION_PREFIX+id,JSON.stringify({version:1,messageId:anchor.id,offset:anchor.offset,scrollTop:anchor.scrollTop,updatedAt:Date.now()}));}
+ catch(e){console.error('阅读锚点偏好写入失败；不会修改剧情',{sessionId:id,error:e});}
+}
+function r19SavedReading(id,data){
+ try{const raw=localStorage.getItem(R19_POSITION_PREFIX+id);if(!raw)return null;
+  const value=JSON.parse(raw);return value.version===1&&typeof value.messageId==='string'&&arr(data?.messages).some(m=>m.id===value.messageId)&&Number.isFinite(value.offset)?value:null;
+ }catch(e){console.error('阅读锚点读取失败',{sessionId:id,error:e});return null;}
+}
+function r19Lifecycle(kind,extra={}){
+ try{const entry={kind,at:Date.now(),build:'r19-p0p1p2-20261023',sessionId:currentSessionId,
+  generationId:currentSessionData?.pendingGeneration?.id||null,attempt:currentSessionData?.pendingGeneration?.attempt||null,
+  persistedStage:currentSessionData?.pendingGeneration?.status||null,
+  wasDiscarded:typeof document.wasDiscarded==='boolean'?document.wasDiscarded:null,
+  navigationType:performance.getEntriesByType?.('navigation')?.[0]?.type||null,...extra};
+  const key='mima-r19-lifecycle-v1',saved=JSON.parse(localStorage.getItem(key)||'[]');
+  localStorage.setItem(key,JSON.stringify([...(Array.isArray(saved)?saved:[]).slice(-23),entry]));
+ }catch(e){console.error('页面生命周期诊断写入失败；不影响剧情',{stage:kind,error:e});}
+}
+window.addEventListener('pagehide',event=>{preserveComposerDraft();r19PersistReading();r19Lifecycle('pagehide',{persisted:!!event.persisted});});
+window.addEventListener('pageshow',event=>{r19Lifecycle('pageshow',{persisted:!!event.persisted});if(event.persisted&&currentSessionId){void checkUnknownGeneration(true);}});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){preserveComposerDraft();r19PersistReading();}r19Lifecycle('visibilitychange',{hidden:document.hidden});});
+
 let generationSerial = 0;
 
 
@@ -120,10 +197,15 @@ function ownsVisibleGeneration(owner){return !!owner && generationOwners.get(own
 function preserveComposerDraft(id=currentSessionId){
     if(!id)return;
     const input=qs('story-input'),director=qs('director-note');
-    sessionComposerDrafts.set(id,{text:input?.value||'',director:director?.value||''});
+    sessionComposerDrafts.set(id,{text:input?.value||'',director:director?.value||''});r19PersistDraft(id,true);
 }
 function restoreComposerDraft(id){
-    const draft=sessionComposerDrafts.get(id)||{text:'',director:''};
+    const draft=r19SavedDraft(id);if(!draft){
+        // Never carry prior session's text into an unverified draft slot.
+        if(qs('story-input'))qs('story-input').value='';if(qs('director-note'))qs('director-note').value='';
+        toggleUIState(false);return;
+    }
+    sessionComposerDrafts.set(id,draft);
     if(qs('story-input'))qs('story-input').value=draft.text;
     if(qs('director-note'))qs('director-note').value=draft.director;
     autoResizeInput();
@@ -132,8 +214,8 @@ function clearSubmittedDraft(owner){
     if(owner.action!=='send'||owner.inputCleared)return;
     owner.inputCleared=true;
     const saved=sessionComposerDrafts.get(owner.sessionId);
-    if(saved?.text===owner.text)sessionComposerDrafts.set(owner.sessionId,{...saved,text:''});
-    if(ownsVisibleGeneration(owner)){
+    if(saved?.text===owner.text){sessionComposerDrafts.set(owner.sessionId,{...saved,text:''});r19PersistDraft(owner.sessionId,true);}
+    if(currentSessionId===owner.sessionId){
         const el=qs('story-input');
         if(el?.value===owner.text){el.value='';autoResizeInput();}
     }
@@ -143,6 +225,12 @@ function restoreGenerationView(){
     clearLiveStream();
     // A previously displayed error belongs only to the original session.
     lastGenerationFailure=generationFailures.get(currentSessionId)||null;
+    r19LastUnknown=null;toggleUnknownGenerationActions(false);qs('generation-recovery-draft')?.classList.add('hidden');qs('generation-copy-draft')?.classList.add('hidden');
+    const durablePending=currentSessionData?.pendingGeneration;
+    if(!lastGenerationFailure&&durablePending?.status==='failed'){
+        lastGenerationFailure={code:durablePending.errorCode||'E_GENERATION_FAILED',message:'上次生成未完成，玩家消息与失败轮仍保留在剧情资料库。',hint:'可以重新核对剧情后点击重说；重说与精确重试是不同操作。',action:durablePending.action||'send'};
+        generationFailures.set(currentSessionId,lastGenerationFailure);
+    }
     currentGenerationAction=owner?.action||null;
     deferredGenerationProgress=null;
     const panel=qs('generation-panel');
@@ -152,7 +240,15 @@ function restoreGenerationView(){
         if(owner.lastProgress)setGenerationProgress(owner.lastProgress);
         if(owner.action==='send'&&!owner.userSaved&&!arr(currentSessionData?.messages).some(m=>m.content===owner.text&&m.role==='user'))renderPendingUserMessage(owner.text);
         if(owner.streamText){const st=ensureLiveStreamBubble(owner);if(st){st.targetText=owner.streamText;st.displayText=owner.streamText;renderLiveStreamText();}}
-    }else if(lastGenerationFailure){showGenerationError(lastGenerationFailure,lastGenerationFailure.action,true);}
+    }else if(durablePending?.status==='prepared'){showUnknownGeneration(durablePending);}
+    else if(lastGenerationFailure){showGenerationError(lastGenerationFailure,lastGenerationFailure.action,true);}
+    const degraded=generationReconcileStates.get(currentSessionId);
+    if(degraded?.status==='degraded'){
+        const panel=qs('generation-panel'),label=qs('generation-label'),detail=qs('generation-detail');
+        panel?.classList.remove('hidden');panel?.classList.add('error');
+        if(label)label.textContent='剧情版本尚未核对 · 已暂停重说';
+        if(detail)detail.textContent=`${degraded.message||'原剧情读取失败'}\n点击「重新核对剧情」即可重试读取，不会自动花费模型额度。`;
+    }
     toggleUIState(generationOwners.size>0);
 }
 function openDrawer(){qs('session-drawer').classList.add('open');qs('drawer-scrim').classList.remove('hidden')}
@@ -437,7 +533,10 @@ async function loadAll() {
         }else {currentSessionId=null;currentSessionData=null;sessionNavigationEpoch++;refreshHeader();refreshChatBox();}
     }
     if(!currentSessionId&&sessions.length){
-        const openingEpoch=sessionNavigationEpoch,opened=await openSession(sessions[0].id,false);
+        let preferred=null;
+        try{const stored=localStorage.getItem(R19_LAST_SESSION);if(stored&&sessions.some(s=>s.id===stored))preferred=stored;}
+        catch(e){console.error('最近剧情偏好读取失败；原剧情未改变',{error:e});}
+        const openingEpoch=sessionNavigationEpoch,opened=await openSession(preferred||sessions[0].id,false);
         if(!opened&&sessionNavigationEpoch===openingEpoch+1)
             throw new Error('E_LIBRARY_DEFAULT_SESSION_UNVERIFIED: 剧情列表已读取，但首个剧情详情未确认；拒绝将空白视为成功');
     }
@@ -464,16 +563,18 @@ async function createSession(){
 }
 async function openSession(id, close=true){
     const epoch=++sessionNavigationEpoch;
-    const res=await fetchStory(`/sessions/${id}`);
+    const res=await fetchStory(`/sessions/${id}/canonical-view`);
     if(epoch!==sessionNavigationEpoch)return null; // Later navigation owns the page.
     if(!res.success||res.data?.id!==id){toast(res.msg||'打开剧情失败：返回了不同的会话');return null;}
     const switched=currentSessionId!==id;
-    if(switched)preserveComposerDraft(currentSessionId);
+    if(switched){preserveComposerDraft(currentSessionId);r19PersistReading(currentSessionId);}
     currentSessionId=id;currentSessionData=res.data;
+    try{localStorage.setItem(R19_LAST_SESSION,id);}catch(e){console.error('最近剧情偏好保存失败',{sessionId:id,error:e});}
     window.MimaChatWallpaper?.onSession?.(id);
-    if(close)closeDrawer();refreshHeader();refreshChatBox();
+    if(close)closeDrawer();refreshHeader();const rememberedAnchor=r19SavedReading(id,res.data);refreshChatBox(rememberedAnchor?{readerAnchorLite:rememberedAnchor,scrollToBottom:false}:{scrollToBottom:true});
     if(switched){restoreComposerDraft(id);}else{preserveComposerDraft(id);}
     restoreGenerationView();
+    if(res.data.pendingGeneration?.status==='prepared')void checkUnknownGeneration(true);
     applyCustomCss();renderSessions();if(isSettingsOpen())renderSettings();
     return res.data;
 }
@@ -2113,6 +2214,12 @@ function renderApiTab(box){
     <div class="form-full"><label class="form-label">Temperature（温度） <span id="api-temp-value" class="value-pill">${temp.toFixed(2)}</span></label><div class="temperature-row"><input id="api-temp-range" class="temp-range" type="range" min="0.1" max="2" step="0.05" value="${temp}" oninput="syncTemperature('range')"><input id="api-temperature" class="field temp-number" type="number" min="0.1" max="2" step="0.05" value="${temp}" oninput="syncTemperature('number')"></div><div class="row-sub">数值越高通常越发散，越低通常越稳定。具体有效范围以模型/中转站为准。</div></div>
     <div><label class="form-label">模型上下文窗口（Tokens，0=未知，不假设硬上限）</label><input id="api-context-window" class="field" type="number" min="0" value="${Number(c.contextWindowTokens||0)}"><div class="row-sub">这是整个输入+输出共享的上下文容量，不等于下方 Max Tokens（只控制输出）。填写服务商确认的容量后会进行预算检查和按需有凭据地规划剧情；留 0 表示容量未知，仍发送完整剧情，由服务商决定能否接收。不用虚构的 32K 限制拦截请求，也不会删除本地 History。</div></div><div><label class="form-label">Max Tokens（最大输出 Tokens，0=不发送）</label><input id="api-max-tokens" class="field" type="number" min="0" value="${Number(c.maxTokens||0)}"></div>
     <div class="form-full"><label class="form-label">续写接口方式</label><select id="api-continuation-mode" class="field"><option value="assistant_tail" ${c.continuationMode!=='deepseek_prefix'?'selected':''}>普通 Chat：生成后续 assistant 段落</option><option value="deepseek_prefix" ${c.continuationMode==='deepseek_prefix'?'selected':''}>已确认支持 DeepSeek prefix 的端点</option></select><div class="row-sub">普通 Chat 保留真实 assistant 尾文，不保证原文前缀补全。prefix 模式仅适用于支持该字段的端点；部分模型要求请求以 user 结束，可能不支持无伪玩家消息的续写。失败会保留原文，不自动换端点或追加指令。</div><label class="check-row"><input id="api-prefix-suffix" type="checkbox" ${c.prefixReturnsSuffix===true?'checked':''}> 前缀接口仅回新后缀（仅在接口确实如此时选择；默认按完整前缀响应校验）</label></div>
+    <div class="form-full"><h4>🧠 Thinking（模型思考与角色意识）</h4><div class="row-sub">原生隐藏推理不能直接读取；若服务商返回推理文本或摘要，咪嘛馆会与剧情正文分开保存。以下角色模式只约束公开的剧情表达，不会修改 Gemini 内部推理。</div>
+    <label class="form-label">剧情思考表达模式</label><select id="api-thinking-mode" class="field"><option value="normal" ${c.thinkingMode==='normal'?'selected':''}>原样模式（不额外插入角色思考指令）</option><option value="character" ${c.thinkingMode==='character'?'selected':''}>角色意识（只写角色可见内心活动，否则正文）</option><option value="prose" ${c.thinkingMode==='prose'?'selected':''}>纯剧情正文（不显示创作分析）</option></select>
+    <label class="form-label">推理强度（只在服务商支持时发送）</label><select id="api-reasoning-effort" class="field"><option value="inherit" ${!c.reasoningEffort||c.reasoningEffort==='inherit'?'selected':''}>默认（不传额外参数）</option><option value="high" ${c.reasoningEffort==='high'?'selected':''}>High</option><option value="medium" ${c.reasoningEffort==='medium'?'selected':''}>Medium</option><option value="low" ${c.reasoningEffort==='low'?'selected':''}>Low</option></select>
+    <label class="check-row"><input id="api-show-thinking" type="checkbox" ${c.showThinking!==false?'checked':''}> 在每条角色回复上方显示可折叠 Thinking（如有）与真实计时</label>
+    <label class="check-row"><input id="api-request-gemini-thoughts" type="checkbox" ${c.requestGeminiThoughts===true?'checked':''}> 请求 Gemini 思考摘要（发送 Google 专用 extra_body；中转不一定支持）</label>
+    <div class="row-sub">观测时间与真实推理时间不同；没有 Thinking 字段时会明确说明。Gemini 3.1 Pro 无法完全关闭原生推理。当前渠道若不支持额外参数会直接报错，不自动换模型或丢弃上下文。</div></div>
     <div><label class="check-row api-check"><input id="api-send-temp" type="checkbox" ${c.sendTemperature!==false?'checked':''}> 发送 Temperature（温度）参数</label><label class="check-row"><input id="api-stream" type="checkbox" ${c.stream?'checked':''}> Streaming（流式传输）</label></div>
     <div class="form-full"><details><summary>Advanced（高级设置）</summary><div class="form-grid advanced-grid"><div class="form-full"><label class="form-label">Chat Endpoint Override（聊天端点覆盖，可空）</label><input id="api-chat-endpoint" class="field" oninput="apiIdentityDraftChanged()" placeholder="例如 /v1/chat/completions" value="${escapeHtml(c.chatEndpoint||'')}"></div><div class="form-full"><label class="form-label">Models Endpoint Override（模型端点覆盖，可空）</label><input id="api-models-endpoint" class="field" placeholder="例如 /v1/models" value="${escapeHtml(c.modelsEndpoint||'')}"></div><div class="form-full"><label class="form-label">Extra Headers JSON（额外请求头 JSON 数据，可空）</label><textarea id="api-extra-headers" class="field textarea" placeholder='{"X-Custom-Key":"value"}'>${escapeHtml(c.extraHeaders||'')}</textarea></div></div></details></div></div>
     <div class="toolbar"><button class="primary-btn" onclick="saveApiSettings()">保存 API（接口）</button><button class="ghost-btn" onclick="testApiConnection()">检查模型列表</button><button class="ghost-btn" onclick="chooseApiImport()">⇧ 导入 API（接口）配置</button></div><div id="api-status" class="api-status"></div></section>
@@ -2131,7 +2238,7 @@ function apiIdentityDraftChanged(){
 function syncApiModelSelect(){const sel=qs('api-model-select'),input=qs('api-model');if(sel?.value&&input){input.value=sel.value;apiIdentityDraftChanged();}}
 function syncTemperature(source){const range=qs('api-temp-range'),num=qs('api-temperature'),pill=qs('api-temp-value');let v=Number(source==='range'?range?.value:num?.value);if(!Number.isFinite(v))v=.85;v=Math.max(.1,Math.min(2,v));if(range&&source!=='range')range.value=v;if(num&&source!=='number')num.value=v.toFixed(2);if(pill)pill.textContent=v.toFixed(2)}
 function populateApiModelSelect(models){const sel=qs('api-model-select');if(!sel)return;const current=qs('api-model')?.value.trim()||'';sel.innerHTML='<option value="">请选择 Model（模型）</option>'+models.map(x=>`<option value="${escapeHtml(x)}" ${x===current?'selected':''}>${escapeHtml(x)}</option>`).join('');if(current&&!models.includes(current)){const opt=document.createElement('option');opt.value=current;opt.textContent=`${current} · 手动`;opt.selected=true;sel.appendChild(opt)}}
-function collectApiForm(){const temp=Math.max(.1,Math.min(2,Number(qs('api-temperature')?.value||.85)));return{apiBase:qs('api-base').value.trim(),apiKey:qs('api-key').value.trim(),model:qs('api-model').value.trim(),chatEndpoint:qs('api-chat-endpoint').value.trim(),modelsEndpoint:qs('api-models-endpoint').value.trim(),extraHeaders:qs('api-extra-headers').value.trim(),sendTemperature:qs('api-send-temp').checked,temperature:temp,stream:qs('api-stream').checked,maxTokens:Number(qs('api-max-tokens').value||0),contextWindowTokens:Number(qs('api-context-window')?.value||0),continuationMode:qs('api-continuation-mode')?.value||'assistant_tail',prefixReturnsSuffix:qs('api-prefix-suffix')?.checked===true}}
+function collectApiForm(){const temp=Math.max(.1,Math.min(2,Number(qs('api-temperature')?.value||.85)));return{apiBase:qs('api-base').value.trim(),apiKey:qs('api-key').value.trim(),model:qs('api-model').value.trim(),chatEndpoint:qs('api-chat-endpoint').value.trim(),modelsEndpoint:qs('api-models-endpoint').value.trim(),extraHeaders:qs('api-extra-headers').value.trim(),sendTemperature:qs('api-send-temp').checked,temperature:temp,stream:qs('api-stream').checked,maxTokens:Number(qs('api-max-tokens').value||0),contextWindowTokens:Number(qs('api-context-window')?.value||0),continuationMode:qs('api-continuation-mode')?.value||'assistant_tail',prefixReturnsSuffix:qs('api-prefix-suffix')?.checked===true,thinkingMode:qs('api-thinking-mode')?.value||'normal',showThinking:qs('api-show-thinking')?.checked!==false,reasoningEffort:qs('api-reasoning-effort')?.value||'inherit',requestGeminiThoughts:qs('api-request-gemini-thoughts')?.checked===true}}
 function saveApiSettings(){
     try{
         // Invalid numbers must not be silently clamped or saved as defaults.
@@ -2158,7 +2265,7 @@ async function testApiConnection(){if(!saveApiSettings())return;const status=qs(
 function describeApiError(e){const message=e?.message||e?.msg||(typeof e==='string'?e:'未知 API 错误');const code=e?.code||(/Failed to fetch|NetworkError|Load failed|CORS/i.test(message)?'E_API_NETWORK_CORS':'E_API_UNKNOWN');const status=Number(e?.status)||0;let hint=e?.hint||'';if(!hint&&code==='E_API_NETWORK_CORS')hint='浏览器 Fetch 在拿不到响应时无法可靠区分 CORS、网络断线、证书错误或“网关错误响应缺少 CORS 头”。如果同一配置一会成功一会失败，更像中转/CDN 节点抖动，而不是你的剧情数据坏了。';if(!hint&&code==='E_STREAM_INTERRUPTED')hint='流式连接已建立后中断。不要自动重复计费；可点击“仅重试本轮”手动重试，玩家消息不会重复写入。';if(!hint&&code==='E_API_REFUSAL_CONTENT')hint='模型把拒绝文本当普通回复返回；正文已拦截且不会进入角色历史或旧版本。可手动重试，不会自动重复计费。';if(!hint)hint='请检查 API（接口）地址、密钥、模型名、参数兼容性以及中转站状态。';return{message,code,status,hint,details:e?.details||'',partialDraft:typeof e?.partialDraft==='string'?e.partialDraft.slice(0,24000):''}}
 function friendlyApiError(e){const i=describeApiError(e);return `${i.code}${i.status?` · HTTP（状态码） ${i.status}`:''} · ${i.message}\n可能原因：${i.hint}`}
 function chooseApiImport(){qs('api-config-file-input').value='';qs('api-config-file-input').click()}
-async function importApiConfigFile(file){if(!file)return;try{const raw=JSON.parse(await file.text()),src=raw.data||raw;const temperature=Number(src.temperature??localStorage.getItem(TEMP_KEY)??.85);MimaStandalone.saveApiConfig({apiBase:src.apiBase||src.baseUrl||src.base_url||'',apiKey:src.apiKey||src.api_key||src.key||'',model:src.model||'',chatEndpoint:src.chatEndpoint||'',modelsEndpoint:src.modelsEndpoint||'',extraHeaders:typeof src.extraHeaders==='string'?src.extraHeaders:src.extraHeaders?JSON.stringify(src.extraHeaders):'',sendTemperature:src.sendTemperature!==false,temperature,stream:!!(src.stream??src.streaming),maxTokens:Number(src.maxTokens||0),contextWindowTokens:Number(src.contextWindowTokens??src.context_window??0),capacityExplicit:true,continuationMode:src.continuationMode==='deepseek_prefix'?'deepseek_prefix':'assistant_tail',prefixReturnsSuffix:src.prefixReturnsSuffix===true});localStorage.setItem(TEMP_KEY,String(temperature));renderApiTab(qs('settings-content'));toast('API（接口）配置已导入到当前浏览器')}catch(e){toast(`API（接口）配置导入失败：${e.message}`)}}
+async function importApiConfigFile(file){if(!file)return;try{const raw=JSON.parse(await file.text()),src=raw.data||raw;const temperature=Number(src.temperature??localStorage.getItem(TEMP_KEY)??.85);MimaStandalone.saveApiConfig({apiBase:src.apiBase||src.baseUrl||src.base_url||'',apiKey:src.apiKey||src.api_key||src.key||'',model:src.model||'',chatEndpoint:src.chatEndpoint||'',modelsEndpoint:src.modelsEndpoint||'',extraHeaders:typeof src.extraHeaders==='string'?src.extraHeaders:src.extraHeaders?JSON.stringify(src.extraHeaders):'',sendTemperature:src.sendTemperature!==false,temperature,stream:!!(src.stream??src.streaming),maxTokens:Number(src.maxTokens||0),contextWindowTokens:Number(src.contextWindowTokens??src.context_window??0),capacityExplicit:true,continuationMode:src.continuationMode==='deepseek_prefix'?'deepseek_prefix':'assistant_tail',prefixReturnsSuffix:src.prefixReturnsSuffix===true,thinkingMode:src.thinkingMode||'normal',showThinking:src.showThinking!==false,reasoningEffort:src.reasoningEffort||'inherit',requestGeminiThoughts:src.requestGeminiThoughts===true});localStorage.setItem(TEMP_KEY,String(temperature));renderApiTab(qs('settings-content'));toast('API（接口）配置已导入到当前浏览器')}catch(e){toast(`API（接口）配置导入失败：${e.message}`)}}
 
 function renderPromptTab(box){box.innerHTML=`<section class="settings-section"><h3>🔬 Prompt Inspector（提示词检查器）</h3><p class="helper">只预览、不调用 LLM。咪嘛馆在模型上下文容量允许时优先提供完整原始剧情；每轮各注入一份已启用 Persona / Preset 与预算内命中的 Worldbook。模型窗口不足时按完整轮次分批裁剪，默认每批10轮且至少保留最新20轮；未有可信来源范围的滚动摘要时暂停，不请求 Provider。原始 History 永远完整保留。v1.1.4 还会显示上游返回的缓存命中统计；没有统计不等于没有缓存。</p><div class="toolbar"><button class="primary-btn" onclick="refreshPromptInspector()">扫描本轮 Prompt（提示词）</button><button class="ghost-btn" onclick="switchSettingsTab('diagnostics')">查看真实请求和异常日志</button></div><div id="prompt-inspector"><div class="row-sub">点击上方按钮生成预览。</div></div></section>`}
 async function refreshPromptInspector(){
@@ -2366,16 +2473,75 @@ window.MimaMemoryPriority={
         });
     }
 };
+function toggleUnknownGenerationActions(visible){
+ for(const id of ['generation-check-unknown','generation-view-draft','generation-takeover-unknown'])qs(id)?.classList.toggle('hidden',!visible);
+}
+function showUnknownGeneration(pending,receipt=null,activeOtherTab=false,verified=false,readError=false){
+ if(!pending||currentGenerationOwner())return;
+ r19LastUnknown={sessionId:currentSessionId,generationId:pending.id,attempt:pending.attempt,verified};
+ const panel=qs('generation-panel'),label=qs('generation-label'),detail=qs('generation-detail'),pct=qs('generation-percent');
+ panel?.classList.remove('hidden','done');panel?.classList.add('error');
+ if(label)label.textContent=activeOtherTab?'已核实其他窗口正在执行原轮':'上一轮生成结果尚未确认';if(pct)pct.textContent='UNKNOWN';
+ if(detail)detail.textContent=`原轮 ID：${pending.id} / 尝试 ${pending.attempt}。${activeOtherTab?'另一个窗口的原生成执行者刚刚回应了存活核对；请在那个窗口查看状态。':'当前窗口没有可验证的原请求执行者，原上游可能已计费。'}${receipt?.persistedChars?`本机已保存 ${receipt.persistedChars} 字符临时流式草稿；它不是正式回复。`:'本机没有已确认可恢复的流式正文。'}${readError?'独立恢复存储读取失败：当前禁止接管或生成，防止未知数据被误判为空。':''}\n免费核对不会调用模型。若原 API 已计费，新尝试可能再次计费。`;
+ toggleUnknownGenerationActions(true);qs('generation-takeover-unknown')?.classList.toggle('hidden',activeOtherTab||!verified);setGenerationRetryVisible(false);
+ qs('generation-reconcile')?.classList.add('hidden');toggleUIState(false);
+}
+async function checkUnknownGeneration(silent=false){
+ const id=currentSessionId;if(!id||generationOwners.has(id))return null;
+ const result=await reconcileCanonicalGenerationSession(id);
+ if(!result||currentSessionId!==id)return null;
+ if(result.pendingGeneration?.status==='prepared'){
+  let receipt=null,activeOtherTab=false,verified=true,readError=false;
+  try{const identity={sessionId:id,generationId:result.pendingGeneration.id,attempt:result.pendingGeneration.attempt};
+   const detail=await MimaLocalStore.generationRead(identity);receipt=detail.receipt;
+   if(receipt?.ownerId)activeOtherTab=await r19ProbeOtherWindow(identity,receipt.ownerId);
+  }
+  catch(e){verified=false;readError=true;console.error('独立临时生成账本读取失败；状态依然 UNKNOWN，禁止旧任务接管',{sessionId:id,error:e});}
+  if(currentSessionId===id)showUnknownGeneration(result.pendingGeneration,receipt,activeOtherTab,verified,readError);
+ }else{
+  r19LastUnknown=null;toggleUnknownGenerationActions(false);
+  if(currentSessionId===id){restoreGenerationView();if(!silent)toast(result.pendingGeneration?.status==='failed'?'核对完成：原生成已失败结算。':'核对完成：以已保存的剧情为准。');}
+ }
+ return result;
+}
+async function viewUnknownGenerationDraft(){
+ const id=r19LastUnknown;if(!id||currentSessionId!==id.sessionId)return;
+ try{
+  const checked=await fetchStory(`/sessions/${encodeURIComponent(id.sessionId)}/canonical-view`);
+  if(!checked.success||currentSessionId!==id.sessionId||checked.data?.pendingGeneration?.id!==id.generationId||checked.data?.pendingGeneration?.attempt!==id.attempt)throw Error('原任务身份已改变，请先免费核对。');
+  const draft=await MimaLocalStore.generationRead(id),pre=qs('generation-recovery-draft');
+  if(pre){pre.classList.remove('hidden');pre.dataset.receivedDraft=draft.text||'';pre.textContent=draft.text||'本机没有已持久确认的流式文字。非流式请求无法从已关闭的页面找回未传给浏览器的正文。';qs('generation-copy-draft')?.classList.toggle('hidden',!draft.text);}
+ }catch(e){console.error('临时生成草稿核验失败',{sessionId:id.sessionId,error:e});toast('草稿核对失败：'+e.message);}
+}
+function copyUnknownGenerationDraft(){
+ const pre=qs('generation-recovery-draft');
+ if(!r19LastUnknown||!pre||pre.classList.contains('hidden'))return toast('请先查看本地草稿');
+ const data=pre.dataset.receivedDraft||'';if(!data)return toast('当前没有已确认的流式正文可复制');
+ if(!navigator.clipboard?.writeText)return toast('此浏览器不能自动复制，请手动选择草稿文字');
+ navigator.clipboard.writeText(data).then(()=>toast('已复制本机暂存文字（不代表正式回复）')).catch(e=>{console.error('复制临时草稿失败',{error:e});toast('自动复制失败，请手动选择文字');});
+}
+async function retryUnknownGeneration(){
+ const id=r19LastUnknown;if(!id||currentSessionId!==id.sessionId)return;
+ const verified=await checkUnknownGeneration(true);
+ if(!verified||!r19LastUnknown?.verified||verified.pendingGeneration?.status!=='prepared'||verified.pendingGeneration?.id!==id.generationId||verified.pendingGeneration?.attempt!==id.attempt)return toast('原生成身份未核实，请重新核对；不调用模型。');
+ if(!confirm('原请求的上游结算仍可能未知，重新生成可能再次收费。新尝试会用同一冻结剧情与新的 attempt，旧回复不能覆盖新回复。确定继续吗？'))return;
+ return triggerChat('','retry',{confirmUnknownTakeover:true,retryParameters:'original'});
+}
 function toggleUIState(generating){
     // The flag remains globally useful for memory priority; composer controls
     // depend only on the selected session's own request.
     isGenerating=generationOwners.size>0;
     if(!isGenerating){for(const release of [...memoryPriorityWaiters])release();}
-    const visible=!!currentGenerationOwner();
+    const verification=generationReconcileStates.get(currentSessionId);
+    const visible=!!currentGenerationOwner()||currentSessionData?.pendingGeneration?.status==='prepared'||r19DraftReadBlocked.has(currentSessionId)||verification?.status==='checking'||verification?.status==='degraded';
     qs('send-btn').disabled=visible;
-    qsa('.quick-actions .chip-btn').forEach(b=>{if(b.id!=='stop-btn')b.disabled=visible});
-    qs('stop-btn').classList.toggle('hidden',!visible);
+    qsa('.quick-actions .chip-btn').forEach(b=>{if(b.id!=='stop-btn'&&b.id!=='generation-reconcile-footer')b.disabled=visible});
+    const footerRecovery=qs('generation-reconcile-footer');
+    if(footerRecovery){footerRecovery.classList.toggle('hidden',verification?.status!=='degraded');footerRecovery.disabled=verification?.status!=='degraded';}
+    qs('stop-btn').classList.toggle('hidden',!currentGenerationOwner());
     qs('story-input').disabled=visible;
+    if(qs('director-note'))qs('director-note').disabled=r19DraftReadBlocked.has(currentSessionId);
+    qs('generation-reconcile')?.classList.toggle('hidden',verification?.status!=='degraded');
 }
 function generationActionLabel(action){return action==='regenerate'?'正在重新生成':action==='continue'?'正在续写':action==='auto_advance'?'正在推进剧情':'正在生成剧情'}
 function syncGenerationMinimizedBadge(percent=0){const badge=qs('generation-minimized-badge'),ring=badge?.querySelector('.generation-minimized-ring'),pct=qs('generation-minimized-percent');if(!badge||!ring||!pct)return;const n=Math.max(2,Math.min(100,Number(percent)||2));badge.style.setProperty('--generation-mini-progress',`${n}%`);ring.style.setProperty('--generation-mini-progress',`${n}%`);pct.textContent=`${Math.round(n)}%`;}
@@ -2452,7 +2618,11 @@ function pumpLiveStream(){
 function handleGenerationProgress(payload,owner=currentGenerationOwner()){
     if(!owner||generationOwners.get(owner.sessionId)!==owner)return;
     owner.lastProgress=payload;
+    if(payload?.generationId&&Number.isFinite(Number(payload.attempt))){
+        owner.generationId=payload.generationId;owner.generationAttempt=Number(payload.attempt);
+    }
     if(payload?.phase==='saved_user'){owner.userSaved=true;clearSubmittedDraft(owner);}
+    if(payload?.thinkingText!==undefined)owner.thinkingProgress=String(payload.thinkingText||'');
     let blocked=false;
     if(payload?.streamText!==undefined){
         const snippet=String(payload.streamText||'');
@@ -2462,9 +2632,12 @@ function handleGenerationProgress(payload,owner=currentGenerationOwner()){
     }
     if(!ownsVisibleGeneration(owner))return;
     if(isSettingsOpen())deferredGenerationProgress={owner,payload};else setGenerationProgress(payload);
-    if(payload?.streamText!==undefined&&!blocked){
+    if((payload?.streamText!==undefined&&!blocked)||payload?.thinkingText!==undefined){
         const st=ensureLiveStreamBubble(owner);
-        if(st){st.targetText=owner.streamText;st.visualPaused=isSettingsOpen();pumpLiveStream();}
+        if(st&&MimaStandalone.getApiConfig()?.showThinking!==false&&payload?.thinkingText!==undefined){
+          if(!st.thinkingNode){st.thinkingNode=document.createElement('details');st.thinkingNode.className='mima-thinking-panel';const head=document.createElement('summary');head.textContent='🧠 模型 Thinking（接收中）';const body=document.createElement('div');body.className='mima-thinking-body';st.thinkingNode.append(head,body);st.node.insertBefore(st.thinkingNode,st.contentNode);}
+          st.thinkingNode.lastElementChild.textContent=owner.thinkingProgress;}
+        if(st&&payload?.streamText!==undefined&&!blocked){st.targetText=owner.streamText;st.visualPaused=isSettingsOpen();pumpLiveStream();}
     }
 }
 function clearLiveStream(){
@@ -2566,34 +2739,108 @@ function resumeGenerationAfterCapacityPreview(){
 }
 function retryFailedGeneration(parameters='original'){
     if(currentGenerationOwner())return toast('当前剧情正在生成中。');
+    if(generationReconcileStates.get(currentSessionId)?.status)return toast('请先核对失败轮的剧情版本，再尝试恢复。');
     const failure=generationFailures.get(currentSessionId);
     if(!failure)return toast('当前剧情没有可重试的失败请求。');
     setGenerationRetryVisible(false);
     return triggerChat('','retry',{retryParameters:parameters==='current'?'current':'original'});
 }
 function dismissGenerationPanel(){qs('generation-panel')?.classList.add('hidden');qs('generation-minimized-badge')?.classList.add('hidden');generationPanelMinimized=false;}
+// Read from canonical IndexedDB, never the possibly stale UI/standalone in-memory cache.
+// Failed reads are a DEGRADED state: do not infer an empty transcript or send a model request.
+async function reconcileCanonicalGenerationSession(sessionId){
+    const previous=generationReconcileStates.get(sessionId);
+    if(previous?.status==='checking'&&previous.promise)return previous.promise;
+    const state={status:'checking',sessionId};
+    generationReconcileStates.set(sessionId,state);
+    toggleUIState(true);
+    const navEpoch=sessionNavigationEpoch;
+    const run=(async()=>{
+        try{
+            const result=await fetchStory(`/sessions/${encodeURIComponent(sessionId)}/canonical-view`);
+            if(!result.success||result.data?.id!==sessionId||!Array.isArray(result.data.messages)||!Number.isFinite(Number(result.data.recordRevision))){
+                const problem=new Error(result.msg||'未能核对最新剧情；原始历史和失败轮均保持不变');
+                problem.code=result.code||'E_STORY_CANONICAL_VIEW_UNVERIFIED';throw problem;
+            }
+            if(generationReconcileStates.get(sessionId)!==state)return null;
+            if(currentSessionId===sessionId&&sessionNavigationEpoch===navEpoch){
+                const box=qs('story-chat-box'),top=box?.scrollTop;
+                currentSessionData=result.data;
+                refreshChatBox({scrollTop:top??0,scrollToBottom:false});refreshHeader();
+            }
+            generationReconcileStates.delete(sessionId);
+            qs('generation-reconcile')?.classList.add('hidden');
+            toggleUIState(false);
+            return result.data;
+        }catch(error){
+            console.error('剧情失败轮 canonical 读取未验证，禁止使用旧 UI 目标重说',{sessionId,stage:'canonical_reconciliation',error});
+            if(generationReconcileStates.get(sessionId)===state){
+                generationReconcileStates.set(sessionId,{status:'degraded',sessionId,code:error.code||'E_STORY_CANONICAL_VIEW_UNVERIFIED',message:error.message});
+                if(currentSessionId===sessionId){
+                    const panel=qs('generation-panel'),label=qs('generation-label'),detail=qs('generation-detail');
+                    panel?.classList.remove('hidden');panel?.classList.add('error');
+                    if(label)label.textContent='剧情版本尚未核对 · 已暂停重说';
+                    if(detail)detail.textContent=`${error.message}\n旧剧情和玩家输入没有删除。点击「重新核对剧情」后再重说，无需刷新页面，也不会自动调用模型。`;
+                    qs('generation-reconcile')?.classList.remove('hidden');
+                }
+                toggleUIState(false);
+            }
+            return null;
+        }
+    })();
+    state.promise=run;
+    return run;
+}
+async function retryGenerationReconciliation(){
+    const id=currentSessionId;
+    if(!id||generationOwners.has(id))return;
+    const result=await reconcileCanonicalGenerationSession(id);
+    if(result&&currentSessionId===id){
+        toast('剧情已核对，可以重新点击「重说」；没有调用模型。');
+        if(result.pendingGeneration?.status==='failed'&&generationFailures.has(id))
+            showGenerationError(generationFailures.get(id),generationFailures.get(id).action,true);
+        else if(result.pendingGeneration?.status!=='failed'){
+            generationFailures.delete(id);dismissGenerationPanel();
+        }
+    }
+}
 async function triggerChat(text,actionType='send',generationOptions={}){
     const targetSessionId=currentSessionId;
     if(!targetSessionId)return toast('请先创建一个剧情。');
+    if(currentSessionData?.pendingGeneration?.status==='prepared'&&!(actionType==='retry'&&generationOptions.confirmUnknownTakeover===true))return toast('原生成尚未结算，请使用免费核对或明确确认新尝试。');
     if(generationOwners.has(targetSessionId))return toast('当前剧情仍在生成，请先停止或等待本轮完成。');
+    const verification=generationReconcileStates.get(targetSessionId);
+    if(verification?.status==='checking')return toast('正在核对剧情，请勿重复提交。');
+    if(verification?.status==='degraded')return toast('剧情尚未核实，请先点击错误面板的「重新核对剧情」。');
+    // Regenerate is a read-modify-write operation, not a UI-cache operation.
+    // Canonical view may include a newly saved user after a failed send.
+    const actionNavigationEpoch=sessionNavigationEpoch;
+    let verifiedSession=null;
+    if(actionType==='regenerate'){
+        verifiedSession=await reconcileCanonicalGenerationSession(targetSessionId);
+        if(!verifiedSession||currentSessionId!==targetSessionId||sessionNavigationEpoch!==actionNavigationEpoch)return;
+        if(generationOwners.has(targetSessionId))return toast('剧情核对期间已有生成开始，请先等待。');
+    }
     const directorNote=qs('director-note').value.trim();
     let targetMessageId=null;
     if(actionType==='regenerate'){
-        const msgs=arr(currentSessionData?.messages);let lastUser=-1,lastAssistant=-1;
+        const msgs=arr(verifiedSession.messages);let lastUser=-1,lastAssistant=-1;
         for(let i=msgs.length-1;i>=0&&(lastUser<0||lastAssistant<0);i--){if(lastUser<0&&msgs[i]?.role==='user')lastUser=i;if(lastAssistant<0&&msgs[i]?.role==='assistant')lastAssistant=i}
         if(lastAssistant>=0&&(lastUser<0||lastAssistant>lastUser))targetMessageId=msgs[lastAssistant]?.id||null;
     }
     contextRecoveryReceipt=null;
-    const owner={turnId:++generationSerial,traceId:newGenerationTraceId(),sessionId:targetSessionId,action:actionType,text:String(text||''),
-        controller:new AbortController(),lastProgress:null,streamText:'',userSaved:false,inputCleared:false,uiStartedAt:performance.now()};
-    generationOwners.set(targetSessionId,owner);generationFailures.delete(targetSessionId);
-    clearLiveStream();
-    if(actionType==='send'&&owner.text.trim())renderPendingUserMessage(owner.text);
-    toggleUIState(true);beginGenerationProgress(actionType);
+    let owner;
+    try{owner={turnId:++generationSerial,traceId:newGenerationTraceId(),sessionId:targetSessionId,action:actionType,text:String(text||''),
+        controller:new AbortController(),lastProgress:null,streamText:'',userSaved:false,inputCleared:false,uiStartedAt:performance.now()};}
+    catch(e){generationFailures.set(targetSessionId,{...describeApiError(e),action:actionType});showGenerationError(e,actionType);return;}
+    generationOwners.set(targetSessionId,owner);generationFailures.delete(targetSessionId);toggleUnknownGenerationActions(false);
     try{
+        clearLiveStream();
+        if(actionType==='send'&&owner.text.trim())renderPendingUserMessage(owner.text);
+        toggleUIState(true);beginGenerationProgress(actionType);
         // Distinct sessions must never abort each other's Direct Reply.
         const res=await fetchStory(`/sessions/${targetSessionId}/chat`,'POST',
-            {text,action:actionType,temperature:getTemp(),directorNote,targetMessageId,regenerationContext:generationOptions.regenerationContext||'original',retryParameters:generationOptions.retryParameters||'original',diagnosticTurnId:String(owner.turnId),diagnosticTraceId:owner.traceId},false,
+            {text,action:actionType,temperature:getTemp(),directorNote,targetMessageId,regenerationContext:generationOptions.regenerationContext||'original',retryParameters:generationOptions.retryParameters||'original',confirmUnknownTakeover:generationOptions.confirmUnknownTakeover===true,expectedRecordRevision:verifiedSession?.recordRevision??null,expectedSourceFingerprint:verifiedSession?MimaStandalone.memorySourceFingerprint(verifiedSession.messages,verifiedSession.messages.length):null,diagnosticTurnId:String(owner.turnId),diagnosticTraceId:owner.traceId},false,
             payload=>handleGenerationProgress(payload,owner),owner.controller.signal);
         if(!res.success&&!res.aborted&&generationOwners.get(targetSessionId)===owner){
             generationFailures.set(targetSessionId,{...describeApiError(res),action:actionType});
@@ -2603,7 +2850,9 @@ async function triggerChat(text,actionType='send',generationOptions={}){
         const preserveReading=visible&&(readingMode||(liveStreamState?.owner===owner&&liveStreamState.followTail===false));
         const preservedReaderAnchor=readingMode&&storyBox?r19CaptureImmersiveAnchor(storyBox):null;
         const preservedScrollTop=preserveReading&&storyBox?storyBox.scrollTop:null;
-        // Final settlement precedes UI unlock; original persisted session is never rewritten to the selected one.
+        // A failed send may have already committed a new user. Keep quick actions
+        // locked until the durable transcript is reconciled, not until UI cleanup.
+        if(!res.success)generationReconcileStates.set(targetSessionId,{status:'checking',sessionId:targetSessionId});
         if(generationOwners.get(targetSessionId)===owner)generationOwners.delete(targetSessionId);
         if(visible){
             clearLiveStream();toggleUIState(false);
@@ -2611,7 +2860,7 @@ async function triggerChat(text,actionType='send',generationOptions={}){
                 toast('生成已停止，主人消息已保留。');
                 setGenerationProgress({percent:100,label:'已停止生成',detail:'已保存的主人消息仍在剧情中。'});
                 const panel=qs('generation-panel');setTimeout(()=>{if(currentSessionId===targetSessionId&&!currentGenerationOwner())panel?.classList.add('hidden')},900);
-                await openSession(targetSessionId,false);
+                await reconcileCanonicalGenerationSession(targetSessionId);
             }else if(res.success){
                 if(res.data?.id!==targetSessionId)throw new Error('E_GENERATION_WRONG_SESSION: 回复的会话身份不匹配');
                 clearSubmittedDraft(owner);
@@ -2621,7 +2870,7 @@ async function triggerChat(text,actionType='send',generationOptions={}){
                 refreshHeader();finishGenerationProgress();
             }else{
                 showGenerationError(res,actionType);toast(`生成失败 · ${res.code||'E_UNKNOWN'}`);
-                await openSession(targetSessionId,false);
+                await reconcileCanonicalGenerationSession(targetSessionId);
             }
             if(preserveReading&&!preservedReaderAnchor&&storyBox&&preservedScrollTop!==null)
                 requestAnimationFrame(()=>{if(currentSessionId===targetSessionId)storyBox.scrollTop=preservedScrollTop});
@@ -2629,13 +2878,18 @@ async function triggerChat(text,actionType='send',generationOptions={}){
             clearSubmittedDraft(owner);
         }else if(!res.aborted){
             console.warn('后台剧情生成失败，已登记在原会话，不影响当前剧情',{sessionId:targetSessionId,turnId:owner.turnId,code:res.code||'E_GENERATION_FAILED'});
+            await reconcileCanonicalGenerationSession(targetSessionId);
+        }else{
+            await reconcileCanonicalGenerationSession(targetSessionId);
         }
         try{await refreshSessionSummaryList();}catch(e){console.error('剧情请求已结束但会话列表刷新失败',{targetSessionId,turnId:owner.turnId,error:e});if(currentSessionId===targetSessionId)toast('剧情状态已保存；会话列表暂时无法刷新');}
     }catch(e){
+        generationReconcileStates.set(targetSessionId,{status:'checking',sessionId:targetSessionId});
         if(generationOwners.get(targetSessionId)===owner)generationOwners.delete(targetSessionId);
         generationFailures.set(targetSessionId,{...describeApiError(e),action:actionType});
         if(currentSessionId===targetSessionId){clearLiveStream();toggleUIState(false);showGenerationError(e,actionType);toast(`生成失败 · ${e?.code||'E_UNKNOWN'}`);}
         else console.error('其他剧情请求异常，原会话仍持有错误信息',{targetSessionId,turnId:owner.turnId,error:e});
+        await reconcileCanonicalGenerationSession(targetSessionId);
     }finally{
         if(generationOwners.get(targetSessionId)===owner)generationOwners.delete(targetSessionId);
         toggleUIState(false);
@@ -2657,7 +2911,15 @@ function autoResizeInput(){const el=qs('story-input');el.style.height='auto';el.
 
 // UI reconciliation never mutates canonical History. Store render snapshots outside session data.
 let r19RenderState={sessionId:null,renderMode:null,roleNames:'',regexToken:'',nodes:new Map()};
-function r19MsgSnapshot(msg){return {role:msg.role||'system',content:msg.content||'',edited:!!msg.isEdited,versions:JSON.stringify(msg.versions||[])};}
+const r19VersionSnapshots=new WeakMap();
+function r19MsgSnapshot(msg){
+ const versions=msg.versions||[],revision=Number(currentSessionData?.recordRevision)||0;
+ const prior=r19VersionSnapshots.get(msg);
+ const cached=prior&&prior.revision===revision&&prior.versions===versions?prior.value:null;
+ const serialized=cached??(versions.length?JSON.stringify(versions):'[]');
+ if(!cached)r19VersionSnapshots.set(msg,{revision,versions,value:serialized});
+ return {role:msg.role||'system',content:msg.content||'',edited:!!msg.isEdited,versions:serialized};
+}
 function r19Unchanged(a,b){return a&&a.role===b.role&&a.content===b.content&&a.edited===b.edited&&a.versions===b.versions;}
 function r19CaptureReadingAnchor(box){
  if(!box)return null;
@@ -2705,7 +2967,11 @@ function refreshChatBox(options={}){
  window.MimaHistoryNavigator?.sync(currentSessionId,messages);
  requestAnimationFrame(()=>{
   if(renderedSessionId!==currentSessionId||renderedEpoch!==sessionNavigationEpoch||renderedLayoutEpoch!==readingLayoutEpoch)return;
-  if(options.readerAnchor&&r19RestoreImmersiveAnchor(box,options.readerAnchor)){}
+  if(options.readerAnchorLite&&next.has(options.readerAnchorLite.messageId)){
+    const node=next.get(options.readerAnchorLite.messageId).el;
+    box.scrollTop+=node.getBoundingClientRect().top-box.getBoundingClientRect().top-options.readerAnchorLite.offset;
+  }
+  else if(options.readerAnchor&&r19RestoreImmersiveAnchor(box,options.readerAnchor)){}
   else if(Number.isFinite(Number(options.scrollTop)))box.scrollTop=Number(options.scrollTop);
   else if(options.scrollToBottom!==false&&!readingMode&&(contextChange||oldBottom))box.scrollTop=box.scrollHeight;
   else if(anchorId){const replacement=next.get(anchorId)?.el;if(replacement)box.scrollTop+=replacement.getBoundingClientRect().top-box.getBoundingClientRect().top-anchorOffset;else box.scrollTop=oldScroll;}
@@ -2715,7 +2981,26 @@ function refreshChatBox(options={}){
 }
 
 function renderPendingUserMessage(text){const box=qs('story-chat-box');if(!box)return;const div=document.createElement('article');div.className='message user-msg pending-user-message';div.dataset.msgId='pending_'+Date.now();const header=document.createElement('div');header.className='msg-header';header.textContent=`${currentUser()?.name||'你'} · 正在提交`;const content=document.createElement('div');content.className='msg-content tavern-story-content';appendRenderedContent(content,cleanCorruptText(text),false);div.append(header,content);box.appendChild(div);box.scrollTop=box.scrollHeight}
-function renderMessageToUI(msg,renderTarget=null){const box=renderTarget||qs('story-chat-box');const liveMsg=()=>currentSessionData?.messages?.find(m=>m.id===msg.id)||msg;const role=msg.role||'system';const div=document.createElement('article');div.className=`message ${role}-msg`;div.dataset.msgId=msg.id||'';const header=document.createElement('div');header.className='msg-header';const roleName=role==='user'?(currentUser()?.name||'你'):(role==='assistant'?(currentChar()?.name||(currentSessionData?.mode==='sandalphon'?'圣德芬':'角色')):'系统');header.textContent=`${roleName}${msg.isEdited?' · 已编辑':''}${msg.versions?.length?` · ${msg.versions.length} 个旧版本`:''}`;div.appendChild(header);const content=document.createElement('div');const allowHtml=role==='assistant'&&currentSessionData?.renderMode==='safe_html';content.className=`msg-content tavern-story-content${allowHtml?' safe-html-content':''}`;const displayText=role==='assistant'&&MimaStandalone.applyRegexForSession?MimaStandalone.applyRegexForSession(currentSessionId,msg.content||'','display'):msg.content||'';appendRenderedContent(content,cleanCorruptText(displayText),allowHtml,role==='assistant');div.appendChild(content);
+function mimaThinkingPanel(record,caption='模型 Thinking（上游返回）'){
+    if(!record||typeof record!=='object')return null;
+    const details=document.createElement('details');details.className='mima-thinking-panel';
+    const summary=document.createElement('summary');summary.className='mima-thinking-summary';
+    const secs=n=>Number.isFinite(n)?(n/1000).toFixed(2)+'s':null;
+    const parts=[caption];
+    if(record.observedThinkingMs!==null&&record.observedThinkingMs!==undefined)parts.push('观测推理段 '+secs(record.observedThinkingMs));
+    else if(record.firstContentWaitMs!==null&&record.firstContentWaitMs!==undefined)parts.push('首字等待 '+secs(record.firstContentWaitMs));
+    else if(record.totalResponseMs!==null&&record.totalResponseMs!==undefined)parts.push('完整响应等待 '+secs(record.totalResponseMs));
+    if(Number.isFinite(record.reasoningTokens))parts.push('推理 '+record.reasoningTokens+' tokens');
+    summary.textContent='🧠 '+parts.join(' · ');details.appendChild(summary);
+    const content=document.createElement('div');content.className='mima-thinking-body';
+    content.textContent=record.text||'上游未返回可查看的思考内容。这不等于模型没有进行内部推理。';
+    details.appendChild(content);
+    const note=document.createElement('div');note.className='mima-thinking-note';
+    note.textContent=record.text?'这是上游提供的推理文本或摘要，不代表内部完整思维链。':'该接口没有提供 Thinking 文本。';
+    if(record.timingNote)note.textContent+=' '+record.timingNote;
+    details.appendChild(note);return details;
+}
+function renderMessageToUI(msg,renderTarget=null){const box=renderTarget||qs('story-chat-box');const liveMsg=()=>currentSessionData?.messages?.find(m=>m.id===msg.id)||msg;const role=msg.role||'system';const div=document.createElement('article');div.className=`message ${role}-msg`;div.dataset.msgId=msg.id||'';const header=document.createElement('div');header.className='msg-header';const roleName=role==='user'?(currentUser()?.name||'你'):(role==='assistant'?(currentChar()?.name||(currentSessionData?.mode==='sandalphon'?'圣德芬':'角色')):'系统');header.textContent=`${roleName}${msg.isEdited?' · 已编辑':''}${msg.versions?.length?` · ${msg.versions.length} 个旧版本`:''}`;div.appendChild(header);if(role==='assistant'&&MimaStandalone.getApiConfig()?.showThinking!==false){const r=msg.metadata?.thinking;const panel=mimaThinkingPanel(r);if(panel)div.appendChild(panel);for(const [i,item] of (msg.metadata?.thinkingContinuations||[]).entries()){const extra=mimaThinkingPanel(item,'续写 Thinking '+(i+1));if(extra)div.appendChild(extra);}}const content=document.createElement('div');const allowHtml=role==='assistant'&&currentSessionData?.renderMode==='safe_html';content.className=`msg-content tavern-story-content${allowHtml?' safe-html-content':''}`;const displayText=role==='assistant'&&MimaStandalone.applyRegexForSession?MimaStandalone.applyRegexForSession(currentSessionId,msg.content||'','display'):msg.content||'';appendRenderedContent(content,cleanCorruptText(displayText),allowHtml,role==='assistant');div.appendChild(content);
 if(allowHtml&&currentSessionData?.promptSettings?.outputContract?.requireHtml&&window.MimaHtmlStructure?.inspect){
   const contract=currentSessionData.promptSettings.outputContract;
   try{
@@ -3013,7 +3298,7 @@ function restoreLegacyFont(){
 }
 
 // Expose inline handlers
-Object.assign(window,{importCurrentSessionAsSettingTemplate,chooseIndependentTemplate,saveIndependentTemplate,copyIndependentTemplate,setIndependentTemplateDefault,deleteIndependentTemplate,setImmersiveReading,saveCurrentSettingTemplate,duplicateSettingTemplate,setDefaultSettingTemplate,deleteSettingTemplate,exportSettingTemplate,importSettingTemplate,refreshSettingTemplateChoices,renderSettingTemplatePreview,manualRollingSummary,mimaFilterLibrary,mimaToggleFavorite,goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,choosePngResourceInspection,playInspectedPngInCompat,savePngSelectedResources,exportPngInspection,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,exportStoryTranscript,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,loadMemoryModels,selectMemoryModel,startFactMemoryEdit,cancelFactMemoryEdit,saveFactMemoryEdit,toggleMergeFactSelection,previewFactMemoryMerge,cancelFactMemoryMerge,confirmFactMemoryMerge,undoFactMemoryMerge,clearCoreMemory,deleteFactMemory,clearAllFactMemories,revokeRollingMemory,restoreRollingMemory,discardMemoryCandidate,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,mimaLoadLargeCssForEdit,stopAtelierAndRestoreCss,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,apiIdentityDraftChanged,syncTemperature,updateStoryTypography,resetStoryTypography,setAppearancePreviewSurface,setBuiltInTheme,dismissGenerationPanel,retryFailedGeneration,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,regenerateCurrentMsg,continueMsg,autoAdvance,restoreMessageVersion,stopGeneration,toggleGenerationPanelMinimize,restoreGenerationPanel,saveGenerationContextAndPreview,resumeGenerationAfterCapacityPreview});
+Object.assign(window,{importCurrentSessionAsSettingTemplate,chooseIndependentTemplate,saveIndependentTemplate,copyIndependentTemplate,setIndependentTemplateDefault,deleteIndependentTemplate,setImmersiveReading,saveCurrentSettingTemplate,duplicateSettingTemplate,setDefaultSettingTemplate,deleteSettingTemplate,exportSettingTemplate,importSettingTemplate,refreshSettingTemplateChoices,renderSettingTemplatePreview,manualRollingSummary,mimaFilterLibrary,mimaToggleFavorite,goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,choosePngResourceInspection,playInspectedPngInCompat,savePngSelectedResources,exportPngInspection,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,exportStoryTranscript,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,loadMemoryModels,selectMemoryModel,startFactMemoryEdit,cancelFactMemoryEdit,saveFactMemoryEdit,toggleMergeFactSelection,previewFactMemoryMerge,cancelFactMemoryMerge,confirmFactMemoryMerge,undoFactMemoryMerge,clearCoreMemory,deleteFactMemory,clearAllFactMemories,revokeRollingMemory,restoreRollingMemory,discardMemoryCandidate,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,mimaLoadLargeCssForEdit,stopAtelierAndRestoreCss,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,apiIdentityDraftChanged,syncTemperature,updateStoryTypography,resetStoryTypography,setAppearancePreviewSurface,setBuiltInTheme,dismissGenerationPanel,retryFailedGeneration,retryGenerationReconciliation,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,regenerateCurrentMsg,continueMsg,autoAdvance,restoreMessageVersion,stopGeneration,toggleGenerationPanelMinimize,restoreGenerationPanel,saveGenerationContextAndPreview,resumeGenerationAfterCapacityPreview});
 
 
 window.MimaTavernBridge={
@@ -3071,7 +3356,9 @@ async function mimaBoot(){
             applyStoryTypography();
             restoreLegacyFont();
             try{fontRecords=await MimaFontManager.init()}catch(e){console.warn('本地字体库启动失败',e)}
-            qs('story-input').addEventListener('input',autoResizeInput);
+            qs('story-input').addEventListener('input',()=>{autoResizeInput();r19ComposerInput();});
+    qs('director-note').addEventListener('input',r19ComposerInput);
+    qs('story-chat-box')?.addEventListener('scroll',()=>{if(r19ScrollTimer)clearTimeout(r19ScrollTimer);r19ScrollTimer=setTimeout(()=>{r19ScrollTimer=null;r19PersistReading();},320);},{passive:true});
     bindStoryStreamScroll();setupImmersiveReading();
     syncComposerContentState();
     qs('session-file-input').addEventListener('change',e=>importSessionFile(e.target.files?.[0]));

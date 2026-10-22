@@ -1084,3 +1084,11 @@ body.mima-reading-mode #story-chat-box[data-mima-chat-wallpaper="1"]::before{
 .app-shell>.composer-shell>.generation-panel .generation-error-dismiss{display:none;}
 .app-shell>.composer-shell>.generation-panel.error .generation-error-dismiss{display:inline-flex;align-items:center;justify-content:center;flex:none;width:40px;height:40px;min-width:40px;min-height:40px;padding:0;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--text);font-size:23px;line-height:1;cursor:pointer;touch-action:manipulation;}
 .app-shell>.composer-shell>.generation-panel.error.minimized{display:none!important;}
+
+/* Thinking disclosure: independent of custom story HTML/CSS and mobile friendly. */
+.mima-thinking-panel{margin:8px 10px 10px;border:1px solid rgba(148,163,184,.4);border-radius:12px;background:rgba(128,128,128,.075);color:inherit;overflow:hidden;max-width:100%;}
+.mima-thinking-summary{cursor:pointer;padding:10px 12px;font-size:.86rem;font-weight:600;line-height:1.5;overflow-wrap:anywhere;list-style-position:inside;}
+.mima-thinking-summary:focus-visible{outline:2px solid currentColor;outline-offset:-2px;}
+.mima-thinking-body{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;padding:10px 12px;border-top:1px solid rgba(148,163,184,.25);max-height:360px;overflow:auto;font-size:.88rem;line-height:1.65;user-select:text;-webkit-user-select:text;}
+.mima-thinking-note{padding:6px 12px 10px;font-size:.74rem;opacity:.75;line-height:1.5;}
+@media(max-width:480px){.mima-thinking-panel{margin:6px 4px 10px}.mima-thinking-body{max-height:45vh;}}
