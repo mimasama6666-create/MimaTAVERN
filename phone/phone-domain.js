@@ -45,10 +45,12 @@
    const bytes=new TextEncoder().encode(raw),digest=await crypto.subtle.digest('SHA-256',bytes);
    return [...new Uint8Array(digest)].map(n=>n.toString(16).padStart(2,'0')).join('');}
  async function addContact(maskId){const mask=MimaPhoneResources.getCharMask(maskId),commandId='contact:'+mask.id;
-  return S().command(commandId,['contacts'],'add_contact',async t=>{const row={id:mask.id,maskId:mask.id,displayNick:mask.name,remark:'',signature:'',avatarRef:'',createdAt:now()};await t.add('contacts',row);return row;});}
+  return S().command(commandId,['contacts'],'add_contact',async t=>{const row={id:mask.id,maskId:mask.id,displayNick:mask.name,remark:'',signature:'',avatarRef:'',avatarAssetId:'',createdAt:now()};await t.add('contacts',row);return row;});}
  async function contacts(){return S().all('contacts');}
- async function updateContact(maskId,patch){must((await S().read('contacts',maskId)), '联系人不存在');return S().transaction(['contacts','conversations'],'readwrite',async t=>{
-   const row=await t.get('contacts',maskId);must(row,'联系人已删除');const next={...row,displayNick:String(patch.displayNick??row.displayNick).slice(0,80),remark:String(patch.remark??row.remark).slice(0,200),signature:String(patch.signature??row.signature).slice(0,300)};
+ async function updateContact(maskId,patch){must((await S().read('contacts',maskId)), '联系人不存在');
+  if(Object.hasOwn(patch,'avatarAssetId')&&patch.avatarAssetId){const asset=await S().read('media',patch.avatarAssetId);must(asset&&asset.ownerId==='owner'&&asset.mime?.startsWith('image/'),'头像不是有效的小手机本地图片');}
+  return S().transaction(['contacts','conversations'],'readwrite',async t=>{
+   const row=await t.get('contacts',maskId);must(row,'联系人已删除');const next={...row,displayNick:String(patch.displayNick??row.displayNick).slice(0,80),remark:String(patch.remark??row.remark).slice(0,200),signature:String(patch.signature??row.signature).slice(0,300),avatarAssetId:Object.hasOwn(patch,'avatarAssetId')?String(patch.avatarAssetId||''):String(row.avatarAssetId||'')};
    await t.put('contacts',next);
    if(JSON.stringify(row)!==JSON.stringify(next))for(const c of await t.all('conversations'))if(c.memberIds.includes(maskId))
      await t.put('conversations',{...c,recordRevision:c.recordRevision+1,updatedAt:now()});

@@ -7,7 +7,21 @@
  function listUserMasks(){return state().masks.filter(m=>m.type==='user'&&m.enabled!==false);}
  function getUserMask(id){const x=getMask(id);if(x.type!=='user')throw Error('选中资源不是 User 面具');return x;}
  function getCharMask(id){const x=getMask(id);if(x.type!=='character')throw Error('选中资源不是 Char 面具');return x;}
- function resolveApiConfig(){const cfg=core().getApiConfig();if(!cfg?.model||!cfg?.apiBase)throw Error('先在咪嘛馆设置有效的 API 地址与模型');return cfg;}
+ function resolveApiConfig(phonePrefs){
+   if(phonePrefs?.phoneApiMode==='custom'){
+     // NEVER fill missing independent values from the story API. Independent means isolated.
+     const custom=phonePrefs.phoneApi||{};
+     if(!String(custom.apiBase||'').trim()||!String(custom.model||'').trim())throw Error('小手机独立 API 未设置地址或模型。请在「我的手机 → API 设置」填写，绝不自动切回剧情 API');
+     const cfg={apiBase:String(custom.apiBase).trim(),apiKey:String(custom.apiKey||''),model:String(custom.model).trim(),
+       chatEndpoint:String(custom.chatEndpoint||''),modelsEndpoint:String(custom.modelsEndpoint||''),extraHeaders:String(custom.extraHeaders||''),
+       sendTemperature:custom.sendTemperature!==false,temperature:Number.isFinite(Number(custom.temperature))?Number(custom.temperature):0.85,
+       stream:!!custom.stream,maxTokens:Number(custom.maxTokens)||0,contextWindowTokens:0,
+       continuationMode:custom.continuationMode||'assistant_tail',prefixReturnsSuffix:!!custom.prefixReturnsSuffix,thinkingMode:custom.thinkingMode||'normal',showThinking:custom.showThinking!==false,reasoningEffort:custom.reasoningEffort||'inherit',requestGeminiThoughts:!!custom.requestGeminiThoughts};
+     // Missing keys are valid only for users' local servers. Validation occurs in original provider transport.
+     return cfg;
+   }
+   const cfg=core().getApiConfig();if(!cfg?.model||!cfg?.apiBase)throw Error('主剧情 API 未配置有效的地址与模型，请设置 API 或启用手机独立配置');return cfg;
+ }
  function snapshotSelection({userMaskId,charMaskIds=[],presetIds=[],worldbookIds=[],visibleText=''}={}){
   const s=state();const users=userMaskId?getUserMask(userMaskId):null;
   const chars=charMaskIds.map(getCharMask);

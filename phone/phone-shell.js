@@ -1,7 +1,7 @@
 /* Phone OS. Every UI action invokes a real phone-domain command. */
 (()=>{'use strict';
  const D=()=>MimaPhoneDomain,R=()=>MimaPhoneResources,S=()=>MimaPhoneStore;
- const state={intentKeys:new Map(),open:false,screen:'messages',threadId:null,momentId:null,loading:false,groupSending:false,sending:false,recording:null,urls:[],notice:'',replyToId:null,chatSearch:'',noticeTimer:null,profileBack:'contacts',contactId:null,maskCache:new Map()};
+ const state={intentKeys:new Map(),open:false,screen:'messages',threadId:null,momentId:null,loading:false,groupSending:false,sending:false,recording:null,urls:[],notice:'',replyToId:null,chatSearch:'',noticeTimer:null,profileBack:'contacts',contactId:null,maskCache:new Map(),typingActor:null,typingThreadId:null,previousScrollY:0,animatedMessageIds:new Set()};
  const root=()=>document.getElementById('mima-phone-root');
  const dom=(name,cls='',text='')=>{const node=document.createElement(name);if(cls)node.className=cls;if(text!==undefined&&text!=='')node.textContent=String(text);return node;};
  const button=(label,handler,cls='')=>{const b=dom('button','phone-btn '+cls,label);b.type='button';b.onclick=()=>safe(handler);return b;};
@@ -19,13 +19,43 @@
    },state.notice.includes('失败')||state.notice.includes('错误')?7500:4000);
  }
  async function safe(fn){try{const result=await fn();return result;}catch(e){console.error('[Mima Phone] 未完成操作（canonical 状态未伪装成功）',e);say(e?.message||String(e));}}
- function syncViewport(){if(!state.open)return;const vv=window.visualViewport;
-   if(vv&&vv.height>0)root().style.setProperty('--phone-visible-height',Math.floor(vv.height)+'px');
+ function syncViewport(){
+   if(!state.open)return;
+   const r=root(),vv=window.visualViewport;
+   if(vv&&vv.height>0){
+     // On iOS Safari the keyboard shrinks/moves the *visual* viewport, not the layout viewport.
+     // A fixed page anchored only by vv.height jumps above the visible screen on focus.
+     r.style.setProperty('--phone-vv-top',Math.max(0,vv.offsetTop||0)+'px');
+     r.style.setProperty('--phone-vv-left',Math.max(0,vv.offsetLeft||0)+'px');
+     r.style.setProperty('--phone-vv-width',Math.floor(vv.width)+'px');
+     r.style.setProperty('--phone-visible-height',Math.floor(vv.height)+'px');
+     const keyboard=vv.height<window.innerHeight-110;
+     r.classList.toggle('phone-keyboard-open',keyboard);
+   }else{
+     r.style.setProperty('--phone-vv-top','0px');r.style.setProperty('--phone-vv-left','0px');
+     r.style.setProperty('--phone-visible-height',window.innerHeight+'px');
+   }
  }
- async function open(){if(state.open)return;await S().open();R().state();state.open=true;root().hidden=false;document.body.classList.add('mima-phone-active');
-   syncViewport();window.visualViewport?.addEventListener('resize',syncViewport);window.addEventListener('resize',syncViewport);await render();}
-
- function close(){if(state.noticeTimer){clearTimeout(state.noticeTimer);state.noticeTimer=null;}state.notice='';if(state.recording){say('录音进行中，请先停止录音');return;}state.open=false;window.visualViewport?.removeEventListener('resize',syncViewport);window.removeEventListener('resize',syncViewport);root().style.removeProperty('--phone-visible-height');clearURLs();root().hidden=true;document.body.classList.remove('mima-phone-active');}
+ function viewportFocus(){requestAnimationFrame(syncViewport);}
+ async function open(){if(state.open)return;await S().open();R().state();state.open=true;
+   state.previousScrollY=window.scrollY;document.body.style.setProperty('--mima-phone-lock-top',(-state.previousScrollY)+'px');
+   root().hidden=false;document.body.classList.add('mima-phone-active');
+   syncViewport();window.visualViewport?.addEventListener('resize',syncViewport);
+   window.visualViewport?.addEventListener('scroll',syncViewport);
+   window.addEventListener('resize',syncViewport);
+   root().addEventListener('focusin',viewportFocus);root().addEventListener('focusout',viewportFocus);
+   await render();}
+ function close(){if(state.recording){say('录音进行中，请先停止录音');return;}
+   if(state.noticeTimer){clearTimeout(state.noticeTimer);state.noticeTimer=null;}state.notice='';state.open=false;
+   window.visualViewport?.removeEventListener('resize',syncViewport);
+   window.visualViewport?.removeEventListener('scroll',syncViewport);
+   window.removeEventListener('resize',syncViewport);
+   root().removeEventListener('focusin',viewportFocus);root().removeEventListener('focusout',viewportFocus);
+   for(const key of ['--phone-visible-height','--phone-vv-top','--phone-vv-left','--phone-vv-width'])root().style.removeProperty(key);
+   root().classList.remove('phone-keyboard-open');clearURLs();root().hidden=true;
+   document.body.classList.remove('mima-phone-active');document.body.style.removeProperty('--mima-phone-lock-top');
+   window.scrollTo(0,state.previousScrollY);
+ }
  function navigate(screen,detail=null){
    if(screen==='chat'&&state.threadId!==detail){state.replyToId=null;state.chatSearch='';}
    if(screen==='profile'){state.profileBack=state.screen;state.contactId=detail;}
@@ -39,6 +69,10 @@
    if(actorId==='group'){node.textContent='👥';return node;}
    const mask=state.maskCache.get(actorId)||null;
    const url=contact?.avatarRef||mask?.avatar||'';
+   if(contact?.avatarAssetId){MimaPhoneMedia.load(contact.avatarAssetId).then(asset=>{
+       if(!node.isConnected||!asset?.mime?.startsWith('image/'))return;
+       const pic=dom('img');pic.alt='头像';pic.src=photoURL(asset);node.replaceChildren(pic);
+     }).catch(err=>console.warn('本地头像读取失败，显示原始头像',err));}
    if(url){const pic=dom('img');pic.alt='';pic.loading='lazy';pic.referrerPolicy='no-referrer';pic.src=url;
      pic.onerror=()=>{pic.remove();node.textContent=(contact?.displayNick||mask?.name||'?').slice(0,1);};node.append(pic);
    }else node.textContent=(contact?.displayNick||mask?.name||'?').slice(0,1);
@@ -68,9 +102,10 @@
    if(state.screen==='chat'){
      const row=await D().thread(state.threadId),people=await D().contacts();
      const person=row.kind==='private'?people.find(x=>x.id===row.memberIds[0]):null;
-     h.append(face(row.kind==='private'?row.memberIds[0]:'group',person));
+     const avatar=face(row.kind==='private'?row.memberIds[0]:'group',person);if(person){avatar.classList.add('phone-tappable-avatar');avatar.role='button';avatar.tabIndex=0;avatar.onclick=()=>safe(()=>navigate('profile',person.id));avatar.onkeydown=e=>{if(e.key==='Enter')avatar.click();};}h.append(avatar);
      const who=dom('div','phone-header-contact');who.append(dom('strong','phone-header-title',row.kind==='group'?row.title:person?.displayNick||row.memberIds[0]));
-     who.append(dom('small','',row.kind==='group'?row.memberIds.length+' 位群成员':'手机聊天 · 独立会话'));h.append(who);
+     who.append(dom('small','',row.kind==='group'?row.memberIds.length+' 位群成员':'聊天 · 手机独立记录'));if(person){who.classList.add('phone-tappable-avatar');who.onclick=()=>safe(()=>navigate('profile',person.id));}h.append(who);
+     h.append(button('⌕',()=>{const finder=root().querySelector('.phone-chat-search');if(!finder)return;finder.open=!finder.open;if(finder.open)finder.querySelector('input')?.focus({preventScroll:true});},'phone-head-search'));
      h.append(button('•••',()=>navigate(row.kind==='group'?'group-edit':'profile',row.memberIds[0]),'phone-head-action'));
    }else{h.append(dom('strong','phone-header-title',title));
      if(detail)h.append(dom('span','phone-head-spacer'));
@@ -127,19 +162,45 @@
    if(!settings.userMaskId)main.append(button('选择 User 面具',()=>navigate('settings'),'phone-primary'));
    search.oninput=()=>{const key=search.value.trim().toLowerCase();for(const row of list.querySelectorAll('.phone-contact-row'))row.hidden=!row.textContent.toLowerCase().includes(key);};
  }
+ async function editContact(person,mask){
+   const overlay=dom('div','phone-modal-backdrop');const pane=dom('form','phone-modal phone-contact-editor');
+   pane.append(dom('h3','','编辑联系人资料'));
+   const hint=dom('p','phone-helper','这里的网名、头像和签名仅属于小手机，不会改变咪嘛馆角色卡。');pane.append(hint);
+   const field=(title,val,tag='input')=>{const label=dom('label','phone-edit-field');label.append(dom('span','',title));const control=input(title,val,tag);label.append(control);pane.append(label);return control;};
+   const nick=field('手机网名',person.displayNick),remark=field('备注',person.remark||''),signature=field('个性签名',person.signature||'','textarea');signature.rows=2;
+   const avatarLabel=dom('label','phone-edit-field');avatarLabel.append(dom('span','','更换小手机头像'));
+   const picker=dom('input','phone-avatar-picker');picker.type='file';picker.accept='image/png,image/jpeg,image/webp,image/gif';avatarLabel.append(picker);pane.append(avatarLabel);
+   const feedback=dom('p','phone-helper','支持 JPG、PNG、WebP、GIF，图片保存在手机本地媒体库。');pane.append(feedback);
+   const controls=dom('div','phone-edit-controls');
+   controls.append(button('取消',()=>overlay.remove()));
+   const reset=button('恢复角色原头像',()=>{picker.value='';picker.dataset.clearAvatar='yes';feedback.textContent='保存后使用角色卡原头像';});controls.append(reset);
+   const save=dom('button','phone-btn phone-primary','保存资料');save.type='submit';controls.append(save);pane.append(controls);
+   pane.onsubmit=e=>{e.preventDefault();safe(async()=>{const name=nick.value.trim();if(!name)throw Error('手机网名不能为空');save.disabled=true;
+     try{let avatarAssetId=person.avatarAssetId||'';if(picker.dataset.clearAvatar==='yes')avatarAssetId='';
+       else if(picker.files?.[0]){const file=picker.files[0];if(!['image/jpeg','image/png','image/webp','image/gif'].includes(file.type))throw Error('请选择支持的图片格式');if(file.size>8*1024*1024)throw Error('头像不能超过 8MB');const saved=await MimaPhoneMedia.save(file);avatarAssetId=saved.id;}
+       await D().updateContact(person.id,{displayNick:name,remark:remark.value,signature:signature.value,avatarAssetId});overlay.remove();await render();say('联系人资料已保存在小手机');
+     }finally{save.disabled=false;}});};
+   overlay.append(pane);overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.remove();});root().append(overlay);nick.focus({preventScroll:true});
+ }
  async function screenProfile(main){
    const person=(await D().contacts()).find(x=>x.id===state.contactId);if(!person)throw Error('联系人不存在');
    const mask=R().getMask(person.maskId),prefs=await D().settings();main.classList.add('phone-profile-screen');
    const hero=dom('section','phone-profile-hero');hero.append(face(person.id,person,true),dom('h1','',person.displayNick));
-   if(person.displayNick!==mask.name)hero.append(dom('small','','角色真名：'+mask.name));
-   hero.append(dom('p','',person.signature||'还没有个性签名'));main.append(hero);
+   hero.append(dom('small','','角色名称：'+mask.name));hero.append(dom('p','',person.signature||'还没有个性签名'));main.append(hero);
    const actions=dom('div','phone-profile-actions');actions.append(button('发消息',async()=>{const chat=await D().createConversation([person.id]);await navigate('chat',chat.id);},'phone-primary'));
-   actions.append(button('手机记忆',()=>{state.threadId=person.id;return navigate('memory');}));main.append(actions);
-   const details=box(main,'联系资料');details.append(dom('div','phone-setting-text','手机网名只影响小手机，不修改角色面具。'));
-   line(details,button('修改网名',async()=>{const name=prompt('手机网名',person.displayNick);if(name===null)return;await D().updateContact(person.id,{displayNick:name||mask.name});await render();}),button('编辑备注与签名',async()=>{
-     const remark=prompt('备注',person.remark||'');if(remark===null)return;const signature=prompt('个性签名',person.signature||'');if(signature===null)return;
-     await D().updateContact(person.id,{remark,signature});await render();}));
-   const palette=box(main,'我发送的消息气泡颜色');palette.append(dom('p','phone-setting-text','对方的气泡始终为浅灰色，此设置只改变自己的消息外观。'));tones(palette,prefs);
+   actions.append(button('编辑头像和网名',()=>editContact(person,mask),'phone-profile-edit'));
+   main.append(actions);
+   const details=box(main,'手机联系人资料');
+   const display=(title,value)=>{const row=dom('div','phone-info-row');row.append(dom('span','',title),dom('strong','',value||'未设置'));details.append(row);};
+   display('手机网名',person.displayNick);display('备注',person.remark);display('个性签名',person.signature);
+   details.append(button('修改联系人资料',()=>editContact(person,mask),'phone-profile-edit'));
+   const biography=box(main,'角色资料（只读）');biography.append(dom('p','phone-setting-text','读取角色原有面具，仅展示，不改变人物设定或小手机记录。'));
+   for(const [title,value] of [['角色简介',mask.description||mask.content],['背景设定',mask.scenario],['角色第一条消息',mask.firstMessage],['创作者备注',mask.creatorNotes]]){
+     if(!value)continue;const block=dom('details','phone-bio-item');block.append(dom('summary','',title),dom('div','phone-bio-text',value));biography.append(block);
+   }
+   if(!biography.querySelector('.phone-bio-item'))biography.append(dom('p','phone-helper','当前角色面具没有填写公开资料。'));
+   const other=box(main,'手机功能');line(other,button('角色手机记忆',()=>{state.threadId=person.id;return navigate('memory');}));
+   const palette=box(main,'我发送的消息气泡颜色');palette.append(dom('p','phone-setting-text','对方始终是浅灰气泡，手机和剧情的颜色设置互不影响。'));tones(palette,prefs);
  }
  // All wallet and chat-card intents share an on-disk idempotency authority.
  async function issueIntent(kind,signature,perform){
@@ -173,6 +234,12 @@
    const to=(await chooseMultiple('选择收礼角色',thread.memberIds.map(id=>({id,label:id})))).at(0);if(!to)return;
    if(!confirm('确认向 '+to+' 赠送一件虚拟礼物？'))return;
    await issueIntent('gift-card',thread.id+':'+choice[0]+':'+to,key=>D().giftInThread(thread.id,choice[0],D().owner,to,key));await render();}
+ function appendTyping(view,actorId,contacts){
+   if(!view)return;view.querySelectorAll('.phone-typing-row').forEach(x=>x.remove());
+   const contact=contacts.find(c=>c.id===actorId),row=dom('div','phone-typing-row');row.setAttribute('role','status');row.setAttribute('aria-label',(contact?.displayNick||'角色')+' 正在生成回复');
+   row.append(face(actorId,contact));const bubble=dom('span','phone-typing-bubble');for(let i=0;i<3;i++)bubble.append(dom('i','phone-typing-dot'));row.append(bubble);view.append(row);view.scrollTop=view.scrollHeight;
+ }
+ async function clearTyping(){state.typingActor=null;state.typingThreadId=null;root().querySelectorAll('.phone-typing-row').forEach(x=>x.remove());}
  async function screenChat(main){
    const thread=await D().thread(state.threadId),settings=await D().settings(),contacts=await D().contacts();
    const displayName=id=>contactName(id,contacts);
@@ -188,13 +255,16 @@
    finder.append(search);main.append(finder);
    const messages=await D().allMessages(thread.id),view=dom('div','phone-chat-history');main.append(view);
    let prevDay='';
-   for(const msg of messages){
+   for(let i=0;i<messages.length;i++){const msg=messages[i];
      const date=new Date(msg.createdAt).toLocaleDateString('zh-CN',{month:'long',day:'numeric'});
      if(date!==prevDay){view.append(dom('div','phone-day-divider',date));prevDay=date;}
      const isMine=msg.actorId===D().owner;
-     const wrap=dom('div','phone-message '+(isMine?'mine':'theirs'));
+     const prev=messages[i-1],next=messages[i+1];const within=(a,b)=>a&&b&&a.actorId===b.actorId&&Math.abs(new Date(a.createdAt)-new Date(b.createdAt))<120000;
+     const fromSame=within(prev,msg)&&new Date(prev.createdAt).toDateString()===new Date(msg.createdAt).toDateString();
+     const toSame=within(msg,next)&&new Date(next.createdAt).toDateString()===new Date(msg.createdAt).toDateString();
+     const wrap=dom('div','phone-message '+(isMine?'mine':'theirs')+(fromSame?' phone-continued':'')+(!toSame?' phone-group-end':' phone-in-group')+(state.animatedMessageIds.has(msg.id)?' phone-new':''));
      wrap.dataset.searchText=msg.content||'';
-     if(!isMine)wrap.append(face(msg.actorId,contacts.find(x=>x.id===msg.actorId)));
+     if(!isMine){if(toSame)wrap.append(dom('span','phone-avatar-placeholder'));else wrap.append(face(msg.actorId,contacts.find(x=>x.id===msg.actorId)));}
      const content=dom('div','phone-message-content');
      if(thread.kind==='group'&&!isMine)content.append(dom('span','phone-message-sender',displayName(msg.actorId)));
      const bubble=dom('article','phone-bubble '+(isMine?'mine':'theirs'));
@@ -225,9 +295,14 @@
      if(msg.versions?.length){const history=dom('details','phone-versions');history.append(dom('summary','','历史版本'));
        for(const v of msg.versions)history.append(dom('pre','phone-raw',v.content));tools.append(history);}
      meta.append(tools);content.append(meta);wrap.append(content);view.append(wrap);
+     bubble.tabIndex=0;bubble.role='button';bubble.setAttribute('aria-label','显示消息操作');
+     const toggle=()=>{for(const other of view.querySelectorAll('.phone-message.is-active'))if(other!==wrap){other.classList.remove('is-active');other.querySelector('.phone-overflow')?.removeAttribute('open');}
+       const on=!wrap.classList.contains('is-active');wrap.classList.toggle('is-active',on);tools.open=on;};
+     bubble.onclick=toggle;bubble.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();toggle();}};bubble.oncontextmenu=e=>{e.preventDefault();toggle();};
    }
    search.oninput=()=>{state.chatSearch=search.value;const q=state.chatSearch.toLowerCase();for(const el of view.querySelectorAll('.phone-message'))el.hidden=!!q&&!el.dataset.searchText.toLowerCase().includes(q);};
    if(state.chatSearch)search.oninput();
+   if(state.typingThreadId===thread.id&&state.typingActor)appendTyping(view,state.typingActor,contacts);
    if(!settings.userMaskId)view.append(dom('p','phone-error','请先选择 User 面具，才能向角色请求回复。'));
    const incomplete=(await D().generations()).filter(g=>g.threadId===thread.id&&['prepared','failed','unknown'].includes(g.status));for(const f of incomplete){const panel=box(view,f.status==='failed'?'失败的手机生成 · 原文保留':'手机请求结果未核实');panel.append(dom('p','phone-error',f.status==='failed'?f.error:'网页刷新或离开前，请求没有留下可确认的最终回复；无法判断服务端是否已计费。不会自动重试。'));panel.append(button('免费核对本机提交状态',async()=>{const latest=await S().read('generations',f.id);say(latest?.status==='committed'?'本任务已提交，无需重新请求':'本机只有 '+(latest?.status||'缺失')+' 状态，没有服务端结果');await render();}));
      if(!state.groupSending&&f.status==='prepared')panel.append(button('确认重新请求（可能再次计费）',async()=>{if(!confirm('原任务最终结果未知。再次请求可能重复计费，但不会重复写入原用户消息。确定重新请求吗？'))return;await produceThreadReplies(thread.id,f.sourceId,[f.actorId],f.id);},'phone-primary'));
@@ -256,13 +331,13 @@
    add.append(attachments);entry.append(add);
    const textBox=input('发送消息…',draft?.content||'','textarea');textBox.rows=1;
    textBox.oninput=()=>safe(()=>D().saveDraft(thread.id,textBox.value));
-   textBox.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();composer.requestSubmit();}});
+   textBox.addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.metaKey||e.ctrlKey)&&!e.isComposing&&e.keyCode!==229){e.preventDefault();composer.requestSubmit();}});
    entry.append(textBox);
    const send=button('↑',()=>composer.requestSubmit(),'phone-send phone-primary');send.setAttribute('aria-label','发送');entry.append(send);
    composer.append(entry);
    composer.onsubmit=e=>{e.preventDefault();safe(async()=>{if(state.sending)return;const txt=textBox.value.trim();if(!txt)return;
      state.sending=true;send.disabled=true;try{const sent=await D().post(thread.id,{content:txt,replyToId:state.replyToId});
-       state.replyToId=null;await D().saveDraft(thread.id,'');textBox.value='';await render();
+       state.replyToId=null;await D().saveDraft(thread.id,'');textBox.value='';state.animatedMessageIds=new Set([sent.id]);await render();state.animatedMessageIds.clear();
        if(settings.userMaskId)await produceThreadReplies(thread.id,sent.id);
      }finally{state.sending=false;send.disabled=false;}});};
    main.append(composer);
@@ -273,23 +348,23 @@
  async function produceThreadReplies(threadId,sourceId,selected=null,retryGenId=null){if(state.groupSending)throw Error('当前小手机已有一轮群聊任务，请先等该轮完成');state.groupSending=true;try{const thread=await D().thread(threadId),prefs=await D().settings(),trigger=sourceId?(await S().read('messages',sourceId))?.content||'':'',speakers=await D().selectSpeakers(threadId,trigger,selected);
    mustUser(prefs);for(const actor of speakers){const current=await D().thread(threadId);if(!current.memberIds.includes(actor))break;
      const sourceDigest=await D().promptDigest(actor);
-     const generated=retryGenId?await D().restartGeneration(retryGenId,sourceDigest):await D().prepareGeneration(threadId,actor,sourceId||'',{task:'chat',sourceDigest});const nick=(await D().contacts()).find(x=>x.id===actor)?.displayNick||actor;say('正在生成 '+nick+' 的手机回复…');let returned=null,canonicalDone=false;
+     const generated=retryGenId?await D().restartGeneration(retryGenId,sourceDigest):await D().prepareGeneration(threadId,actor,sourceId||'',{task:'chat',sourceDigest});const peopleNow=await D().contacts(),nick=peopleNow.find(x=>x.id===actor)?.displayNick||actor;state.typingActor=actor;state.typingThreadId=threadId;if(state.screen==='chat'&&state.threadId===threadId)appendTyping(root().querySelector('.phone-chat-history'),actor,peopleNow);let returned=null,canonicalDone=false;
      try{const all=await D().history(threadId),membership=await S().read('memberships',threadId+':'+actor),start=membership?.joinedAtSeq||0;
        const visible=all.filter(m=>m.seq>=start&&m.deliveryState==='committed');
        const people=await D().contacts(),speakerNames=Object.fromEntries(people.map(c=>[c.id,c.displayNick]));
        const extraMemories=await D().memories(actor);const extra=extraMemories.map(m=>'已授权的手机记忆（'+m.id+'）：'+m.content).join('\n');
        const mounts=await D().effectiveResources(actor,prefs);
        const source=all.find(m=>m.id===sourceId)||all.at(-1),parts=source?.assetIds?.length?await MimaPhoneMedia.visionParts(source.assetIds.filter(Boolean)):[];
-       returned=await MimaPhoneModel.generate({actorId:actor,userMaskId:prefs.userMaskId,history:visible,presetIds:mounts.presetIds,worldbookIds:mounts.worldbookIds,scope:thread.kind,extra,visionParts:parts,speakerNames});
-       await D().finishGeneration(generated.id,returned.bubbles,returned.raw,generated.attempt,await D().promptDigest(actor));canonicalDone=true;say(nick+' 的回复已保存');
-       try{await render();}catch(paintError){console.error('手机回复已保存，但界面重绘失败；无需重复付费生成',{generationId:generated.id,error:paintError});say('手机回复已保存。界面显示未更新，请重新打开聊天。');}
+       returned=await MimaPhoneModel.generate({actorId:actor,userMaskId:prefs.userMaskId,history:visible,presetIds:mounts.presetIds,worldbookIds:mounts.worldbookIds,scope:thread.kind,extra,visionParts:parts,speakerNames,apiSettings:prefs});
+       const committed=await D().finishGeneration(generated.id,returned.bubbles,returned.raw,generated.attempt,await D().promptDigest(actor));state.animatedMessageIds=new Set(committed.resultIds||[]);canonicalDone=true;say(nick+' 的回复已保存');
+       try{await render();state.animatedMessageIds.clear();}catch(paintError){console.error('手机回复已保存，但界面重绘失败；无需重复付费生成',{generationId:generated.id,error:paintError});say('手机回复已保存。界面显示未更新，请重新打开聊天。');}
        if(retryGenId)break;
      }catch(e){if(canonicalDone){console.error('手机回复已结算，后续非关键任务失败',{generationId:generated.id,error:e});say('回复已经保存，后续界面任务失败；不要重发');break;}
        const raw=typeof e.raw==='string'?e.raw:returned?.raw||'';try{await D().failGeneration(generated.id,e.message,raw,generated.attempt);}catch(settleError){
          console.warn('旧 attempt 或已结算任务的失败回调被拒绝，保留当前状态',{generationId:generated.id,attempt:generated.attempt,error:settleError});}
        say('角色回复未提交：'+e.message);await render();break;}
    }
-   }finally{state.groupSending=false;}}
+   }finally{state.groupSending=false;await clearTyping();}}
  function mustUser(prefs){if(!prefs.userMaskId)throw Error('先在「我的手机」选择 User 面具');}
  async function attachImage(threadId){const picker=dom('input');picker.type='file';picker.accept='image/*';picker.onchange=()=>safe(async()=>{const file=picker.files?.[0];if(!file)return;const asset=await MimaPhoneMedia.save(file);const sent=await D().post(threadId,{type:'image',content:'[发送了一张图片]',assetIds:[asset.id]});await render();const prefs=await D().settings();if(prefs.userMaskId)await produceThreadReplies(threadId,sent.id);});picker.click();}
  async function recordAudio(threadId){if(state.recording){const recorder=state.recording;state.recording=null;const result=await recorder.stop(),saved=await MimaPhoneMedia.save(result.blob);const sent=await D().post(threadId,{type:'voice_audio',content:result.transcript?'[录音转写] '+result.transcript:'[语音录音，未取得可靠转写]',assetIds:[saved.id]});await render();const prefs=await D().settings();if(prefs.userMaskId&&result.transcript)await produceThreadReplies(threadId,sent.id);return;}
@@ -317,7 +392,7 @@
    try{
      const mounts=await D().effectiveResources(actorId,prefs);
      reply=await MimaPhoneModel.generateSocialPlan({actorId,userMaskId:prefs.userMaskId,
-       feed:gen.feedSnapshot,memories:gen.memorySnapshot||[],presetIds:mounts.presetIds,worldbookIds:mounts.worldbookIds,mode:kind});
+       feed:gen.feedSnapshot,memories:gen.memorySnapshot||[],presetIds:mounts.presetIds,worldbookIds:mounts.worldbookIds,mode:kind,apiSettings:prefs});
      await D().stageSocialPlan(gen.id,{attempt:gen.attempt,raw:reply.raw,actions:reply.actions,
        sourceDigest:await D().promptDigest(actorId)});
      // One confirmation authorizes the entire proposed action set, not a button
@@ -343,7 +418,7 @@
      const history=m?[{actorId:D().owner,content:'有权限可见的动态：'+m.body},...(await D().comments(momentId)).map(c=>({actorId:c.actorId,content:(c.id===parentCommentId?'请回复这条评论：':'评论：')+c.body}))]: (await D().moments(actorId)).map(item=>({actorId:item.authorId,content:'角色有权看到的朋友圈动态：'+item.body}));
      const mounts=await D().effectiveResources(actorId,prefs);
      const extra=kind==='moment'?'请以角色本人名义写一条朋友圈动态，不引用任何未授权私聊。':'请根据可见动态及评论自然回应，不要捏造未见资料。';
-     reply=await MimaPhoneModel.generate({actorId,userMaskId:prefs.userMaskId,history,presetIds:mounts.presetIds,worldbookIds:mounts.worldbookIds,task:kind,scope:m?.audience||'public',extra});
+     reply=await MimaPhoneModel.generate({actorId,userMaskId:prefs.userMaskId,history,presetIds:mounts.presetIds,worldbookIds:mounts.worldbookIds,task:kind,scope:m?.audience||'public',extra,apiSettings:prefs});
      await D().stageSocialCandidate(gen.id,{attempt:gen.attempt,raw:reply.raw,bubbles:reply.bubbles,sourceDigest:await D().promptDigest(actorId)});staged=true;
      if(confirm('发布以下角色内容？\n\n'+reply.bubbles.map(b=>b.content).join('\n'))){
        await D().finishSocialGeneration(gen.id,{attempt:gen.attempt,sourceDigest:await D().promptDigest(actorId)});
@@ -474,7 +549,49 @@
    for(const item of await D().inventory(D().owner))await walletIntentControls(belongings,'gift:'+item.id);const pending=(await D().orders()).filter(x=>x.status==='SENT_PENDING');const orders=box(main,'待领取礼物');for(const o of pending){line(orders,dom('span','',`${o.senderId} → ${o.recipientId}`),button('收下',async()=>{await D().settleGift(o.id,o.recipientId,true);await render();}),button('拒绝退回',async()=>{await D().settleGift(o.id,o.recipientId,false);await render();}));}
    const journal=box(main,'交易账本');for(const entry of (await D().ledger()).slice(-24).reverse())journal.append(dom('small','phone-ledger-row',`${entry.type} · ${entry.walletId}: ${entry.deltaMinor>=0?'+':''}${entry.deltaMinor}`));
  }
- async function screenSettings(main){main.append(dom('h1','phone-page-heading','我的手机'));const prefs=await D().settings(),users=R().listUserMasks(),all=R().state();const settings=box(main,'身份与资料');const select=dom('select','phone-input');for(const u of users){const opt=dom('option','',u.name);opt.value=u.id;opt.selected=prefs.userMaskId===u.id;select.append(opt);}line(settings,select,button('使用这个 User 面具',async()=>{await D().setSettings({userMaskId:select.value});await render();},'phone-primary'));
+ async function apiConfigUI(main,prefs){
+   const card=box(main,'小手机专属 API 设置');
+   card.append(dom('p','phone-setting-text','默认跟随剧情 API。切换到独立配置后，私聊、群聊和朋友圈生成都使用手机模型；不会修改剧情配置，缺少地址或模型时明确报错，绝不偷偷回退。'));
+   const chooser=dom('select','phone-input');for(const [title,value] of [['跟随主剧情的 API','inherit'],['手机独立 API','custom']]){
+     const opt=dom('option','',title);opt.value=value;opt.selected=(prefs.phoneApiMode||'inherit')===value;chooser.append(opt);}
+   line(card,chooser);
+   chooser.onchange=()=>safe(async()=>{await D().setSettings({phoneApiMode:chooser.value});await render();});
+   if(chooser.value!=='custom')return;
+   const inherited=MimaStandalone.getApiConfig(),custom=prefs.phoneApi||{};
+   const fields={};
+   function field(label,key,{secret=false,kind='input'}={}){
+     const wrap=dom('label','phone-edit-field');wrap.append(dom('span','',label));
+     const el=input(label,String(custom[key]??''),kind);if(secret)el.type='password';
+     el.autocomplete='off';fields[key]=el;wrap.append(el);card.append(wrap);return el;
+   }
+   field('API Base URL（渠道地址）','apiBase');field('API Key','apiKey',{secret:true});field('模型名称 / ID','model');
+   const opts=dom('details','phone-api-extra');opts.append(dom('summary','','高级设置（端点、采样、流式）'));card.append(opts);
+   function optional(label,key){const wrap=dom('label','phone-edit-field');wrap.append(dom('span','',label));const el=input(label,String(custom[key]??''));fields[key]=el;wrap.append(el);opts.append(wrap);}
+   optional('聊天端点（可选）','chatEndpoint');optional('模型列表端点（可选）','modelsEndpoint');optional('额外请求头 JSON（可选）','extraHeaders');
+   optional('温度 0～2','temperature');fields.temperature.value=String(custom.temperature??0.85);
+   optional('最大输出 tokens（0 = 渠道默认）','maxTokens');fields.maxTokens.value=String(custom.maxTokens??0);
+   const stream=dom('label','phone-check'),ck=dom('input');ck.type='checkbox';ck.checked=!!custom.stream;stream.append(ck,document.createTextNode('使用流式响应'));opts.append(stream);
+   const response=dom('p','phone-helper phone-api-feedback','手机独立配置只保存在小手机本地数据库。备份文件可能包含 API Key，请妥善保管。');card.append(response);
+   const getCurrent=()=>{
+     const cfg=Object.fromEntries(Object.entries(fields).map(([k,v])=>[k,v.value.trim()]));
+     cfg.temperature=Number(cfg.temperature);cfg.maxTokens=Number(cfg.maxTokens);cfg.stream=ck.checked;
+     if(!cfg.apiBase||!cfg.model)throw Error('独立模式必须填写 API 地址与模型');
+     if(!Number.isFinite(cfg.temperature)||cfg.temperature<0||cfg.temperature>2)throw Error('温度应在 0～2');
+     if(!Number.isSafeInteger(cfg.maxTokens)||cfg.maxTokens<0)throw Error('最大输出 tokens 必须为非负整数');
+     if(cfg.extraHeaders){let h;try{h=JSON.parse(cfg.extraHeaders)}catch(e){throw Error('额外请求头不是有效 JSON');}if(!h||Array.isArray(h)||typeof h!=='object')throw Error('额外请求头必须为 JSON 对象');}
+     MimaStandalone.buildEndpoints(cfg);return cfg;
+   };
+   const buttons=dom('div','phone-line');
+   buttons.append(button('保存手机 API',async()=>{const cfg=getCurrent();await D().setSettings({phoneApiMode:'custom',phoneApi:cfg});response.textContent='已保存：'+cfg.model+'（仅手机）';say('手机 API 已保存，不影响剧情模型');},'phone-primary'));
+   buttons.append(button('从剧情复制配置',async()=>{if(!confirm('将当前主剧情 API 参数复制到手机独立配置？仅复制这一次，此后两者不再同步。'))return;
+     const copy={...inherited};delete copy.modelCapacityProfiles;delete copy.contextWindowIdentity;await D().setSettings({phoneApiMode:'custom',phoneApi:copy});await render();}));
+   buttons.append(button('查询可用模型',async()=>{const cfg=getCurrent();response.textContent='正在查询此渠道的模型列表…';
+     const found=await MimaStandalone.listModelsWithConfig(cfg);response.replaceChildren(dom('span','',`找到 ${found.length} 个模型：`));
+     const select=dom('select','phone-input');for(const id of found){const opt=dom('option','',id);opt.value=id;select.append(opt);}
+     select.value=fields.model.value;select.onchange=()=>{fields.model.value=select.value;};response.append(select);
+   }));card.append(buttons);
+ }
+ async function screenSettings(main){main.append(dom('h1','phone-page-heading','我的手机'));const prefs=await D().settings(),users=R().listUserMasks(),all=R().state();await apiConfigUI(main,prefs);const settings=box(main,'身份与资料');const select=dom('select','phone-input');for(const u of users){const opt=dom('option','',u.name);opt.value=u.id;opt.selected=prefs.userMaskId===u.id;select.append(opt);}line(settings,select,button('使用这个 User 面具',async()=>{await D().setSettings({userMaskId:select.value});await render();},'phone-primary'));
    const presets=box(main,'全局预设（只读挂载）');for(const p of all.presets.filter(x=>x.enabled!==false)){const l=dom('label','phone-check'),ck=document.createElement('input');ck.type='checkbox';ck.checked=(prefs.presetIds||[]).includes(p.id);ck.onchange=()=>safe(async()=>{const ps=new Set((await D().settings()).presetIds||[]);ck.checked?ps.add(p.id):ps.delete(p.id);await D().setSettings({presetIds:[...ps]});});l.append(ck,document.createTextNode(p.name));presets.append(l);}
    const worlds=box(main,'世界书（只读挂载）');for(const w of all.worldbooks.filter(x=>x.enabled!==false)){const l=dom('label','phone-check'),ck=document.createElement('input');ck.type='checkbox';ck.checked=(prefs.worldbookIds||[]).includes(w.id);ck.onchange=()=>safe(async()=>{const ids=new Set((await D().settings()).worldbookIds||[]);ck.checked?ids.add(w.id):ids.delete(w.id);await D().setSettings({worldbookIds:[...ids]});});l.append(ck,document.createTextNode(w.name));worlds.append(l);}
    const overrides=box(main,'每个角色独立挂载（仅手机生效）');const characters=await D().contacts();

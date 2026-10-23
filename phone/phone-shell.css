@@ -275,3 +275,148 @@ body.mima-phone-active{overflow:hidden!important}
 
 #mima-phone-root .phone-home-header{min-height:39px;border-bottom:0;padding-top:calc(4px + env(safe-area-inset-top,0px));padding-bottom:0}
 #mima-phone-root .phone-btn.phone-root-back{border:0;background:transparent;padding:2px 0;min-height:28px;font-size:12px;color:var(--phone-muted);font-weight:500}
+
+/* R19 Mobile UX repair · iOS visual viewport follows both offset and size. */
+html:has(body.mima-phone-active){overflow:hidden;overscroll-behavior:none}
+body.mima-phone-active{
+  position:fixed!important;top:var(--mima-phone-lock-top,0px)!important;
+  left:0!important;right:0!important;width:100%!important;height:100%!important;
+  overflow:hidden!important;overscroll-behavior:none;
+}
+#mima-phone-root{
+  inset:auto!important;top:var(--phone-vv-top,0px)!important;left:var(--phone-vv-left,0px)!important;
+  width:var(--phone-vv-width,100vw);height:var(--phone-visible-height,100dvh);
+  overflow:hidden;touch-action:pan-y;
+}
+#mima-phone-root .phone-shell{height:100%;max-height:100%;min-height:0;box-shadow:none}
+#mima-phone-root .phone-chat-screen{min-height:0;overflow:hidden}
+#mima-phone-root .phone-chat-history{
+  gap:3px;padding:15px 12px 12px;
+  overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;
+  scroll-behavior:auto;
+}
+#mima-phone-root .phone-day-divider{
+  padding:5px 13px;border-radius:14px;background:#f5f5f7;
+  color:#8b8d99;font-size:11px;align-self:center;
+  margin:10px auto 18px;line-height:1.25;
+}
+#mima-phone-root .phone-message{gap:7px;align-items:flex-end;margin-bottom:0;min-height:30px}
+#mima-phone-root .phone-message.phone-group-end{margin-bottom:11px}
+#mima-phone-root .phone-message-content{max-width:min(76%,440px)}
+#mima-phone-root .phone-message>.phone-avatar,
+#mima-phone-root .phone-avatar-placeholder{height:27px;width:27px;flex:0 0 27px;align-self:flex-end;margin-bottom:2px;font-size:11px}
+#mima-phone-root .phone-message>.phone-avatar{border:1px solid #f0eff3}
+#mima-phone-root .phone-bubble{
+  border-radius:18px;padding:8px 12px;font-size:15px;line-height:1.42;
+  background:#e9e9ec;color:#151519;max-width:100%;min-width:0;
+  box-shadow:none;word-break:break-word;overflow-wrap:anywhere;
+}
+#mima-phone-root .phone-bubble.mine{border-radius:18px;color:#fff;background:var(--phone-outgoing)}
+#mima-phone-root .phone-message.phone-group-end.theirs .phone-bubble{border-bottom-left-radius:5px}
+#mima-phone-root .phone-message.phone-group-end.mine .phone-bubble{border-bottom-right-radius:5px}
+#mima-phone-root .phone-bubble-text{line-height:1.42}
+#mima-phone-root .phone-bubble[role=button]{cursor:context-menu}
+#mima-phone-root .phone-message-meta{margin-top:2px;min-height:0;display:none;align-items:center;gap:4px;padding:0 3px}
+#mima-phone-root .phone-message.phone-group-end .phone-message-meta,
+#mima-phone-root .phone-message.is-active .phone-message-meta{display:flex}
+#mima-phone-root .phone-bubble-time{font-size:10px;letter-spacing:0;color:#a2a5ae}
+/* The previous tiny ellipsis repeated under every bubble was visual clutter. Long press/tap bubble opens a real menu. */
+#mima-phone-root .phone-overflow{display:none}
+#mima-phone-root .phone-message.is-active .phone-overflow{display:inline-block}
+#mima-phone-root .phone-message.is-active .phone-overflow>summary{
+  display:inline-flex;align-items:center;justify-content:center;
+  min-height:29px;min-width:34px;border-radius:11px;background:#eeeeF2;
+  color:#5c5e69;line-height:1;font-size:16px;
+}
+#mima-phone-root .phone-overflow>.phone-pop-actions{
+  top:auto;bottom:calc(100% + 7px);left:0;right:auto;
+  border-radius:16px;padding:5px;box-shadow:0 14px 38px rgba(20,20,25,.18);
+}
+#mima-phone-root .phone-message.mine .phone-overflow>.phone-pop-actions{left:auto;right:0}
+#mima-phone-root .phone-header{
+  border-bottom:1px solid #e9e9ed;background:rgba(252,252,254,.96);
+  padding-top:calc(8px + env(safe-area-inset-top,0px));
+  min-height:66px;
+}
+#mima-phone-root .phone-header>.phone-avatar{width:42px;height:42px}
+#mima-phone-root .phone-header-contact .phone-header-title{font-size:16px;font-weight:720}
+#mima-phone-root .phone-header-contact small{font-size:11px}
+#mima-phone-root .phone-header .phone-tappable-avatar{cursor:pointer}
+#mima-phone-root .phone-composer{
+  border-top:1px solid #e8e8ee;background:rgba(252,252,253,.98);
+  padding:8px 12px calc(8px + env(safe-area-inset-bottom,0px));
+  box-shadow:0 -1px 10px rgba(30,30,40,.02);
+}
+#mima-phone-root.phone-keyboard-open .phone-composer{padding-bottom:7px}
+#mima-phone-root .phone-composer-entry{align-items:flex-end;gap:7px}
+#mima-phone-root .phone-composer .phone-input{
+  min-height:38px;max-height:120px;border:1px solid #dddde4;background:#fff;
+  border-radius:21px;font-size:16px;padding:9px 13px;
+}
+#mima-phone-root .phone-add-menu>summary{height:38px;width:38px;font-size:25px;border-color:#dcdde3}
+#mima-phone-root .phone-btn.phone-send{min-height:38px;height:38px;width:38px;font-size:23px}
+#mima-phone-root .phone-add-actions{
+  bottom:49px;left:0;border-radius:17px;padding:7px;gap:3px;
+  box-shadow:0 13px 42px rgba(25,25,30,.15)
+}
+#mima-phone-root .phone-add-actions .phone-btn{background:#f4f4f7;padding:12px 13px;border-radius:11px}
+/* True conditional typing indicator while generation is in progress. Not persisted as a fake reply. */
+#mima-phone-root .phone-typing-row{display:flex;gap:7px;align-items:flex-end;margin:4px 0 15px;animation:phone-enter .22s ease-out}
+#mima-phone-root .phone-typing-row>.phone-avatar{width:27px;height:27px;font-size:11px}
+#mima-phone-root .phone-typing-bubble{height:35px;min-width:65px;display:flex;gap:4px;align-items:center;justify-content:center;background:#e9e9ec;border-radius:17px 17px 17px 5px;padding:5px 11px}
+#mima-phone-root .phone-typing-dot{height:7px;width:7px;border-radius:50%;background:#9c9ca5;display:block;animation:phone-typing 1.15s infinite ease-in-out both}
+#mima-phone-root .phone-typing-dot:nth-child(2){animation-delay:.16s}
+#mima-phone-root .phone-typing-dot:nth-child(3){animation-delay:.32s}
+@keyframes phone-typing{0%,60%,100%{transform:translateY(0);opacity:.45}30%{transform:translateY(-4px);opacity:1}}
+@keyframes phone-enter{from{transform:translateY(5px);opacity:.5}to{transform:translateY(0);opacity:1}}
+/* Contact pages must be real editable screens, not a dead-end details card. */
+#mima-phone-root .phone-profile-hero{padding:30px 4px 20px}
+#mima-phone-root .phone-profile-hero .phone-avatar{width:100px;height:100px;font-size:38px;box-shadow:0 0 0 5px #fff,0 5px 24px rgba(36,39,52,.07)}
+#mima-phone-root .phone-profile-actions{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:18px}
+#mima-phone-root .phone-profile-actions .phone-btn{min-height:44px}
+#mima-phone-root .phone-info-row{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;padding:11px 0;border-bottom:1px solid var(--phone-border);font-size:13px}
+#mima-phone-root .phone-info-row:last-of-type{border-bottom:0}
+#mima-phone-root .phone-info-row>span{color:var(--phone-muted);flex:0 0 75px}
+#mima-phone-root .phone-info-row>strong{font-weight:500;text-align:right;overflow-wrap:anywhere}
+#mima-phone-root .phone-btn.phone-profile-edit{border:0;background:#edf0f5;color:#363a4a;border-radius:13px}
+#mima-phone-root .phone-bio-item{border-top:1px solid var(--phone-border);padding:10px 0;font-size:13px}
+#mima-phone-root .phone-bio-item summary{cursor:pointer;font-weight:600}
+#mima-phone-root .phone-bio-text{padding:11px 0;white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto;font-size:12px;line-height:1.65}
+#mima-phone-root .phone-modal-backdrop{
+  position:absolute;inset:0;overflow:auto;overscroll-behavior:contain;
+  padding:max(14px,env(safe-area-inset-top,0px)) 14px max(14px,env(safe-area-inset-bottom,0px));
+}
+#mima-phone-root .phone-contact-editor{display:grid;gap:11px;max-height:min(90%,700px);padding:23px 18px;overflow:auto}
+#mima-phone-root .phone-edit-field{display:grid;gap:6px;color:var(--phone-ink);font-size:13px;font-weight:600}
+#mima-phone-root .phone-edit-field .phone-input{font-weight:400;width:100%;border-radius:12px;min-height:42px}
+#mima-phone-root .phone-avatar-picker{width:100%;font-size:12px}
+#mima-phone-root .phone-edit-controls{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}
+#mima-phone-root .phone-edit-controls .phone-primary{flex:1}
+#mima-phone-root .phone-api-extra>summary{cursor:pointer;font-size:12px;margin:11px 0}
+#mima-phone-root .phone-api-feedback .phone-input{margin:7px 0;width:100%}
+@media (max-width:520px){
+  #mima-phone-root .phone-chat-history{padding:11px 9px 12px}
+  #mima-phone-root .phone-message-content{max-width:77%}
+  #mima-phone-root .phone-header{padding-left:12px;padding-right:12px}
+}
+@media (prefers-reduced-motion:reduce){
+  #mima-phone-root .phone-typing-dot,#mima-phone-root .phone-typing-row{animation:none!important}
+}
+/* The contextual action bar overlays a multi-bubble run; never changes history row height. */
+#mima-phone-root .phone-message-content{position:relative}
+#mima-phone-root .phone-message:not(.phone-group-end) .phone-message-meta{
+  position:absolute;top:100%;left:0;z-index:8;margin-top:0;
+  padding:2px 3px;border-radius:9px;background:rgba(255,255,255,.95);
+}
+#mima-phone-root .phone-message.mine:not(.phone-group-end) .phone-message-meta{left:auto;right:0}
+/* New messages animate only once after persistence, with calm native-app motion. */
+#mima-phone-root .phone-message.phone-new .phone-bubble{animation:phone-bubble-appear .26s cubic-bezier(.2,.75,.2,1) both}
+#mima-phone-root .phone-inbox-item:active,#mima-phone-root .phone-contact-row:active{background:rgba(120,120,130,.055)}
+@keyframes phone-bubble-appear{from{opacity:.1;transform:translateY(10px) scale(.96)}to{opacity:1;transform:translateY(0) scale(1)}}
+@media(prefers-reduced-motion:reduce){#mima-phone-root .phone-message.phone-new .phone-bubble{animation:none!important}}
+/* Search is launched from the chat navigation header, not a permanent row in the message timeline. */
+#mima-phone-root .phone-chat-search:not([open]){display:none}
+#mima-phone-root .phone-btn.phone-head-search{border:0;background:transparent;font-size:25px;min-width:36px;min-height:38px;padding:0;color:#484b56}
+#mima-phone-root .phone-chat-search[open]{padding:10px 14px;border-bottom:1px solid var(--phone-border)}
+#mima-phone-root .phone-chat-search[open] summary{display:none}
+#mima-phone-root .phone-chat-search[open] .phone-input{margin-bottom:0}
