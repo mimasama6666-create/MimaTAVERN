@@ -123,7 +123,7 @@
      const person=row.kind==='private'?people.find(x=>x.id===row.memberIds[0]):null;
      const avatar=face(row.kind==='private'?row.memberIds[0]:'group',person);if(person){avatar.classList.add('phone-tappable-avatar');avatar.role='button';avatar.tabIndex=0;avatar.onclick=()=>safe(()=>navigate('profile',person.id));avatar.onkeydown=e=>{if(e.key==='Enter')avatar.click();};}h.append(avatar);
      const who=dom('div','phone-header-contact');who.append(dom('strong','phone-header-title',row.kind==='group'?row.title:person?.displayNick||row.memberIds[0]));
-     who.append(dom('small','',row.kind==='group'?row.memberIds.length+' 位群成员':'聊天 · 手机独立记录'));if(person){who.classList.add('phone-tappable-avatar');who.onclick=()=>safe(()=>navigate('profile',person.id));}h.append(who);
+     who.append(dom('small','',row.kind==='group'?row.memberIds.length+' 位群成员':'聊天 · 手机独立记录'));if(person){who.classList.add('phone-contact-link');who.role='button';who.tabIndex=0;who.setAttribute('aria-label','查看 '+(person.displayNick||'联系人')+' 的资料');who.onclick=()=>safe(()=>navigate('profile',person.id));who.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();who.click();}};}h.append(who);
      h.append(button('⌕',()=>{const finder=root().querySelector('.phone-chat-search');if(!finder)return;finder.open=!finder.open;if(finder.open)finder.querySelector('input')?.focus({preventScroll:true});},'phone-head-search'));
      h.append(button('•••',()=>navigate(row.kind==='group'?'group-edit':'profile',row.memberIds[0]),'phone-head-action'));
    }else{h.append(dom('strong','phone-header-title',title));
@@ -635,24 +635,70 @@
    optional('最大输出 tokens（0 = 渠道默认）','maxTokens');fields.maxTokens.value=String(custom.maxTokens??0);
    const stream=dom('label','phone-check'),ck=dom('input');ck.type='checkbox';ck.checked=!!custom.stream;stream.append(ck,document.createTextNode('使用流式响应'));opts.append(stream);
    const response=dom('p','phone-helper phone-api-feedback','手机独立配置只保存在小手机本地数据库。备份文件可能包含 API Key，请妥善保管。');card.append(response);
-   const getCurrent=()=>{
-     const cfg=Object.fromEntries(Object.entries(fields).map(([k,v])=>[k,v.value.trim()]));
-     cfg.temperature=Number(cfg.temperature);cfg.maxTokens=Number(cfg.maxTokens);cfg.stream=ck.checked;
-     if(!cfg.apiBase||!cfg.model)throw Error('独立模式必须填写 API 地址与模型');
+   // Model discovery must work *before* a model ID has been selected.
+   // Only saving a working generation profile requires an actual model ID.
+   const readDraft=()=>Object.fromEntries(Object.entries(fields).map(([k,v])=>[k,v.value.trim()]));
+   const validateDiscovery=()=>{
+     const cfg=readDraft();
+     if(!cfg.apiBase)throw Error('请先填写 API Base URL，再查询模型列表');
+     if(cfg.extraHeaders){
+       let headers;try{headers=JSON.parse(cfg.extraHeaders);}catch(_){throw Error('额外请求头不是有效 JSON');}
+       if(!headers||Array.isArray(headers)||typeof headers!=='object')throw Error('额外请求头必须为 JSON 对象');
+     }
+     // Use the same endpoint resolver as real generation (including custom /models).
+     const endpoints=MimaStandalone.buildEndpoints(cfg);
+     if(!['http:','https:'].includes(new URL(endpoints.models).protocol))throw Error('模型列表端点需要 HTTP 或 HTTPS 地址');
+     return cfg;
+   };
+   const validateSave=()=>{
+     const cfg=validateDiscovery();
+     if(!cfg.model)throw Error('保存手机 API 前，请填写或选择模型 ID');
+     cfg.temperature=Number(fields.temperature.value.trim());
+     cfg.maxTokens=Number(fields.maxTokens.value.trim());cfg.stream=ck.checked;
      if(!Number.isFinite(cfg.temperature)||cfg.temperature<0||cfg.temperature>2)throw Error('温度应在 0～2');
      if(!Number.isSafeInteger(cfg.maxTokens)||cfg.maxTokens<0)throw Error('最大输出 tokens 必须为非负整数');
-     if(cfg.extraHeaders){let h;try{h=JSON.parse(cfg.extraHeaders)}catch(e){throw Error('额外请求头不是有效 JSON');}if(!h||Array.isArray(h)||typeof h!=='object')throw Error('额外请求头必须为 JSON 对象');}
-     MimaStandalone.buildEndpoints(cfg);return cfg;
+     return cfg;
    };
    const buttons=dom('div','phone-line');
-   buttons.append(button('保存手机 API',async()=>{const cfg=getCurrent();await D().setSettings({phoneApiMode:'custom',phoneApi:cfg});response.textContent='已保存：'+cfg.model+'（仅手机）';say('手机 API 已保存，不影响剧情模型');},'phone-primary'));
+   buttons.append(button('保存手机 API',async()=>{const cfg=validateSave();await D().setSettings({phoneApiMode:'custom',phoneApi:cfg});response.textContent='已保存：'+cfg.model+'（仅手机）';say('手机 API 已保存，不影响剧情模型');},'phone-primary'));
    buttons.append(button('从剧情复制配置',async()=>{if(!confirm('将当前主剧情 API 参数复制到手机独立配置？仅复制这一次，此后两者不再同步。'))return;
      const copy={...inherited};delete copy.modelCapacityProfiles;delete copy.contextWindowIdentity;await D().setSettings({phoneApiMode:'custom',phoneApi:copy});await render();}));
-   buttons.append(button('查询可用模型',async()=>{const cfg=getCurrent();response.textContent='正在查询此渠道的模型列表…';
-     const found=await MimaStandalone.listModelsWithConfig(cfg);response.replaceChildren(dom('span','',`找到 ${found.length} 个模型：`));
-     const select=dom('select','phone-input');for(const id of found){const opt=dom('option','',id);opt.value=id;select.append(opt);}
-     select.value=fields.model.value;select.onchange=()=>{fields.model.value=select.value;};response.append(select);
-   }));card.append(buttons);
+   const queryButton=button('查询可用模型',async()=>{
+     if(queryButton.disabled)return;
+     let cfg;try{cfg=validateDiscovery();}catch(err){response.textContent=err?.message||String(err);return;}
+     const queryIdentity=JSON.stringify([cfg.apiBase,cfg.apiKey,cfg.modelsEndpoint,cfg.extraHeaders]);
+     queryButton.disabled=true;queryButton.textContent='正在查询…';
+     response.textContent='正在查询此渠道的模型列表…';
+     try{
+       const found=await MimaStandalone.listModelsWithConfig(cfg);
+       if(!response.isConnected)return; // Page navigated; never touch a different screen.
+       const now=readDraft();
+       if(JSON.stringify([now.apiBase,now.apiKey,now.modelsEndpoint,now.extraHeaders])!==queryIdentity){
+         response.textContent='查询期间连接配置发生变化，请按新配置重新查询。';return;
+       }
+       if(!found.length){response.textContent='这个渠道没有返回可用模型，请检查模型列表端点与权限。';return;}
+       response.replaceChildren(dom('span','',`找到 ${found.length} 个模型。选择后仍需点击「保存手机 API」：`));
+       const select=dom('select','phone-input');
+       const placeholder=dom('option','','选择模型（不会自动保存）');placeholder.value='';select.append(placeholder);
+       for(const id of found){const opt=dom('option','',id);opt.value=id;select.append(opt);}
+       select.value=found.includes(fields.model.value.trim())?fields.model.value.trim():'';
+       const unsaved=dom('small','',fields.model.value.trim()&&!found.includes(fields.model.value.trim())?'当前手填模型不在此列表，已保留原值。':'');
+       select.onchange=()=>{if(!select.value)return;fields.model.value=select.value;unsaved.textContent='已选择 '+select.value+' · 尚未保存';};
+       response.append(select,unsaved);
+     }catch(err){
+       if(!response.isConnected)return;
+       // No credentials or custom header values in inline error feedback.
+       let message=String(err?.message||'查询失败');
+       for(const secret of [cfg.apiKey,...(function(){try{return Object.values(JSON.parse(cfg.extraHeaders||'{}')).filter(v=>typeof v==='string');}catch(_){return [];}})()]){
+         if(secret&&secret.length>=4)message=message.split(secret).join('[已隐藏]');
+       }
+       const status=err?.status||err?.details?.status||err?.httpStatus;
+       response.textContent=`模型列表查询失败${err?.code?' ['+err.code+']':''}${status?' (HTTP '+status+')':''}：${message}。可检查 API 地址、权限或高级设置中的模型列表端点。`;
+     }finally{
+       queryButton.disabled=false;queryButton.textContent='查询可用模型';
+     }
+   });
+   buttons.append(queryButton);card.append(buttons);
  }
  async function screenSettings(main){main.append(dom('h1','phone-page-heading','我的手机'));const prefs=await D().settings(),users=R().listUserMasks(),all=R().state();await apiConfigUI(main,prefs);const settings=box(main,'身份与资料');const select=dom('select','phone-input');for(const u of users){const opt=dom('option','',u.name);opt.value=u.id;opt.selected=prefs.userMaskId===u.id;select.append(opt);}line(settings,select,button('使用这个 User 面具',async()=>{await D().setSettings({userMaskId:select.value});await render();},'phone-primary'));
    const presets=box(main,'全局预设（只读挂载）');for(const p of all.presets.filter(x=>x.enabled!==false)){const l=dom('label','phone-check'),ck=document.createElement('input');ck.type='checkbox';ck.checked=(prefs.presetIds||[]).includes(p.id);ck.onchange=()=>safe(async()=>{const ps=new Set((await D().settings()).presetIds||[]);ck.checked?ps.add(p.id):ps.delete(p.id);await D().setSettings({presetIds:[...ps]});});l.append(ck,document.createTextNode(p.name));presets.append(l);}

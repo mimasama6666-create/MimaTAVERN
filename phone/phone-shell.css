@@ -462,11 +462,11 @@ body.mima-phone-active{
   content:"";position:absolute;width:39px;height:39px;left:50%;top:50%;
   transform:translate(-50%,-50%);border-radius:50%;background:var(--phone-field);z-index:-1;
 }
-#mima-phone-root .phone-header>.phone-tappable-avatar{
+#mima-phone-root .phone-header>.phone-avatar.phone-tappable-avatar{
   width:55px;height:55px;overflow:visible;border-radius:0;
   background:radial-gradient(circle 21px at center,#efedf1 98%,transparent 100%);
 }
-#mima-phone-root .phone-header>.phone-tappable-avatar img{
+#mima-phone-root .phone-header>.phone-avatar.phone-tappable-avatar img{
   width:42px;height:42px;border-radius:50%;
 }
 #mima-phone-root .phone-modal .phone-btn,
@@ -487,3 +487,7 @@ body.mima-phone-active{
 #mima-phone-root .phone-quick-links .phone-btn{min-height:55px}
 #mima-phone-root .phone-add-actions{bottom:calc(100% + 6px)}
 #mima-phone-root .phone-message.is-active .phone-overflow>summary{min-width:55px;min-height:55px}
+
+/* Name remains a separate accessible profile link, never a second avatar. */
+#mima-phone-root .phone-header .phone-contact-link{cursor:pointer;background-image:none;min-width:0;overflow:hidden}
+#mima-phone-root .phone-header .phone-contact-link:focus-visible{outline:2px solid var(--phone-outgoing);outline-offset:2px;border-radius:6px}
