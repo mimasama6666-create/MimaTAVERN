@@ -53,6 +53,11 @@ function normalizeTextPolicy(raw,legacyTypography=false){
    statusHtml:{inkMode:mode(status.inkMode)}};
 }
 const defaultRegions=()=>Object.fromEntries(REGION_KEYS.map(k=>[k,k!=='status'&&k!=='safeHtmlHost']));
+function normalizedReadingBoard(value){const r=value&&typeof value==='object'?value:{};return {
+ enabled:r.enabled===true,html:r.html!==false,regular:r.regular===true,statusFrame:r.statusFrame===true,
+ tone:r.tone==='dark'?'dark':'light',opacity:clamp(r.opacity??86,40,100),blur:clamp(r.blur??12,0,30),
+ padding:clamp(r.padding??16,0,40),radius:clamp(r.radius??18,0,48)
+};}
 const PATTERNS=['dots','grid','stripes','diagonal','checker','waves','rings','radial','diamond','cross','halftone','none'];
 const clone=x=>JSON.parse(JSON.stringify(x));
 const clamp=(n,a,b)=>Math.max(a,Math.min(b,Number.isFinite(+n)?+n:a));
@@ -156,9 +161,9 @@ function baseTheme(id='liquid-frost'){
  elements.field={...base,fill:'#ffffff',alpha:78,blur:3};
  elements.message={...base,fill:'#ffffff',alpha:kind==='glass'?58:kind==='aqua'?62:24,border:kind==='glass'||kind==='aqua'?1:0,blur:kind==='glass'?14:kind==='aqua'?10:0,shadow:0};
  elements.safeHtmlHost={...elements.message}; // Data survives even when not authorized; legacy project remains editable.
- return {id:uid(),name:`${name} · 自定义`,format:'mima-atl-project',schema:1,template:id,originPreset:'',layoutRecipe:'story',cssPriority:'atelier-only',regions:defaultRegions(),proseTypography:false,textPolicy:normalizeTextPolicy(null,false),nightMode:'app',elements,patterns:[],stickers:[],fonts:[],favorites:[],variants:{},extraCss:'',draftVersion:0,createdAt:Date.now(),updatedAt:Date.now()};
+ return {id:uid(),name:`${name} · 自定义`,format:'mima-atl-project',schema:1,template:id,originPreset:'',layoutRecipe:'story',cssPriority:'atelier-only',regions:defaultRegions(),readingBoard:normalizedReadingBoard(),proseTypography:false,textPolicy:normalizeTextPolicy(null,false),nightMode:'app',elements,patterns:[],stickers:[],fonts:[],favorites:[],variants:{},extraCss:'',draftVersion:0,createdAt:Date.now(),updatedAt:Date.now()};
 }
-function normalized(raw){if(!raw||raw.format!=='mima-atl-project'||raw.schema!==1||!raw.elements||typeof raw.elements!=='object')throw new Error('不支持或损坏的主题工程格式');const obj=baseTheme(raw.template||'minimal-clear');obj.id=String(raw.id||uid());obj.name=safeName(raw.name);obj.originPreset=/^[a-z][a-z0-9-]{0,100}$/.test(String(raw.originPreset||''))?String(raw.originPreset):'';obj.layoutRecipe=/^[a-z][a-z0-9-]{0,80}$/.test(String(raw.layoutRecipe||''))?String(raw.layoutRecipe):'story';obj.cssPriority=PRESENTATION.includes(raw.cssPriority)?raw.cssPriority:raw.cssPriority==='regions-first'?'mix-atelier':raw.cssPriority==='legacy-first'?'mix-legacy':'atelier-only';obj.proseTypography=raw.proseTypography===true;obj.textPolicy=normalizeTextPolicy(raw.textPolicy,obj.proseTypography);obj.nightMode=['app','system','light','dark'].includes(raw.nightMode)?raw.nightMode:'app';obj.regions=defaultRegions();if(raw.regions&&typeof raw.regions==='object')for(const k of REGION_KEYS)if(Object.prototype.hasOwnProperty.call(raw.regions,k))obj.regions[k]=raw.regions[k]===true;obj.createdAt=Number(raw.createdAt)||Date.now();obj.updatedAt=Number(raw.updatedAt)||Date.now();obj.draftVersion=Math.max(0,Number(raw.draftVersion)||0);obj.linkedCssId=/^css[-_a-zA-Z0-9]+$/.test(String(raw.linkedCssId||''))?String(raw.linkedCssId):'';for(const k of Object.keys(TARGETS)){if(raw.elements[k]&&typeof raw.elements[k]==='object'){
+function normalized(raw){if(!raw||raw.format!=='mima-atl-project'||raw.schema!==1||!raw.elements||typeof raw.elements!=='object')throw new Error('不支持或损坏的主题工程格式');const obj=baseTheme(raw.template||'minimal-clear');obj.id=String(raw.id||uid());obj.name=safeName(raw.name);obj.originPreset=/^[a-z][a-z0-9-]{0,100}$/.test(String(raw.originPreset||''))?String(raw.originPreset):'';obj.layoutRecipe=/^[a-z][a-z0-9-]{0,80}$/.test(String(raw.layoutRecipe||''))?String(raw.layoutRecipe):'story';obj.cssPriority=PRESENTATION.includes(raw.cssPriority)?raw.cssPriority:raw.cssPriority==='regions-first'?'mix-atelier':raw.cssPriority==='legacy-first'?'mix-legacy':'atelier-only';obj.proseTypography=raw.proseTypography===true;obj.textPolicy=normalizeTextPolicy(raw.textPolicy,obj.proseTypography);obj.nightMode=['app','system','light','dark'].includes(raw.nightMode)?raw.nightMode:'app';obj.regions=defaultRegions();obj.readingBoard=normalizedReadingBoard(raw.readingBoard);if(raw.regions&&typeof raw.regions==='object')for(const k of REGION_KEYS)if(Object.prototype.hasOwnProperty.call(raw.regions,k))obj.regions[k]=raw.regions[k]===true;obj.createdAt=Number(raw.createdAt)||Date.now();obj.updatedAt=Number(raw.updatedAt)||Date.now();obj.draftVersion=Math.max(0,Number(raw.draftVersion)||0);obj.linkedCssId=/^css[-_a-zA-Z0-9]+$/.test(String(raw.linkedCssId||''))?String(raw.linkedCssId):'';for(const k of Object.keys(TARGETS)){if(raw.elements[k]&&typeof raw.elements[k]==='object'){
  const e={...obj.elements[k]};for(const field of Object.keys(DEFAULT))if(Object.prototype.hasOwnProperty.call(raw.elements[k],field)){
  const v=raw.elements[k][field];e[field]=typeof DEFAULT[field]==='number'?clamp(v,-10000,10000):typeof v==='string'?v.slice(0,250):DEFAULT[field];
  } e.fill=hex(e.fill);e.ink=hex(e.ink);e.borderColor=hex(e.borderColor);e.strokeColor=hex(e.strokeColor);e.gradientTo=hex(e.gradientTo);e.maskColor=hex(e.maskColor);e.image=validImage(raw.elements[k].image)?raw.elements[k].image:'';obj.elements[k]=e;}}
@@ -260,6 +265,17 @@ function compile(project,mode='live',options={}){
   result+=`${selectors}{position:relative;isolation:isolate;}\n${pseudo}{content:"";position:absolute;inset:${inset}px;pointer-events:none;border:${thickness}px ${variant} ${borderColor};border-radius:inherit;box-shadow:${orn==='cream'?'inset 0 2px 5px rgba(255,255,255,.50)':'none'};}\n`;
  }
 
+ }
+ // Explicitly opt-in readability surface on the outer authored message host only.
+ const board=normalizedReadingBoard(project.readingBoard);
+ if(board.enabled && mode!=='preview'){
+  const light=board.tone==='light',bg=rgba(light?'#fbfaf8':'#202127',board.opacity);
+  const edge=light?'rgba(64,65,73,.15)':'rgba(255,255,255,.2)';
+  const content=[];
+  if(board.html)content.push(`${scope} .app-shell #story-chat-box article.message > .msg-content.tavern-story-content.safe-html-content`);
+  if(board.regular)content.push(`${scope} .app-shell #story-chat-box article.message > .msg-content:not(.safe-html-content)`);
+  if(content.length)result+=`${content.join(',')}{box-sizing:border-box;max-width:100%;min-width:0;overflow-wrap:anywhere;background-color:${bg};border:1px solid ${edge};border-radius:${board.radius}px;padding:${board.padding}px;backdrop-filter:blur(${board.blur}px);-webkit-backdrop-filter:blur(${board.blur}px);box-shadow:0 6px 22px rgba(0,0,0,.10)}\n`;
+  if(board.statusFrame&&board.html)result+=`${scope} .app-shell #story-chat-box .tavern-story-content.safe-html-content > :is(details,system){border-radius:${Math.max(6,board.radius-4)}px;outline:1px solid ${edge};outline-offset:3px;}\n`;
  }
  result+=`@keyframes mima-atl-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}\n@keyframes mima-atl-glow{from{filter:brightness(.95)}to{filter:brightness(1.15)}}\n@media(prefers-reduced-motion:reduce){${scope} *{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}\n`;
  // Extra CSS is an explicit advanced user-authored layer; it does not need to be parseable back into visual parameters.

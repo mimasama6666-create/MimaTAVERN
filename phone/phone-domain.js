@@ -520,7 +520,9 @@
    const signature=JSON.stringify(payload);must(signature&&signature.length<3000,'交易内容无效');
    return S().transaction(['drafts'],'readwrite',async t=>{
      const key='wallet_intent:'+slot,existing=await t.get('drafts',key);
-     if(existing){must(existing.signature===signature,'已有未重置的交易意图，请先明确开始新操作');return existing;}
+     if(existing&&existing.status!=='committed'){must(existing.signature===signature,'上一笔交易尚未核实，请先用原条件核对，不能另起扣款');return existing;}
+     // A finished purchase is not a permanent lock. A *new confirmed action*
+     // gets a new command ID; an unresolved operation keeps its original ID.
      const row={id:key,commandId:id('cmd_wallet'),signature,slot,status:'pending',createdAt:now()};await t.put('drafts',row);return row;
    });
  }
@@ -588,9 +590,9 @@
  async function inventory(actorId){return (await S().all('inventories')).filter(x=>x.ownerId===actorId);}
  async function orders(){return S().all('orders');}
  async function ledger(){return S().all('ledgerEntries');}
- async function addMemory(charId,text,sourceEventIds=[],scopeId='',commandId=id('memory')){MimaPhoneResources.getCharMask(charId);must(text.trim(),'记忆不能为空');return S().command(commandId,['memories','messages','memberships'],'memory',async t=>{
+ async function addMemory(charId,text,sourceEventIds=[],scopeId='',commandId=id('memory'),kind='fact'){must(['core','fact','rolling','pinned'].includes(kind),'手机记忆分类无效');MimaPhoneResources.getCharMask(charId);must(text.trim(),'记忆不能为空');return S().command(commandId,['memories','messages','memberships'],'memory',async t=>{
     for(const sourceId of sourceEventIds){const source=await t.get('messages',sourceId);must(source&&!source.deliveryState?.includes('deleted'),'记忆来源消息不存在或已删除');const membership=await t.get('memberships',source.threadId+':'+charId);must(membership&&source.seq>=membership.joinedAtSeq&&(membership.leftAtSeq==null||source.seq<=membership.leftAtSeq),'角色未参与这条消息所属时间范围');}
-    const row={id:id('memory'),charId,content:text,sourceEventIds,scopeId,createdAt:now(),verified:false,status:'needs_review',provenance:sourceEventIds.length?'source_pending_review':'owner_assertion'};await t.add('memories',row);return row;});}
+    const row={id:id('memory'),charId,content:text,sourceEventIds,scopeId,kind,createdAt:now(),verified:false,status:'needs_review',provenance:sourceEventIds.length?'source_pending_review':'owner_assertion'};await t.add('memories',row);return row;});}
  async function approveMemory(memoryId){return S().transaction(['memories','messages','memberships','moments','comments'],'readwrite',async t=>{const m=await t.get('memories',memoryId);must(m&&m.status==='needs_review','这条记忆不处于待核验状态');for(const sourceId of m.sourceEventIds){
    if(m.sourceType==='moment'||m.sourceType==='comment'){
      const source=await t.get(m.sourceType==='moment'?'moments':'comments',sourceId);
@@ -625,7 +627,7 @@
        }
        if(!okay)break;
      }
-     if(okay)selected.push({id:m.id,charId:m.charId,content:m.content,approvedAt:m.approvedAt,
+     if(okay)selected.push({id:m.id,charId:m.charId,content:m.content,kind:m.kind||'fact',approvedAt:m.approvedAt,
        sourceEventIds:[...(m.sourceEventIds||[])],sourceRevisions:{...(m.sourceRevisions||{})},
        grantId:grant?.id||null,grantVersion:grant?.version||null});
    }
@@ -654,5 +656,51 @@
    const key=memoryId+':'+toId,g=await t.get('memoryGrants',key);must(g,'授权不存在');
    const next={...g,enabled:false,version:(g.version||1)+1,revokedAt:now()};await t.put('memoryGrants',next);return next;
  });}
- window.MimaPhoneDomain=Object.freeze({owner,walletIntent,finishWalletIntent,resetWalletIntent,readWalletIntent,prepareSocialGeneration,stageSocialCandidate,stageSocialPlan,reviseSocialPlan,finishSocialPlan,finishSocialGeneration,failSocialGeneration,cancelSocialGeneration,pendingSocialGenerations,settings,setSettings,promptDigest,transferInThread,giftInThread,actorResources,setActorResources,effectiveResources,selectSpeakers,readNotice,addContact,contacts,updateContact,createConversation,threads,thread,updateThread,history,allMessages,post,editMessage,restoreMessage,prepareGeneration,restartGeneration,finishGeneration,checkpointGenerationDraft,cancelGeneration,failGeneration,recoverGeneration,generations,moments,createMoment,editMoment,comments,comment,editComment,deleteComment,react,reactions,notices,acl,balance,issue,transfer,catalog,buyGift,giftItem,settleGift,inventory,orders,ledger,addMemory,approveMemory,allMemories,memories,grantMemory,revokeMemory,saveDraft,readDraft});
+ // Owner-triggered, separately persisted phone-only memory summary lifecycle.
+ // Model output is always a review candidate, never a trusted memory.
+ async function beginMemorySummary(threadId,charId){
+   MimaPhoneResources.getCharMask(charId);
+   const rows=await S().transaction(['conversations','messages','memberships'],'readonly',async t=>{
+     const conversation=await t.get('conversations',threadId),membership=await t.get('memberships',threadId+':'+charId);
+     must(conversation?.memberIds.includes(charId)&&membership,'角色无权限读取该手机聊天');
+     return (await t.all('messages')).filter(m=>m.threadId===threadId&&m.deliveryState==='committed'&&m.seq>=membership.joinedAtSeq&&(membership.leftAtSeq==null||m.seq<=membership.leftAtSeq)).sort((a,b)=>a.seq-b.seq);
+   });
+   must(rows.length,'没有可供总结的已提交手机原文');
+   const job={id:'phone_memory_job:'+id('sum'),task:'phone_memory_summary',threadId,charId,status:'prepared',sourceEventIds:rows.map(x=>x.id),sourceRevisions:Object.fromEntries(rows.map(x=>[x.id,x.version||1])),startedAt:now(),error:'',raw:''};
+   await S().write('drafts',job);return {job,rows};
+ }
+ async function finishMemorySummary(jobId,entries,raw='',model=''){
+   return S().transaction(['drafts','memories','messages','memberships','conversations'],'readwrite',async t=>{
+     const job=await t.get('drafts',jobId);must(job?.task==='phone_memory_summary','手机记忆任务不存在');
+     if(job.status==='committed')return job;
+     must(job.status==='prepared','旧手机记忆任务已终结，不能重复覆盖');
+     const conversation=await t.get('conversations',job.threadId),member=await t.get('memberships',job.threadId+':'+job.charId);
+     must(conversation?.memberIds.includes(job.charId)&&member,'该角色已经不属于此会话');
+     for(const sourceId of job.sourceEventIds){const msg=await t.get('messages',sourceId);
+       must(msg&&msg.deliveryState==='committed'&&msg.threadId===job.threadId&&(msg.version||1)===job.sourceRevisions[sourceId]&&msg.seq>=member.joinedAtSeq&&(member.leftAtSeq==null||msg.seq<=member.leftAtSeq),'摘要来源原文已变化，禁止自动采用过期事实');
+     }
+     must(Array.isArray(entries)&&entries.length<=32,'摘要候选过量');
+     const ids=[],allowed=new Set(job.sourceEventIds);
+     for(const entry of entries){
+       must(['core','fact','rolling'].includes(entry.kind)&&typeof entry.content==='string'&&entry.content.trim()&&Array.isArray(entry.sourceEventIds)&&entry.sourceEventIds.length&&entry.sourceEventIds.every(x=>allowed.has(x)),'候选缺少真实来源，拒绝写入');
+       const m={id:id('memory'),charId:job.charId,content:entry.content,kind:entry.kind,sourceType:'message',sourceEventIds:[...new Set(entry.sourceEventIds)],sourceRevisions:Object.fromEntries(entry.sourceEventIds.map(x=>[x,job.sourceRevisions[x]])),scopeId:job.threadId,createdAt:now(),verified:false,status:'needs_review',provenance:'model_summary_pending_review',jobId};
+       await t.add('memories',m);ids.push(m.id);
+     }
+     const done={...job,status:'committed',finishedAt:now(),model,raw,candidateIds:ids};await t.put('drafts',done);return done;
+   });
+ }
+ async function cancelMemorySummary(jobId){
+   return S().transaction(['drafts'],'readwrite',async t=>{
+     const job=await t.get('drafts',jobId);must(job?.task==='phone_memory_summary','整理任务不存在');
+     if(job.status!=='prepared')return job;
+     const archived={...job,status:'cancelled',finishedAt:now(),error:'主人明确取消或归档；服务端计费状态未知，不自动重试'};
+     await t.put('drafts',archived);return archived;
+   });
+ }
+ async function failMemorySummary(jobId,error,raw=''){
+   return S().transaction(['drafts'],'readwrite',async t=>{const job=await t.get('drafts',jobId);if(!job||job.status!=='prepared')return job;
+     const done={...job,status:'failed',error:String(error),raw:String(raw),finishedAt:now()};await t.put('drafts',done);return done;
+   });
+ }
+ window.MimaPhoneDomain=Object.freeze({owner,walletIntent,finishWalletIntent,resetWalletIntent,readWalletIntent,prepareSocialGeneration,stageSocialCandidate,stageSocialPlan,reviseSocialPlan,finishSocialPlan,finishSocialGeneration,failSocialGeneration,cancelSocialGeneration,pendingSocialGenerations,settings,setSettings,promptDigest,transferInThread,giftInThread,actorResources,setActorResources,effectiveResources,selectSpeakers,readNotice,addContact,contacts,updateContact,createConversation,threads,thread,updateThread,history,allMessages,post,editMessage,restoreMessage,prepareGeneration,restartGeneration,finishGeneration,checkpointGenerationDraft,cancelGeneration,failGeneration,recoverGeneration,generations,moments,createMoment,editMoment,comments,comment,editComment,deleteComment,react,reactions,notices,acl,balance,issue,transfer,catalog,buyGift,giftItem,settleGift,inventory,orders,ledger,addMemory,approveMemory,allMemories,memories,grantMemory,revokeMemory,beginMemorySummary,finishMemorySummary,failMemorySummary,cancelMemorySummary,saveDraft,readDraft});
 })();

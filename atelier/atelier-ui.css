@@ -102,5 +102,12 @@
 }
 @media(max-width:345px){.atl-toolbar-primary .atl-heading small{display:none}.atl-toolbar-primary .atl-heading b{font-size:10px}}
 /* Keep the full-screen Shadow DOM editor on the same independently configured density. */
-.atl-app{zoom:var(--mima-ui-scale,.8);height:100%;width:100%}
+.atl-app{zoom:1;height:100%;width:100%;font-size:12px}
 @supports (-webkit-touch-callout:none){.atl-editor input:not([type=range]):not([type=color]),.atl-editor textarea,.atl-editor select{font-size:max(16px,1em)}}
+
+/* Opt-in inspiration view, real story canvas is the default. */
+:host(.atl-live-dock) .atl-inspiration{display:inline-flex;align-items:center;justify-content:center;font-size:11px}
+.atl-inspiration{border:1px solid #d5c6dd;border-radius:10px;background:#fbf5fe;color:#705682;cursor:pointer}
+.atl-reading-board{border-color:#c8b1cc;background:linear-gradient(155deg,#faf6fc,#fff)}
+.atl-reading-board input[type=range]{width:100%;accent-color:#9b78a8}
+@media(max-width:850px){:host(.atl-live-dock) .atl-toolbar-primary{gap:5px}.atl-inspiration{font-size:10px;padding:5px 7px}}

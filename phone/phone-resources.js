@@ -15,7 +15,7 @@
      const cfg={apiBase:String(custom.apiBase).trim(),apiKey:String(custom.apiKey||''),model:String(custom.model).trim(),
        chatEndpoint:String(custom.chatEndpoint||''),modelsEndpoint:String(custom.modelsEndpoint||''),extraHeaders:String(custom.extraHeaders||''),
        sendTemperature:custom.sendTemperature!==false,temperature:Number.isFinite(Number(custom.temperature))?Number(custom.temperature):0.85,
-       stream:!!custom.stream,maxTokens:Number(custom.maxTokens)||0,contextWindowTokens:0,
+       stream:!!custom.stream,maxTokens:Number(custom.maxTokens)||0,contextWindowTokens:Math.max(0,Number(custom.contextWindowTokens)||0),
        continuationMode:custom.continuationMode||'assistant_tail',prefixReturnsSuffix:!!custom.prefixReturnsSuffix,thinkingMode:custom.thinkingMode||'normal',showThinking:custom.showThinking!==false,reasoningEffort:custom.reasoningEffort||'inherit',requestGeminiThoughts:!!custom.requestGeminiThoughts};
      // Missing keys are valid only for users' local servers. Validation occurs in original provider transport.
      return cfg;

@@ -321,7 +321,34 @@ function renderAppearancePreview(){
       ${safeOn?`<article class="message assistant-msg typography-preview-safe-demo"><div class="msg-header">Safe HTML（兼容测试）</div><div class="msg-content tavern-story-content safe-html-content"><p class="story-prose story-paragraph typography-preview-html-prose">这是第一段 Safe HTML 正文。它显式挂载正文排版类，因此字号、行高、字间距、段间距与首行缩进都会实时变化。</p><p class="story-prose story-paragraph typography-preview-html-prose">这是第二段 Safe HTML 正文，用来直观看出段间距和首行缩进；下面的状态栏仍保持自己的 CSS，不会被正文排版强行挤坏。</p><system class="typography-preview-statusbar"><strong>STATUS BAR</strong><span>自带 CSS 的状态栏仍保持自己的字号与布局，不会被首行缩进或段间距挤坏。</span><div class="typography-preview-status-row"><span>心情　平静</span><span>时间　23:48</span></div></system></div></article>`:`<div class="typography-preview-safe-placeholder">开启下方「允许 Safe HTML 状态栏渲染」后，这里会出现 HTML 正文 + 状态栏兼容性示范。</div>`}
     </div></div>`;
 }
-function closeEditor(){qs('editor-modal').classList.add('hidden');editorState=null}
+let editorInitialForm=null,editorInitialDraft=null;
+function editorFormSnapshot(){
+ const body=qs('editor-body');if(!body)return '';
+ return JSON.stringify([...body.querySelectorAll('input,textarea,select')].map(el=>[el.id||el.name||'',el.type==='checkbox'||el.type==='radio'?el.checked:el.value]));
+}
+function editorHasUnsavedChanges(){
+ if(!editorState||editorInitialForm===null)return false;
+ return editorFormSnapshot()!==editorInitialForm||editorInitialDraft!==JSON.stringify(editorState.draft??null);
+}
+function closeEditor(){
+ const modal=qs('editor-modal');modal.querySelector('.editor-discard-confirm')?.remove();modal.classList.add('hidden');
+ editorState=null;editorInitialForm=null;editorInitialDraft=null;
+}
+function requestCloseEditor(reason='cancel'){
+ const modal=qs('editor-modal');if(modal.classList.contains('hidden'))return;
+ if(!editorHasUnsavedChanges())return closeEditor();
+ let confirmLayer=modal.querySelector('.editor-discard-confirm');
+ if(confirmLayer){confirmLayer.hidden=false;return;}
+ confirmLayer=document.createElement('div');confirmLayer.className='editor-discard-confirm';confirmLayer.setAttribute('role','alertdialog');confirmLayer.setAttribute('aria-label','未保存的编辑');
+ confirmLayer.innerHTML='<div class="editor-discard-card"><strong>还有未保存的修改</strong><span>返回编辑可继续保留输入；放弃修改才会关闭。原角色卡或资源数据不会被覆盖。</span><div><button type="button" class="ghost-btn" data-editor-keep>继续编辑</button><button type="button" class="danger-btn" data-editor-discard>放弃修改</button></div></div>';
+ confirmLayer.querySelector('[data-editor-keep]').onclick=()=>{confirmLayer.hidden=true;qs('editor-body').querySelector('input,textarea,select')?.focus({preventScroll:true});};
+ confirmLayer.querySelector('[data-editor-discard]').onclick=()=>closeEditor();
+ modal.querySelector('.modal-panel').style.position='relative';modal.querySelector('.modal-panel').appendChild(confirmLayer);
+ confirmLayer.querySelector('[data-editor-keep]').focus({preventScroll:true});
+}
+window.requestCloseEditor=requestCloseEditor;
+window.addEventListener('beforeunload',e=>{if(!qs('editor-modal')?.classList.contains('hidden')&&editorHasUnsavedChanges()){e.preventDefault();e.returnValue='';}});
+
 function openNewSessionModal(){qs('new-session-modal').classList.remove('hidden');refreshSettingTemplateChoices();setTimeout(()=>qs('new-session-title').focus(),50)}
 let settingTemplateCache=[];
 let selectedTemplateEditId=''; // independent editor, never tied to any session
@@ -2474,7 +2501,7 @@ async function refreshDiagnosticsView(){
     qs('diag-download-one').onclick=()=>downloadJson(`咪嘛馆_诊断_${String(record.requestId||record.id).replace(/[^\w.-]/g,'_')}.json`,record);
 }
 
-function setupEditorButtons(deleteFn,saveFn){qs('editor-save').textContent='保存';const del=qs('editor-delete');if(deleteFn){del.classList.remove('hidden');del.onclick=deleteFn}else{del.classList.add('hidden');del.onclick=null}qs('editor-save').onclick=saveFn}
+function setupEditorButtons(deleteFn,saveFn){editorInitialForm=editorFormSnapshot();editorInitialDraft=JSON.stringify(editorState?.draft??null);qs('editor-save').textContent='保存';const del=qs('editor-delete');if(deleteFn){del.classList.remove('hidden');del.onclick=deleteFn}else{del.classList.add('hidden');del.onclick=null}qs('editor-save').onclick=saveFn}
 function downloadText(name,text,type='text/plain;charset=utf-8'){return window.MimaFileExport.save(name,String(text??''),type)}
 function downloadJson(name,obj){downloadText(name,JSON.stringify(obj,null,2),'application/json;charset=utf-8')}
 function toast(text){let t=document.getElementById('mima-toast');if(!t){t=document.createElement('div');t.id='mima-toast';t.style.cssText='position:fixed;z-index:2000;left:50%;bottom:120px;transform:translateX(-50%);background:rgba(48,51,56,.92);color:white;padding:10px 14px;border-radius:999px;font-size:13px;max-width:85vw;text-align:center;transition:.2s';document.body.appendChild(t)}t.textContent=text;t.style.opacity='1';clearTimeout(t._timer);t._timer=setTimeout(()=>t.style.opacity='0',2200)}

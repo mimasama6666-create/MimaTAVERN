@@ -1097,12 +1097,14 @@ body.mima-reading-mode #story-chat-box[data-mima-chat-wallpaper="1"]::before{
 :root{--mima-ui-scale:.8}
 .app-shell{zoom:var(--mima-ui-scale);height:100%;max-height:none}
 .session-drawer{zoom:var(--mima-ui-scale)}
-.modal{zoom:var(--mima-ui-scale)}
+.modal{zoom:1}
+.modal > .modal-panel{font-size:calc(1rem * var(--mima-ui-scale, .8))}
 #compat-lab{zoom:var(--mima-ui-scale)}
 /* Keep native iOS focus controls at a readable, non-auto-zoom CSS size. */
 @supports (-webkit-touch-callout:none){.app-shell input,.app-shell textarea,.modal input,.modal textarea,.modal select{font-size:max(16px,1em)}}
 /* Fixed modal backdrops must fill the true visual screen after zoom, not 80% of its height. */
-.modal{height:100%;width:100%}
+/* The viewport host must not inherit the 80% content density. */
+.modal{left:var(--mima-viewport-left,0px);top:var(--mima-viewport-top,0px);right:auto;bottom:auto;width:var(--mima-viewport-width,100vw);height:var(--mima-viewport-height,100dvh)}
 /* Compatibility player also occupies the whole viewport after density reduction. */
 #compat-lab{width:100%;height:100%}
 #compat-lab.in-chat .compat-main{height:calc(100% - 70px - env(safe-area-inset-top,0px))}
@@ -1119,12 +1121,29 @@ html #compat-lab.in-chat .compat-main{height:calc(100% - 70px - env(safe-area-in
     align-self:flex-start;
     width:100%;
     max-width:none;
-    height:100%;
-    max-height:none;
+    height:min(850px,calc(var(--mima-viewport-height,100dvh) - 16px));
+    max-height:calc(var(--mima-viewport-height,100dvh) - 16px);
     min-height:0;
-    zoom:var(--mima-ui-scale, .8);
+    zoom:1;
     border-radius:20px 20px 0 0;
   }
   #settings-modal .settings-tabs{min-width:0;overflow-x:auto}
   #settings-modal .settings-content{min-height:0;overflow-y:auto}
 }
+
+/* R19 keyboard-safe shared overlays: one unscaled visualViewport coordinate frame. */
+.modal:not(.hidden){max-width:none;max-height:none;min-height:0;box-sizing:border-box;overflow:hidden}
+.modal > .modal-panel{min-height:0;min-width:0;max-height:calc(var(--mima-viewport-height,100dvh) - 16px);overscroll-behavior:contain}
+.modal .editor-body,.modal .settings-content{scroll-padding-block:18px;min-height:0;overscroll-behavior:contain}
+.modal :is(input,textarea,select){scroll-margin-block:18px}
+@media(max-width:620px),(max-height:500px) and (orientation:landscape){
+ .modal{padding:8px max(6px,env(safe-area-inset-right)) max(6px,env(safe-area-inset-bottom)) max(6px,env(safe-area-inset-left));align-items:flex-end}
+ #editor-modal>.editor-panel{height:calc(var(--mima-viewport-height,100dvh) - 16px);max-height:calc(var(--mima-viewport-height,100dvh) - 16px)}
+ #settings-modal>.settings-panel{height:calc(var(--mima-viewport-height,100dvh) - 16px);max-height:calc(var(--mima-viewport-height,100dvh) - 16px)}
+ .modal .modal-head{padding:9px 12px}
+ .modal .editor-actions{padding:8px 12px}
+}
+.editor-discard-confirm{position:absolute;inset:0;z-index:10;background:rgba(23,19,27,.42);display:flex;align-items:center;justify-content:center;padding:16px}
+.editor-discard-confirm[hidden]{display:none!important}
+.editor-discard-card{width:min(350px,100%);padding:18px;background:#fff;border-radius:18px;box-shadow:0 15px 46px #22172944;display:grid;gap:12px;font-size:14px;line-height:1.5}
+.editor-discard-card>div{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}

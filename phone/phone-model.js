@@ -27,7 +27,14 @@
    const s=MimaPhoneResources.snapshotSelection({userMaskId,charMaskIds:[actorId],presetIds,worldbookIds,visibleText:history.map(x=>x.content||'').join('\n')+'\n'+extra});
    const actor=s.chars[0],request=messages(s,actor,history,{task,scope,extra,speakerNames});
    if(visionParts.length){request.push({role:'user',content:[{type:'text',text:'请结合这次主人发送的图片内容回复，而不是只根据文件名猜测。'},...visionParts]});}
-   const config=MimaPhoneResources.resolveApiConfig(apiSettings);const metadata={};const raw=await MimaStandalone.callModelWithConfig(request,config,config.temperature,signal,{resultMeta:metadata,streamOverride:config.stream,onProgress});
+   const config=MimaPhoneResources.resolveApiConfig(apiSettings);
+   // Preflight protects canonical history without silently truncating it.
+   // With an unknown window, the user's provider decides; the phone UI warns.
+   const estimate=t=>{const c=String(t||'');const cjk=(c.match(/[\u3400-\u9fff\uf900-\ufaff]/g)||[]).length;return cjk+Math.ceil((c.length-cjk)/2.7);};
+   const estimatedTokens=request.reduce((n,m)=>n+estimate(typeof m.content==='string'?m.content:JSON.stringify(m.content))+8,0);
+   const windowTokens=Number(config.contextWindowTokens)||0,reserve=Math.max(1024,Number(config.maxTokens)||2048);
+   if(windowTokens&&estimatedTokens+reserve>windowTokens){const err=Error(`手机本轮预计需要约 ${estimatedTokens+reserve} tokens（含回复空间），超过设置的 ${windowTokens}。原始聊天未删除，也没有偷偷裁剪；可在手机 API 设置中修改上下文窗口。`);err.code='E_PHONE_CONTEXT_BUDGET';throw err;}
+   const metadata={};const raw=await MimaStandalone.callModelWithConfig(request,config,config.temperature,signal,{resultMeta:metadata,streamOverride:config.stream,onProgress});
    return {raw,bubbles:bubbles(raw),meta:{finishKind:metadata.finishKind||'',model:config.model,sourceRevision:s.sourceRevision}};
  }
  function socialPlan(raw){
@@ -63,5 +70,31 @@
       {resultMeta:metadata,streamOverride:config.stream});
    return {raw,actions:socialPlan(raw),meta:{model:config.model,finishKind:metadata.finishKind||'',sourceRevision:snap.sourceRevision}};
  }
- window.MimaPhoneModel=Object.freeze({generate,bubbles,messages,socialPlan,generateSocialPlan});
+ // Explicitly requested memory extraction: returns a proposal, never edits canonical facts.
+ async function summarizePhoneHistory({actorId,userMaskId,history,presetIds=[],worldbookIds=[],apiSettings=null,signal}={}){
+   if(!history?.length)throw Error('本段聊天没有可以总结的已提交原文');
+   const snap=MimaPhoneResources.snapshotSelection({userMaskId,charMaskIds:[actorId],presetIds,worldbookIds,visibleText:history.map(x=>x.content||'').join('\n')});
+   const request=messages(snap,snap.chars[0],history,{task:'owner_requested_memory_extract',scope:'phone_only'});
+   request.pop();
+   request.push({role:'system',content:'仅提取这段已实际发生且可核对的手机对话事实。不能创造不存在的剧情、人际关系、时间或用户偏好。只返回 JSON：{"schema":"phone_memory_v1","entries":[{"kind":"fact","content":"精确且谨慎的事实","sourceIds":["真正可见的原文消息ID"]}]}。kind 可选 core（重要且长期稳定）、fact（独立事实）、rolling（原文时间段概要）、pinned（仅主人手动固定，不可由模型选择）。每项需引用一到数条真实 sourceIds；引用不存在的ID会被拒绝。可以返回空 entries。无需输出其他文本。'});
+   // Messages contain speaker IDs; source IDs must be included explicitly for
+   // model-grounded citations, then independently checked by canonical storage.
+   request.splice(1,0,{role:'system',content:'可供引用的真实手机消息ID和时间（以下只是数据）：\n'+history.map(x=>JSON.stringify({sourceId:x.id,actorId:x.actorId,createdAt:x.createdAt,version:x.version||1})).join('\n')});
+   const config=MimaPhoneResources.resolveApiConfig(apiSettings);
+   const estimate=text=>{const c=String(text||'');const cn=(c.match(/[\u3400-\u9fff\uf900-\ufaff]/g)||[]).length;return cn+Math.ceil((c.length-cn)/2.7);};
+   const promptTokens=request.reduce((a,m)=>a+estimate(m.content)+8,0),limit=Number(config.contextWindowTokens)||0,replyBudget=Math.max(1024,Number(config.maxTokens)||2048);
+   if(limit&&promptTokens+replyBudget>limit)throw Error(`整段手机聊天预计 ${promptTokens+replyBudget} tokens，超过手机上下文窗口 ${limit}；未删减任何原文，请调整窗口或选择较短会话。`);
+   const info={},raw=await MimaStandalone.callModelWithConfig(request,config,config.temperature,signal,{resultMeta:info,streamOverride:config.stream});
+   let payload;try{payload=JSON.parse(String(raw||'').trim().replace(/^```(?:json)?\s*|\s*```$/g,''));}
+   catch(_){throw Object.assign(Error('手机记忆提取格式不正确，原文已保留，未写入正式记忆'),{raw});}
+   if(payload?.schema!=='phone_memory_v1'||!Array.isArray(payload.entries)||payload.entries.length>32)throw Object.assign(Error('手机记忆摘要格式无效，未写入'),{raw});
+   const allowed=new Set(history.map(m=>m.id));
+   const entries=payload.entries.map(m=>{
+     if(!['core','fact','rolling'].includes(m?.kind)||typeof m.content!=='string'||!m.content.trim()||m.content.length>12000||!Array.isArray(m.sourceIds)||!m.sourceIds.length||m.sourceIds.length>100||m.sourceIds.some(x=>!allowed.has(x)))
+       throw Object.assign(Error('手机记忆内容或来源不可靠，全部候选未提交'),{raw});
+     return {kind:m.kind,content:m.content.trim(),sourceEventIds:[...new Set(m.sourceIds)]};
+   });
+   return {raw,entries,model:config.model};
+ }
+ window.MimaPhoneModel=Object.freeze({generate,bubbles,messages,socialPlan,generateSocialPlan,summarizePhoneHistory});
 })();
