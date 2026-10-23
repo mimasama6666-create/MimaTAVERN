@@ -172,7 +172,7 @@ function cleanCorruptText(text) {
     try { out = out.normalize('NFC'); } catch (_) {}
     return out.replace(/\uFFFD+/g,'').replace(/(?:ï¿½)+/g,'').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g,'').trim();
 }
-function goPhone() { toast('这是独立分享版：没有连接 MIMAMAO 手机或宅邸。'); }
+function goPhone() { if(!window.MimaPhoneShell)return toast('小手机模块未加载，无法进入。'); void window.MimaPhoneShell.open().catch(e=>{console.error('小手机进入失败',e);toast('手机存储或资源不可用：'+e.message);}); }
 
 async function fetchStory(endpoint, method='GET', body=null, useAbort=false, progress=null, signalOverride=null) {
     // Chat and background memory summaries have distinct cancellation ownership.
@@ -2363,7 +2363,7 @@ async function reviewRejectedDiagnosticHtml(record){
     qs('editor-eyebrow').textContent='原始生成任务 · 0 API 请求 · 待主人确认';
     const body=qs('editor-body');body.replaceChildren();
     const intro=document.createElement('p');intro.textContent='源自失败生成诊断。不会重新采样或续写；确认后将按原生成 ID 保存同一条消息，并保留原始 rawContent 与诊断证据。';body.appendChild(intro);
-    for(const [name,txt] of [['未通过 HTML 合同的原始正文',candidate.oldContent],['按固定模板生成的候选',candidate.proposedContent]]){
+    for(const [name,txt] of [['未通过 HTML 合同的原始正文',candidate.oldContent],[candidate.repairMode==='tag_closure'?'仅追加闭合标签的候选（原文不改）':'按固定模板生成的候选',candidate.proposedContent]]){
         const lbl=document.createElement('label');lbl.textContent=name;lbl.className='form-label';
         const area=document.createElement('textarea');area.className='field textarea tall';area.value=txt;area.readOnly=true;body.append(lbl,area);
     }
@@ -2383,8 +2383,8 @@ async function reviewRejectedDiagnosticHtml(record){
     qs('editor-save').textContent='确认恢复修复版';qs('editor-modal').classList.remove('hidden');
 }
 function diagnosticHtmlCodeRepairButton(record){
-    const b=document.createElement('button');b.type='button';b.className='ghost-btn';b.textContent='HTML 免 API 补全';b.title='需启用结构合同并绑定模板。若原文已经完整，请使用「手动恢复」，不必补代码。';
-    b.disabled=!!record.manualRecovery||!record.rawRejectedReply||!!record.rejectedReplyTruncated;
+    const b=document.createElement('button');b.type='button';b.className='ghost-btn';b.textContent='HTML 免 API 补全';b.title='优先只追加缺失的 HTML 闭合标签；复杂结构仍需绑定模板或手动恢复。没有 API 请求。';
+    b.disabled=!!record.manualRecovery||!record.rawRejectedReply;
     b.onclick=()=>void reviewRejectedDiagnosticHtml(record);return b;
 }
 function diagnosticRecoveryButton(record){
@@ -2537,11 +2537,11 @@ function toggleUIState(generating){
     qs('send-btn').disabled=visible;
     qsa('.quick-actions .chip-btn').forEach(b=>{if(b.id!=='stop-btn'&&b.id!=='generation-reconcile-footer')b.disabled=visible});
     const footerRecovery=qs('generation-reconcile-footer');
-    if(footerRecovery){footerRecovery.classList.toggle('hidden',verification?.status!=='degraded');footerRecovery.disabled=verification?.status!=='degraded';}
+    if(footerRecovery){const blocked=!!visible&&!currentGenerationOwner();footerRecovery.classList.toggle('hidden',!blocked);footerRecovery.disabled=!blocked;footerRecovery.textContent=verification?.status==='checking'?'↻ 当前核对中（免费）':currentSessionData?.pendingGeneration?.status==='prepared'?'↻ 核对未结算生成（免费）':r19DraftReadBlocked.has(currentSessionId)?'↻ 草稿读取受阻（免费核对）':'↻ 核对失败轮（免费）';}
     qs('stop-btn').classList.toggle('hidden',!currentGenerationOwner());
     qs('story-input').disabled=visible;
     if(qs('director-note'))qs('director-note').disabled=r19DraftReadBlocked.has(currentSessionId);
-    qs('generation-reconcile')?.classList.toggle('hidden',verification?.status!=='degraded');
+    qs('generation-reconcile')?.classList.toggle('hidden',!visible||!!currentGenerationOwner());
 }
 function generationActionLabel(action){return action==='regenerate'?'正在重新生成':action==='continue'?'正在续写':action==='auto_advance'?'正在推进剧情':'正在生成剧情'}
 function syncGenerationMinimizedBadge(percent=0){const badge=qs('generation-minimized-badge'),ring=badge?.querySelector('.generation-minimized-ring'),pct=qs('generation-minimized-percent');if(!badge||!ring||!pct)return;const n=Math.max(2,Math.min(100,Number(percent)||2));badge.style.setProperty('--generation-mini-progress',`${n}%`);ring.style.setProperty('--generation-mini-progress',`${n}%`);pct.textContent=`${Math.round(n)}%`;}
@@ -2690,7 +2690,38 @@ function showGenerationError(err,action=currentGenerationAction,fromRestore=fals
     if(input)input.value=Number(MimaStandalone.getApiConfig()?.contextWindowTokens)>=4096?String(MimaStandalone.getApiConfig().contextWindowTokens):'';
     qs('generation-resume-unanswered')?.classList.add('hidden');
     contextRecoveryReceipt=null;
+    void refreshFailedGenerationRecovery();
 }
+let r19HudRecoveryDiagnosticId=null;
+async function refreshFailedGenerationRecovery(){
+ const preview=qs('generation-owner-preview'),recover=qs('generation-owner-recover'),repair=qs('generation-owner-html-repair');
+ if(!preview||!recover)return;
+ r19HudRecoveryDiagnosticId=null;preview.classList.add('hidden');recover.classList.add('hidden');repair?.classList.add('hidden');
+ const sessionId=currentSessionId;if(!sessionId||!qs('generation-panel')?.classList.contains('error'))return;
+ try{
+   const persisted=await MimaLocalStore.loadState(),session=persisted.sessions.find(s=>s.id===sessionId);
+   const pending=session?.pendingGeneration;
+   if(!pending||pending.status!=='failed')return;
+   const records=await MimaDiagnosticJournal.list({sessionId});
+   const record=records.find(r=>r.generationId===pending.id&&r.generationAttempt===pending.attempt&&r.action===pending.action&&['rejected','aborted','conflict'].includes(r.status));
+   if(!record||currentSessionId!==sessionId)return;
+   const candidate=await MimaDiagnosticJournal.candidatePreview(record.id);
+   if(!candidate.raw?.trim()||!candidate.complete)return;
+   r19HudRecoveryDiagnosticId=record.id;preview.classList.remove('hidden');recover.classList.remove('hidden');if(record.action&&!record.action.startsWith('compat_'))repair?.classList.remove('hidden');
+ }catch(e){console.warn('拒收原文现场入口暂不可用，保留诊断与 canonical 数据',{sessionId,error:e});}
+}
+async function previewFailedGenerationRaw(){
+ const id=r19HudRecoveryDiagnosticId;if(!id)return toast('当前没有经核实的完整失败正文');
+ try{const c=await MimaDiagnosticJournal.candidatePreview(id);const panel=qs('generation-detail');
+   if(!c.complete)throw Error('原文未完整保存，不允许假称可以恢复');
+   let details=qs('generation-owner-raw-preview');if(details)details.remove();details=document.createElement('details');details.id='generation-owner-raw-preview';details.open=true;
+   const sum=document.createElement('summary');sum.textContent='完整模型原文 · 纯文本展示（非执行 HTML）';
+   const pre=document.createElement('pre');pre.className='generation-error-diagnostic';pre.style.maxHeight='35vh';pre.style.overflow='auto';pre.textContent=c.raw;
+   details.append(sum,pre);panel.append(details);
+ }catch(e){toast('无法预览：'+e.message);}
+}
+async function recoverFailedGenerationRaw(){const id=r19HudRecoveryDiagnosticId;if(!id)return toast('没有可恢复的完整原文');await recoverDiagnosticReply(id);await refreshFailedGenerationRecovery();}
+async function repairFailedGenerationHtml(){const id=r19HudRecoveryDiagnosticId;if(!id)return toast('没有可修复的已核验原文');try{const record=await MimaDiagnosticJournal.recoveryCandidate(id);await reviewRejectedDiagnosticHtml(record);}catch(e){toast('免费 HTML 补全不可用：'+e.message);}}
 function currentRecoverySnapshot(){const session=MimaStandalone.getState()?.sessions?.find(s=>s.id===currentSessionId);return session?{
     sessionId:session.id,recordRevision:session.recordRevision,lastId:session.messages?.at(-1)?.id||'',
     sourceFingerprint:MimaStandalone.memorySourceFingerprint(session.messages||[],session.messages?.length||0)}:null;}
@@ -3298,7 +3329,7 @@ function restoreLegacyFont(){
 }
 
 // Expose inline handlers
-Object.assign(window,{importCurrentSessionAsSettingTemplate,chooseIndependentTemplate,saveIndependentTemplate,copyIndependentTemplate,setIndependentTemplateDefault,deleteIndependentTemplate,setImmersiveReading,saveCurrentSettingTemplate,duplicateSettingTemplate,setDefaultSettingTemplate,deleteSettingTemplate,exportSettingTemplate,importSettingTemplate,refreshSettingTemplateChoices,renderSettingTemplatePreview,manualRollingSummary,mimaFilterLibrary,mimaToggleFavorite,goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,choosePngResourceInspection,playInspectedPngInCompat,savePngSelectedResources,exportPngInspection,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,exportStoryTranscript,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,loadMemoryModels,selectMemoryModel,startFactMemoryEdit,cancelFactMemoryEdit,saveFactMemoryEdit,toggleMergeFactSelection,previewFactMemoryMerge,cancelFactMemoryMerge,confirmFactMemoryMerge,undoFactMemoryMerge,clearCoreMemory,deleteFactMemory,clearAllFactMemories,revokeRollingMemory,restoreRollingMemory,discardMemoryCandidate,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,mimaLoadLargeCssForEdit,stopAtelierAndRestoreCss,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,apiIdentityDraftChanged,syncTemperature,updateStoryTypography,resetStoryTypography,setAppearancePreviewSurface,setBuiltInTheme,dismissGenerationPanel,retryFailedGeneration,retryGenerationReconciliation,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,regenerateCurrentMsg,continueMsg,autoAdvance,restoreMessageVersion,stopGeneration,toggleGenerationPanelMinimize,restoreGenerationPanel,saveGenerationContextAndPreview,resumeGenerationAfterCapacityPreview});
+Object.assign(window,{importCurrentSessionAsSettingTemplate,chooseIndependentTemplate,saveIndependentTemplate,copyIndependentTemplate,setIndependentTemplateDefault,deleteIndependentTemplate,setImmersiveReading,saveCurrentSettingTemplate,duplicateSettingTemplate,setDefaultSettingTemplate,deleteSettingTemplate,exportSettingTemplate,importSettingTemplate,refreshSettingTemplateChoices,renderSettingTemplatePreview,manualRollingSummary,mimaFilterLibrary,mimaToggleFavorite,goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,choosePngResourceInspection,playInspectedPngInCompat,savePngSelectedResources,exportPngInspection,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,exportStoryTranscript,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,loadMemoryModels,selectMemoryModel,startFactMemoryEdit,cancelFactMemoryEdit,saveFactMemoryEdit,toggleMergeFactSelection,previewFactMemoryMerge,cancelFactMemoryMerge,confirmFactMemoryMerge,undoFactMemoryMerge,clearCoreMemory,deleteFactMemory,clearAllFactMemories,revokeRollingMemory,restoreRollingMemory,discardMemoryCandidate,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,mimaLoadLargeCssForEdit,stopAtelierAndRestoreCss,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,apiIdentityDraftChanged,syncTemperature,updateStoryTypography,resetStoryTypography,setAppearancePreviewSurface,setBuiltInTheme,dismissGenerationPanel,previewFailedGenerationRaw,recoverFailedGenerationRaw,repairFailedGenerationHtml,retryFailedGeneration,retryGenerationReconciliation,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,regenerateCurrentMsg,continueMsg,autoAdvance,restoreMessageVersion,stopGeneration,toggleGenerationPanelMinimize,restoreGenerationPanel,saveGenerationContextAndPreview,resumeGenerationAfterCapacityPreview});
 
 
 window.MimaTavernBridge={

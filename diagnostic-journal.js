@@ -3,7 +3,7 @@
    Only an explicitly confirmed manual recovery may copy a retained reply back.
    Failed writes are reported, never used to classify a model reply as successful. */
 (()=>{'use strict';
- const DB='MimaTAVERN_Native_Diagnostics_V1',STORE='entries';
+ const DB='MimaTAVERN_Native_Diagnostics_V1',STORE='entries',CANDIDATES='full_candidates';
  const LIMIT_COUNT=30,LIMIT_DAYS=14,LIMIT_BYTES=24*1024*1024,MAX_REQUEST_CHARS=4*1024*1024,MAX_BAD_REPLY_CHARS=128*1024;
  let dbPromise=null,queue=Promise.resolve(),lastError='';
  const pickString=(s,max)=>String(s??'').slice(0,max);
@@ -11,8 +11,8 @@
  function open(){
    if(!('indexedDB' in window))return Promise.reject(new Error('当前浏览器不支持 IndexedDB，无法保留诊断日志'));
    if(!dbPromise)dbPromise=new Promise((resolve,reject)=>{
-     const r=indexedDB.open(DB,1);
-     r.onupgradeneeded=()=>{const db=r.result;if(!db.objectStoreNames.contains(STORE)){const store=db.createObjectStore(STORE,{keyPath:'id'});store.createIndex('sessionId','sessionId',{unique:false});}};
+     const r=indexedDB.open(DB,2);
+     r.onupgradeneeded=()=>{const db=r.result;if(!db.objectStoreNames.contains(STORE)){const store=db.createObjectStore(STORE,{keyPath:'id'});store.createIndex('sessionId','sessionId',{unique:false});}if(!db.objectStoreNames.contains(CANDIDATES))db.createObjectStore(CANDIDATES,{keyPath:'id'});};
      r.onerror=()=>reject(r.error||new Error('诊断数据库打开失败'));
      r.onsuccess=()=>{const db=r.result;db.onversionchange=()=>{db.close();dbPromise=null};resolve(db);};
      r.onblocked=()=>reject(new Error('其他标签正在升级诊断日志数据库'));
@@ -24,12 +24,26 @@
  function transact(job){const next=queue.then(job).then(value=>{lastError='';return value});queue=next.catch(notice);return next;}
  function finished(tx){return new Promise((resolve,reject)=>{tx.oncomplete=()=>resolve();tx.onabort=()=>reject(tx.error||new Error('诊断日志事务已中止'));tx.onerror=()=>reject(tx.error||new Error('诊断日志事务失败'))})}
  function roughSize(row){try{return JSON.stringify(row).length*2}catch(_){return 0}}
+ // Diagnostic retention is non-canonical. A full rejected response is pinned
+ // until the 14-day expiration or explicit Owner deletion, not silently dropped
+ // to enforce a soft byte limit; its size still appears in capacity reporting.
  async function prune(){
-   const db=await open(),rows=await readAll(),now=Date.now();
+   const db=await open(),rows=await readAll(),cutoff=Date.now()-LIMIT_DAYS*86400000;
+   const ctx=db.transaction(CANDIDATES,'readonly'),candidates=await waitRequest(ctx.objectStore(CANDIDATES).getAll());
+   const candById=new Map(candidates.map(c=>[c.id,c]));
    rows.sort((a,b)=>Number(b.createdAtMs||0)-Number(a.createdAtMs||0));
-   const deletes=[],cutoff=now-LIMIT_DAYS*86400000;let kept=0,bytes=0;
-   for(const row of rows){const size=roughSize(row);if(Number(row.createdAtMs||0)<cutoff||kept>=LIMIT_COUNT||bytes+size>LIMIT_BYTES)deletes.push(row.id);else{kept++;bytes+=size;}}
-   if(deletes.length){const tx=db.transaction(STORE,'readwrite'),st=tx.objectStore(STORE);deletes.forEach(id=>st.delete(id));await finished(tx);}
+   const deletes=[],keepIds=new Set();let kept=0,bytes=0;
+   for(const row of rows){
+     const candidate=candById.get(row.id),size=roughSize(row)+(candidate?roughSize(candidate):0);
+     const expired=Number(row.createdAtMs||0)<cutoff;
+     if(expired||(!candidate&&(kept>=LIMIT_COUNT||bytes+size>LIMIT_BYTES))){deletes.push(row.id);continue;}
+     keepIds.add(row.id);kept++;bytes+=size;
+   }
+   // Orphan full candidates are never allowed to outlive the parent diagnostic.
+   for(const c of candidates)if(!keepIds.has(c.id)&&!deletes.includes(c.id))deletes.push(c.id);
+   if(deletes.length){const tx=db.transaction([STORE,CANDIDATES],'readwrite'),st=tx.objectStore(STORE),c=tx.objectStore(CANDIDATES);
+     for(const id of deletes){st.delete(id);c.delete(id);}await finished(tx);}
+   if(bytes>LIMIT_BYTES)console.warn('E_DIAGNOSTIC_SOFT_LIMIT: 完整恢复原文优先保留，诊断配额已超软限制',{bytes,limit:LIMIT_BYTES,pinned:candidates.filter(x=>keepIds.has(x.id)).length});
  }
  function issueId(){return 'd_'+Date.now().toString(36)+'_'+(window.crypto?.randomUUID?.()||Math.random().toString(36).slice(2));}
  function begin({sessionId,action,turnId,attemptId,traceId}={}){
@@ -40,7 +54,7 @@
    return id;
  }
  function event(id,data={}){
-   if(!id||!data||!['request','transport_response','provider_result','settlement','manual_recovery','timing','preflight_failure'].includes(data.type))return Promise.resolve();
+   if(!id||!data||!['request','transport_response','provider_result','settlement','manual_recovery','timing','preflight_failure','transformation_provenance'].includes(data.type))return Promise.resolve();
    return transact(async()=>{
      const db=await open();const tx=db.transaction(STORE,'readwrite'),st=tx.objectStore(STORE),row=await waitRequest(st.get(id));
      // Deleting a record is final, even if a request still runs.
@@ -76,6 +90,13 @@
            receivedChars:Number(data.receivedChars)||0,chars:Number(data.chars)||0,messageCount:Number(data.messageCount)||0,
            recordedAt:new Date().toISOString()});
          row.timings=row.timings.slice(-48);
+       }else if(data.type==='transformation_provenance'){
+         // Hash-only provenance, never copy private raw text into a metadata row.
+         row.transformations=Array.isArray(row.transformations)?row.transformations:[];
+         row.transformations.push({generationId:pickString(data.generationId,120),attempt:Number(data.attempt)||null,
+           raw:data.raw,canonical:data.canonical,display:data.display,
+           regexVersions:data.regexVersions,admissionStage:pickString(data.admissionStage,120),contractMode:pickString(data.contractMode,80),recordedAt:new Date().toISOString()});
+         row.transformations=row.transformations.slice(-12);
        }else if(data.type==='transport_response'){
          row.transport={requestStartedAt:pickString(data.requestStartedAt,50),responseReceivedAt:pickString(data.responseReceivedAt,50),fetchElapsedMs:Number(data.fetchElapsedMs)||0,httpStatus:Number(data.httpStatus)||0,
            providerRequestId:pickString(data.providerRequestId,200),cfRay:pickString(data.cfRay,200)};
@@ -119,12 +140,33 @@
    await queue;const db=await open(),tx=db.transaction(STORE,'readonly'),done=finished(tx);
    const row=await waitRequest(tx.objectStore(STORE).get(String(id)));await done;return row||null;
  }
+ // A format-rejected full Provider reply must never depend on the 128 KiB
+ // diagnostic preview or automatic 14-day pruning. Keep the original immutable
+ // bytes under diagnosticId, outside canonical History/Memory, before admission.
+ async function retainCandidate(id,raw,canonical=null){
+   if(!id||typeof raw!=='string'||!raw.length)throw Error('E_CANDIDATE_SOURCE_INVALID');
+   const digest=async value=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value)))].map(v=>v.toString(16).padStart(2,'0')).join('');
+   const rawDigest=await digest(raw),canonicalDigest=typeof canonical==='string'?await digest(canonical):null;
+   return transact(async()=>{const db=await open(),tx=db.transaction(CANDIDATES,'readwrite'),st=tx.objectStore(CANDIDATES);
+     const old=await waitRequest(st.get(id));if(old&&old.rawDigest!==rawDigest)throw Error('E_CANDIDATE_IMMUTABLE_CONFLICT');
+     if(!old)st.add({id,raw,rawChars:raw.length,rawDigest,canonicalDigest,storedAt:new Date().toISOString(),completeRaw:true});await finished(tx);
+     return {id,rawChars:raw.length,rawDigest,completeRaw:true};
+   });
+ }
+ async function discardCandidate(id){return transact(async()=>{const db=await open(),tx=db.transaction(CANDIDATES,'readwrite');tx.objectStore(CANDIDATES).delete(id);await finished(tx);});}
+ async function fullCandidate(id){await queue;const db=await open(),tx=db.transaction(CANDIDATES,'readonly');return (await waitRequest(tx.objectStore(CANDIDATES).get(String(id))))||null;}
+ async function candidatePreview(id){const record=await get(id),saved=await fullCandidate(id);if(!record)throw Error('诊断记录不存在');
+   if(saved){return {id,raw:saved.raw,rawChars:saved.rawChars,complete:true,digest:saved.rawDigest};}
+   return {id,raw:record.rawRejectedReply||'',rawChars:String(record.rawRejectedReply||'').length,complete:!!record.rawRejectedReply&&!record.rejectedReplyTruncated,digest:null};
+ }
  async function recoveryCandidate(id){
    const row=await get(id),bad=message=>{throw Object.assign(new Error(message),{code:'E_REPLY_RECOVERY_UNAVAILABLE'});};
    if(!row)bad('诊断记录已清理，无法恢复。');
    if(!['rejected','aborted','conflict'].includes(row.status))bad('本记录不是已结算的坏回复。');
-   if(!String(row.rawRejectedReply||'').trim())bad('这条日志没有收到可恢复的正文；不会重新请求模型。');
-   if(row.rejectedReplyTruncated===true)bad('诊断副本已被裁剪，缺少的正文无法恢复；原记录保留。');
+   const candidate=await fullCandidate(id);
+   if(!candidate&&!String(row.rawRejectedReply||'').trim())bad('这条日志没有收到可恢复的正文；不会重新请求模型。');
+   if(candidate){row.rawRejectedReply=candidate.raw;row.rejectedReplyTruncated=false;row.fullCandidateVerified=true;}
+   else if(row.rejectedReplyTruncated===true)bad('诊断副本已被裁剪，缺少的正文无法恢复；原记录保留。');
    // Old compat errors did not mark the transport partialDraft's 24k cap.
    if(String(row.action||'').startsWith('compat_')&&row.rawRejectedReply.length===24000&&!row.replyCaptureVersion)bad('旧日志无法确认正文是否已被裁剪，未改写剧情。');
    return row;
@@ -133,9 +175,9 @@
    await transact(prune);await queue;const rows=await readAll();
    return rows.filter(x=>(!sessionId||x.sessionId===sessionId)&&(!errorsOnly||['rejected','aborted','conflict'].includes(x.status))).sort((a,b)=>b.createdAtMs-a.createdAtMs);
  }
- function remove(id){return transact(async()=>{const db=await open(),tx=db.transaction(STORE,'readwrite');tx.objectStore(STORE).delete(id);await finished(tx)});}
- function clearSession(sessionId){return transact(async()=>{const rows=await readAll(),db=await open(),tx=db.transaction(STORE,'readwrite'),st=tx.objectStore(STORE);rows.filter(x=>x.sessionId===sessionId).forEach(x=>st.delete(x.id));await finished(tx)});}
- function clearAll(){return transact(async()=>{const db=await open(),tx=db.transaction(STORE,'readwrite');tx.objectStore(STORE).clear();await finished(tx)});}
+ function remove(id){return transact(async()=>{const db=await open(),tx=db.transaction([STORE,CANDIDATES],'readwrite');tx.objectStore(STORE).delete(id);tx.objectStore(CANDIDATES).delete(id);await finished(tx)});}
+ function clearSession(sessionId){return transact(async()=>{const rows=await readAll(),db=await open(),tx=db.transaction([STORE,CANDIDATES],'readwrite'),st=tx.objectStore(STORE),c=tx.objectStore(CANDIDATES);rows.filter(x=>x.sessionId===sessionId).forEach(x=>{st.delete(x.id);c.delete(x.id)});await finished(tx)});}
+ function clearAll(){return transact(async()=>{const db=await open(),tx=db.transaction([STORE,CANDIDATES],'readwrite');tx.objectStore(STORE).clear();tx.objectStore(CANDIDATES).clear();await finished(tx)});}
  function status(){return {error:lastError,limitCount:LIMIT_COUNT,limitDays:LIMIT_DAYS,limitBytes:LIMIT_BYTES,database:DB};}
- window.MimaDiagnosticJournal=Object.freeze({begin,event,uiTiming,get,recoveryCandidate,list,remove,clearSession,clearAll,status});
+ window.MimaDiagnosticJournal=Object.freeze({begin,event,uiTiming,get,recoveryCandidate,retainCandidate,discardCandidate,fullCandidate,candidatePreview,list,remove,clearSession,clearAll,status});
 })();

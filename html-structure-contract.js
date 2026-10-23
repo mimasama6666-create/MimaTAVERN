@@ -9,21 +9,77 @@
  const cssAuthorizations=c=>selectors(c?.staticCssSelectors);
  const voids=new Set(['area','base','br','col','embed','hr','img','input','link','meta','param','source','track','wbr']);
  const markup=s=>/<\/?[A-Za-z][\w:.-]*(?:\s|>|\/)/.test(String(s||''));
- // No HTMLParser recovery may silently turn an unclosed REQUIRED response into a PASS.
- function rawBalance(source){
-   let raw=String(source||'');const stack=[];
-   raw=raw.replace(/<!--(?:[\s\S]*?)-->|<style\b[^>]*>[\s\S]*?<\/style\s*>/gi,x=>x.startsWith('<!--')?'': '<style></style>');
-   const token=/<(\/)?([A-Za-z][\w:.-]*)\b(?:"[^"]*"|'[^']*'|[^'">])*?>/g;let last=0,m;
-   while((m=token.exec(raw))){
-     const between=raw.slice(last,m.index);
-     if(/<(?:\/?[A-Za-z]|!|\?)/.test(between))return {ok:false,reason:'malformed_tag'};
-     const tag=m[2].toLowerCase();last=token.lastIndex;
-     if(voids.has(tag))continue;
-     if(m[1]){if(stack.pop()!==tag)return {ok:false,reason:'mismatched_closing_'+tag};}
-     else if(!/\/\s*>$/.test(m[0]))stack.push(tag);
+ // Read HTML in tokenizer context, not with a global tag regex: a JS string,
+ // textarea value, comment or DOCTYPE must never become an element.
+ const rawTextTags=new Set(['script','style','xmp','iframe','noembed','noframes','plaintext']);
+ const rcdataTags=new Set(['textarea','title']);
+ const optionalEnd={li:['li'],dt:['dt','dd'],dd:['dd','dt'],p:['p','div','section','article','header','footer','main','nav','aside','h1','h2','h3','h4','h5','h6','ul','ol','table','pre','blockquote'],
+   option:['option','optgroup'],optgroup:['optgroup'],tr:['tr'],td:['td','th'],th:['td','th'],thead:['tbody','tfoot'],tbody:['tbody','tfoot'],tfoot:['tbody']};
+ function tokenize(source){
+   const src=String(source||''),stack=[];let i=0,seen=false;
+   const error=(reason)=>({ok:false,reason,stack:[...stack],seen});
+   const popOptional=(tag)=>{while(stack.length&&optionalEnd[stack.at(-1)]?.includes(tag))stack.pop();};
+   while(i<src.length){
+     const active=stack.at(-1);
+     if(active==='plaintext'){i=src.length;break;}
+     if(rawTextTags.has(active)||rcdataTags.has(active)){
+       const close=new RegExp('</'+active+'\\s*>','ig');close.lastIndex=i;
+       const hit=close.exec(src);
+       if(!hit){return error('unclosed_'+active);}
+       stack.pop();i=close.lastIndex;continue;
+     }
+     const start=src.indexOf('<',i);if(start<0)break;i=start;
+     if(src.startsWith('<!--',i)){const end=src.indexOf('-->',i+4);if(end<0)return error('unfinished_comment');i=end+3;continue;}
+     if(/^<!doctype\b/i.test(src.slice(i))){
+       // The public identifier may contain > in a quote; parse until unquoted >.
+       let j=i+2,quote='';for(;j<src.length;j++){const ch=src[j];if(quote){if(ch===quote)quote='';}else if(ch==='"'||ch==="'")quote=ch;else if(ch==='>')break;}
+       if(j>=src.length)return error('unfinished_doctype');i=j+1;continue;
+     }
+     if(src.startsWith('<![CDATA[',i)){const end=src.indexOf(']]>',i+9);if(end<0)return error('unfinished_cdata');i=end+3;continue;}
+     if(src.startsWith('<?',i)){const end=src.indexOf('?>',i+2);if(end<0)return error('unfinished_processing_instruction');i=end+2;continue;}
+     const match=/^<(\/)?([A-Za-z][\w:.-]*)\b/.exec(src.slice(i));
+     if(!match){
+       // Literal less-than text, e.g. "3 < 5", is not markup.
+       if(/^<!|^<\/?[A-Za-z]/.test(src.slice(i)))return error('malformed_tag');
+       i++;continue;
+     }
+     const tag=match[2].toLowerCase();let j=i+match[0].length,quote='';
+     for(;j<src.length;j++){const ch=src[j];if(quote){if(ch===quote)quote='';}else if(ch==='"'||ch==="'")quote=ch;else if(ch==='>')break;}
+     if(j>=src.length)return error('unfinished_tag');
+     const whole=src.slice(i,j+1),isClosing=!!match[1],selfClosing=/\/\s*>$/.test(whole);seen=true;
+     // In text/html, '/>' does NOT close ordinary HTML elements. Only SVG/MathML
+     // foreign content has self-closing semantics (except HTML integration points).
+     const foreignStart=Math.max(stack.lastIndexOf('svg'),stack.lastIndexOf('math'));
+     const insideForeign=foreignStart>=0&&!stack.slice(foreignStart+1).includes('foreignobject');
+     if(isClosing){
+       // Optional end tags are not missing markup in HTML documents.
+       while(stack.length&&stack.at(-1)!==tag&&optionalEnd[stack.at(-1)])stack.pop();
+       if(stack.at(-1)!==tag)return error('mismatched_closing_'+tag);
+       stack.pop();
+     }else if(!voids.has(tag)){
+       popOptional(tag);
+       if(!(selfClosing&&(insideForeign||tag==='svg'||tag==='math')))stack.push(tag);
+     }
+     i=j+1;
    }
-   if(/<(?:\/?[A-Za-z]|!|\?)/.test(raw.slice(last)))return {ok:false,reason:'unfinished_tag'};
-   return stack.length?{ok:false,reason:'unclosed_'+stack[stack.length-1]}:{ok:true};
+   while(stack.length&&optionalEnd[stack.at(-1)])stack.pop();
+   return stack.length?error('unclosed_'+stack.at(-1)):{ok:true,stack:[],seen};
+ }
+ function rawBalance(source){const result=tokenize(source);return {ok:result.ok,...(!result.ok?{reason:result.reason}:{})};}
+ // This repair changes only a demonstrably absent suffix: never rewrite any
+ // original byte, never close unsafe RAWTEXT or guess malformed markup.
+ function closeUnclosedTags(source){
+   const original=String(source??''),result=tokenize(original);
+   if(!result.seen)throw Error(result.reason&&result.reason!=='unclosed_'?'E_HTML_TAG_CLOSURE_AMBIGUOUS_MARKUP: '+result.reason:'E_HTML_TAG_CLOSURE_NO_MARKUP');
+   if(result.ok)throw Error('E_HTML_TAG_CLOSURE_NOT_NEEDED');
+   if(!result.reason.startsWith('unclosed_'))throw Error('E_HTML_TAG_CLOSURE_AMBIGUOUS_MARKUP: '+result.reason);
+   const forbidden=new Set(['script','style','textarea','title','iframe','object','embed','svg','math','template','xmp','noembed','noframes','plaintext']);
+   if(result.stack.some(tag=>forbidden.has(tag)))throw Error('E_HTML_TAG_CLOSURE_UNSAFE_ELEMENT');
+   const appended=[...result.stack].reverse().map(tag=>'</'+tag+'>').join('');
+   if(!appended)throw Error('E_HTML_TAG_CLOSURE_NOT_NEEDED');
+   const proposedContent=original+appended;
+   if(!tokenize(proposedContent).ok)throw Error('E_HTML_TAG_CLOSURE_VERIFICATION_FAILED');
+   return {proposedContent,oldContent:original,appended,repairActions:['append_missing_closing_tags'],confidence:'lexical_append_only',missingFields:[]};
  }
  function onlyUnique(body,sel){let list;try{list=body.querySelectorAll(sel);}catch{throw Error('E_HTML_CONTRACT_SELECTOR_INVALID: '+sel);}return list;}
  function path(node){let r=[],el=node;while(el&&el.parentElement&&el!==el.ownerDocument.body){const siblings=[...el.parentElement.children].filter(n=>n.tagName===el.tagName);r.push(el.tagName+':'+siblings.indexOf(el));el=el.parentElement;}return r.reverse().join('/');}
@@ -388,5 +444,5 @@
    if(!model.isEqualNode(elTree(expected.html)))throw Error('E_HTML_AI_LAYOUT_OR_DYNAMIC_UNVERIFIED');
    return {ok:true,missingFields:expected.fields};
  }
- window.MimaHtmlStructure=Object.freeze({inspect,threePart,continuationKind,propose,finalizeProposal,finalizeWithProse,aiAdmission,verifyReformat,rawBalance});
+ window.MimaHtmlStructure=Object.freeze({inspect,threePart,continuationKind,propose,finalizeProposal,finalizeWithProse,aiAdmission,verifyReformat,rawBalance,closeUnclosedTags});
 })();

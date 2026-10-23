@@ -1,0 +1,60 @@
+/* Scoped phone OS: inherits host foreground, typography and CSS theme variables. */
+#mima-phone-root[hidden]{display:none!important}
+body.mima-phone-active{overflow:hidden!important}
+#mima-phone-root{position:fixed;inset:0;z-index:2147482800;color:var(--text-primary,var(--ink,#2b2a31));background:var(--app-bg,var(--bg,#ecebf1));font-family:inherit;isolation:isolate;overscroll-behavior:contain}
+#mima-phone-root *{box-sizing:border-box}
+#mima-phone-root .phone-shell{max-width:710px;margin:0 auto;display:grid;grid-template-rows:auto minmax(0,1fr) auto auto;min-height:0;height:100dvh;background:var(--card-bg,rgba(255,255,255,.87));box-shadow:0 12px 70px rgba(30,25,40,.16);overflow:hidden;backdrop-filter:blur(18px)}
+#mima-phone-root .phone-header{display:flex;align-items:center;gap:10px;min-height:66px;padding:calc(8px + env(safe-area-inset-top,0px)) 14px 8px;background:var(--surface-glass,rgba(255,255,255,.65));border-bottom:1px solid var(--border,rgba(106,104,125,.18));backdrop-filter:blur(16px)}
+#mima-phone-root .phone-header-title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;font-size:17px;font-weight:700}
+#mima-phone-root .phone-main{min-height:0;overflow:auto;overscroll-behavior:contain;padding:16px 14px 24px;background:linear-gradient(140deg,rgba(247,217,232,.18),transparent 70%),var(--panel-bg,rgba(250,249,253,.58));}
+#mima-phone-root .phone-tabbar{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));background:var(--surface-glass,rgba(255,255,255,.87));border-top:1px solid var(--border,rgba(106,104,125,.19));padding:8px 5px calc(8px + env(safe-area-inset-bottom,0px));gap:3px;backdrop-filter:blur(24px)}
+#mima-phone-root .phone-btn{font:inherit;color:inherit;cursor:pointer;flex-shrink:0;border-radius:12px;border:1px solid var(--border,rgba(123,106,132,.17));background:var(--button-bg,rgba(255,255,255,.5));padding:9px 12px;min-height:40px;transition:filter .16s,transform .16s;overflow-wrap:anywhere}
+#mima-phone-root .phone-btn:active{transform:scale(.97)}
+#mima-phone-root .phone-btn:hover{filter:brightness(.96)}
+#mima-phone-root .phone-btn.phone-primary,#mima-phone-root .phone-btn.active{background:var(--accent,#bd819f);border-color:transparent;color:white}
+#mima-phone-root .phone-tabbar .phone-btn{padding:6px 2px;min-height:48px;border:0;border-radius:13px;font-size:11px;white-space:normal;line-height:1.4;background:transparent}
+#mima-phone-root .phone-tabbar .phone-btn.active{background:var(--accent,#bd819f);color:white}
+#mima-phone-root .phone-back{font-size:25px;border:none;background:none;min-width:36px;padding:4px}
+#mima-phone-root .phone-exit{font-size:11px;white-space:nowrap;padding:8px}
+#mima-phone-root .phone-card{padding:14px 15px;border-radius:18px;border:1px solid var(--border,rgba(85,80,100,.14));background:var(--card-bg,rgba(255,255,255,.81));margin-bottom:13px;box-shadow:0 4px 18px rgba(49,30,40,.045);overflow-wrap:anywhere}
+#mima-phone-root .phone-card h3{font-size:15px;font-weight:650;margin:0 0 10px}
+#mima-phone-root .phone-card h3:empty{display:none}
+#mima-phone-root .phone-card p{line-height:1.6;white-space:pre-wrap;margin:.5em 0}
+#mima-phone-root .phone-card small{display:block;font-size:11px;opacity:.65;margin-top:6px;overflow-wrap:anywhere}
+#mima-phone-root .phone-card.phone-list-card{cursor:pointer;padding:14px 18px}
+#mima-phone-root .phone-list-card:hover{filter:brightness(.98)}
+#mima-phone-root .phone-line{display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap}
+#mima-phone-root .phone-line>*{max-width:100%}
+#mima-phone-root .phone-input{appearance:auto;flex:1;min-width:110px;max-width:100%;border:1px solid var(--border,rgba(108,104,125,.25));border-radius:12px;padding:10px 12px;background:var(--input-bg,rgba(255,255,255,.7));color:inherit;font:inherit;font-size:14px}
+#mima-phone-root textarea.phone-input{width:100%;min-height:60px;line-height:1.6;resize:vertical}
+#mima-phone-root .phone-composer{position:sticky;bottom:0;padding:8px 9px;border-radius:17px;background:var(--card-bg,rgba(255,255,255,.91));box-shadow:0 0 15px rgba(30,20,50,.12);backdrop-filter:blur(18px);margin-top:14px}
+#mima-phone-root .phone-chat-history{display:flex;flex-direction:column;align-items:stretch;gap:14px;padding:12px 1px 18px}
+#mima-phone-root .phone-bubble{max-width:85%;min-width:80px;align-self:flex-start;padding:10px 12px;border-radius:6px 16px 16px 16px;background:var(--card-bg,white);box-shadow:0 3px 13px rgba(45,25,50,.07);overflow-wrap:anywhere;white-space:pre-wrap;font-size:14px}
+#mima-phone-root .phone-bubble.mine{align-self:flex-end;border-radius:16px 6px 16px 16px;background:var(--accent-soft,#efcfe0)}
+#mima-phone-root .phone-bubble-name{display:block;font-size:11px;font-weight:700;opacity:.68;margin-bottom:5px}
+#mima-phone-root .phone-bubble-text{white-space:pre-wrap;line-height:1.65}
+#mima-phone-root .phone-bubble-time{display:block;text-align:right;opacity:.5;margin-top:5px;font-size:10px}
+#mima-phone-root .phone-bubble-media{max-width:100%;max-height:480px;object-fit:contain;border-radius:9px;cursor:zoom-in}
+#mima-phone-root .phone-bubble-audio{max-width:100%;width:260px}
+#mima-phone-root .phone-person-name{display:grid;gap:2px}
+#mima-phone-root .phone-person-name small{margin:0}
+#mima-phone-root .phone-thread-title{font-weight:700;margin-bottom:12px}
+#mima-phone-root .phone-helper{font-size:12px;line-height:1.65;opacity:.75;padding:6px 2px}
+#mima-phone-root .phone-post{white-space:pre-wrap;line-height:1.75}
+#mima-phone-root .phone-raw{white-space:pre-wrap;max-height:35vh;overflow:auto;font-size:12px}
+#mima-phone-root .phone-error{font-size:13px;color:#c25065;white-space:pre-wrap;overflow-wrap:anywhere;padding:10px}
+#mima-phone-root .phone-empty{opacity:.67;text-align:center;padding:38px 14px;font-size:13px}
+#mima-phone-root .phone-tiny{padding:3px 9px;min-height:24px;font-size:11px}
+#mima-phone-root .phone-status{display:none;max-height:85px;overflow:auto;white-space:pre-wrap;font-size:12px;padding:9px 15px;background:rgba(104,97,119,.9);color:white;overflow-wrap:anywhere}
+#mima-phone-root .phone-status.visible{display:block}
+#mima-phone-root .phone-check{display:flex;gap:10px;align-items:center;padding:10px 6px;font-size:13px}
+#mima-phone-root .phone-check input{accent-color:var(--accent,#bd819f)}
+#mima-phone-root .phone-wallet-row,#mima-phone-root .phone-ledger-row{padding:6px 0;border-bottom:1px dashed var(--border,rgba(70,60,80,.15));display:block}
+#mima-phone-root .phone-modal-backdrop{position:fixed;inset:0;background:rgba(20,15,29,.5);display:grid;place-items:center;padding:20px;z-index:5}
+#mima-phone-root .phone-modal{background:var(--card-bg,#fff);color:inherit;width:min(450px,95vw);max-height:76dvh;overflow:auto;padding:21px;border-radius:18px;box-shadow:0 10px 55px rgba(0,0,0,.3)}
+@media(max-width:500px){#mima-phone-root .phone-main{padding:13px 10px 22px}#mima-phone-root .phone-card{padding:12px}#mima-phone-root .phone-line{gap:5px}#mima-phone-root .phone-btn{padding:8px;font-size:12px}#mima-phone-root .phone-bubble{max-width:91%}#mima-phone-root .phone-header-title{font-size:15px}}
+
+#mima-phone-root .phone-deleted{opacity:.55;border:1px dashed currentColor}
+#mima-phone-root .phone-deleted>.phone-bubble-text{text-decoration:line-through}
+#mima-phone-root .phone-bubble[hidden]{display:none!important}
+#mima-phone-root .phone-versions pre{max-height:150px;overflow:auto}
