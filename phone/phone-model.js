@@ -23,7 +23,7 @@
    out.push({role:'system',content:'只返回 JSON：{"schema":"phone_bubbles_v1","bubbles":[{"kind":"text","text":"自然聊天内容"}]}。可连续多气泡，按自然语义决定条数。禁止输出额外解释、角色外文本或伪造用户消息。'});
    return out;
  }
- async function generate({actorId,userMaskId,history=[],presetIds=[],worldbookIds=[],task='chat',scope='',extra='',signal,visionParts=[],speakerNames={},apiSettings=null}={}){
+ async function generate({actorId,userMaskId,history=[],presetIds=[],worldbookIds=[],task='chat',scope='',extra='',signal,visionParts=[],speakerNames={},apiSettings=null,onProgress=null}={}){
    const s=MimaPhoneResources.snapshotSelection({userMaskId,charMaskIds:[actorId],presetIds,worldbookIds,visibleText:history.map(x=>x.content||'').join('\n')+'\n'+extra});
    const actor=s.chars[0],request=messages(s,actor,history,{task,scope,extra,speakerNames});
    if(visionParts.length){request.push({role:'user',content:[{type:'text',text:'请结合这次主人发送的图片内容回复，而不是只根据文件名猜测。'},...visionParts]});}
