@@ -3374,7 +3374,8 @@ let mimaStartupPending=false, mimaStartupBound=false, mimaStartupReady=false;
 function showMimaStartupFailure(stage,error){
     const issue={kind:'mima_startup_read_failure',stage,code:String(error?.code||error?.name||'E_STARTUP_UNKNOWN').slice(0,120),
         message:String(error?.message||error||'未知错误').slice(0,1600),occurredAt:new Date().toISOString(),
-        pageVersion:'20261019-r4.2',failureHandlerWroteCanonicalState:false};
+        pageVersion:'20261023-r19-startup-asset-1',failureHandlerWroteCanonicalState:false,
+        storeScriptAvailable:typeof window.MimaLocalStore?.loadState==='function'};
     let panel=document.getElementById('mima-startup-failure');
     if(!panel){
         panel=document.createElement('section');panel.id='mima-startup-failure';
@@ -3383,9 +3384,21 @@ function showMimaStartupFailure(stage,error){
         panel.innerHTML='<div style="width:min(520px,100%);padding:24px;background:#292c37;border:1px solid #71778d;border-radius:14px"><h2 style="font-size:20px;margin:0 0 12px">咪嘛馆暂时无法载入资料库</h2><p>原始存档未被清空，也不会自动初始化空存档。请保留当前页面，导出诊断以便排查。</p><pre id="mima-startup-error" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:30vh;overflow:auto"></pre><div style="display:flex;gap:12px;flex-wrap:wrap"><button type="button" id="mima-startup-export">导出错误诊断</button><button type="button" id="mima-startup-retry">手动重新读取</button></div></div>';
         document.body.appendChild(panel);
         panel.querySelector('#mima-startup-export').addEventListener('click',()=>{
-            window.MimaFileExport.save('mima-startup-failure.json',JSON.stringify(panel.mimaLastIssue,null,2),'application/json;charset=utf-8');
+            const payload=JSON.stringify(panel.mimaLastIssue,null,2);
+            if(typeof window.MimaFileExport?.save==='function'){window.MimaFileExport.save('mima-startup-failure.json',payload,'application/json;charset=utf-8');return;}
+            const file=new Blob([payload],{type:'application/json;charset=utf-8'}),url=URL.createObjectURL(file);
+            const link=document.createElement('a');link.href=url;link.download='mima-startup-failure.json';document.body.append(link);link.click();link.remove();
+            setTimeout(()=>URL.revokeObjectURL(url),1000);
         });
-        panel.querySelector('#mima-startup-retry').addEventListener('click',()=>mimaBoot());
+        panel.querySelector('#mima-startup-retry').addEventListener('click',()=>{
+            if(typeof window.MimaStandalone?.init!=='function'){const issue=new Error('E_STARTUP_CORE_SCRIPT_MISSING: 剧情引擎脚本未成功加载，未读取或改写存档');issue.code='E_STARTUP_CORE_SCRIPT_MISSING';throw issue;}
+        if(typeof window.MimaStandalone?.init!=='function'||typeof window.MimaLocalStore?.loadState!=='function'){
+                // A missing classic script cannot be restored by reading IndexedDB again.
+                // User-initiated page reload re-fetches deployed scripts; no data reset.
+                window.location.reload();return;
+            }
+            void mimaBoot();
+        });
     }
     panel.mimaLastIssue=issue;
     panel.querySelector('#mima-startup-error').textContent=`阶段：${issue.stage}\n错误：${issue.code}\n${issue.message}`;
@@ -3396,7 +3409,12 @@ async function mimaBoot(){
     mimaStartupPending=true;
     let stage='init_local_state';
     try{
-        // Re-initialization reads the verified canonical state, not an empty fallback.
+        // An absent script is an asset/deployment error, never missing user data.
+        // Do not invoke a method on an undefined global and mislabel it as IDB corruption.
+        if(typeof window.MimaLocalStore?.loadState!=='function'){
+            const missing=new Error('E_STARTUP_STORE_SCRIPT_MISSING: 本地存储脚本未成功加载；请核对 local-store.js 请求和部署资源版本。原始资料库未读取、未清空。');
+            missing.code='E_STARTUP_STORE_SCRIPT_MISSING';throw missing;
+        }
         await MimaStandalone.init();
         stage='bind_application';
         if(!mimaStartupBound){
@@ -3433,4 +3451,7 @@ async function mimaBoot(){
         showMimaStartupFailure(stage,e);
     }finally{mimaStartupPending=false;}
 }
-window.addEventListener('load',mimaBoot);
+// Scripts above are synchronous and at the end of body. DOMContentLoaded does not
+// wait for full image/asset load (the prior `load` listener delayed startup).
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',mimaBoot,{once:true});
+else queueMicrotask(mimaBoot);

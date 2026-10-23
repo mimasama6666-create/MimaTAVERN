@@ -5,7 +5,7 @@
    if(decoded?.schema!=='phone_bubbles_v1'||!Array.isArray(decoded.bubbles)||!decoded.bubbles.length||decoded.bubbles.length>256)throw Object.assign(Error('手机消息格式不合法，未将内容写入正式聊天'),{code:'E_PHONE_FORMAT',raw:text});
    return decoded.bubbles.map(b=>{if(!b||!['text','voice_text'].includes(b.kind)||typeof b.text!=='string'||!b.text.trim()||b.text.length>120000)throw Object.assign(Error('手机气泡类型或内容无效'),{code:'E_PHONE_FORMAT',raw:text});return {kind:b.kind,content:b.text};});
  }
- function messages(snapshot,actor,history,{task='chat',scope='',extra='',speakerNames={},apiSettings=null}={}){
+ function messages(snapshot,actor,history,{task='chat',scope='',extra='',speakerNames={},apiSettings=null,onProgress=null}={}){
    if(!actor||!snapshot.user)throw Error('缺少已验证的 Char/User 面具');
    const preamble=`你正在虚拟手机上扮演角色 ${actor.name}。角色的真实人格设定：\n${actor.content||actor.description||''}\n背景：${actor.scenario||''}\n示例对话：${actor.exampleDialogue||''}\n对方：${snapshot.user.name}\n用户资料：${snapshot.user.content||''}\n这是与主剧情独立的手机社交事实域。不得代用户发言、不得凭台词修改余额/库存。不可看到未授权的其他私聊。当前任务：${task}；可见范围：${scope}。`;
    const system=[preamble,...snapshot.presets.map(p=>p.content),...snapshot.lore.map(e=>e.content),extra].filter(Boolean).join('\n\n');
@@ -27,7 +27,7 @@
    const s=MimaPhoneResources.snapshotSelection({userMaskId,charMaskIds:[actorId],presetIds,worldbookIds,visibleText:history.map(x=>x.content||'').join('\n')+'\n'+extra});
    const actor=s.chars[0],request=messages(s,actor,history,{task,scope,extra,speakerNames});
    if(visionParts.length){request.push({role:'user',content:[{type:'text',text:'请结合这次主人发送的图片内容回复，而不是只根据文件名猜测。'},...visionParts]});}
-   const config=MimaPhoneResources.resolveApiConfig(apiSettings);const metadata={};const raw=await MimaStandalone.callModelWithConfig(request,config,config.temperature,signal,{resultMeta:metadata,streamOverride:config.stream});
+   const config=MimaPhoneResources.resolveApiConfig(apiSettings);const metadata={};const raw=await MimaStandalone.callModelWithConfig(request,config,config.temperature,signal,{resultMeta:metadata,streamOverride:config.stream,onProgress});
    return {raw,bubbles:bubbles(raw),meta:{finishKind:metadata.finishKind||'',model:config.model,sourceRevision:s.sourceRevision}};
  }
  function socialPlan(raw){

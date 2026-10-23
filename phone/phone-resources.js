@@ -20,7 +20,11 @@
      // Missing keys are valid only for users' local servers. Validation occurs in original provider transport.
      return cfg;
    }
-   const cfg=core().getApiConfig();if(!cfg?.model||!cfg?.apiBase)throw Error('主剧情 API 未配置有效的地址与模型，请设置 API 或启用手机独立配置');return cfg;
+   const cfg=core().getApiConfig();if(!cfg?.model||!cfg?.apiBase)throw Error('主剧情 API 未配置有效的地址与模型，请设置 API 或启用手机独立配置');
+   // Optional PHONE-only transport override; never writes or mutates story API.
+   const mode=phonePrefs?.phoneStreamOverride||'inherit';
+   if(mode==='on'||mode==='off')return {...cfg,stream:mode==='on'};
+   return cfg;
  }
  function snapshotSelection({userMaskId,charMaskIds=[],presetIds=[],worldbookIds=[],visibleText=''}={}){
   const s=state();const users=userMaskId?getUserMask(userMaskId):null;

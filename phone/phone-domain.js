@@ -159,16 +159,16 @@
  function assertAttempt(g,attempt){must(Number.isSafeInteger(attempt)&&attempt>=1,'生成回调缺少 attempt');
    if(g.attempt!==attempt)throw Object.assign(Error('E_PHONE_STALE_ATTEMPT: 旧请求不能结算新一轮'),{code:'E_PHONE_STALE_ATTEMPT'});}
  async function restartGeneration(genId,sourceDigest=''){return S().transaction(chatGenerationStores,'readwrite',async t=>{
-   const g=await t.get('generations',genId);must(g&&['prepared','failed','unknown'].includes(g.status),'没有可明确重发的生成任务');
+   const g=await t.get('generations',genId);must(g&&['prepared','failed','unknown','cancelled'].includes(g.status),'没有可明确重发的生成任务');
    const c=await t.get('conversations',g.threadId);
    if(g.sourceDigest)must(sourceDigest===g.sourceDigest,'角色或预设在原尝试后变动，请重新发起新的任务');
    must(c&&c.memberIds.includes(g.actorId)&&c.memberRevision===g.memberRevision&&c.recordRevision===g.sourceRevision,'会话在原任务后已变化，禁止旧回复重放到新历史');
-   const previous={attempt:g.attempt,status:g.status,error:g.error||'',raw:g.raw||'',at:now()};
+   const previous={attempt:g.attempt,status:g.status,error:g.error||'',raw:g.raw||g.rawDraft||'',at:now()};
    // An explicit retry makes a NEW provider request. It must use a fresh
    // authorized snapshot; old raw stays only in attemptHistory as evidence.
    // Attempt fencing prevents the previous provider callback from committing.
    const memorySnapshot=await memoryProjectionTx(t,g.actorId);
-   const next={...g,status:'prepared',attempt:g.attempt+1,error:'',raw:'',memorySnapshot,attemptHistory:[...(g.attemptHistory||[]),previous],restartedAt:now(),restartExplicit:true};
+   const next={...g,status:'prepared',attempt:g.attempt+1,error:'',raw:'',rawDraft:'',rawIncomplete:false,memorySnapshot,attemptHistory:[...(g.attemptHistory||[]),previous],restartedAt:now(),restartExplicit:true};
    await t.put('generations',next);return next;
  });}
  async function finishGeneration(generationId,bubbles,raw,attempt,sourceDigest=''){return S().transaction(chatGenerationStores,'readwrite',async t=>{
@@ -186,20 +186,41 @@
    if((await t.get('prefs','main'))?.autoMemoryCandidates===true)for(const row of rows)await stageTranscriptCandidate(t,row,gen.actorId);
    const done={...gen,status:'committed',raw,finishedAt:now(),resultIds:rows.map(x=>x.id)};await t.put('generations',done);return done;
  });}
- async function failGeneration(genId,error,raw='',attempt){return S().transaction(['generations'],'readwrite',async t=>{
+ // Stream checkpoints are evidence only: never part of canonical messages.
+ // A late callback from a canceled/restarted attempt cannot revive an old draft.
+ async function checkpointGenerationDraft(genId,attempt,partial){return S().transaction(['generations'],'readwrite',async t=>{
+   const g=await t.get('generations',genId);if(!g||g.status!=='prepared'||g.attempt!==attempt)return false;
+   const draft=String(partial||'');
+   if(draft.length<(g.rawDraft||'').length)return false;
+   await t.put('generations',{...g,rawDraft:draft,rawIncomplete:true,rawDraftAt:now()});return true;
+ });}
+ async function cancelGeneration(genId,attempt,partialEvidence=''){return S().transaction(['generations'],'readwrite',async t=>{
+   const g=await t.get('generations',genId);must(g,'生成任务不存在');assertAttempt(g,attempt);
+   if(g.status==='committed'||g.status==='cancelled')return g;
+   must(['prepared','failed','unknown'].includes(g.status),'当前任务不能取消');
+   const supplied=String(partialEvidence||'');
+   const evidence=supplied.length>(g.rawDraft||'').length?supplied:(g.rawDraft||'');
+   const result={...g,status:'cancelled',rawDraft:evidence,rawIncomplete:!!evidence||!!g.rawIncomplete,cancelledAt:now(),error:g.error||'主人取消了当前任务；本地已有草稿仍保留，未提交为角色消息'};
+   await t.put('generations',result);return result;
+ });}
+ async function failGeneration(genId,error,raw='',attempt,{partial=false}={}){return S().transaction(['generations'],'readwrite',async t=>{
    const row=await t.get('generations',genId);must(row,'生成任务不存在');assertAttempt(row,attempt);
    if(row.status==='committed')return row;
    must(row.status==='prepared','生成任务已结算，旧失败不能覆盖');
-   const next={...row,status:'failed',error:String(error),raw,finishedAt:now()};await t.put('generations',next);return next;
+   const incoming=String(raw||''),checkpoint=String(row.rawDraft||'');
+   const evidence=checkpoint.length>incoming.length?checkpoint:incoming;
+   const next={...row,status:'failed',error:String(error),raw:evidence,rawDraft:evidence,rawIncomplete:!!partial||(!raw&&!!row.rawIncomplete)||(checkpoint.length>incoming.length&&!!row.rawIncomplete),finishedAt:now()};await t.put('generations',next);return next;
  });}
  // Parsed recovery is the default. Exact raw JSON is evidence, not a text bubble.
  // Owner can deliberately accept a manually entered plain-text version, labelled
  // as an override, without pretending a truncated JSON reply was parsed.
  async function recoverGeneration(genId,{mode='parsed',text='',attempt,sourceDigest=''}={}){
-   const gen=await S().read('generations',genId);must(gen&&gen.status==='failed'&&typeof gen.raw==='string'&&gen.raw.trim(),'没有可人工恢复的候选');
+   const gen=await S().read('generations',genId);
+   const evidence=String(gen?.raw||gen?.rawDraft||'');
+   must(gen&&evidence.trim()&&(gen.status==='failed'||(gen.status==='cancelled'&&mode==='owner_text')),'没有可人工恢复的候选；未核实的任务须先取消，才能由主人明确编辑恢复');
    assertAttempt(gen,attempt);if(gen.sourceDigest)must(sourceDigest===gen.sourceDigest,'恢复候选引用的角色资源已变化，不会误写入新人物设定');
    let bubbles;
-   if(mode==='parsed')bubbles=MimaPhoneModel.bubbles(gen.raw);
+   if(mode==='parsed'){must(gen.status==='failed'&&!gen.rawIncomplete,'未完成的流式草稿不能自动按完整回复解析');bubbles=MimaPhoneModel.bubbles(evidence);}
    else if(mode==='owner_text'){must(typeof text==='string'&&text.trim(),'需要主人明确填写恢复正文');bubbles=[{kind:'text',content:text}];}
    else throw Error('不支持的人工恢复模式');
    return finishRecovered(genId,bubbles,{attempt,mode});
@@ -207,7 +228,9 @@
  async function finishRecovered(genId,bubbles,{attempt,mode}){return S().transaction(chatGenerationStores,'readwrite',async t=>{
    const g=await t.get('generations',genId);must(g,'任务不存在');assertAttempt(g,attempt);
    if(g.status==='committed')return g;
-   must(g.status==='failed'&&!!g.raw,'没有完整可恢复的原文');const c=await t.get('conversations',g.threadId);
+   must((g.status==='failed'||(g.status==='cancelled'&&mode==='owner_text'))&&!!(g.raw||g.rawDraft),'没有保留可手动恢复的原文');
+   if(mode==='parsed')must(!g.rawIncomplete&&g.status==='failed','未验证的流式草稿不能自动解析为正式回复');
+   const c=await t.get('conversations',g.threadId);
    must(c&&c.memberIds.includes(g.actorId)&&!(c.settings?.mutedIds||[]).includes(g.actorId)&&c.memberRevision===g.memberRevision&&c.recordRevision===g.sourceRevision,'目标群/成员或消息已变化，禁止旧候选错误写回');
    await verifyChatMemories(t,g);
    const rows=[];for(const b of bubbles){must(['text','voice_text'].includes(b.kind)&&typeof b.content==='string'&&b.content.trim(),'恢复气泡不合法');
@@ -631,5 +654,5 @@
    const key=memoryId+':'+toId,g=await t.get('memoryGrants',key);must(g,'授权不存在');
    const next={...g,enabled:false,version:(g.version||1)+1,revokedAt:now()};await t.put('memoryGrants',next);return next;
  });}
- window.MimaPhoneDomain=Object.freeze({owner,walletIntent,finishWalletIntent,resetWalletIntent,readWalletIntent,prepareSocialGeneration,stageSocialCandidate,stageSocialPlan,reviseSocialPlan,finishSocialPlan,finishSocialGeneration,failSocialGeneration,cancelSocialGeneration,pendingSocialGenerations,settings,setSettings,promptDigest,transferInThread,giftInThread,actorResources,setActorResources,effectiveResources,selectSpeakers,readNotice,addContact,contacts,updateContact,createConversation,threads,thread,updateThread,history,allMessages,post,editMessage,restoreMessage,prepareGeneration,restartGeneration,finishGeneration,failGeneration,recoverGeneration,generations,moments,createMoment,editMoment,comments,comment,editComment,deleteComment,react,reactions,notices,acl,balance,issue,transfer,catalog,buyGift,giftItem,settleGift,inventory,orders,ledger,addMemory,approveMemory,allMemories,memories,grantMemory,revokeMemory,saveDraft,readDraft});
+ window.MimaPhoneDomain=Object.freeze({owner,walletIntent,finishWalletIntent,resetWalletIntent,readWalletIntent,prepareSocialGeneration,stageSocialCandidate,stageSocialPlan,reviseSocialPlan,finishSocialPlan,finishSocialGeneration,failSocialGeneration,cancelSocialGeneration,pendingSocialGenerations,settings,setSettings,promptDigest,transferInThread,giftInThread,actorResources,setActorResources,effectiveResources,selectSpeakers,readNotice,addContact,contacts,updateContact,createConversation,threads,thread,updateThread,history,allMessages,post,editMessage,restoreMessage,prepareGeneration,restartGeneration,finishGeneration,checkpointGenerationDraft,cancelGeneration,failGeneration,recoverGeneration,generations,moments,createMoment,editMoment,comments,comment,editComment,deleteComment,react,reactions,notices,acl,balance,issue,transfer,catalog,buyGift,giftItem,settleGift,inventory,orders,ledger,addMemory,approveMemory,allMemories,memories,grantMemory,revokeMemory,saveDraft,readDraft});
 })();

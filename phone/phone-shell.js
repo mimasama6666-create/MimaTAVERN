@@ -1,7 +1,7 @@
 /* Phone OS. Every UI action invokes a real phone-domain command. */
 (()=>{'use strict';
  const D=()=>MimaPhoneDomain,R=()=>MimaPhoneResources,S=()=>MimaPhoneStore;
- const state={intentKeys:new Map(),open:false,screen:'messages',threadId:null,momentId:null,loading:false,groupSending:false,sending:false,recording:null,urls:[],notice:'',replyToId:null,chatSearch:'',noticeTimer:null,profileBack:'contacts',contactId:null,maskCache:new Map(),typingActor:null,typingThreadId:null,previousScrollY:0,animatedMessageIds:new Set(),draftWrites:new Map(),localDrafts:new Map(),scrollRestore:null,activeChoice:null};
+ const state={intentKeys:new Map(),open:false,screen:'messages',threadId:null,momentId:null,loading:false,groupSending:false,sending:false,recording:null,urls:[],notice:'',replyToId:null,chatSearch:'',noticeTimer:null,profileBack:'contacts',contactId:null,maskCache:new Map(),typingActor:null,typingThreadId:null,previousScrollY:0,animatedMessageIds:new Set(),draftWrites:new Map(),localDrafts:new Map(),scrollRestore:null,activeChoice:null,activeGenerationControllers:new Map()};
  const root=()=>document.getElementById('mima-phone-root');
  const dom=(name,cls='',text='')=>{const node=document.createElement(name);if(cls)node.className=cls;if(text!==undefined&&text!=='')node.textContent=String(text);return node;};
  const button=(label,handler,cls='')=>{const b=dom('button','phone-btn '+cls,label);b.type='button';b.onclick=()=>safe(handler);return b;};
@@ -343,14 +343,30 @@
    if(state.chatSearch)search.oninput();
    if(state.typingThreadId===thread.id&&state.typingActor)appendTyping(view,state.typingActor,contacts);
    if(!settings.userMaskId)view.append(dom('p','phone-error','请先选择 User 面具，才能向角色请求回复。'));
-   const incomplete=(await D().generations()).filter(g=>g.threadId===thread.id&&['prepared','failed','unknown'].includes(g.status));for(const f of incomplete){const panel=box(view,f.status==='failed'?'失败的手机生成 · 原文保留':'手机请求结果未核实');panel.append(dom('p','phone-error',f.status==='failed'?f.error:'网页刷新或离开前，请求没有留下可确认的最终回复；无法判断服务端是否已计费。不会自动重试。'));panel.append(button('免费核对本机提交状态',async()=>{const latest=await S().read('generations',f.id);say(latest?.status==='committed'?'本任务已提交，无需重新请求':'本机只有 '+(latest?.status||'缺失')+' 状态，没有服务端结果');await render();}));
-     if(!state.groupSending&&f.status==='prepared')panel.append(button('确认重新请求（可能再次计费）',async()=>{if(!confirm('原任务最终结果未知。再次请求可能重复计费，但不会重复写入原用户消息。确定重新请求吗？'))return;await produceThreadReplies(thread.id,f.sourceId,[f.actorId],f.id);},'phone-primary'));
-     if(f.raw&&f.status==='failed'){const details=dom('details');details.append(dom('summary','','查看模型原文'),dom('pre','phone-raw',f.raw));panel.append(details);panel.append(button('解析并恢复多条气泡（零 API）',async()=>{
+   const incomplete=(await D().generations()).filter(g=>g.threadId===thread.id&&['prepared','failed','unknown','cancelled'].includes(g.status));for(const f of incomplete){
+     const active=state.activeGenerationControllers.has(f.id);
+     const evidence=f.raw||f.rawDraft||'';
+     const panel=box(view,({failed:'失败的手机生成 · 原文保留',cancelled:'已取消的手机生成 · 草稿保留',unknown:'手机请求结果未核实',prepared:active?'正在生成手机回复':'上次请求未取得结算凭据'})[f.status]);panel.dataset.generationId=f.id;
+     const explanation=f.status==='failed'?f.error:f.status==='cancelled'?(f.error||'任务已停止，本机证据保留'):active?'模型请求进行中，草稿仅为已收到的部分，不是正式角色消息。':'页面离开或刷新后，无法核实服务端最终状态及是否计费。不会自动重试。';
+     panel.append(dom('p','phone-error',explanation));
+     if(evidence||active){const details=dom('details');details.open=active;
+       const summary=dom('summary','',evidence?`查看${f.rawIncomplete||f.status!=='failed'?'已收到的部分草稿（非完整回复）':'模型返回的原文'} · ${evidence.length} 字符`:'等待上游发送正文…');
+       const preview=dom('pre','phone-raw',evidence);details.append(summary,preview);panel.append(details);
+       panel.append(button('复制本机已收到的文字',async()=>{const live=preview.textContent||evidence;if(!live)return;say('复制的是本机已接收文字，不代表完整回复');if(navigator.clipboard?.writeText)return navigator.clipboard.writeText(live);prompt('复制收到的文字',live);}));}
+     panel.append(button('免费核对本机提交状态',async()=>{const latest=await S().read('generations',f.id);say(latest?.status==='committed'?'本任务已提交，无需重新请求':'本机状态：'+(latest?.status||'缺失')+'。不能由此判断服务端是否计费。');await render();}));
+     if(f.status==='prepared'||f.status==='unknown')panel.append(button(active?'■ 停止当前生成':'取消／归档此任务',async()=>{if(!confirm(active?'停止正在进行的手机回复？已收到的草稿会保留，不会作为正式消息发送。':'将这条未完成任务标记为已取消？已有文字保留，之后仍可手动发起新请求。'))return;
+        const controller=state.activeGenerationControllers.get(f.id);
+        const liveDraft=panel.querySelector('.phone-raw')?.textContent||'';
+        controller?.abort();const settled=await D().cancelGeneration(f.id,f.attempt,liveDraft);
+        say(settled.status==='committed'?'请求已经提交成功，本机记录不会被撤销':'本次生成已取消，本机已收到的文字已保留');await render();}));
+     if(!state.groupSending&&!active)panel.append(button('手动重新请求（可能再次计费）',async()=>{if(!confirm('旧任务的服务端计费状态未必可确认。将按当前有效授权重新请求，可能再次计费；不会重复发送主人消息。确定继续？'))return;await produceThreadReplies(thread.id,f.sourceId,[f.actorId],f.id);},'phone-primary'));
+     if(f.raw&&f.status==='failed'&&!f.rawIncomplete){panel.append(button('解析并恢复多条气泡（零 API）',async()=>{
        const parsed=MimaPhoneModel.bubbles(f.raw);if(!confirm('已经正确解析出 '+parsed.length+' 条气泡。确认将其加入当前聊天？'))return;
        await D().recoverGeneration(f.id,{mode:'parsed',attempt:f.attempt,sourceDigest:await D().promptDigest(f.actorId)});await render();},'phone-primary'));
-       panel.append(button('主人自行编辑正文恢复',async()=>{
-         const example=(()=>{try{return MimaPhoneModel.bubbles(f.raw).map(b=>b.content).join('\n');}catch(_){return '';}})();
-         const revised=prompt('请手动输入要发布的正文（不填充坏 JSON）。模型原文仍单独保存供审计。',example);
+     }
+     if(evidence&&(f.status==='failed'||f.status==='cancelled')){panel.append(button(f.rawIncomplete||f.status==='cancelled'?'手动编辑已收到文字并恢复（零 API）':'主人自行编辑正文恢复',async()=>{
+         const example=(()=>{try{return f.rawIncomplete||f.status==='cancelled'?evidence:MimaPhoneModel.bubbles(f.raw).map(b=>b.content).join('\n');}catch(_){return evidence;}})();
+         const revised=prompt('以下是本机保存的候选文字，可能不完整或包含 JSON 格式。请亲自删改成希望发布的消息。此操作不调用模型，不代表模型已正常完成：',example);
          if(revised===null||!revised.trim())return;
          if(!confirm('确认以主人编辑的文字作为一条手机气泡？这不是模型原始完整输出，不调用 API。'))return;
          await D().recoverGeneration(f.id,{mode:'owner_text',text:revised,attempt:f.attempt,sourceDigest:await D().promptDigest(f.actorId)});await render();}));}}
@@ -407,7 +423,19 @@
  async function produceThreadReplies(threadId,sourceId,selected=null,retryGenId=null){if(state.groupSending)throw Error('当前小手机已有一轮群聊任务，请先等该轮完成');state.groupSending=true;try{const thread=await D().thread(threadId),prefs=await D().settings(),trigger=sourceId?(await S().read('messages',sourceId))?.content||'':'',speakers=await D().selectSpeakers(threadId,trigger,selected);
    mustUser(prefs);for(const actor of speakers){const current=await D().thread(threadId);if(!current.memberIds.includes(actor))break;
      const sourceDigest=await D().promptDigest(actor);
-     const generated=retryGenId?await D().restartGeneration(retryGenId,sourceDigest):await D().prepareGeneration(threadId,actor,sourceId||'',{task:'chat',sourceDigest});const peopleNow=await D().contacts(),nick=peopleNow.find(x=>x.id===actor)?.displayNick||actor;state.typingActor=actor;state.typingThreadId=threadId;if(state.screen==='chat'&&state.threadId===threadId)appendTyping(root().querySelector('.phone-chat-history'),actor,peopleNow);let returned=null,canonicalDone=false;
+     const generated=retryGenId?await D().restartGeneration(retryGenId,sourceDigest):await D().prepareGeneration(threadId,actor,sourceId||'',{task:'chat',sourceDigest});
+     const controller=new AbortController();state.activeGenerationControllers.set(generated.id,controller);
+     let savedDraft='',lastDraft='',lastCheckpointAt=0,checkpointChain=Promise.resolve();
+     const flushDraft=()=>{if(!lastDraft||lastDraft===savedDraft)return checkpointChain;const snapshot=lastDraft;savedDraft=snapshot;checkpointChain=checkpointChain.catch(()=>{}).then(()=>D().checkpointGenerationDraft(generated.id,generated.attempt,snapshot));return checkpointChain;};
+     const onProgress=ev=>{if(typeof ev?.streamText!=='string'||!ev.streamText)return;lastDraft=ev.streamText;
+       const currentPanel=Array.from(root().querySelectorAll('[data-generation-id]')).find(x=>x.dataset.generationId===generated.id);
+       if(currentPanel){const preview=currentPanel.querySelector('.phone-raw'),summary=currentPanel.querySelector('details summary');
+         if(preview)preview.textContent=lastDraft;if(summary)summary.textContent='已收到的未提交草稿 · '+lastDraft.length+' 字符';}
+       const at=Date.now();if(at-lastCheckpointAt>=350||lastDraft.length-savedDraft.length>=350){lastCheckpointAt=at;void flushDraft().catch(e=>console.warn('手机流式草稿检查点写入失败',e));}};
+     const peopleNow=await D().contacts(),nick=peopleNow.find(x=>x.id===actor)?.displayNick||actor;state.typingActor=actor;state.typingThreadId=threadId;
+     // Make Stop and live evidence accessible as soon as this generation exists.
+     if(state.open&&state.screen==='chat'&&state.threadId===threadId)try{await render();}catch(e){console.warn('手机生成控制面板未绘制，生成事务仍被保留',e);}
+     let returned=null,canonicalDone=false;
      try{const all=await D().history(threadId),membership=await S().read('memberships',threadId+':'+actor),start=membership?.joinedAtSeq||0;
        const visible=all.filter(m=>m.seq>=start&&m.deliveryState==='committed');
        const people=await D().contacts(),speakerNames=Object.fromEntries(people.map(c=>[c.id,c.displayNick]));
@@ -418,16 +446,25 @@
        const extra=extraMemories.map(m=>'已授权的手机记忆（'+m.id+'）：'+m.content).join('\n');
        const mounts=await D().effectiveResources(actor,prefs);
        const source=all.find(m=>m.id===sourceId)||all.at(-1),parts=source?.assetIds?.length?await MimaPhoneMedia.visionParts(source.assetIds.filter(Boolean)):[];
-       returned=await MimaPhoneModel.generate({actorId:actor,userMaskId:prefs.userMaskId,history:visible,presetIds:mounts.presetIds,worldbookIds:mounts.worldbookIds,scope:thread.kind,extra,visionParts:parts,speakerNames,apiSettings:prefs});
+       returned=await MimaPhoneModel.generate({actorId:actor,userMaskId:prefs.userMaskId,history:visible,presetIds:mounts.presetIds,worldbookIds:mounts.worldbookIds,scope:thread.kind,extra,visionParts:parts,speakerNames,apiSettings:prefs,signal:controller.signal,onProgress});
+       await flushDraft().catch(e=>console.warn('手机最后草稿检查点写入失败',e));
        const committed=await D().finishGeneration(generated.id,returned.bubbles,returned.raw,generated.attempt,await D().promptDigest(actor));state.animatedMessageIds=new Set(committed.resultIds||[]);canonicalDone=true;say(nick+' 的回复已保存');
        try{await render();state.animatedMessageIds.clear();}catch(paintError){console.error('手机回复已保存，但界面重绘失败；无需重复付费生成',{generationId:generated.id,error:paintError});say('手机回复已保存。界面显示未更新，请重新打开聊天。');}
        if(retryGenId)break;
      }catch(e){if(canonicalDone){console.error('手机回复已结算，后续非关键任务失败',{generationId:generated.id,error:e});say('回复已经保存，后续界面任务失败；不要重发');break;}
-       const raw=typeof e.raw==='string'?e.raw:returned?.raw||'';try{await D().failGeneration(generated.id,e.message,raw,generated.attempt);}catch(settleError){
+       await flushDraft().catch(err=>console.warn('手机失败草稿检查点写入失败',err));
+       const observed=typeof e.raw==='string'?e.raw:typeof e.partialDraft==='string'?e.partialDraft:returned?.raw||'';
+       const raw=lastDraft.length>observed.length?lastDraft:observed;
+       try{await D().failGeneration(generated.id,e.message,raw,generated.attempt,{partial:!!e.partialDraft||(!e.raw&&!!lastDraft)});}catch(settleError){
          console.warn('旧 attempt 或已结算任务的失败回调被拒绝，保留当前状态',{generationId:generated.id,attempt:generated.attempt,error:settleError});}
        say('角色回复未提交：'+e.message);await render();break;}
+     finally{state.activeGenerationControllers.delete(generated.id);}
    }
-   }finally{state.groupSending=false;await clearTyping();}}
+   }finally{state.groupSending=false;await clearTyping();
+     // The prior failure paint happened while groupSending was still true; the
+     // retry button was omitted forever until the user manually navigated.
+     if(state.open&&state.screen==='chat'&&state.threadId===threadId)try{await render();}catch(e){console.warn('结束手机生成后的刷新失败；记录仍在本地',e);}
+   }}
  function mustUser(prefs){if(!prefs.userMaskId)throw Error('先在「我的手机」选择 User 面具');}
  async function attachImage(threadId){const picker=dom('input');picker.type='file';picker.accept='image/*';picker.onchange=()=>safe(async()=>{const file=picker.files?.[0];if(!file)return;const asset=await MimaPhoneMedia.save(file);const sent=await D().post(threadId,{type:'image',content:'[发送了一张图片]',assetIds:[asset.id]});await render();const prefs=await D().settings();if(prefs.userMaskId)await produceThreadReplies(threadId,sent.id);});picker.click();}
  async function recordAudio(threadId){if(state.recording){const recorder=state.recording;state.recording=null;const result=await recorder.stop(),saved=await MimaPhoneMedia.save(result.blob);const sent=await D().post(threadId,{type:'voice_audio',content:result.transcript?'[录音转写] '+result.transcript:'[语音录音，未取得可靠转写]',assetIds:[saved.id]});await render();const prefs=await D().settings();if(prefs.userMaskId&&result.transcript)await produceThreadReplies(threadId,sent.id);return;}
@@ -619,7 +656,14 @@
      const opt=dom('option','',title);opt.value=value;opt.selected=(prefs.phoneApiMode||'inherit')===value;chooser.append(opt);}
    line(card,chooser);
    chooser.onchange=()=>safe(async()=>{await D().setSettings({phoneApiMode:chooser.value});await render();});
-   if(chooser.value!=='custom')return;
+   if(chooser.value!=='custom'){
+     const inherited=MimaStandalone.getApiConfig();
+     const switchRow=dom('label','phone-edit-field');switchRow.append(dom('span','','本手机的流式响应方式（不改主剧情 API）'));
+     const streamSelect=dom('select','phone-input');for(const [name,value] of [['跟随剧情设置（当前'+(inherited.stream?'流式':'非流式')+'）','inherit'],['流式','on'],['非流式','off']]){const opt=dom('option','',name);opt.value=value;opt.selected=(prefs.phoneStreamOverride||'inherit')===value;streamSelect.append(opt);}switchRow.append(streamSelect);card.append(switchRow);
+     card.append(dom('p','phone-helper','此项仅控制小手机的下一次请求。进行中的生成沿用发起时的参数；不会修改剧情 API 或已有记录。'));
+     streamSelect.onchange=()=>safe(async()=>{await D().setSettings({phoneStreamOverride:streamSelect.value});say('已保存手机流式设置：'+(streamSelect.value==='inherit'?'跟随剧情':streamSelect.value==='on'?'流式':'非流式'));});
+     return;
+   }
    const inherited=MimaStandalone.getApiConfig(),custom=prefs.phoneApi||{};
    const fields={};
    function field(label,key,{secret=false,kind='input'}={}){
@@ -633,7 +677,8 @@
    optional('聊天端点（可选）','chatEndpoint');optional('模型列表端点（可选）','modelsEndpoint');optional('额外请求头 JSON（可选）','extraHeaders');
    optional('温度 0～2','temperature');fields.temperature.value=String(custom.temperature??0.85);
    optional('最大输出 tokens（0 = 渠道默认）','maxTokens');fields.maxTokens.value=String(custom.maxTokens??0);
-   const stream=dom('label','phone-check'),ck=dom('input');ck.type='checkbox';ck.checked=!!custom.stream;stream.append(ck,document.createTextNode('使用流式响应'));opts.append(stream);
+   const stream=dom('label','phone-check'),ck=dom('input');ck.type='checkbox';ck.checked=!!custom.stream;stream.append(ck,document.createTextNode('使用流式响应'));
+   card.append(stream);card.append(dom('small','phone-helper','关闭为非流式；更改后点击「保存手机 API」才对下一轮生效。'));
    const response=dom('p','phone-helper phone-api-feedback','手机独立配置只保存在小手机本地数据库。备份文件可能包含 API Key，请妥善保管。');card.append(response);
    // Model discovery must work *before* a model ID has been selected.
    // Only saving a working generation profile requires an actual model ID.
