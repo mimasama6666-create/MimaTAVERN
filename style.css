@@ -1092,3 +1092,18 @@ body.mima-reading-mode #story-chat-box[data-mima-chat-wallpaper="1"]::before{
 .mima-thinking-body{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;padding:10px 12px;border-top:1px solid rgba(148,163,184,.25);max-height:360px;overflow:auto;font-size:.88rem;line-height:1.65;user-select:text;-webkit-user-select:text;}
 .mima-thinking-note{padding:6px 12px 10px;font-size:.74rem;opacity:.75;line-height:1.5;}
 @media(max-width:480px){.mima-thinking-panel{margin:6px 4px 10px}.mima-thinking-body{max-height:45vh;}}
+
+/* R19 global interface density. The root viewport, user CSS source and stored story typography remain untouched. */
+:root{--mima-ui-scale:.8}
+.app-shell{zoom:var(--mima-ui-scale);height:100%;max-height:none}
+.session-drawer{zoom:var(--mima-ui-scale)}
+.modal{zoom:var(--mima-ui-scale)}
+#compat-lab{zoom:var(--mima-ui-scale)}
+/* Keep native iOS focus controls at a readable, non-auto-zoom CSS size. */
+@supports (-webkit-touch-callout:none){.app-shell input,.app-shell textarea,.modal input,.modal textarea,.modal select{font-size:max(16px,1em)}}
+/* Fixed modal backdrops must fill the true visual screen after zoom, not 80% of its height. */
+.modal{height:100%;width:100%}
+/* Compatibility player also occupies the whole viewport after density reduction. */
+#compat-lab{width:100%;height:100%}
+#compat-lab.in-chat .compat-main{height:calc(100% - 70px - env(safe-area-inset-top,0px))}
+html #compat-lab.in-chat .compat-main{height:calc(100% - 70px - env(safe-area-inset-top,0px))}

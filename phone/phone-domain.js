@@ -4,6 +4,10 @@
  const owner='owner';
  function must(ok,msg){if(!ok)throw Error(msg);}
  const uniq=x=>[...new Set(x)];
+ // Phone chat and social turns must read and verify the same authorized memory
+ // sources inside their respective authoritative IndexedDB transactions.
+ const memoryStores=['memories','memoryGrants','messages','memberships','moments','comments'];
+ const chatGenerationStores=['generations','conversations','prefs',...memoryStores];
  async function settings(){return (await S().read('prefs','main'))||{key:'main',userMaskId:'',presetIds:[],worldbookIds:[],ownerName:'主人'};}
  async function setSettings(patch){return S().transaction(['prefs','conversations'],'readwrite',async t=>{
    const old=await t.get('prefs','main')||{key:'main'};const next={...old,...patch,key:'main'};
@@ -143,29 +147,38 @@
  async function editMessage(messageId,content,deleteOnly=false){return mutateOwnerMessage(messageId,deleteOnly?'recall':'edit',content);}
  async function prepareGeneration(threadId,actorId,sourceId,{task='reply',sourceDigest=''}={}){
    const generation={id:id('gen'),threadId,actorId,sourceId,task,sourceDigest,status:'prepared',attempt:1,startedAt:now(),raw:'',error:'',resultIds:[]};
-   return S().transaction(['generations','conversations','messages'],'readwrite',async t=>{const c=await t.get('conversations',threadId);must(c&&c.memberIds.includes(actorId)&&!(c.settings?.mutedIds||[]).includes(actorId),'目标角色不在当前会话或已被禁言');
+   return S().transaction(chatGenerationStores,'readwrite',async t=>{const c=await t.get('conversations',threadId);must(c&&c.memberIds.includes(actorId)&&!(c.settings?.mutedIds||[]).includes(actorId),'目标角色不在当前会话或已被禁言');
      if(sourceId){const source=await t.get('messages',sourceId);must(source&&source.threadId===threadId&&source.deliveryState==='committed','触发消息已删除或不属于此会话');const existing=(await t.all('generations')).find(g=>g.threadId===threadId&&g.actorId===actorId&&g.sourceId===sourceId&&['prepared','committed'].includes(g.status));must(!existing,'这个触发消息已经发起过该角色生成，禁止重复请求或重复结算');}
-     generation.memberRevision=c.memberRevision;generation.sourceRevision=c.recordRevision;await t.add('generations',generation);return generation;});}
+     generation.memberRevision=c.memberRevision;generation.sourceRevision=c.recordRevision;
+     // Freeze the exact memory projection used by the outbound prompt, not a
+     // second read after this transaction closes.
+     generation.memorySnapshot=await memoryProjectionTx(t,actorId);
+     await t.add('generations',generation);return generation;});}
  // A generation ID is stable across attempts. Each Provider dispatch captures its
  // numeric attempt; stale callbacks have no authority to mutate canonical state.
  function assertAttempt(g,attempt){must(Number.isSafeInteger(attempt)&&attempt>=1,'生成回调缺少 attempt');
    if(g.attempt!==attempt)throw Object.assign(Error('E_PHONE_STALE_ATTEMPT: 旧请求不能结算新一轮'),{code:'E_PHONE_STALE_ATTEMPT'});}
- async function restartGeneration(genId,sourceDigest=''){return S().transaction(['generations','conversations'],'readwrite',async t=>{
+ async function restartGeneration(genId,sourceDigest=''){return S().transaction(chatGenerationStores,'readwrite',async t=>{
    const g=await t.get('generations',genId);must(g&&['prepared','failed','unknown'].includes(g.status),'没有可明确重发的生成任务');
    const c=await t.get('conversations',g.threadId);
    if(g.sourceDigest)must(sourceDigest===g.sourceDigest,'角色或预设在原尝试后变动，请重新发起新的任务');
    must(c&&c.memberIds.includes(g.actorId)&&c.memberRevision===g.memberRevision&&c.recordRevision===g.sourceRevision,'会话在原任务后已变化，禁止旧回复重放到新历史');
    const previous={attempt:g.attempt,status:g.status,error:g.error||'',raw:g.raw||'',at:now()};
-   const next={...g,status:'prepared',attempt:g.attempt+1,error:'',raw:'',attemptHistory:[...(g.attemptHistory||[]),previous],restartedAt:now(),restartExplicit:true};
+   // An explicit retry makes a NEW provider request. It must use a fresh
+   // authorized snapshot; old raw stays only in attemptHistory as evidence.
+   // Attempt fencing prevents the previous provider callback from committing.
+   const memorySnapshot=await memoryProjectionTx(t,g.actorId);
+   const next={...g,status:'prepared',attempt:g.attempt+1,error:'',raw:'',memorySnapshot,attemptHistory:[...(g.attemptHistory||[]),previous],restartedAt:now(),restartExplicit:true};
    await t.put('generations',next);return next;
  });}
- async function finishGeneration(generationId,bubbles,raw,attempt,sourceDigest=''){return S().transaction(['generations','conversations','messages','prefs','memories','memberships'],'readwrite',async t=>{
+ async function finishGeneration(generationId,bubbles,raw,attempt,sourceDigest=''){return S().transaction(chatGenerationStores,'readwrite',async t=>{
    const gen=await t.get('generations',generationId);must(gen,'生成任务不存在');assertAttempt(gen,attempt);
    if(gen.sourceDigest)must(gen.sourceDigest===sourceDigest,'角色人设或世界书在生成期间变化，拒绝旧回复写入');
    if(gen.status==='committed')return gen;
    must(gen.status==='prepared','生成已经处于终结状态');const c=await t.get('conversations',gen.threadId);
    must(c?.memberIds.includes(gen.actorId)&&!(c.settings?.mutedIds||[]).includes(gen.actorId)&&c.memberRevision===gen.memberRevision,'群成员身份或禁言状态已改变，旧任务不再发出');
    must(c.recordRevision===gen.sourceRevision,'会话在生成期间发生变化；旧回复不能覆盖新的手机历史');
+   await verifyChatMemories(t,gen);
    must(Array.isArray(bubbles)&&bubbles.length>=1&&bubbles.length<=256,'不可提交空白或过量气泡');
    const rows=[];for(const b of bubbles){must(['text','voice_text'].includes(b.kind)&&typeof b.content==='string'&&b.content.trim(),'气泡内容不合法');
      const row={id:id('msg'),threadId:c.id,seq:c.lastSeq+rows.length+1,actorId:gen.actorId,type:b.kind,content:b.content,assetIds:[],replyToId:gen.sourceId,turnId:gen.id,version:1,versions:[],deliveryState:'committed',createdAt:now(),eventId:gen.id};await t.add('messages',row);rows.push(row);}
@@ -191,11 +204,12 @@
    else throw Error('不支持的人工恢复模式');
    return finishRecovered(genId,bubbles,{attempt,mode});
  }
- async function finishRecovered(genId,bubbles,{attempt,mode}){return S().transaction(['generations','conversations','messages','prefs','memories','memberships'],'readwrite',async t=>{
+ async function finishRecovered(genId,bubbles,{attempt,mode}){return S().transaction(chatGenerationStores,'readwrite',async t=>{
    const g=await t.get('generations',genId);must(g,'任务不存在');assertAttempt(g,attempt);
    if(g.status==='committed')return g;
    must(g.status==='failed'&&!!g.raw,'没有完整可恢复的原文');const c=await t.get('conversations',g.threadId);
    must(c&&c.memberIds.includes(g.actorId)&&!(c.settings?.mutedIds||[]).includes(g.actorId)&&c.memberRevision===g.memberRevision&&c.recordRevision===g.sourceRevision,'目标群/成员或消息已变化，禁止旧候选错误写回');
+   await verifyChatMemories(t,g);
    const rows=[];for(const b of bubbles){must(['text','voice_text'].includes(b.kind)&&typeof b.content==='string'&&b.content.trim(),'恢复气泡不合法');
      const row={id:id('msg'),threadId:c.id,seq:c.lastSeq+rows.length+1,actorId:g.actorId,type:b.kind,content:b.content,assetIds:[],replyToId:g.sourceId,turnId:g.id,version:1,versions:[],deliveryState:'committed',createdAt:now(),eventId:g.id};await t.add('messages',row);rows.push(row);}
    await t.put('conversations',{...c,lastSeq:c.lastSeq+rows.length,recordRevision:c.recordRevision+1,updatedAt:now()});
@@ -596,7 +610,16 @@
  }
  async function allMemories(actorId){return (await S().all('memories')).filter(m=>m.charId===actorId);}
 
- const memoryStores=['memories','memoryGrants','messages','memberships','moments','comments'];
+ // A former generation has no reliable provenance for which phone memories
+ // were injected. Do not turn an unverified old raw response into canonical
+ // history: preserve it and ask for an explicit new attempt instead.
+ async function verifyChatMemories(t,g){
+   must(Array.isArray(g.memorySnapshot),
+     'E_PHONE_MEMORY_SNAPSHOT_MISSING: 旧手机任务缺少授权快照，不能直接提交或恢复；请重新发起生成');
+   const live=await memoryProjectionTx(t,g.actorId);
+   must(JSON.stringify(live)===JSON.stringify(g.memorySnapshot),
+     'E_PHONE_MEMORY_STALE: 手机记忆、来源或分享授权已变化，旧回复不能提交；请重新生成');
+ }
  async function memories(actorId){MimaPhoneResources.getCharMask(actorId);return S().transaction(memoryStores,'readonly',t=>memoryProjectionTx(t,actorId));}
  async function grantMemory(memoryId,toId){MimaPhoneResources.getCharMask(toId);return S().transaction(['memories','memoryGrants'],'readwrite',async t=>{
    const memory=await t.get('memories',memoryId);must(memory&&memory.status==='valid'&&memory.approvedAt,'仅可分享已批准的有效记忆');must(memory.charId!==toId,'不能给自己重复授权');

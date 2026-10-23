@@ -1,7 +1,7 @@
 /* Phone OS. Every UI action invokes a real phone-domain command. */
 (()=>{'use strict';
  const D=()=>MimaPhoneDomain,R=()=>MimaPhoneResources,S=()=>MimaPhoneStore;
- const state={intentKeys:new Map(),open:false,screen:'messages',threadId:null,momentId:null,loading:false,groupSending:false,sending:false,recording:null,urls:[],notice:'',replyToId:null,chatSearch:'',noticeTimer:null,profileBack:'contacts',contactId:null,maskCache:new Map(),typingActor:null,typingThreadId:null,previousScrollY:0,animatedMessageIds:new Set()};
+ const state={intentKeys:new Map(),open:false,screen:'messages',threadId:null,momentId:null,loading:false,groupSending:false,sending:false,recording:null,urls:[],notice:'',replyToId:null,chatSearch:'',noticeTimer:null,profileBack:'contacts',contactId:null,maskCache:new Map(),typingActor:null,typingThreadId:null,previousScrollY:0,animatedMessageIds:new Set(),draftWrites:new Map(),localDrafts:new Map(),scrollRestore:null,activeChoice:null};
  const root=()=>document.getElementById('mima-phone-root');
  const dom=(name,cls='',text='')=>{const node=document.createElement(name);if(cls)node.className=cls;if(text!==undefined&&text!=='')node.textContent=String(text);return node;};
  const button=(label,handler,cls='')=>{const b=dom('button','phone-btn '+cls,label);b.type='button';b.onclick=()=>safe(handler);return b;};
@@ -19,6 +19,20 @@
    },state.notice.includes('失败')||state.notice.includes('错误')?7500:4000);
  }
  async function safe(fn){try{const result=await fn();return result;}catch(e){console.error('[Mima Phone] 未完成操作（canonical 状态未伪装成功）',e);say(e?.message||String(e));}}
+ // Serialize autosaves by thread. An older keystroke must never overwrite the
+ // explicit empty draft written after a successfully committed send.
+ function persistDraft(threadId,value){
+   const text=String(value);state.localDrafts.set(threadId,text);
+   const prior=state.draftWrites.get(threadId)||Promise.resolve();
+   const pending=prior.catch(()=>{}).then(()=>D().saveDraft(threadId,text));
+   state.draftWrites.set(threadId,pending);
+   void pending.then(()=>{if(state.draftWrites.get(threadId)===pending)state.draftWrites.delete(threadId);},()=>{
+     if(state.draftWrites.get(threadId)===pending)state.draftWrites.delete(threadId);
+   });
+   return pending;
+ }
+ function cancelChoice(){if(state.activeChoice)state.activeChoice([]);}
+
  function syncViewport(){
    if(!state.open)return;
    const r=root(),vv=window.visualViewport;
@@ -38,15 +52,19 @@
  }
  function viewportFocus(){requestAnimationFrame(syncViewport);}
  async function open(){if(state.open)return;await S().open();R().state();state.open=true;
+   // Keep the full-screen viewport host outside the fixed body. On iOS, focusing a
+   // textarea moves visualViewport and sometimes the layout scroll position;
+   // a fixed overlay nested in the frozen body follows both and jumps upward.
+   const host=root();if(host.parentNode!==document.documentElement)document.documentElement.appendChild(host);
    state.previousScrollY=window.scrollY;document.body.style.setProperty('--mima-phone-lock-top',(-state.previousScrollY)+'px');
-   root().hidden=false;document.body.classList.add('mima-phone-active');
+   host.hidden=false;document.body.classList.add('mima-phone-active');
    syncViewport();window.visualViewport?.addEventListener('resize',syncViewport);
    window.visualViewport?.addEventListener('scroll',syncViewport);
    window.addEventListener('resize',syncViewport);
    root().addEventListener('focusin',viewportFocus);root().addEventListener('focusout',viewportFocus);
    await render();}
  function close(){if(state.recording){say('录音进行中，请先停止录音');return;}
-   if(state.noticeTimer){clearTimeout(state.noticeTimer);state.noticeTimer=null;}state.notice='';state.open=false;
+   cancelChoice();if(state.noticeTimer){clearTimeout(state.noticeTimer);state.noticeTimer=null;}state.notice='';state.open=false;
    window.visualViewport?.removeEventListener('resize',syncViewport);
    window.visualViewport?.removeEventListener('scroll',syncViewport);
    window.removeEventListener('resize',syncViewport);
@@ -57,6 +75,7 @@
    window.scrollTo(0,state.previousScrollY);
  }
  function navigate(screen,detail=null){
+   cancelChoice();
    if(screen==='chat'&&state.threadId!==detail){state.replyToId=null;state.chatSearch='';}
    if(screen==='profile'){state.profileBack=state.screen;state.contactId=detail;}
    state.screen=screen;if(screen==='chat')state.threadId=detail;
@@ -113,7 +132,13 @@
    }
    container.append(h);
  }
- async function render(){if(!state.open)return;clearURLs();const r=root();r.replaceChildren();
+ async function render(){if(!state.open)return;
+   // A popup removed by re-render must settle its awaiting action, not leave a
+   // Promise suspended forever while the owner continues using the phone.
+   cancelChoice();clearURLs();const r=root();const oldView=r.querySelector('.phone-chat-history[data-thread-id]');
+   state.scrollRestore=oldView?{threadId:oldView.dataset.threadId,top:oldView.scrollTop,
+     fromBottom:Math.max(0,oldView.scrollHeight-oldView.clientHeight-oldView.scrollTop)}:null;
+   r.replaceChildren();
    const shell=dom('div','phone-shell'+(['chat','moment','group-edit','memory','profile'].includes(state.screen)?' phone-detail':'')+(state.screen==='chat'?' phone-is-chat':''));r.append(shell);
    const titles={messages:'消息',contacts:'通讯录',moments:'朋友圈',wallet:'钱包',settings:'我的',chat:'聊天',moment:'动态详情','group-edit':'群聊设置',memory:'手机记忆',profile:'联系人资料'};
    try{state.maskCache=new Map(R().state().masks.filter(m=>m.enabled!==false).map(m=>[m.id,m]));const prefs=await D().settings();const theme=['green','blue','graphite'].includes(prefs.chatBubbleTone)?prefs.chatBubbleTone:'green';r.dataset.bubbleTone=theme;await header(shell,titles[state.screen]||'小手机');
@@ -144,9 +169,17 @@
    }
    search.oninput=()=>{const needle=search.value.trim().toLowerCase();for(const item of list.querySelectorAll('.phone-inbox-item'))item.hidden=!item.textContent.toLowerCase().includes(needle);};
  }
- async function createGroup(){const list=await D().contacts();if(list.length<2)throw Error('请先添加至少两个联系人');const selected=await chooseMultiple('选择群成员',list.map(c=>({id:c.id,label:c.displayNick})));if(selected.length<2)throw Error('群聊至少两个成员');const title=prompt('群名称','我的小群聊')||'我的小群聊';const row=await D().createConversation(selected,{kind:'group',title});navigate('chat',row.id);}
- async function chooseMultiple(title,options){return new Promise(resolve=>{const backdrop=dom('div','phone-modal-backdrop'),dialog=dom('div','phone-modal'),checks=[];dialog.append(dom('h3','',title));for(const item of options){const label=dom('label','phone-check'),ck=document.createElement('input');ck.type='checkbox';ck.value=item.id;label.append(ck,document.createTextNode(item.label));dialog.append(label);checks.push(ck);}
-     line(dialog,button('取消',()=>{backdrop.remove();resolve([]);}),button('确定',()=>{const values=checks.filter(c=>c.checked).map(c=>c.value);backdrop.remove();resolve(values);},'phone-primary'));backdrop.append(dialog);root().append(backdrop);});}
+ async function createGroup(){const list=await D().contacts();if(list.length<2)throw Error('请先添加至少两个联系人');const selected=await chooseMultiple('选择群成员',list.map(c=>({id:c.id,label:c.displayNick})));if(!selected.length)return;if(selected.length<2)throw Error('群聊至少两个成员');const title=prompt('群名称','我的小群聊')||'我的小群聊';const row=await D().createConversation(selected,{kind:'group',title});navigate('chat',row.id);}
+ async function chooseMultiple(title,options){if(state.activeChoice)throw Error('请先完成当前选择');return new Promise(resolve=>{
+     const backdrop=dom('div','phone-modal-backdrop'),dialog=dom('div','phone-modal'),checks=[];
+     const finish=values=>{if(state.activeChoice!==finish)return;state.activeChoice=null;backdrop.remove();resolve(values);};
+     state.activeChoice=finish;dialog.setAttribute('role','dialog');dialog.setAttribute('aria-modal','true');
+     dialog.append(dom('h3','',title));for(const item of options){const label=dom('label','phone-check'),ck=document.createElement('input');ck.type='checkbox';ck.value=item.id;label.append(ck,document.createTextNode(item.label));dialog.append(label);checks.push(ck);}
+     line(dialog,button('取消',()=>finish([])),button('确定',()=>finish(checks.filter(c=>c.checked).map(c=>c.value)),'phone-primary'));
+     backdrop.append(dialog);backdrop.onclick=e=>{if(e.target===backdrop)finish([]);};
+     backdrop.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();finish([]);}});
+     root().append(backdrop);
+   });}
  async function screenContacts(main){
    const existing=await D().contacts(),masks=R().listCharacterMasks(),settings=await D().settings();
    main.append(dom('h1','phone-page-heading','通讯录'));
@@ -230,14 +263,20 @@
  async function sendChatGift(thread){const owned=(await D().inventory(D().owner)).filter(x=>x.status==='owned');
    if(!owned.length)throw Error('还没有可赠送的礼物，请先到钱包礼物商店购买');
    const choice=await chooseMultiple('选择一件礼物',owned.map(x=>({id:x.id,label:D().catalog.find(i=>i.id===x.catalogId)?.name||x.catalogId})));
-   if(choice.length!==1)throw Error('请只选择一件礼物');
+   if(!choice.length)return;if(choice.length!==1)throw Error('请只选择一件礼物');
    const to=(await chooseMultiple('选择收礼角色',thread.memberIds.map(id=>({id,label:id})))).at(0);if(!to)return;
    if(!confirm('确认向 '+to+' 赠送一件虚拟礼物？'))return;
    await issueIntent('gift-card',thread.id+':'+choice[0]+':'+to,key=>D().giftInThread(thread.id,choice[0],D().owner,to,key));await render();}
+ // Only follow a live incoming typing indicator when the reader is near the end.
+ // A reply that arrives while the owner reads history must never steal the scroll position.
  function appendTyping(view,actorId,contacts){
-   if(!view)return;view.querySelectorAll('.phone-typing-row').forEach(x=>x.remove());
+   if(!view)return;
+   const follow=view.scrollHeight-view.clientHeight-view.scrollTop<=56;
+   view.querySelectorAll('.phone-typing-row').forEach(x=>x.remove());
    const contact=contacts.find(c=>c.id===actorId),row=dom('div','phone-typing-row');row.setAttribute('role','status');row.setAttribute('aria-label',(contact?.displayNick||'角色')+' 正在生成回复');
-   row.append(face(actorId,contact));const bubble=dom('span','phone-typing-bubble');for(let i=0;i<3;i++)bubble.append(dom('i','phone-typing-dot'));row.append(bubble);view.append(row);view.scrollTop=view.scrollHeight;
+   row.append(face(actorId,contact));const bubble=dom('span','phone-typing-bubble');for(let i=0;i<3;i++)bubble.append(dom('i','phone-typing-dot'));row.append(bubble);view.append(row);
+   if(follow)view.scrollTop=view.scrollHeight;
+   else{const hint=view.parentNode?.querySelector('.phone-new-message-hint');if(hint)hint.hidden=false;}
  }
  async function clearTyping(){state.typingActor=null;state.typingThreadId=null;root().querySelectorAll('.phone-typing-row').forEach(x=>x.remove());}
  async function screenChat(main){
@@ -253,7 +292,7 @@
    const finder=dom('details','phone-chat-search');finder.append(dom('summary','','⌕ 搜索聊天记录'));
    const search=input('搜索当前聊天原文…',state.chatSearch);
    finder.append(search);main.append(finder);
-   const messages=await D().allMessages(thread.id),view=dom('div','phone-chat-history');main.append(view);
+   const messages=await D().allMessages(thread.id),view=dom('div','phone-chat-history');view.dataset.threadId=thread.id;main.append(view);
    let prevDay='';
    for(let i=0;i<messages.length;i++){const msg=messages[i];
      const date=new Date(msg.createdAt).toLocaleDateString('zh-CN',{month:'long',day:'numeric'});
@@ -329,21 +368,41 @@
    attachments.append(button('虚拟转账',()=>sendChatTransfer(thread)));
    attachments.append(button('送礼物',()=>sendChatGift(thread)));
    add.append(attachments);entry.append(add);
-   const textBox=input('发送消息…',draft?.content||'','textarea');textBox.rows=1;
-   textBox.oninput=()=>safe(()=>D().saveDraft(thread.id,textBox.value));
+   const textBox=input('发送消息…',state.localDrafts.has(thread.id)?state.localDrafts.get(thread.id):draft?.content||'','textarea');textBox.rows=1;
+   textBox.oninput=()=>{void persistDraft(thread.id,textBox.value).catch(e=>{console.error('[Mima Phone] 草稿保存失败',e);if(textBox.isConnected)say('草稿未能保存：'+e.message);});};
    textBox.addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.metaKey||e.ctrlKey)&&!e.isComposing&&e.keyCode!==229){e.preventDefault();composer.requestSubmit();}});
    entry.append(textBox);
    const send=button('↑',()=>composer.requestSubmit(),'phone-send phone-primary');send.setAttribute('aria-label','发送');entry.append(send);
    composer.append(entry);
    composer.onsubmit=e=>{e.preventDefault();safe(async()=>{if(state.sending)return;const txt=textBox.value.trim();if(!txt)return;
-     state.sending=true;send.disabled=true;try{const sent=await D().post(thread.id,{content:txt,replyToId:state.replyToId});
-       state.replyToId=null;await D().saveDraft(thread.id,'');textBox.value='';state.animatedMessageIds=new Set([sent.id]);await render();state.animatedMessageIds.clear();
+     state.sending=true;send.disabled=true;textBox.disabled=true;try{const sent=await D().post(thread.id,{content:txt,replyToId:state.replyToId});
+       state.replyToId=null;
+       // Earlier oninput saves finish first. Do not silently claim that a
+       // committed message failed just because the later draft cleanup failed.
+       try{await persistDraft(thread.id,'');state.localDrafts.delete(thread.id);}
+       catch(draftError){console.error('手机消息已发送但草稿清理失败',draftError);say('消息已发送；草稿清理失败，请检查旧草稿');}
+       textBox.value='';state.animatedMessageIds=new Set([sent.id]);await render();state.animatedMessageIds.clear();
        if(settings.userMaskId)await produceThreadReplies(thread.id,sent.id);
-     }finally{state.sending=false;send.disabled=false;}});};
+     }finally{state.sending=false;send.disabled=false;textBox.disabled=false;}});};
+   // A visible, actionable cue instead of scrolling the reader out of old messages.
+   const unreadHint=button('↓ 新消息',()=>{view.scrollTop=view.scrollHeight;unreadHint.hidden=true;},'phone-new-message-hint');
+   unreadHint.hidden=true;main.append(unreadHint);
+   view.addEventListener('scroll',()=>{
+     if(view.scrollHeight-view.clientHeight-view.scrollTop<=56)unreadHint.hidden=true;
+   },{passive:true});
    main.append(composer);
    await walletIntentControls(view,'transfer-card:'+thread.id);await walletIntentControls(view,'gift-card:'+thread.id);
-   // The scroll region is separate from the fixed composer. New replies appear above the keyboard.
-   requestAnimationFrame(()=>{if(view.isConnected)view.scrollTop=view.scrollHeight;});
+   // Snapshot the incoming IDs before the send lifecycle clears animatedMessageIds.
+   // Sending one's own text follows it; an incoming reply respects deliberate reading.
+   const previous=state.scrollRestore,hasNewMessages=state.animatedMessageIds.size>0;
+   const ownNew=messages.some(m=>m.actorId===D().owner&&state.animatedMessageIds.has(m.id));
+   const showingTyping=state.typingThreadId===thread.id&&!!state.typingActor;
+   requestAnimationFrame(()=>{if(!view.isConnected)return;
+     if(previous?.threadId===thread.id&&previous.fromBottom>56&&!ownNew){
+       view.scrollTop=Math.min(previous.top,Math.max(0,view.scrollHeight-view.clientHeight));
+       if(hasNewMessages||showingTyping)unreadHint.hidden=false;
+     }else view.scrollTop=view.scrollHeight;
+   });
  }
  async function produceThreadReplies(threadId,sourceId,selected=null,retryGenId=null){if(state.groupSending)throw Error('当前小手机已有一轮群聊任务，请先等该轮完成');state.groupSending=true;try{const thread=await D().thread(threadId),prefs=await D().settings(),trigger=sourceId?(await S().read('messages',sourceId))?.content||'':'',speakers=await D().selectSpeakers(threadId,trigger,selected);
    mustUser(prefs);for(const actor of speakers){const current=await D().thread(threadId);if(!current.memberIds.includes(actor))break;
@@ -352,7 +411,11 @@
      try{const all=await D().history(threadId),membership=await S().read('memberships',threadId+':'+actor),start=membership?.joinedAtSeq||0;
        const visible=all.filter(m=>m.seq>=start&&m.deliveryState==='committed');
        const people=await D().contacts(),speakerNames=Object.fromEntries(people.map(c=>[c.id,c.displayNick]));
-       const extraMemories=await D().memories(actor);const extra=extraMemories.map(m=>'已授权的手机记忆（'+m.id+'）：'+m.content).join('\n');
+       // The outbound request uses the *prepared generation's* frozen
+       // permissions, never an independently refreshed read of live memory.
+       const extraMemories=generated.memorySnapshot;
+       if(!Array.isArray(extraMemories))throw Error('旧手机生成缺少冻结的记忆授权快照，请重新发起生成');
+       const extra=extraMemories.map(m=>'已授权的手机记忆（'+m.id+'）：'+m.content).join('\n');
        const mounts=await D().effectiveResources(actor,prefs);
        const source=all.find(m=>m.id===sourceId)||all.at(-1),parts=source?.assetIds?.length?await MimaPhoneMedia.visionParts(source.assetIds.filter(Boolean)):[];
        returned=await MimaPhoneModel.generate({actorId:actor,userMaskId:prefs.userMaskId,history:visible,presetIds:mounts.presetIds,worldbookIds:mounts.worldbookIds,scope:thread.kind,extra,visionParts:parts,speakerNames,apiSettings:prefs});

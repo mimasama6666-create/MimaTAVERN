@@ -101,3 +101,6 @@
  :host(.atl-live-dock) .atl-header{min-height:0;padding:4px 7px}
 }
 @media(max-width:345px){.atl-toolbar-primary .atl-heading small{display:none}.atl-toolbar-primary .atl-heading b{font-size:10px}}
+/* Keep the full-screen Shadow DOM editor on the same independently configured density. */
+.atl-app{zoom:var(--mima-ui-scale,.8);height:100%;width:100%}
+@supports (-webkit-touch-callout:none){.atl-editor input:not([type=range]):not([type=color]),.atl-editor textarea,.atl-editor select{font-size:max(16px,1em)}}
