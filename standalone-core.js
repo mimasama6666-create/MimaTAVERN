@@ -165,6 +165,7 @@
       canonLevel: s.canonLevel || 'alternate', status: s.status || 'active',
       messages: arr(s.messages).map(normalizeMessage),
       pendingGeneration: s.pendingGeneration&&typeof s.pendingGeneration==='object'?clone(s.pendingGeneration):null,
+      lastGeneration: s.lastGeneration&&typeof s.lastGeneration==='object'?clone(s.lastGeneration):null,
       legacyMemoryQuarantined:s.legacyMemoryQuarantined===true, promptLineageProjection:s.promptLineageProjection===true, archivedBranches: arr(s.archivedBranches), deletedMessages: arr(s.deletedMessages).map(normalizeMessage),
       summary: text(s.summary), rollingSummary: text(s.rollingSummary || s.summary), longSummary: text(s.longSummary),
       sceneSummary: text(s.sceneSummary), characterPsychSummary: text(s.characterPsychSummary), relationshipSummary: text(s.relationshipSummary),
@@ -2755,7 +2756,7 @@
     // The new player message and its frozen request share one CAS commit.
     // Both are durable before fetch without rewriting the full library twice.
     commitStarted=true;
-    session=await saveSession({...session,pendingGeneration:pending});
+    session=await saveSession({...session,pendingGeneration:pending,lastGeneration:{id:pending.id,attempt:pending.attempt,action:pending.action,status:'prepared',preparedAt:pending.preparedAt}});
     emitProgress(progress,{phase:'generation_prepared',generationId:pending.id,attempt:pending.attempt,percent:38,detail:'本轮请求已持久准备；正在进行恢复账本核对。'});
     if(unsavedUserInput){unsavedUserInput=false;emitProgress(progress,{phase:'saved_user',generationId:pending.id,attempt:pending.attempt,percent:38,detail:'主人消息与本轮请求已安全写入本地剧情。'});}
     }catch(preparationError){
@@ -2787,7 +2788,7 @@
         ownerId:pending.ownerId,sourceFingerprint:pending.canonicalFingerprint,recordRevision:session.recordRevision});
     }catch(recoveryError){
       try{const latestState=normalizeState(await recoverStore.loadState()),live=latestState.sessions.find(x=>x.id===id);
-        if(live?.pendingGeneration?.id===pending.id&&live.pendingGeneration.attempt===pending.attempt){state=latestState;await saveSession({...live,pendingGeneration:{...live.pendingGeneration,status:'failed',errorCode:'E_GENERATION_RECEIPT_UNAVAILABLE'}});}}
+        if(live?.pendingGeneration?.id===pending.id&&live.pendingGeneration.attempt===pending.attempt){state=latestState;await saveSession({...live,pendingGeneration:{...live.pendingGeneration,status:'failed',errorCode:'E_GENERATION_RECEIPT_UNAVAILABLE'},lastGeneration:{id:pending.id,attempt:pending.attempt,action:pending.action,status:'failed',preparedAt:pending.preparedAt,settledAt:nowIso(),errorCode:'E_GENERATION_RECEIPT_UNAVAILABLE'}});}}
       catch(err){console.error('恢复账本错误后无法结算 prepared；保留原状态',{sessionId:id,generationId:pending.id,error:err});}
       throw new ApiError('E_GENERATION_RECEIPT_UNAVAILABLE','本地恢复账本无法提交，未向模型发送请求。',{details:String(recoveryError)});
     }
@@ -2924,7 +2925,7 @@
       // Rebase the one generated turn onto a verified current Session. Style,
       // manual memory and other settings changed while thinking are retained.
       state=persisted;
-      try{saved=await saveSession({...latest,messages:generatedMessages,pendingGeneration:null,legacyMemoryQuarantined:latest.legacyMemoryQuarantined||session.legacyMemoryQuarantined},{signal});break;}
+      try{saved=await saveSession({...latest,messages:generatedMessages,pendingGeneration:null,lastGeneration:{id:pending.id,attempt:pending.attempt,action:pending.action,status:'completed',preparedAt:pending.preparedAt,settledAt:nowIso(),resultMessageId:action==='regenerate'&&target?.id?target.id:action==='continue'&&continuationKind==='suffix'&&target?.id?target.id:[...generatedMessages].reverse().find(m=>m.role==='assistant')?.id||null},legacyMemoryQuarantined:latest.legacyMemoryQuarantined||session.legacyMemoryQuarantined},{signal});break;}
       catch(e){if(!String(e?.message||'').includes('E_CANONICAL_CONFLICT')||commitAttempt===2)throw e;}
     }
     storyMark('canonical_committed',{messageCount:saved.messages.length});
@@ -2954,7 +2955,7 @@
       try{
         const persisted=normalizeState(await window.MimaLocalStore.loadState()),latest=persisted.sessions.find(x=>x.id===id);
         if(latest?.pendingGeneration?.id===pending.id&&latest.pendingGeneration.attempt===pending.attempt&&latest.pendingGeneration.status==='prepared'){
-          state=persisted;await saveSession({...latest,pendingGeneration:{...latest.pendingGeneration,status:'failed',errorCode:e?.code||e?.name||'E_STORY_RUNTIME'}});
+          state=persisted;await saveSession({...latest,pendingGeneration:{...latest.pendingGeneration,status:'failed',errorCode:e?.code||e?.name||'E_STORY_RUNTIME'},lastGeneration:{id:pending.id,attempt:pending.attempt,action:pending.action,status:e?.name==='AbortError'?'aborted':'failed',preparedAt:pending.preparedAt,settledAt:nowIso(),errorCode:e?.code||e?.name||'E_STORY_RUNTIME'}});
           void recoverStore.generationReceipt(identity,e?.name==='AbortError'?'ABORTED_SETTLED':'FAILED_SETTLED',{errorCode:e?.code||e?.name||'E_STORY_RUNTIME'}).catch(err=>console.error('失败回执记录失败；canonical 已结算',{sessionId:id,generationId:pending.id,error:err}));
         }
       }catch(storageError){console.error('生成失败状态无法保存；原始剧情未作为空库覆盖',{sessionId:id,generationId:pending.id,error:storageError});}
@@ -2977,14 +2978,16 @@
     if(!session||!pending||pending.status!=='prepared'||
        pending.id!==String(body.generationId||'')||pending.attempt!==Number(body.attempt))
       throw new ApiError('E_UNKNOWN_GENERATION_IDENTITY_CHANGED','原任务状态已改变，未修改剧情。请免费重新核对。');
-    if(pending.canonicalFingerprint!==memorySourceFingerprint(session.messages,session.messages.length))
-      throw new ApiError('E_UNKNOWN_GENERATION_SOURCE_CHANGED','剧情原文在生成后变化，不能按旧状态解除锁定。');
+    // Releasing a lost request only fences its old commit; it never restores,
+    // rewinds or replaces messages. A changed transcript is therefore a reason
+    // to RETIRE the obsolete attempt, not to permanently deny release.
+    const sourceChanged=pending.canonicalFingerprint!==memorySourceFingerprint(session.messages,session.messages.length);
     const identity={sessionId:id,generationId:pending.id,attempt:pending.attempt};
     // Missing/corrupt recovery store is not proof of missing data. Never claim
     // a successful transition if the independent receipt cannot even be read.
     const recovery=await store.generationRead(identity),oldReceipt=recovery?.receipt||{};
     state=persisted;
-    const saved=await saveSession({...session,pendingGeneration:{...pending,status:'failed',errorCode:'E_GENERATION_OWNER_ABANDONED',abandonedAt:nowIso()}});
+    const saved=await saveSession({...session,pendingGeneration:{...pending,status:'failed',errorCode:'E_GENERATION_OWNER_ABANDONED',abandonedAt:nowIso(),sourceChangedAtRelease:sourceChanged},lastGeneration:{id:pending.id,attempt:pending.attempt,action:pending.action,status:'interrupted',preparedAt:pending.preparedAt,settledAt:nowIso(),sourceChangedAtRelease:sourceChanged}});
     // generationReceipt replaces the top-level receipt record. Carry forward
     // transport-dispatch evidence instead of rewriting an attempted paid request
     // as if it was never sent.

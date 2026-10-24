@@ -112,7 +112,7 @@ function r19Lifecycle(kind,extra={}){
  }catch(e){console.error('页面生命周期诊断写入失败；不影响剧情',{stage:kind,error:e});}
 }
 window.addEventListener('pagehide',event=>{preserveComposerDraft();r19PersistReading();r19Lifecycle('pagehide',{persisted:!!event.persisted});});
-window.addEventListener('pageshow',event=>{r19Lifecycle('pageshow',{persisted:!!event.persisted});if(event.persisted&&currentSessionId){void checkUnknownGeneration(true);}});
+window.addEventListener('pageshow',event=>{r19Lifecycle('pageshow',{persisted:!!event.persisted});if(event.persisted&&currentSessionId){void reconcileCanonicalGenerationSession(currentSessionId).then(updateGenerationTaskViewerShortcut);}});
 document.addEventListener('visibilitychange',()=>{if(document.hidden){preserveComposerDraft();r19PersistReading();}r19Lifecycle('visibilitychange',{hidden:document.hidden});});
 
 let generationSerial = 0;
@@ -247,10 +247,9 @@ function restoreGenerationView(){
     r19LastUnknown=null;toggleUnknownGenerationActions(false);qs('generation-recovery-draft')?.classList.add('hidden');qs('generation-copy-draft')?.classList.add('hidden');
     hideFailedStreamControls();
     const durablePending=currentSessionData?.pendingGeneration;
-    if(!lastGenerationFailure&&durablePending?.status==='failed'){
-        lastGenerationFailure={code:durablePending.errorCode||'E_GENERATION_FAILED',message:'上次生成未完成，玩家消息与失败轮仍保留在剧情资料库。',hint:'可以重新核对剧情后点击重说；重说与精确重试是不同操作。',action:durablePending.action||'send'};
-        generationFailures.set(currentSessionId,lastGenerationFailure);
-    }
+    // Past failures belong in the task viewer, not a blocking error HUD
+    // recreated every time a story is opened after refresh.
+    updateGenerationTaskViewerShortcut();
     currentGenerationAction=owner?.action||null;
     deferredGenerationProgress=null;
     const panel=qs('generation-panel');
@@ -268,8 +267,7 @@ function restoreGenerationView(){
           }
           if(owner.streamText){st.targetText=owner.streamText;st.displayText=owner.streamText;renderLiveStreamText();}
         }}
-    }else if(durablePending?.status==='prepared'){showUnknownGeneration(durablePending);}
-    else if(lastGenerationFailure){showGenerationError(lastGenerationFailure,lastGenerationFailure.action,true);}
+    }else if(lastGenerationFailure && generationFailures.has(currentSessionId)){showGenerationError(lastGenerationFailure,lastGenerationFailure.action,true);}
     const degraded=generationReconcileStates.get(currentSessionId);
     if(degraded?.status==='degraded'){
         const panel=qs('generation-panel'),label=qs('generation-label'),detail=qs('generation-detail');
@@ -623,13 +621,14 @@ async function openSession(id, close=true){
     if(!res.success||res.data?.id!==id){toast(res.msg||'打开剧情失败：返回了不同的会话');return null;}
     const switched=currentSessionId!==id;
     if(switched){preserveComposerDraft(currentSessionId);r19PersistReading(currentSessionId);}
+    if(switched)closeGenerationTaskViewer();
     currentSessionId=id;currentSessionData=res.data;
     try{localStorage.setItem(R19_LAST_SESSION,id);}catch(e){console.error('最近剧情偏好保存失败',{sessionId:id,error:e});}
     window.MimaChatWallpaper?.onSession?.(id);
     if(close)closeDrawer();refreshHeader();const rememberedAnchor=r19SavedReading(id,res.data);refreshChatBox(rememberedAnchor?{readerAnchorLite:rememberedAnchor,scrollToBottom:false}:{scrollToBottom:true});
     if(switched){restoreComposerDraft(id);}else{preserveComposerDraft(id);}
     restoreGenerationView();
-    if(res.data.pendingGeneration?.status==='prepared')void checkUnknownGeneration(true);
+    updateGenerationTaskViewerShortcut();
     applyCustomCss();renderSessions();if(isSettingsOpen())renderSettings();
     return res.data;
 }
@@ -2528,6 +2527,76 @@ window.MimaMemoryPriority={
         });
     }
 };
+let r19TaskViewerCopiedText='';
+function latestGenerationInfo(session=currentSessionData){
+ const pending=session?.pendingGeneration,last=session?.lastGeneration;
+ if(pending?.status==='prepared')return pending;
+ if(last?.id&&(!pending||last.preparedAt>=pending.preparedAt))return last;
+ return pending||null;
+}
+function updateGenerationTaskViewerShortcut(session=currentSessionData){
+ const btn=qs('generation-task-viewer-open');if(!btn)return;
+ const last=latestGenerationInfo(session);btn.classList.toggle('hidden',!currentSessionId||!last);
+ if(last){btn.textContent=last.status==='prepared'?'◷ 上轮状态':last.status==='completed'?'✓ 上轮结果':'◷ 上轮记录';}
+}
+function closeGenerationTaskViewer(){qs('generation-task-viewer')?.classList.add('hidden');r19TaskViewerCopiedText='';}
+async function openGenerationTaskViewer(){
+ const viewer=qs('generation-task-viewer'),status=qs('generation-task-status'),body=qs('generation-task-text');
+ if(!viewer||!currentSessionId)return;
+ viewer.classList.remove('hidden');status.textContent='正在读取本地记录…';body.textContent='';
+ const sessionId=currentSessionId,nav=sessionNavigationEpoch;
+ try{
+   const res=await fetchStory(`/sessions/${encodeURIComponent(sessionId)}/canonical-view`);
+   if(!res.success||res.data?.id!==sessionId||!Array.isArray(res.data.messages))throw new Error(res.msg||'剧情数据读取失败');
+   if(currentSessionId!==sessionId||nav!==sessionNavigationEpoch||viewer.classList.contains('hidden'))return;
+   updateGenerationTaskViewerShortcut(res.data);
+   const entry=latestGenerationInfo(res.data);
+   if(!entry){status.textContent='当前剧情还没有可查看的任务记录。';r19TaskViewerCopiedText='';return;}
+   let draft='',receipt=null,draftProblem='';
+   try{
+     const read=await MimaLocalStore.generationRead({sessionId,generationId:entry.id,attempt:entry.attempt});
+     draft=read.text||'';receipt=read.receipt;
+   }catch(error){draftProblem='本机临时片段读取异常：'+error.message+'。未删除任何原始记录。';}
+   if(currentSessionId!==sessionId||viewer.classList.contains('hidden'))return;
+   const stage=entry.status==='completed'?'已完成并保存':entry.status==='failed'?'生成失败':entry.status==='aborted'?'已停止':entry.status==='interrupted'?'已中断（旧请求不再写入剧情）':'结果尚未确认';
+   const localOwner=generationOwners.get(sessionId),localActive=!!localOwner&&localOwner.generationId===entry.id&&localOwner.generationAttempt===entry.attempt;
+   const hasSavedReply=entry.status==='completed';
+   const actualReply=hasSavedReply?res.data.messages.find(m=>m.id===entry.resultMessageId):null;
+   const reply=actualReply?.rawContent||actualReply?.content||'';
+   const recordLength=Number(receipt?.persistedChars)||draft.length;
+   status.textContent=`${stage} · ${entry.action||'生成'} · ${entry.attempt||1} 次尝试`+
+     (receipt?`\n本机已核实接收 ${recordLength} 字符 · 记录阶段 ${receipt.stage||'未知'}`:'\n没有独立流式接收记录')+
+     (localActive?'\n当前页面仍在生成，可在剧情中查看流式输出。':'')+
+     (entry.status==='prepared'?'\n刷新后的原网络请求不能重新连接；这里仅展示本地真实收到的内容，不会调用或取消 API。':'')+
+     (draftProblem?'\n'+draftProblem:'');
+   r19TaskViewerCopiedText=reply||draft;
+   body.textContent=reply||draft||(hasSavedReply?'回复已保存到剧情，但无法通过记录定位到原消息。请在剧情中查看。':'这轮没有在本机留下可核实的正文。非流式请求在页面关闭前未收到的响应无法恢复。');
+ }catch(error){if(currentSessionId===sessionId&&!viewer.classList.contains('hidden')){status.textContent='本地读取失败，历史未被更改：'+error.message;body.textContent='';r19TaskViewerCopiedText='';}}
+}
+async function copyGenerationTaskViewerText(){
+ if(!r19TaskViewerCopiedText)return toast('没有已核实的文字可复制');
+ try{await navigator.clipboard.writeText(r19TaskViewerCopiedText);toast('已复制本机已收到的文字');}catch(error){toast('复制失败，请长按文字手动选择');}
+}
+async function retireOrphanedGenerationForNewTurn(sessionId){
+ try{
+   const verified=await reconcileCanonicalGenerationSession(sessionId);
+   if(!verified||currentSessionId!==sessionId)return false;
+   const pending=verified.pendingGeneration;
+   if(pending?.status!=='prepared')return true;
+   const identity={sessionId,generationId:pending.id,attempt:pending.attempt};
+   const read=await MimaLocalStore.generationRead(identity);
+   const activeElsewhere=await r19ProbeOtherWindow(identity,read.receipt?.ownerId||pending.ownerId);
+   if(currentSessionId!==sessionId)return false;
+   if(activeElsewhere){toast('另一窗口仍在生成这轮剧情，请返回原窗口查看，或关闭原窗口后再开始新一轮。');return false;}
+   // Release the stale transaction without touching story messages or saved
+   // fragments. The core performs a revision-checked CAS and fences late replies.
+   const result=await fetchStory(`/sessions/${encodeURIComponent(sessionId)}/generation-abandon`,'POST',identity);
+   if(!result.success||result.data?.id!==sessionId)throw new Error(result.msg||'旧任务只读状态无法结算');
+   currentSessionData=result.data;generationFailures.delete(sessionId);
+   updateGenerationTaskViewerShortcut();
+   return true;
+ }catch(error){toast('旧任务本地记录暂时无法核对，未发起新请求：'+error.message);return false;}
+}
 function toggleUnknownGenerationActions(visible){
  for(const id of ['generation-check-unknown','generation-view-draft','generation-takeover-unknown','generation-abandon-unknown'])qs(id)?.classList.toggle('hidden',!visible);
 }
@@ -2552,7 +2621,7 @@ async function checkUnknownGeneration(silent=false){
    if(receipt?.ownerId)activeOtherTab=await r19ProbeOtherWindow(identity,receipt.ownerId);
   }
   catch(e){verified=false;readError=true;console.error('独立临时生成账本读取失败；状态依然 UNKNOWN，禁止旧任务接管',{sessionId:id,error:e});}
-  if(currentSessionId===id)showUnknownGeneration(result.pendingGeneration,receipt,activeOtherTab,verified,readError);
+  if(currentSessionId===id)updateGenerationTaskViewerShortcut(result);
  }else{
   r19LastUnknown=null;toggleUnknownGenerationActions(false);
   if(currentSessionId===id){restoreGenerationView();if(!silent)toast(result.pendingGeneration?.status==='failed'?'核对完成：原生成已失败结算。':'核对完成：以已保存的剧情为准。');}
@@ -2662,11 +2731,11 @@ function toggleUIState(generating){
     isGenerating=generationOwners.size>0;
     if(!isGenerating){for(const release of [...memoryPriorityWaiters])release();}
     const verification=generationReconcileStates.get(currentSessionId);
-    const visible=!!currentGenerationOwner()||currentSessionData?.pendingGeneration?.status==='prepared'||r19DraftReadBlocked.has(currentSessionId)||verification?.status==='checking'||verification?.status==='degraded';
+    const visible=!!currentGenerationOwner()||r19DraftReadBlocked.has(currentSessionId)||verification?.status==='checking'||verification?.status==='degraded';
     qs('send-btn').disabled=visible;
     qsa('.quick-actions .chip-btn').forEach(b=>{if(b.id!=='stop-btn'&&b.id!=='generation-reconcile-footer')b.disabled=visible});
     const footerRecovery=qs('generation-reconcile-footer');
-    if(footerRecovery){const blocked=!!visible&&!currentGenerationOwner();footerRecovery.classList.toggle('hidden',!blocked);footerRecovery.disabled=!blocked;footerRecovery.textContent=verification?.status==='checking'?'↻ 当前核对中（免费）':currentSessionData?.pendingGeneration?.status==='prepared'?'↻ 核对未结算生成（免费）':r19DraftReadBlocked.has(currentSessionId)?'↻ 草稿读取受阻（免费核对）':'↻ 核对失败轮（免费）';}
+    if(footerRecovery){const blocked=!!visible&&!currentGenerationOwner();footerRecovery.classList.toggle('hidden',!blocked);footerRecovery.disabled=!blocked;footerRecovery.textContent=verification?.status==='checking'?'↻ 当前核对中（免费）':r19DraftReadBlocked.has(currentSessionId)?'↻ 草稿读取受阻（免费核对）':'↻ 核对失败轮（免费）';}
     qs('stop-btn').classList.toggle('hidden',!currentGenerationOwner());qs('generation-stop-inline')?.classList.toggle('hidden',!currentGenerationOwner());
     qs('story-input').disabled=visible;
     if(qs('director-note'))qs('director-note').disabled=r19DraftReadBlocked.has(currentSessionId);
@@ -2940,7 +3009,7 @@ async function reconcileCanonicalGenerationSession(sessionId){
             if(currentSessionId===sessionId&&sessionNavigationEpoch===navEpoch){
                 const box=qs('story-chat-box'),top=box?.scrollTop;
                 currentSessionData=result.data;
-                refreshChatBox({scrollTop:top??0,scrollToBottom:false});refreshHeader();
+                refreshChatBox({scrollTop:top??0,scrollToBottom:false});refreshHeader();updateGenerationTaskViewerShortcut();
             }
             generationReconcileStates.delete(sessionId);
             qs('generation-reconcile')?.classList.add('hidden');
@@ -2973,8 +3042,8 @@ async function retryGenerationReconciliation(){
         if(result.pendingGeneration?.status==='prepared'){
             // Canonical messages can be readable while a request remains UNKNOWN.
             // A successful read must never tell the user regeneration is available.
-            await checkUnknownGeneration(true);
-            toast('剧情已读取，但原生成仍未结算。请在面板选择「放弃等待并解锁」或「确认后重新生成」。');
+            updateGenerationTaskViewerShortcut(result);
+            toast('上轮任务仍未确认；可点「上轮状态」查看记录。新生成会单独结算旧任务。');
             return;
         }
         if(result.pendingGeneration?.status==='failed'){
@@ -2990,8 +3059,14 @@ async function retryGenerationReconciliation(){
 async function triggerChat(text,actionType='send',generationOptions={}){
     const targetSessionId=currentSessionId;
     if(!targetSessionId)return toast('请先创建一个剧情。');
-    if(currentSessionData?.pendingGeneration?.status==='prepared'&&!(actionType==='retry'&&generationOptions.confirmUnknownTakeover===true))return toast('原生成尚未结算，请使用免费核对或明确确认新尝试。');
     if(generationOwners.has(targetSessionId))return toast('当前剧情仍在生成，请先停止或等待本轮完成。');
+    // The viewer is READ-ONLY. Starting a new turn is the explicit action that
+    // retires a previous page's orphaned transaction, without an unlock wizard.
+    // A verified live owner in another tab is left alone.
+    if(currentSessionData?.pendingGeneration?.status==='prepared'){
+        const released=await retireOrphanedGenerationForNewTurn(targetSessionId);
+        if(!released||currentSessionId!==targetSessionId)return;
+    }
     const verification=generationReconcileStates.get(targetSessionId);
     if(verification?.status==='checking')return toast('正在核对剧情，请勿重复提交。');
     if(verification?.status==='degraded')return toast('剧情尚未核实，请先点击错误面板的「重新核对剧情」。');
@@ -3047,7 +3122,7 @@ async function triggerChat(text,actionType='send',generationOptions={}){
             }else if(res.success){
                 if(res.data?.id!==targetSessionId)throw new Error('E_GENERATION_WRONG_SESSION: 回复的会话身份不匹配');
                 clearSubmittedDraft(owner);
-                currentSessionData=res.data;
+                currentSessionData=res.data;updateGenerationTaskViewerShortcut();
                 refreshChatBox(preservedReaderAnchor?{readerAnchor:preservedReaderAnchor,scrollToBottom:false}:preserveReading?{scrollTop:preservedScrollTop}:{scrollToBottom:true});
                 requestAnimationFrame(()=>{if(currentSessionId===targetSessionId)persistStoryUiTiming(owner,'ui_final_stable');});
                 refreshHeader();finishGenerationProgress();
@@ -3488,7 +3563,7 @@ function restoreLegacyFont(){
 }
 
 // Expose inline handlers
-Object.assign(window,{importCurrentSessionAsSettingTemplate,chooseIndependentTemplate,saveIndependentTemplate,copyIndependentTemplate,setIndependentTemplateDefault,deleteIndependentTemplate,setImmersiveReading,saveCurrentSettingTemplate,duplicateSettingTemplate,setDefaultSettingTemplate,deleteSettingTemplate,exportSettingTemplate,importSettingTemplate,refreshSettingTemplateChoices,renderSettingTemplatePreview,manualRollingSummary,mimaFilterLibrary,mimaToggleFavorite,goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,choosePngResourceInspection,playInspectedPngInCompat,savePngSelectedResources,exportPngInspection,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,exportStoryTranscript,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,loadMemoryModels,selectMemoryModel,startFactMemoryEdit,cancelFactMemoryEdit,saveFactMemoryEdit,toggleMergeFactSelection,previewFactMemoryMerge,cancelFactMemoryMerge,confirmFactMemoryMerge,undoFactMemoryMerge,clearCoreMemory,deleteFactMemory,clearAllFactMemories,revokeRollingMemory,restoreRollingMemory,discardMemoryCandidate,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,mimaLoadLargeCssForEdit,stopAtelierAndRestoreCss,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,apiIdentityDraftChanged,syncTemperature,updateStoryTypography,resetStoryTypography,setAppearancePreviewSurface,setBuiltInTheme,dismissGenerationPanel,previewFailedGenerationRaw,recoverFailedGenerationRaw,repairFailedGenerationHtml,retryFailedGeneration,retryGenerationReconciliation,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,regenerateCurrentMsg,continueMsg,autoAdvance,restoreMessageVersion,stopGeneration,abandonUnknownGeneration,toggleGenerationPanelMinimize,restoreGenerationPanel,saveGenerationContextAndPreview,resumeGenerationAfterCapacityPreview});
+Object.assign(window,{openGenerationTaskViewer,closeGenerationTaskViewer,copyGenerationTaskViewerText,importCurrentSessionAsSettingTemplate,chooseIndependentTemplate,saveIndependentTemplate,copyIndependentTemplate,setIndependentTemplateDefault,deleteIndependentTemplate,setImmersiveReading,saveCurrentSettingTemplate,duplicateSettingTemplate,setDefaultSettingTemplate,deleteSettingTemplate,exportSettingTemplate,importSettingTemplate,refreshSettingTemplateChoices,renderSettingTemplatePreview,manualRollingSummary,mimaFilterLibrary,mimaToggleFavorite,goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,choosePngResourceInspection,playInspectedPngInCompat,savePngSelectedResources,exportPngInspection,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,exportStoryTranscript,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,loadMemoryModels,selectMemoryModel,startFactMemoryEdit,cancelFactMemoryEdit,saveFactMemoryEdit,toggleMergeFactSelection,previewFactMemoryMerge,cancelFactMemoryMerge,confirmFactMemoryMerge,undoFactMemoryMerge,clearCoreMemory,deleteFactMemory,clearAllFactMemories,revokeRollingMemory,restoreRollingMemory,discardMemoryCandidate,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,mimaLoadLargeCssForEdit,stopAtelierAndRestoreCss,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,apiIdentityDraftChanged,syncTemperature,updateStoryTypography,resetStoryTypography,setAppearancePreviewSurface,setBuiltInTheme,dismissGenerationPanel,previewFailedGenerationRaw,recoverFailedGenerationRaw,repairFailedGenerationHtml,retryFailedGeneration,retryGenerationReconciliation,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,regenerateCurrentMsg,continueMsg,autoAdvance,restoreMessageVersion,stopGeneration,abandonUnknownGeneration,toggleGenerationPanelMinimize,restoreGenerationPanel,saveGenerationContextAndPreview,resumeGenerationAfterCapacityPreview});
 
 
 window.MimaTavernBridge={
