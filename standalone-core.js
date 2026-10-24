@@ -621,7 +621,7 @@
       source:memory.core.source,sourceCurrent:coreSourceCurrent,chars:memory.core.content.length,injected:coreIncluded,
       reason:!memory.settings.injectCore?'disabled':!memory.core.content?'empty':replay&&!coreSourceCurrent?'historical_replay_boundary':coreSourceCurrent?'included':'source_changed_included'});
     if(coreIncluded){
-      const label=memory.core.verification.status==='human_confirmed'?'玩家手工编辑':'AI总结（可编辑）';
+      const label=memory.core.verification.status==='human_confirmed'?'玩家手工编辑':'自动整理（可编辑）';
       add('manual_core_memory',`【核心记忆 / Core Memory】【来源：${label}】\n${memory.core.content}`);
     }
     if(memory.facts.length){
@@ -636,7 +636,7 @@
           reason:!memory.settings.injectFacts?'disabled':replay&&!current?'historical_replay_boundary':!injected?'injection_limit':current?'included':'source_changed_included'};
       }));
       if(selected.length)add('manual_fact_memories',`【事实记忆 / Fact Memories】\n${selected.map(x=>{
-        const label=x.verification.status==='human_confirmed'?'玩家手工编辑':'AI总结（可编辑）';
+        const label=x.verification.status==='human_confirmed'?'玩家手工编辑':'自动整理（可编辑）';
         return `【第 ${x.startRound}–${x.endRound} 轮 · ${label}】\n${x.content}`;
       }).join('\n\n')}`);
     }
@@ -645,7 +645,7 @@
     if(!session.legacyMemoryQuarantined&&!session.promptLineageProjection&&session.relationshipSummary)add('relationship_summary',`【关系变化摘要】\n${session.relationshipSummary}`);
     if(!session.legacyMemoryQuarantined&&!session.promptLineageProjection&&session.unresolvedHooks?.length)add('unresolved_hooks',`【未解决伏笔】\n${session.unresolvedHooks.map(x=>`- ${x}`).join('\n')}`);
     if(session.userNotes)add('user_notes',`【玩家备注】\n${session.userNotes}`);
-    if(session.aiNotes)add('ai_notes',`【AI 备注】\n${session.aiNotes}`);
+    if(session.aiNotes)add('ai_notes',`【补充备注】\n${session.aiNotes}`);
     add('worldbook_back',joinWb(back,'System Back'),{sourceId:back.map(x=>x.entry.id).join(','),resourceId:back.map(x=>x.book.id).join(',')});
     const htmlContract=session.promptSettings?.outputContract;
     if(htmlContract?.requireHtml){
@@ -663,7 +663,7 @@
         }catch(e){sourceSafeShell='\n【标准参考消息的动态来源无法验证，仅使用上述显式结构选择器；原参考消息仍安全保存在历史存档。】';}
       }
       const shape=htmlContract.structureMode==='three_part_html_status'?'明确启用三段式：先 .mima-current 环境栏，中间保留非空剧情正文，末尾依次且各仅一个 .mima-gaze、.mima-bond、.mima-abyss、.mima-pulse、.mima-cocoon、.mima-echo、.mima-pets、.mima-nexus。':'旧版自定义选择器结构模式；';
-      add('html_structure_contract',`【本轮 HTML 结构合同：须按 HTML 形式回复；不得只输出纯文本。${shape}必需结构选择器：${htmlContract.requiredSelectors||'(无额外选择器)'}。正文槽：${htmlContract.bodySelector||'(未标注)'}。状态槽：${htmlContract.statusSelector||'(未标注)'}。所有旧状态是历史快照，不得当成当前事实；无法确认的本轮状态请标明待确认。】${sourceSafeShell}`);
+      add('html_structure_contract',`【HTML 状态栏格式：要按照格式输出。${shape}必需结构选择器：${htmlContract.requiredSelectors||'(无额外选择器)'}。正文槽：${htmlContract.bodySelector||'(未标注)'}。状态槽：${htmlContract.statusSelector||'(未标注)'}。HTML 标签须完整；旧状态不等于本轮状态，无法确认的值标为待确认。】${sourceSafeShell}`);
     }
     if(options.directorNote||session.directorNote)add('director_note',options.directorNote||session.directorNote);
     return {prompt:chunks.join('\n\n'),sections,memoryTrace};

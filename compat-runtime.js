@@ -446,7 +446,7 @@ function compatOutputContract(settings){
 }
 function injectFormatContract(out,session){
  const c=session.outputContract;if(!c?.requireHtml&&!c?.completeHtml)return out;
- const parts=['本次回复必须满足当前角色独立 HTML 输出合同，缺少结构不能当作正常剧情提交。不要从旧剧情中复制状态数值。'];
+ const parts=['HTML 状态栏格式：要按照格式输出。旧状态不等于本轮状态。'];
  if(c.completeHtml)parts.push('HTML 标签必须完整闭合。');
  if(c.requireHtml)parts.push('必须输出真实 HTML 结构，不得只输出纯文本。');
  if(c.requiredSelectors)parts.push('必需的 CSS 选择器结构：'+c.requiredSelectors);
