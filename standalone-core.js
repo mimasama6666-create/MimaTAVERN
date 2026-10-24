@@ -1348,7 +1348,8 @@
   }
   async function callModelWithConfig(messages,cfgInput,temperature=0.85,signal,options={}){
     const cfg={...defaultApiConfig(),...(cfgInput||{})};if(!cfg.model)throw new ApiError('E_API_CONFIG','还没有选择/填写 Model（模型）');const {chat}=buildEndpoints(cfg);
-    const streamEnabled=options.streamOverride===undefined?!!cfg.stream:!!options.streamOverride;
+    // The actual serialized request, not a UI toggle, decides how its response is parsed.
+    // A frozen retry can legitimately carry an earlier stream setting.
     // Direct memory / novel / auxiliary calls do not pass through assemble().
     // They still must never submit input + output above a *declared* window.
     if(Number(cfg.contextWindowTokens)>=4096){
@@ -1362,7 +1363,7 @@
           details:JSON.stringify({estimatedInputTokens:estimated,reservedOutputTokens:output,windowTokens:Number(cfg.contextWindowTokens),stage:options.memoryContext?.stage||'provider_request'}),
           hint:'请检查上下文窗口与 max_tokens 配置；不会自动改变设置或删除 Persona/History。'});
     }
-    const body=makeApiBody(messages,cfg,temperature,options),serializationStartedAt=Date.now();
+    const body=makeApiBody(messages,cfg,temperature,options),streamEnabled=body.stream===true,serializationStartedAt=Date.now();
     const requestJson=JSON.stringify(body),requestBytes=new TextEncoder().encode(requestJson).byteLength;
     // Record an immutable payload fingerprint and the exact message-role/size
     // shape at the network boundary. NEVER store raw story text or credentials.
@@ -1402,7 +1403,7 @@
     // extraHeaders never enter the independent diagnostics database.
     try{options.onDiagnostic?.({type:'request',request:body,messageSources:options.messageSources||[],...diag});}
     catch(e){console.error('诊断事件回调失败；真实模型请求继续执行',e);}
-    emitProgress(options.onProgress,{phase:'requesting',percent:42,detail:`正在请求 ${cfg.model}`});
+    emitProgress(options.onProgress,{phase:'requesting',percent:42,streamRequested:streamEnabled,detail:`正在请求 ${cfg.model} · 实际发送${streamEnabled?'流式':'非流式'}参数${streamEnabled?'（stream: true）':''}`});
     const fetchStartedAt=Date.now(),requestStartedAt=new Date(fetchStartedAt).toISOString();
     timing('fetch_start');
     let res;try{res=await fetch(chat,{method:'POST',headers:apiHeaders(cfg),body:requestJson,signal,mode:'cors',credentials:'omit',cache:'no-store'});}catch(e){
@@ -1441,7 +1442,17 @@
     }
     timing('headers',{httpStatus:res.status});
     const contentType=String(res.headers?.get?.('content-type')||'').toLowerCase();
-    if(streamEnabled&&!/application\/json/i.test(contentType)){
+    const jsonResponse=/application\/json/i.test(contentType);
+    const effectiveResponseMode=streamEnabled?(jsonResponse?'json_fallback':'streaming'):'json';
+    try{options.onDiagnostic?.({type:'response_mode',requestId,requestedStream:streamEnabled,actualMode:effectiveResponseMode,responseContentType:contentType.slice(0,100),httpStatus:res.status});}
+    catch(e){console.error('响应模式诊断失败，生成不受影响',e);}
+    if(streamEnabled&&jsonResponse){
+      // A gateway may ignore stream:true and return a complete JSON body. Keep
+      // the valid reply and report the real transport mode; never invent deltas.
+      emitProgress(options.onProgress,{phase:'stream_fallback',percent:55,streamRequested:true,actualResponseMode:'json',receivedChars:0,
+        detail:'已发送 stream:true，但接口返回整包 JSON；本轮只能在接收完整正文后显示，并非实时流式。'});
+    }
+    if(streamEnabled&&!jsonResponse){
       emitProgress(options.onProgress,{phase:'stream_headers',percent:55,receivedChars:0,detail:`HTTP ${res.status} 响应头已收到；等待第一段模型正文（0 字）…`});
       let firstVisibleMarked=false,lastChars=0;
       const streamProgress=ev=>{if(ev.streamText!==undefined){lastChars=ev.streamText.length;if(!firstVisibleMarked&&lastChars){firstVisibleMarked=true;timing('first_visible_delta',{receivedChars:lastChars});}}options.onProgress?.(ev.streamText===undefined?ev:{...ev,streamText:prefixResponseText(ev.streamText,body,cfg,true)});};
@@ -1456,7 +1467,7 @@
         if(options.resultMeta?.finishReason)try{options.onDiagnostic?.({type:'provider_result',finishKind:options.resultMeta.finishKind,finishReason:options.resultMeta.finishReason,responseChars:e?.partialDraft?.length||0});}catch(diagErr){console.error('诊断事件回调失败',diagErr);}
         throw responseFailure(e,'stream',{streamDetails:String(e?.details||'').slice(0,500)});}
     }
-    emitProgress(options.onProgress,{phase:'receiving',percent:68,detail:'模型已响应，正在解析正文…'});
+    emitProgress(options.onProgress,{phase:'receiving',percent:68,streamRequested:streamEnabled,actualResponseMode:effectiveResponseMode,detail:streamEnabled?'接口未提供流式事件，正在读取完整 JSON 正文…':'模型已响应，正在解析非流式正文…'});
     timing('json_receive_start');
     let data;try{data=await parseJsonResponse(res,'API');}
     catch(e){throw responseFailure(e,'response_body_parse');}
@@ -2704,7 +2715,13 @@
     // An unverified window cannot be compared against a fabricated limit.
     // Keep the frozen payload byte-for-byte and leave capacity adjudication
     // to the Provider, with no local retry or automatic substitution.
-    cfg={...cfg,model:requestBody.model,stream:requestBody.stream===true,sendTemperature:Object.hasOwn(requestBody,'temperature'),maxTokens:requestBody.max_tokens||0};
+    const currentTransportStream=cfg.stream===true;
+    const frozenTransportStream=requestBody.stream===true;
+    if(originalSnapshot&&currentTransportStream!==frozenTransportStream){
+      emitProgress(progress,{phase:'request_mode_frozen',percent:35,streamRequested:frozenTransportStream,
+        detail:`这次沿用原请求快照：${frozenTransportStream?'流式':'非流式'}（当前 API 设置为${currentTransportStream?'流式':'非流式'}）。如需改为当前模式，请选择按当前参数重试/重说。`});
+    }
+    cfg={...cfg,model:requestBody.model,stream:frozenTransportStream,sendTemperature:Object.hasOwn(requestBody,'temperature'),maxTokens:requestBody.max_tokens||0};
     messages=requestBody.messages;
     pending={id:retryPending?.id||makeId('generation'),action,targetMessageId:target?.id||null,snapshot,canonicalFingerprint,status:'prepared',attempt:(retryPending?.attempt||0)+1,
       ownerId:String(options.diagnosticTraceId||''),preparedAt:nowIso()};

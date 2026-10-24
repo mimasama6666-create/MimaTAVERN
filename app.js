@@ -275,7 +275,7 @@ function openDrawer(){qs('session-drawer').classList.add('open');qs('drawer-scri
 function closeDrawer(){qs('session-drawer').classList.remove('open');qs('drawer-scrim').classList.add('hidden')}
 function isSettingsOpen(){const modal=qs('settings-modal');return !!modal&&!modal.classList.contains('hidden')}
 function openSettings(tab='roles'){settingsNavigationTouched=true;settingsTab=tab;qs('settings-modal').classList.remove('hidden');renderSettings()}
-function closeSettings(){if(settingsTab==='templates'&&templateEditorDirty&&!confirm('设置模板有尚未保存的修改，确定关闭并放弃吗？'))return;templateEditorDirty=false;settingsNavigationTouched=true;++settingsRenderEpoch;qs('settings-modal').classList.add('hidden');if(deferredGenerationProgress){if(ownsVisibleGeneration(deferredGenerationProgress.owner))setGenerationProgress(deferredGenerationProgress.payload);deferredGenerationProgress=null}if(liveStreamState)liveStreamState.visualPaused=false}
+function closeSettings(){if(settingsTab==='templates'&&templateEditorDirty&&!confirm('设置模板有尚未保存的修改，确定关闭并放弃吗？'))return;templateEditorDirty=false;settingsNavigationTouched=true;++settingsRenderEpoch;qs('settings-modal').classList.add('hidden');if(deferredGenerationProgress){if(ownsVisibleGeneration(deferredGenerationProgress.owner))setGenerationProgress(deferredGenerationProgress.payload);deferredGenerationProgress=null}if(liveStreamState){liveStreamState.visualPaused=false;pumpLiveStream();}}
 function switchSettingsTab(tab){if(tab!==settingsTab&&settingsTab==='templates'&&templateEditorDirty&&!confirm('模板修改尚未保存，确定离开并放弃吗？'))return;templateEditorDirty=false;settingsNavigationTouched=true;settingsTab=tab;renderSettings()}
 function maybeOpenInitialApiSettings(){
     // This delayed first-run invitation must never override a user's tab selection.
@@ -2297,11 +2297,11 @@ function saveApiSettings(){
         if(c.extraHeaders)JSON.parse(c.extraHeaders);
         MimaStandalone.saveApiConfig({...c,capacityExplicit:true});
         const actual=MimaStandalone.getApiConfig();
-        if(actual.temperature!==temp||actual.maxTokens!==maxTokens||actual.contextWindowTokens!==windowSize||actual.model!==c.model||actual.apiBase!==c.apiBase||actual.chatEndpoint!==c.chatEndpoint)
+        if(actual.temperature!==temp||actual.maxTokens!==maxTokens||actual.contextWindowTokens!==windowSize||actual.model!==c.model||actual.apiBase!==c.apiBase||actual.chatEndpoint!==c.chatEndpoint||actual.stream!==c.stream)
             throw new Error('保存后的 API 数值与输入不一致');
         localStorage.setItem(TEMP_KEY,String(c.temperature));
-        toast('API（接口）配置只保存到了这个浏览器');
-        const el=qs('api-status');if(el)el.textContent='✅ 已保存。';return true;
+        toast(`API 配置已保存 · ${actual.stream?'流式已开启':'非流式已选择'}`);
+        const el=qs('api-status');if(el)el.textContent=`✅ 已保存 · ${actual.stream?'后续新请求启用流式（stream:true）':'后续新请求为非流式'}。按原请求重试或重说仍会遵守原始快照。`;return true;
     }catch(e){
         const info=describeApiError(e);toast(`API（接口）配置错误：${info.message}`);
         const el=qs('api-status');if(el)el.textContent=`❌ ${info.code} · ${info.message}\n可能原因：${info.hint}`;return false;
