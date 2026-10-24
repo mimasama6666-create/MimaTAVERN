@@ -245,6 +245,7 @@ function restoreGenerationView(){
     // A previously displayed error belongs only to the original session.
     lastGenerationFailure=generationFailures.get(currentSessionId)||null;
     r19LastUnknown=null;toggleUnknownGenerationActions(false);qs('generation-recovery-draft')?.classList.add('hidden');qs('generation-copy-draft')?.classList.add('hidden');
+    hideFailedStreamControls();
     const durablePending=currentSessionData?.pendingGeneration;
     if(!lastGenerationFailure&&durablePending?.status==='failed'){
         lastGenerationFailure={code:durablePending.errorCode||'E_GENERATION_FAILED',message:'上次生成未完成，玩家消息与失败轮仍保留在剧情资料库。',hint:'可以重新核对剧情后点击重说；重说与精确重试是不同操作。',action:durablePending.action||'send'};
@@ -2566,6 +2567,54 @@ function copyUnknownGenerationDraft(){
  if(!navigator.clipboard?.writeText)return toast('此浏览器不能自动复制，请手动选择草稿文字');
  navigator.clipboard.writeText(data).then(()=>toast('已复制本机暂存文字（不代表正式回复）')).catch(e=>{console.error('复制临时草稿失败',{error:e});toast('自动复制失败，请手动选择文字');});
 }
+// A failed/blocked stream is a read-only *transport* artifact, never an
+// accepted assistant message. Read it by exact canonical generation identity;
+// do not turn diagnostic previews (which may be capped) into "complete" text.
+let r19FailedStreamIdentity=null;
+function hideFailedStreamControls(){
+ r19FailedStreamIdentity=null;
+ for(const id of ['generation-view-failed-stream','generation-copy-failed-stream'])qs(id)?.classList.add('hidden');
+}
+async function refreshFailedStreamControls(){
+ hideFailedStreamControls();
+ const sessionId=currentSessionId;
+ if(!sessionId||!qs('generation-panel')?.classList.contains('error'))return;
+ try{
+  const state=await MimaLocalStore.loadState(),pending=state.sessions?.find(s=>s.id===sessionId)?.pendingGeneration;
+  if(pending?.status!=='failed')return;
+  const identity={sessionId,generationId:pending.id,attempt:pending.attempt};
+  const draft=await MimaLocalStore.generationRead(identity);
+  if(!draft.complete||!draft.text.length||currentSessionId!==sessionId||!qs('generation-panel')?.classList.contains('error'))return;
+  r19FailedStreamIdentity=identity;
+  qs('generation-view-failed-stream')?.classList.remove('hidden');
+ }catch(e){console.warn('已失败生成的本机流式原文尚不可核对；不假称已保存',{sessionId,error:e});}
+}
+async function readFailedGenerationStream(){
+ const id=r19FailedStreamIdentity;
+ if(!id||currentSessionId!==id.sessionId)throw new Error('当前会话没有已核实的失败流式原文');
+ const state=await MimaLocalStore.loadState(),pending=state.sessions?.find(s=>s.id===id.sessionId)?.pendingGeneration;
+ if(!pending||pending.status!=='failed'||pending.id!==id.generationId||pending.attempt!==id.attempt)throw new Error('原任务已经改变；不能显示旧轮的流式正文');
+ const draft=await MimaLocalStore.generationRead(id);
+ if(!draft.complete||!draft.text.length||currentSessionId!==id.sessionId)throw new Error('本机流式记录不完整或会话已切换');
+ return draft.text;
+}
+async function viewFailedGenerationStream(){
+ try{
+  const text=await readFailedGenerationStream(),pre=qs('generation-recovery-draft');
+  if(!pre)return;
+  pre.textContent='【失败或拦截时本机已持久化的流式片段 · 未提交剧情】\n已保存 '+text.length+' 字符；不能证明上游全部内容均已发送或落盘。\n\n'+text;
+  pre.classList.remove('hidden');
+  qs('generation-copy-failed-stream')?.classList.remove('hidden');
+ }catch(e){toast('流式草稿核对失败：'+e.message);}
+}
+async function copyFailedGenerationStream(){
+ try{
+  const value=await readFailedGenerationStream();
+  if(!navigator.clipboard?.writeText)throw new Error('当前浏览器不允许自动复制，请在预览框长按选择文字');
+  await navigator.clipboard.writeText(value);
+  toast('已复制本机已核实保存的全部片段（不是正式回复）');
+ }catch(e){toast('复制失败：'+e.message);}
+}
 async function retryUnknownGeneration(){
  const id=r19LastUnknown;if(!id||currentSessionId!==id.sessionId)return;
  const verified=await checkUnknownGeneration(true);
@@ -2596,7 +2645,7 @@ function toggleGenerationPanelMinimize(force){if(!currentGenerationOwner()&&!qs(
 function restoreGenerationPanel(){setGenerationPanelMinimized(false);}
 function setGenerationProgress(payload={}){const panel=qs('generation-panel'),bar=qs('generation-progress-bar'),label=qs('generation-label'),pct=qs('generation-percent'),detail=qs('generation-detail');if(!panel)return;panel.classList.remove('hidden','error','done');const n=Math.max(2,Math.min(100,Number(payload.percent)||2));bar.style.width=`${n}%`;pct.textContent=`${Math.round(n)}%`;syncGenerationMinimizedBadge(n);if(payload.label)label.textContent=payload.label;if(payload.detail)detail.textContent=payload.detail}
 function setGenerationRetryVisible(visible){for(const id of ['generation-retry','generation-retry-current'])qs(id)?.classList.toggle('hidden',!visible);}
-function beginGenerationProgress(action){deferredGenerationProgress=null;currentGenerationAction=action;lastGenerationFailure=null;contextRecoveryReceipt=null;setGenerationRetryVisible(false);setGenerationPanelMinimized(false);qs('generation-capacity-recovery')?.classList.add('hidden');qs('generation-resume-unanswered')?.classList.add('hidden');const panel=qs('generation-panel');panel?.classList.remove('hidden','error','done');setGenerationProgress({percent:4,label:`🤍 ${generationActionLabel(action)}`,detail:'正在准备本轮剧情…'})}
+function beginGenerationProgress(action){hideFailedStreamControls();qs('generation-recovery-draft')?.classList.add('hidden');qs('generation-copy-failed-stream')?.classList.add('hidden');deferredGenerationProgress=null;currentGenerationAction=action;lastGenerationFailure=null;contextRecoveryReceipt=null;setGenerationRetryVisible(false);setGenerationPanelMinimized(false);qs('generation-capacity-recovery')?.classList.add('hidden');qs('generation-resume-unanswered')?.classList.add('hidden');const panel=qs('generation-panel');panel?.classList.remove('hidden','error','done');setGenerationProgress({percent:4,label:`🤍 ${generationActionLabel(action)}`,detail:'正在准备本轮剧情…'})}
 function isStoryNearBottom(box,threshold=96){return !box||((box.scrollHeight-box.scrollTop-box.clientHeight)<=threshold)}
 function updateStoryFollowButton(){const b=qs('story-follow-stream');if(!b)return;b.classList.toggle('hidden',!liveStreamState||liveStreamState.followTail!==false)}
 function resumeStoryStreamFollow(){if(!liveStreamState)return;liveStreamState.followTail=true;const box=qs('story-chat-box');if(box)box.scrollTop=box.scrollHeight;updateStoryFollowButton()}
@@ -2737,6 +2786,7 @@ function showGenerationError(err,action=currentGenerationAction,fromRestore=fals
     qs('generation-resume-unanswered')?.classList.add('hidden');
     contextRecoveryReceipt=null;
     void refreshFailedGenerationRecovery();
+    void refreshFailedStreamControls();
 }
 let r19HudRecoveryDiagnosticId=null;
 async function refreshFailedGenerationRecovery(){

@@ -592,6 +592,9 @@
     const back=matched.filter(x=>Number(x.entry.depth||0)===0&&x.entry.position==='back');
     const chunks=[],sections=[];const add=(name,content,source={})=>{const resolved=String(resolveMacrosForSession(session,content)??'');if(!resolved.trim())return;chunks.push(resolved);sections.push({name,chars:resolved.length,content:resolved,source:{kind:name.includes('memory')||name.includes('summary')?'memory':name.startsWith('worldbook')?'world_info':name.includes('persona')?'persona':name==='director_note'?'director_note':'player_material',sourceId:name,section:name,...source}});};
     const ps=sortedPresets(session);for(const preset of ps)add('presets',preset.content,{kind:'preset',sourceId:preset.id,resourceId:preset.id,name:preset.name,priority:preset.priority});
+    // Only a user-initiated continuation receives this boundary. History remains
+    // byte-for-byte canonical; no fabricated user turn or model switch is added.
+    if(options.continuation===true)add('continuation_boundary','【续写衔接】最后一条已保存的角色正文是当前时间线的结尾。只接着它的新情节向后写，不要从前几轮重新开始、复述或重演已经写过的场景。保持现有角色、文风和输出格式。',{kind:'continuation_boundary'});
     add('worldbook_front',joinWb(front,'System Front'),{sourceId:front.map(x=>x.entry.id).join(','),resourceId:front.map(x=>x.book.id).join(',')});
     if(session.loadedUserMaskId)add('user_persona',formatMask(enabledMask(session.loadedUserMaskId),'user'),{sourceId:session.loadedUserMaskId,resourceId:session.loadedUserMaskId});
     if(session.loadedCharMaskId)add('character_persona',formatMask(enabledMask(session.loadedCharMaskId),'character'),{sourceId:session.loadedCharMaskId,resourceId:session.loadedCharMaskId});
@@ -1008,7 +1011,7 @@
     if(code==='E_API_EMPTY_REPLY')return '接口请求成功，但可见正文为空。常见原因是中转兼容层只返回 reasoning_content、模型输出被过滤/截断、max_tokens 太小，或上游返回格式异常。咪嘛馆现在会拦截空回复，不再把空白消息写进剧情。';
     if(code==='E_API_UNRECOGNIZED_RESPONSE')return '接口返回成功，但响应结构不是咪嘛馆可识别的 OpenAI-compatible 文本格式。可检查中转站是否使用了自定义响应结构。';
     if(code==='E_STREAM_PARSE')return '流式数据没有按 SSE/NDJSON 的常见格式返回，可能是中转站的流式兼容实现异常。可暂时关闭 Streaming（流式传输）再试。';
-    if(code==='E_STREAM_INTERRUPTED')return '流式连接已经建立，但接收过程中被网络 / CDN / 中转节点中断。咪嘛馆不会自动再次计费重试；可以点击“仅重试本轮”手动重试，且不会重复写入玩家消息。';
+    if(code==='E_STREAM_INTERRUPTED')return '已取得 HTTP 响应头，但流式正文未可靠结束；浏览器读取、网络连接或服务端中途关闭均可能造成此情况，单凭本机信息不能判定责任方。咪嘛馆不会自动再次计费重试，已写盘片段可从失败面板免费查看。';
     if(status===400)return '请求参数不被接口接受。常见原因是模型名错误、该模型不支持 temperature / stream / max_tokens，或接口格式不兼容。';
     if(status===402)return '上游/中转站计费网关拒绝了本次请求。余额非零也可能因为模型倍率、分组额度、预授权或请求的最大输出额度过高而被拒绝。';
     if(status===401)return 'API Key（密钥）无效、过期，或 Authorization 认证格式不被服务端接受。';
@@ -1152,7 +1155,7 @@
   async function readStreamingReply(res,onProgress,model='',allowIncompleteDraft=false){
     if(!res.body?.getReader)throw new ApiError('E_STREAM_PARSE','当前浏览器无法读取流式响应。',{status:res.status});
     const reader=res.body.getReader(),decoder=new TextDecoder();
-    let buffer='',reply='',eventCount=0,finalPayload=null,streamUsage=null,receivedDone=false,finishReason='',finishKind='unknown',badEvents=0,refusalSeen=false,terminalConflict=false,firstByteMarked=false;
+    let buffer='',reply='',eventCount=0,finalPayload=null,streamUsage=null,receivedDone=false,finishReason='',finishKind='unknown',badEvents=0,refusalSeen=false,terminalConflict=false,firstByteMarked=false,transportBytes=0;
     let thoughtText='',thoughtSource='',thoughtStart=null,firstContentAt=null,reasoningTokens=null,lastThoughtUiAt=-Infinity;
     const startedAt=performance.now();
     const publishMeta=()=>{if(onProgress?.resultMeta)Object.assign(onProgress.resultMeta,{finishReason:finishReason||'unknown',finishKind,receivedDone,refused:refusalSeen});};
@@ -1186,14 +1189,21 @@
       const piece=extractStreamDelta(payload);if(piece){if(firstContentAt===null)firstContentAt=performance.now();reply+=piece;emitProgress(onProgress,{phase:'streaming',percent:Math.min(90,58+Math.log10(reply.length+1)*12),receivedChars:reply.length,delta:piece,streamText:reply,detail:`已接收 ${reply.length} 个字符`});}
     };
     try{
-      while(true){const {done,value}=await reader.read();if(done)break;if(!firstByteMarked){firstByteMarked=true;onProgress?.onTiming?.('first_byte',{chunkBytes:value?.byteLength||0});}buffer+=decoder.decode(value,{stream:true});const lines=buffer.split(/\r?\n/);buffer=lines.pop()||'';for(const line of lines)consumeLine(line)}
+      while(true){const {done,value}=await reader.read();if(done)break;transportBytes+=value?.byteLength||0;if(!firstByteMarked){firstByteMarked=true;onProgress?.onTiming?.('first_byte',{chunkBytes:value?.byteLength||0});emitProgress(onProgress,{phase:'stream_transport',percent:56,receivedChars:0,transportBytes,detail:'已收到响应体数据，仍等待第一段可见正文（0 字）'});}buffer+=decoder.decode(value,{stream:true});const lines=buffer.split(/\r?\n/);buffer=lines.pop()||'';for(const line of lines)consumeLine(line)}
       buffer+=decoder.decode();if(buffer.trim())for(const line of buffer.split(/\r?\n/))consumeLine(line);
     }catch(e){
       publishMeta();
       if(reply&&e&&typeof e==='object')e.partialDraft=reply.slice(0,24000);
       if(e?.name==='AbortError'||e instanceof ApiError)throw e;
-      if(reply)throw Object.assign(new ApiError('E_STREAM_INTERRUPTED',`流式连接在接收 ${reply.length} 字符后异常终止。未将部分文本当成角色回复。`,{status:res.status,details:`stage: stream_read; events: ${eventCount}; cause: ${e?.name||'unknown'}: ${e?.message||String(e)}`}),{partialDraft:reply.slice(0,24000)});
-      throw asApiError(e,'E_API_NETWORK_CORS');
+      // The response headers were already received. A later body read failure
+      // is not evidence of a fetch-before-response CORS failure, even when
+      // Safari reports the same TypeError('Load failed') for both situations.
+      throw Object.assign(new ApiError('E_STREAM_INTERRUPTED',reply
+        ?`流式连接在接收 ${reply.length} 字符后异常终止。未将部分文本当成角色回复。`
+        :'已收到 HTTP 响应头，但流式正文未完整传输；本轮没有确认收到可恢复的正文字符。',{
+          status:res.status,details:`stage: stream_read; receivedChars: ${reply.length}; receivedBytes: ${transportBytes}; events: ${eventCount}; cause: ${e?.name||'unknown'}: ${e?.message||String(e)}`,
+          hint:'响应头成功不代表正文生成成功。请核对本机流式片段账本；没有片段时无法恢复文字。不要自动重复计费。'
+        }),{partialDraft:reply.slice(0,24000)});
     }
     onProgress?.onTiming?.('last_delta',{receivedChars:reply.length,events:eventCount,receivedDone});
     if(!reply&&finalPayload){try{reply=extractReply(finalPayload)}catch(e){if(e instanceof ApiError&&e.code==='E_API_UPSTREAM')throw e;}}
@@ -1432,7 +1442,7 @@
     timing('headers',{httpStatus:res.status});
     const contentType=String(res.headers?.get?.('content-type')||'').toLowerCase();
     if(streamEnabled&&!/application\/json/i.test(contentType)){
-      emitProgress(options.onProgress,{phase:'streaming',percent:55,detail:'连接成功，正在接收流式正文…'});
+      emitProgress(options.onProgress,{phase:'stream_headers',percent:55,receivedChars:0,detail:`HTTP ${res.status} 响应头已收到；等待第一段模型正文（0 字）…`});
       let firstVisibleMarked=false,lastChars=0;
       const streamProgress=ev=>{if(ev.streamText!==undefined){lastChars=ev.streamText.length;if(!firstVisibleMarked&&lastChars){firstVisibleMarked=true;timing('first_visible_delta',{receivedChars:lastChars});}}options.onProgress?.(ev.streamText===undefined?ev:{...ev,streamText:prefixResponseText(ev.streamText,body,cfg,true)});};
       streamProgress.resultMeta=options.resultMeta;streamProgress.onTiming=timing;try{
@@ -2741,7 +2751,7 @@
     let draftTail=Promise.resolve();
     const queueDraft=(force=false)=>{
       if(draftDegraded||lastStream.length<=persistedChars)return;
-      if(!force&&lastStream.length-persistedChars<2048&&Date.now()-lastDraftAttemptAt<900)return;
+      if(!force&&lastStream.length-persistedChars<512&&Date.now()-lastDraftAttemptAt<350)return;
       lastDraftAttemptAt=Date.now();
       const chunk=lastStream.slice(persistedChars),offset=persistedChars,seq=ordinal;
       persistedChars=lastStream.length;ordinal++;
@@ -2890,6 +2900,12 @@
     return saved;
     }catch(e){
       queueDraft(true);await draftTail;
+      // The independently stored fragments remain readable after a safety
+      // terminal/transport error. Never present a storage write failure as saved.
+      if(lastStream&&draftDegraded){
+        const prior=String(e?.details||'');
+        if(e&&typeof e==='object')e.details=(prior+'\nE_STREAM_DRAFT_STORAGE_DEGRADED: 已收到 '+lastStream.length+' 字符，但本机片段写入失败；不能承诺完整保留。').slice(0,7000);
+      }
       // Persist only request lifecycle metadata, never rejected model content in canonical data.
       try{
         const persisted=normalizeState(await window.MimaLocalStore.loadState()),latest=persisted.sessions.find(x=>x.id===id);
