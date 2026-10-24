@@ -9,8 +9,8 @@ const TARGETS={
   button:{label:'主要按钮',real:'.app-shell .primary-btn,.app-shell .send-btn',preview:'.atl-demo-primary,.atl-demo-send'},
   secondary:{label:'次要按钮',real:'.app-shell .ghost-btn,.app-shell .chip-btn,.app-shell .nav-label',preview:'.atl-demo-secondary'},
   field:{label:'输入框',real:'.app-shell .field,.app-shell .composer-row textarea',preview:'.atl-demo-field'},
-  message:{label:'普通剧情消息材质（不含 HTML 状态栏）',real:'.app-shell .assistant-msg > .msg-content:not(.safe-html-content),.app-shell .user-msg > .msg-content:not(.safe-html-content)',preview:'.atl-demo-message:not(.atl-demo-safe-host)'},
-  safeHtmlHost:{label:'HTML 正文外框材质（只改外层，不改内部 CSS）',real:'.app-shell .assistant-msg > .msg-content.tavern-story-content.safe-html-content,.app-shell .user-msg > .msg-content.tavern-story-content.safe-html-content',preview:'.atl-demo-safe-host'},
+  message:{label:'普通剧情消息材质（不含 HTML 状态栏）',real:'.app-shell #story-chat-box article.message.assistant-msg > .msg-content:not(.safe-html-content),.app-shell #story-chat-box article.message.user-msg > .msg-content:not(.safe-html-content)',preview:'.atl-demo-message:not(.atl-demo-safe-host)'},
+  safeHtmlHost:{label:'HTML 正文外框材质（只改外层，不改内部 CSS）',real:'.app-shell #story-chat-box article.message.assistant-msg > .msg-content.tavern-story-content.safe-html-content,.app-shell #story-chat-box article.message.user-msg > .msg-content.tavern-story-content.safe-html-content',preview:'.atl-demo-safe-host'},
   panel:{label:'弹窗/卡片（不改设置分组）',real:'.modal-panel,.session-drawer .session-item,.library-card',preview:'.atl-demo-card'},
   status:{label:'HTML 状态栏（默认不接管）',real:'.app-shell .tavern-story-content.safe-html-content > details,.app-shell .tavern-story-content.safe-html-content > system',preview:'.atl-demo-status'}
 };
@@ -262,7 +262,7 @@ function compile(project,mode='live',options={}){
   // Only set inherited host properties; authored status HTML with explicit
   // color/background rules remains authoritative on its descendants.
   const color=hex(sourceStyle.ink);
-  result+=`${selectors}{color:${color};--text:${color};--mima-html-ink:${color};}\n`;
+  result+=`${selectors}{color:${color};--text:${color};--mima-html-ink:${color};--mima-html-glass-blur:${clamp(sourceStyle.blur,0,60)}px;--mima-html-surface:${rgba(sourceStyle.fill,sourceStyle.alpha)};}\n`;
  }
  if(key==='status'&&pol.statusHtml.inkMode==='explicit')result+=`${selectors}{color:${hex(project.elements.status.ink)}}\n`;
  const orn=project.elements[key]?.ornament;
@@ -328,7 +328,7 @@ function appearanceWarnings(project){
   if(key==='shell'&&Number(style.blur)>0&&!style.image)issues.push('整体背景图模糊当前无对象：请先导入页面背景图；模糊值已经保留。');
   if(key!=='shell'&&Number(style.blur)>0&&Number(style.alpha)>=92)issues.push((TARGETS[key]?.label||key)+' 的表面较不透明，真实磨砂可能不易看到；可降低「背景不透明度」，不会自动替您改值。');
  }
- if(project.regions?.safeHtmlHost===false)issues.push('角色 HTML 外宿主受保护：工坊普通消息材质不会修改它；需要时须单独授权。');
+ if(project.regions?.safeHtmlHost===false)issues.push('当前项目未开启「HTML 正文外框」区域，因此工坊普通消息的磨砂不会作用于角色 HTML。请在设计页开启外框同步或手动勾选区域；不会自动改动旧工程。');
  return issues;
 }
 let active=null,applied=null,style=null,decor=null,decorFront=null,channel=null,initialized=false,ready=null,lastApplyReceipt=null;

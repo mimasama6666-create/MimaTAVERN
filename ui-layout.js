@@ -14,13 +14,16 @@ function viewport(){
  // while focusing the composer. Height compensation alone leaves the entire
  // zoomed app in the layout viewport, exposing a large blank strip above the OS keyboard.
  const active=doc.activeElement;
- const composerFocused=!!(active?.matches?.('input,textarea,[contenteditable="true"]') && active.closest('.app-shell > .composer-shell'));
- // Record the unoccluded viewport only outside focus, otherwise keyboard-open
- // frames could overwrite the reference height and make the layout jump.
- if(!composerFocused){restingViewportHeight=height;restingViewportWidth=width;}
- else if(!restingViewportHeight||Math.abs(width-restingViewportWidth)>80){
+ const editableFocused=!!active?.matches?.('input,textarea,select,[contenteditable="true"]');
+ const composerFocused=!!(editableFocused && active.closest('.app-shell > .composer-shell'));
+ // Focusout happens before the iOS keyboard has finished dismissing. Never
+ // mistake that intermediate, shortened viewport for the unoccluded height.
+ // Also cover edits inside settings: those controls open the same OS keyboard.
+ if(!restingViewportHeight || Math.abs(width-restingViewportWidth)>40){
    restingViewportHeight=Math.max(height,window.innerHeight||0,root.clientHeight||0);
    restingViewportWidth=width;
+ }else if(!editableFocused){
+   restingViewportHeight=Math.max(restingViewportHeight,height);
  }
  const referenceHeight=Math.max(restingViewportHeight,window.innerHeight||0,root.clientHeight||0);
  const keyboardVisible=!!(composerFocused && v &&

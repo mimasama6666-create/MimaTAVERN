@@ -1144,7 +1144,7 @@ body.mima-reading-mode #story-chat-box[data-mima-chat-wallpaper="1"]::before{
 .modal > .modal-panel{zoom:var(--mima-ui-scale);font-size:1rem}
 #compat-lab{zoom:var(--mima-ui-scale)}
 /* Keep native iOS focus controls at a readable, non-auto-zoom CSS size. */
-@supports (-webkit-touch-callout:none){.app-shell input,.app-shell textarea,.modal input,.modal textarea,.modal select{font-size:max(calc(16px / var(--mima-ui-scale)),1em)}}
+@supports (-webkit-touch-callout:none){.app-shell input:focus,.app-shell textarea:focus,.modal input:focus,.modal textarea:focus,.modal select:focus{font-size:max(calc(16px / var(--mima-ui-scale)),1em)}}
 /* Fixed modal backdrops must fill the true visual screen after zoom, not 80% of its height. */
 /* The viewport host must not inherit the 80% content density. */
 .modal{left:var(--mima-viewport-left,0px);top:var(--mima-viewport-top,0px);right:auto;bottom:auto;width:var(--mima-viewport-width,100vw);height:var(--mima-viewport-height,100dvh)}
@@ -1220,6 +1220,36 @@ html.mima-composer-keyboard .app-shell>.composer-shell{padding-bottom:10px}
 .app-shell>.composer-shell>.generation-panel.error #generation-takeover-unknown{
   flex:1 1 150px;min-height:56px;padding:10px 12px;white-space:normal;
 }
+
+/* R19: Mobile settings density must include content and fixed-size form controls.
+   Preserve the 16px unscaled iOS focused input minimum; don't enlarge labels
+   and every control to 20px inside the already zoomed modal. */
+#settings-modal .settings-panel{font-size:.88rem}
+#settings-modal .settings-panel .settings-tabs button{font-size:.85em;padding:7px 10px}
+#settings-modal .settings-content{font-size:.88rem;line-height:1.5}
+#settings-modal .settings-section h3{font-size:1.05rem;line-height:1.32}
+#settings-modal .settings-content :is(.primary-btn,.ghost-btn,.danger-btn,.tool-mini){font-size:.9rem;line-height:1.3;padding:9px 11px}
+#settings-modal .settings-content :is(.field,select.field,textarea.field){font-size:1rem;line-height:1.35;padding:9px 11px}
+#settings-modal .settings-content .font-row{min-width:0;flex-wrap:wrap}
+#settings-modal .settings-content .font-row>.row-main{flex:1 1 150px;overflow:hidden}
+#settings-modal .settings-content .font-row .row-sub{overflow-wrap:anywhere}
+#settings-modal .settings-content .mima-legacy-font{margin:12px 0;padding:12px;border:1px solid var(--line);border-radius:12px}
+#settings-modal .mima-legacy-font summary{cursor:pointer;font-size:.85rem}
+/* Scale the composer toolbar's large legacy labels without changing the story prose. */
+.app-shell>.composer-shell .composer-actions :is(button,.ghost-btn,.primary-btn),
+.app-shell>.composer-shell .composer-toolbar :is(button,.ghost-btn,.primary-btn){font-size:.82rem;line-height:1.3}
+.app-shell>.composer-shell .composer-row textarea{font-size:1rem;line-height:1.45}
+
+@supports (-webkit-touch-callout:none){
+ #settings-modal .settings-content :is(input.field,textarea.field,select.field):focus,
+ .app-shell>.composer-shell>.composer-row textarea:focus{font-size:max(calc(16px / var(--mima-ui-scale)),1rem)}
+}
+.app-shell>.composer-shell>.quick-actions{gap:5px;scroll-snap-type:x proximity}
+.app-shell>.composer-shell>.quick-actions>.chip-btn{font-size:.75rem;padding:6px 9px;min-height:36px;line-height:1.24;scroll-snap-align:start}
+#settings-modal .modal-head h2{font-size:1.22rem;line-height:1.3}
+#settings-modal .modal-head .eyebrow{font-size:.66rem}
+#settings-modal .settings-content .settings-section{margin-bottom:17px}
+#settings-modal .settings-content .settings-section>.toolbar{gap:7px}
 
 
 /* Read-only refresh task viewer; unlike the old recovery HUD it never gates composing. */

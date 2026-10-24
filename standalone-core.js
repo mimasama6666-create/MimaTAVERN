@@ -593,9 +593,8 @@
     const back=matched.filter(x=>Number(x.entry.depth||0)===0&&x.entry.position==='back');
     const chunks=[],sections=[];const add=(name,content,source={})=>{const resolved=String(resolveMacrosForSession(session,content)??'');if(!resolved.trim())return;chunks.push(resolved);sections.push({name,chars:resolved.length,content:resolved,source:{kind:name.includes('memory')||name.includes('summary')?'memory':name.startsWith('worldbook')?'world_info':name.includes('persona')?'persona':name==='director_note'?'director_note':'player_material',sourceId:name,section:name,...source}});};
     const ps=sortedPresets(session);for(const preset of ps)add('presets',preset.content,{kind:'preset',sourceId:preset.id,resourceId:preset.id,name:preset.name,priority:preset.priority});
-    // Only a user-initiated continuation receives this boundary. History remains
-    // byte-for-byte canonical; no fabricated user turn or model switch is added.
-    if(options.continuation===true)add('continuation_boundary','【续写衔接】最后一条已保存的角色正文是当前时间线的结尾。只接着它的新情节向后写，不要从前几轮重新开始、复述或重演已经写过的场景。保持现有角色、文风和输出格式。',{kind:'continuation_boundary'});
+    // Continuation sends the real assistant tail. It does not inject an extra
+    // narrative/director instruction; the owner controls prose in her presets.
     add('worldbook_front',joinWb(front,'System Front'),{sourceId:front.map(x=>x.entry.id).join(','),resourceId:front.map(x=>x.book.id).join(',')});
     if(session.loadedUserMaskId)add('user_persona',formatMask(enabledMask(session.loadedUserMaskId),'user'),{sourceId:session.loadedUserMaskId,resourceId:session.loadedUserMaskId});
     if(session.loadedCharMaskId)add('character_persona',formatMask(enabledMask(session.loadedCharMaskId),'character'),{sourceId:session.loadedCharMaskId,resourceId:session.loadedCharMaskId});
@@ -1261,17 +1260,23 @@
     }
     return projected;
   }
-  // The provider's hidden chain of thought is not an API-readable artifact.
-  // This protocol only controls authored roleplay content; it does not claim
-  // to rewrite or disclose private provider reasoning.
-  const CHARACTER_THINKING_PROTOCOL = `Roleplay presentation rule: Maintain the established character's subjective consciousness, perception and knowledge. If you write visible internal monologue, write it as authentic in-character narrative, never as AI prompt analysis or a writing plan. Do not fabricate an AI thinking trace, and do not label the provider's reasoning as character thoughts. If no authentic inner monologue is needed, proceed straight to the complete narrative response. Respect all established formatting and HTML contracts; never add required new tags or alter existing response structure.`;
-  const PROSE_ONLY_PROTOCOL = `Roleplay presentation rule: Output only the complete in-world narrative response according to the existing scene and formatting contract. Do not add a visible AI analysis, reasoning transcript, explanatory preface, thinking tags, or placeholder. This instruction does not disable the provider's internal reasoning.`;
-  function applyStoryThinkingProtocol(messages,mode){
-    if(mode==='normal')return;
-    const protocol=mode==='character'?CHARACTER_THINKING_PROTOCOL:PROSE_ONLY_PROTOCOL;
-    const index=messages.findLastIndex?messages.findLastIndex(m=>m.role==='system'):messages.map(m=>m.role).lastIndexOf('system');
-    if(index>=0)messages[index].content=String(messages[index].content||'')+'\n\n'+protocol;
-    else messages.unshift({role:'system',content:protocol});
+  // No program-authored character/roleplay presentation instruction is appended
+  // to ordinary story messages. Prompt ownership belongs to the user's mounts.
+  // Earlier releases did append one of two precise, one-line English suffixes.
+  // Strip those generated suffixes ONLY when replaying an old frozen snapshot;
+  // never rewrite ordinary authored prompts or canonical history.
+  function stripRetiredStoryProtocol(body){
+    const messages=body?.messages;
+    if(!Array.isArray(messages))return body;
+    const index=messages.map(m=>m?.role).lastIndexOf('system');
+    if(index<0||typeof messages[index]?.content!=='string')return body;
+    const value=messages[index].content;
+    const suffix=/\n\nRoleplay presentation rule: (?:Maintain the established character's subjective consciousness, perception and knowledge\.|Output only the complete in-world narrative response according to the existing scene and formatting contract\.)[^\n]*?(?:never add required new tags or alter existing response structure\.|This instruction does not disable the provider's internal reasoning\.)$/;
+    if(!suffix.test(value))return body;
+    const clean=value.replace(suffix,'');
+    if(clean)messages[index].content=clean;
+    else messages[index].content=''; // retain snapshot source index identity
+    return body;
   }
   function thinkingText(value){
     if(typeof value==='string')return value;
@@ -1308,9 +1313,8 @@
     return finiteUsageNumber(u.completion_tokens_details?.reasoning_tokens,u.reasoning_tokens,u.thoughtsTokenCount,u.thoughts_token_count,u.output_token_details?.reasoning_tokens);
   }
   function makeApiBody(messages,cfg,temperature,options={}){
-    if(options.requestBody)return clone(options.requestBody);
+    if(options.requestBody)return stripRetiredStoryProtocol(clone(options.requestBody));
     const body={model:cfg.model,messages:options.continuation?continuationProjection(messages,cfg):clone(messages)};
-    if(options.storyThinking===true)applyStoryThinkingProtocol(body.messages,cfg.thinkingMode);
     if(options.storyThinking===true&&['low','medium','high'].includes(cfg.reasoningEffort))body.reasoning_effort=cfg.reasoningEffort;
     // Optional, explicit Google-compatible extension. Unsupported proxies must
     // report an HTTP failure; never retry silently with altered semantics.
@@ -1360,7 +1364,7 @@
       return {role:m.role,content,...(m.prefix===true?{prefix:true}:{})};
     })};
     for(const key of ['stream','temperature','max_tokens','reasoning_effort','extra_body'])if(Object.hasOwn(snapshot.requestBody,key))body[key]=clone(snapshot.requestBody[key]);
-    return body;
+    return stripRetiredStoryProtocol(body);
   }
   function prefixResponseText(value,body,cfg,partial=false){
     const last=body.messages[body.messages.length-1],raw=String(value??'');
@@ -2707,7 +2711,7 @@
     cfg=getApiConfig();
     const originalSnapshot=retryPending?.snapshot||(action==='regenerate'&&target&&options.regenerationContext!=='current'?target.metadata?.generationSnapshot:null);
     if(originalSnapshot){
-      requestBody=restoreGenerationRequest(originalSnapshot,promptSession,sourceFingerprint);snapshot=clone(originalSnapshot);
+      requestBody=restoreGenerationRequest(originalSnapshot,promptSession,sourceFingerprint);snapshot=clone(originalSnapshot);stripRetiredStoryProtocol(snapshot.requestBody);
       if(retryPending&&options.retryParameters==='current'){
         // Only the explicitly selected transport parameters change. Lore,
         // memory, presets and player text remain those of the frozen request.

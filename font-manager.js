@@ -5,6 +5,7 @@ window.MimaFontManager = (() => {
     const UI_KEY = 'mimamao_tavern_ui_font';
     const STORY_KEY = 'mimamao_tavern_story_font';
     const loaded = new Map();
+    const URL_LIBRARY_KEY = 'mimamao_tavern_url_fonts_v1';
 
     function openDb() {
         return new Promise((resolve, reject) => {
@@ -119,7 +120,52 @@ window.MimaFontManager = (() => {
         localStorage.setItem(kind === 'ui' ? UI_KEY : STORY_KEY, family || '');
         applySelected();
     }
+    // URL fonts share the same UI/story selectors as local fonts, but keep an
+    // independent small metadata library. Never upload, fetch or overwrite local binaries.
+    function urlFonts() {
+        let value;
+        try { value=JSON.parse(localStorage.getItem(URL_LIBRARY_KEY)||'[]'); } catch(_) { return []; }
+        return Array.isArray(value)?value.filter(x=>x && /^[a-zA-Z0-9_-]{1,90}$/.test(x.id) && /^https:\/\//i.test(x.url) && typeof x.family==='string').slice(0,100):[];
+    }
+    function urlFontStyle() {
+        let tag=document.getElementById('mima-url-font-library-style');
+        if(!tag){tag=document.createElement('style');tag.id='mima-url-font-library-style';document.head.appendChild(tag);}
+        const imports=[],faces=[];
+        for(const f of urlFonts()) {
+            const url=f.url.replace(/[\"'\\()\s]/g,'');
+            const fam=f.family.replace(/[\"'\\;{}\n\r]/g,'');
+            if(!url||!fam)continue;
+            if(f.css===true){imports.push(`@import url("${url}");`);continue;}
+            faces.push(`@font-face{font-family:"${fam}";src:url("${url}");font-display:swap;}`);
+        }
+        const css=imports.join('\n')+faces.join('\n');
+        if(tag.textContent!==css)tag.textContent=css;
+    }
+    function addUrlFont(name,url,family){
+        name=String(name||family||'链接字体').trim().slice(0,75);
+        url=String(url||'').trim();family=String(family||name).trim().slice(0,75);
+        let parsed;try{parsed=new URL(url)}catch(_){throw Error('请输入有效的 HTTPS 字体地址')}
+        if(parsed.protocol!=='https:'||parsed.username||parsed.password||/[\s"'()\\]/.test(url)||url.length>2048)throw Error('请使用不含账号密码的 HTTPS 字体文件或 CSS 链接');
+        if(!family||/["'\\;{}\n\r]/.test(family))throw Error('字体名称不能包含特殊 CSS 符号');
+        const css=/fonts\.googleapis\.com$/i.test(parsed.hostname)||/\.css(?:$|[?#])/i.test(parsed.pathname);
+        const fonts=urlFonts();if(fonts.length>=100)throw Error('链接字体库最多保存 100 个');
+        const id='urlfont_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,9);
+        // File links use a unique internal family; imported CSS must retain
+        // the author-defined family name declared inside its stylesheet.
+        const record={id,name,url,css,family:css?family:'MimaUrl_'+id};
+        localStorage.setItem(URL_LIBRARY_KEY,JSON.stringify([...fonts,record]));
+        urlFontStyle();return record;
+    }
+    function deleteUrlFont(id){
+        const records=urlFonts(),found=records.find(x=>x.id===id);
+        if(!found)return false;
+        localStorage.setItem(URL_LIBRARY_KEY,JSON.stringify(records.filter(x=>x.id!==id)));
+        if(getSelected('ui')===found.family)setSelected('ui','');
+        if(getSelected('story')===found.family)setSelected('story','');
+        urlFontStyle();applySelected();return true;
+    }
     function applySelected() {
+        urlFontStyle();
         const root = document.documentElement;
         const ui = getSelected('ui');
         const story = getSelected('story');
@@ -247,5 +293,5 @@ window.MimaFontManager = (() => {
         if (record && getSelected('ui') === record.family) setSelected('ui','');
         if (record && getSelected('story') === record.family) setSelected('story','');
     }
-    return { init, all, importFile, deleteFont, getSelected, setSelected, applySelected, exportPortable, importPortable, planPortableImport, commitPortablePlan, rollbackPortablePlan };
+    return { init, all, importFile, deleteFont, getSelected, setSelected, applySelected, urlFonts, addUrlFont, deleteUrlFont, exportPortable, importPortable, planPortableImport, commitPortablePlan, rollbackPortablePlan };
 })();
