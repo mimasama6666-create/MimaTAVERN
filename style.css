@@ -1190,3 +1190,33 @@ html #compat-lab.in-chat .compat-main{height:calc(100% - 70px - env(safe-area-in
 .editor-discard-confirm[hidden]{display:none!important}
 .editor-discard-card{width:min(350px,100%);padding:18px;background:#fff;border-radius:18px;box-shadow:0 15px 46px #22172944;display:grid;gap:12px;font-size:14px;line-height:1.5}
 .editor-discard-card>div{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+
+/* R19 iOS keyboard regression: the scaled story shell must follow the VISUAL
+   viewport origin as well as its size. The document is not the composer scroll
+   surface; chat-box retains its own independent scroll position. */
+html.mima-composer-keyboard,
+html.mima-composer-keyboard body{overflow:hidden;overscroll-behavior:none}
+html.mima-composer-keyboard .app-shell{
+  position:fixed;
+  top:calc(var(--mima-viewport-top,0px) / var(--mima-ui-scale,1));
+  left:calc(var(--mima-viewport-left,0px) / var(--mima-ui-scale,1));
+  width:calc(var(--mima-viewport-width,100vw) / var(--mima-ui-scale,1));
+  height:calc(var(--mima-viewport-height,100dvh) / var(--mima-ui-scale,1));
+  max-width:none;margin:0;overflow:hidden;
+}
+/* The keyboard already provides a bottom safe area; do not apply the home
+   indicator's safe-area inset again below the composer. */
+html.mima-composer-keyboard .app-shell>.composer-shell{padding-bottom:10px}
+/* P0: explicit recovery for a generation orphaned by a page lifecycle reset.
+   All actions must stay scrollable/tappable instead of clipping under the
+   320px generic error capsule. Other generation/error panels are unchanged. */
+.app-shell>.composer-shell>.generation-panel.error:has(#generation-abandon-unknown:not(.hidden)){
+  max-height:min(65dvh,520px);overflow-y:auto;overscroll-behavior:contain;
+}
+.app-shell>.composer-shell>.generation-panel.error:has(#generation-abandon-unknown:not(.hidden)) .generation-actions{
+  overflow:visible;flex-wrap:wrap;justify-content:flex-start;
+}
+.app-shell>.composer-shell>.generation-panel.error #generation-abandon-unknown,
+.app-shell>.composer-shell>.generation-panel.error #generation-takeover-unknown{
+  flex:1 1 150px;min-height:56px;padding:10px 12px;white-space:normal;
+}

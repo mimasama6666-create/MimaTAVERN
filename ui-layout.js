@@ -1,13 +1,31 @@
 /* Shared keyboard-safe viewport for production dialogs; never scales the fixed layer. */
 (function(){'use strict';
-const doc=document,stack=[],previous=new WeakMap();let raf=0,composing=false;
+const doc=document,stack=[],previous=new WeakMap();let raf=0,composing=false,restingViewportHeight=0,restingViewportWidth=0;
 function visible(n){return !n.hidden&&!n.classList.contains('hidden');}
 function viewport(){
- const v=window.visualViewport,r=doc.documentElement.style;
- r.setProperty('--mima-viewport-height',Math.max(1,v?.height||innerHeight)+'px');
- r.setProperty('--mima-viewport-width',Math.max(1,v?.width||innerWidth)+'px');
- r.setProperty('--mima-viewport-top',(v?.offsetTop||0)+'px');
- r.setProperty('--mima-viewport-left',(v?.offsetLeft||0)+'px');
+ const v=window.visualViewport,root=doc.documentElement,r=root.style;
+ const height=Math.max(1,v?.height||innerHeight),width=Math.max(1,v?.width||innerWidth);
+ const top=v?.offsetTop||0,left=v?.offsetLeft||0;
+ r.setProperty('--mima-viewport-height',height+'px');
+ r.setProperty('--mima-viewport-width',width+'px');
+ r.setProperty('--mima-viewport-top',top+'px');
+ r.setProperty('--mima-viewport-left',left+'px');
+ // iOS Safari may move the visual viewport *and* the layout scroll position
+ // while focusing the composer. Height compensation alone leaves the entire
+ // zoomed app in the layout viewport, exposing a large blank strip above the OS keyboard.
+ const active=doc.activeElement;
+ const composerFocused=!!(active?.matches?.('input,textarea,[contenteditable="true"]') && active.closest('.app-shell > .composer-shell'));
+ // Record the unoccluded viewport only outside focus, otherwise keyboard-open
+ // frames could overwrite the reference height and make the layout jump.
+ if(!composerFocused){restingViewportHeight=height;restingViewportWidth=width;}
+ else if(!restingViewportHeight||Math.abs(width-restingViewportWidth)>80){
+   restingViewportHeight=Math.max(height,window.innerHeight||0,root.clientHeight||0);
+   restingViewportWidth=width;
+ }
+ const referenceHeight=Math.max(restingViewportHeight,window.innerHeight||0,root.clientHeight||0);
+ const keyboardVisible=!!(composerFocused && v &&
+   (referenceHeight-height>100 || Math.abs(top)>30));
+ root.classList.toggle('mima-composer-keyboard',keyboardVisible);
 }
 function focusedControlVisible(){
  if(composing)return;
@@ -27,6 +45,7 @@ viewport();window.addEventListener('resize',scheduled,{passive:true});
 window.visualViewport?.addEventListener('resize',scheduled,{passive:true});
 window.visualViewport?.addEventListener('scroll',scheduled,{passive:true});
 doc.addEventListener('focusin',()=>scheduled(),true);
+doc.addEventListener('focusout',()=>scheduled(),true);
 doc.addEventListener('compositionstart',()=>{composing=true;},true);
 doc.addEventListener('compositionend',()=>{composing=false;scheduled();},true);
 for(const modal of doc.querySelectorAll('.modal')){

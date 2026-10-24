@@ -2529,7 +2529,7 @@ window.MimaMemoryPriority={
     }
 };
 function toggleUnknownGenerationActions(visible){
- for(const id of ['generation-check-unknown','generation-view-draft','generation-takeover-unknown'])qs(id)?.classList.toggle('hidden',!visible);
+ for(const id of ['generation-check-unknown','generation-view-draft','generation-takeover-unknown','generation-abandon-unknown'])qs(id)?.classList.toggle('hidden',!visible);
 }
 function showUnknownGeneration(pending,receipt=null,activeOtherTab=false,verified=false,readError=false){
  if(!pending||currentGenerationOwner())return;
@@ -2538,7 +2538,7 @@ function showUnknownGeneration(pending,receipt=null,activeOtherTab=false,verifie
  panel?.classList.remove('hidden','done');panel?.classList.add('error');
  if(label)label.textContent=activeOtherTab?'已核实其他窗口正在执行原轮':'上一轮生成结果尚未确认';if(pct)pct.textContent='UNKNOWN';
  if(detail)detail.textContent=`原轮 ID：${pending.id} / 尝试 ${pending.attempt}。${activeOtherTab?'另一个窗口的原生成执行者刚刚回应了存活核对；请在那个窗口查看状态。':'当前窗口没有可验证的原请求执行者，原上游可能已计费。'}${receipt?.persistedChars?`本机已保存 ${receipt.persistedChars} 字符临时流式草稿；它不是正式回复。`:'本机没有已确认可恢复的流式正文。'}${readError?'独立恢复存储读取失败：当前禁止接管或生成，防止未知数据被误判为空。':''}\n免费核对不会调用模型。若原 API 已计费，新尝试可能再次计费。`;
- toggleUnknownGenerationActions(true);qs('generation-takeover-unknown')?.classList.toggle('hidden',activeOtherTab||!verified);setGenerationRetryVisible(false);
+ toggleUnknownGenerationActions(true);qs('generation-takeover-unknown')?.classList.toggle('hidden',activeOtherTab||!verified);qs('generation-abandon-unknown')?.classList.toggle('hidden',activeOtherTab||!verified);setGenerationRetryVisible(false);
  qs('generation-reconcile')?.classList.add('hidden');toggleUIState(false);
 }
 async function checkUnknownGeneration(silent=false){
@@ -2630,6 +2630,32 @@ async function retryUnknownGeneration(){
  if(!confirm('原请求的上游结算仍可能未知，重新生成可能再次收费。新尝试会用同一冻结剧情与新的 attempt，旧回复不能覆盖新回复。确定继续吗？'))return;
  return triggerChat('','retry',{confirmUnknownTakeover:true,retryParameters:'original'});
 }
+async function abandonUnknownGeneration(){
+ const identity=r19LastUnknown;
+ if(!identity||currentSessionId!==identity.sessionId)return toast('请先核对未结算的原任务');
+ if(currentGenerationOwner())return toast('当前窗口仍有正在执行的请求，请使用停止生成');
+ const checked=await checkUnknownGeneration(true);
+ if(!checked||currentSessionId!==identity.sessionId||!r19LastUnknown?.verified||
+   checked.pendingGeneration?.status!=='prepared'||checked.pendingGeneration.id!==identity.generationId||
+   checked.pendingGeneration.attempt!==identity.attempt)return toast('无法确认原任务身份，暂不解除锁定');
+ const button=qs('generation-abandon-unknown');
+ if(button?.classList.contains('hidden'))return toast('检测到其他窗口可能正在执行，请回到原窗口操作');
+ if(!confirm('原生成的上游是否已经完成或计费仍未知。本操作只在本机放弃等待，不调用 API、不撤销上游请求、不删除历史和已保存流式草稿。旧轮回复此后不会再自动提交；如果重新生成，可能再次收费。确定解除锁定吗？'))return;
+ button.disabled=true;
+ try{
+   const result=await fetchStory(`/sessions/${encodeURIComponent(identity.sessionId)}/generation-abandon`,'POST',{
+     generationId:identity.generationId,attempt:identity.attempt
+   });
+   if(!result.success)throw Error(result.msg||'生成解除锁定失败');
+   if(currentSessionId===identity.sessionId){
+     currentSessionData=result.data;
+     r19LastUnknown=null;
+     restoreGenerationView();
+     toast('已放弃等待旧任务，剧情解锁；没有发送模型请求');
+   }
+ }catch(error){toast('解除锁定失败：'+error.message);await checkUnknownGeneration(true);}
+ finally{button.disabled=false;}
+}
 function toggleUIState(generating){
     // The flag remains globally useful for memory priority; composer controls
     // depend only on the selected session's own request.
@@ -2641,7 +2667,7 @@ function toggleUIState(generating){
     qsa('.quick-actions .chip-btn').forEach(b=>{if(b.id!=='stop-btn'&&b.id!=='generation-reconcile-footer')b.disabled=visible});
     const footerRecovery=qs('generation-reconcile-footer');
     if(footerRecovery){const blocked=!!visible&&!currentGenerationOwner();footerRecovery.classList.toggle('hidden',!blocked);footerRecovery.disabled=!blocked;footerRecovery.textContent=verification?.status==='checking'?'↻ 当前核对中（免费）':currentSessionData?.pendingGeneration?.status==='prepared'?'↻ 核对未结算生成（免费）':r19DraftReadBlocked.has(currentSessionId)?'↻ 草稿读取受阻（免费核对）':'↻ 核对失败轮（免费）';}
-    qs('stop-btn').classList.toggle('hidden',!currentGenerationOwner());
+    qs('stop-btn').classList.toggle('hidden',!currentGenerationOwner());qs('generation-stop-inline')?.classList.toggle('hidden',!currentGenerationOwner());
     qs('story-input').disabled=visible;
     if(qs('director-note'))qs('director-note').disabled=r19DraftReadBlocked.has(currentSessionId);
     qs('generation-reconcile')?.classList.toggle('hidden',!visible||!!currentGenerationOwner());
@@ -2944,11 +2970,20 @@ async function retryGenerationReconciliation(){
     if(!id||generationOwners.has(id))return;
     const result=await reconcileCanonicalGenerationSession(id);
     if(result&&currentSessionId===id){
-        toast('剧情已核对，可以重新点击「重说」；没有调用模型。');
-        if(result.pendingGeneration?.status==='failed'&&generationFailures.has(id))
-            showGenerationError(generationFailures.get(id),generationFailures.get(id).action,true);
-        else if(result.pendingGeneration?.status!=='failed'){
+        if(result.pendingGeneration?.status==='prepared'){
+            // Canonical messages can be readable while a request remains UNKNOWN.
+            // A successful read must never tell the user regeneration is available.
+            await checkUnknownGeneration(true);
+            toast('剧情已读取，但原生成仍未结算。请在面板选择「放弃等待并解锁」或「确认后重新生成」。');
+            return;
+        }
+        if(result.pendingGeneration?.status==='failed'){
+            restoreGenerationView();
+            toast('原轮已失败结算；可以重新点击重说或查看已保存原文');
+        }else{
             generationFailures.delete(id);dismissGenerationPanel();
+            toggleUIState(false);
+            toast('剧情已核对，可以继续生成；没有调用模型');
         }
     }
 }
@@ -3045,7 +3080,13 @@ async function triggerChat(text,actionType='send',generationOptions={}){
 }
 function stopGeneration(){
     const owner=currentGenerationOwner();
-    if(!owner)return;
+    if(!owner){
+      if(currentSessionData?.pendingGeneration?.status==='prepared'){
+        void checkUnknownGeneration(true);
+        toast('页面刷新后原请求已失去执行者，不能远程停止；请核对后明确放弃等待');
+      }
+      return;
+    }
     owner.controller.abort(); // Only the selected request; settlement happens in triggerChat.
     if(liveStreamState?.owner===owner)clearLiveStream();
 }
@@ -3447,7 +3488,7 @@ function restoreLegacyFont(){
 }
 
 // Expose inline handlers
-Object.assign(window,{importCurrentSessionAsSettingTemplate,chooseIndependentTemplate,saveIndependentTemplate,copyIndependentTemplate,setIndependentTemplateDefault,deleteIndependentTemplate,setImmersiveReading,saveCurrentSettingTemplate,duplicateSettingTemplate,setDefaultSettingTemplate,deleteSettingTemplate,exportSettingTemplate,importSettingTemplate,refreshSettingTemplateChoices,renderSettingTemplatePreview,manualRollingSummary,mimaFilterLibrary,mimaToggleFavorite,goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,choosePngResourceInspection,playInspectedPngInCompat,savePngSelectedResources,exportPngInspection,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,exportStoryTranscript,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,loadMemoryModels,selectMemoryModel,startFactMemoryEdit,cancelFactMemoryEdit,saveFactMemoryEdit,toggleMergeFactSelection,previewFactMemoryMerge,cancelFactMemoryMerge,confirmFactMemoryMerge,undoFactMemoryMerge,clearCoreMemory,deleteFactMemory,clearAllFactMemories,revokeRollingMemory,restoreRollingMemory,discardMemoryCandidate,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,mimaLoadLargeCssForEdit,stopAtelierAndRestoreCss,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,apiIdentityDraftChanged,syncTemperature,updateStoryTypography,resetStoryTypography,setAppearancePreviewSurface,setBuiltInTheme,dismissGenerationPanel,previewFailedGenerationRaw,recoverFailedGenerationRaw,repairFailedGenerationHtml,retryFailedGeneration,retryGenerationReconciliation,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,regenerateCurrentMsg,continueMsg,autoAdvance,restoreMessageVersion,stopGeneration,toggleGenerationPanelMinimize,restoreGenerationPanel,saveGenerationContextAndPreview,resumeGenerationAfterCapacityPreview});
+Object.assign(window,{importCurrentSessionAsSettingTemplate,chooseIndependentTemplate,saveIndependentTemplate,copyIndependentTemplate,setIndependentTemplateDefault,deleteIndependentTemplate,setImmersiveReading,saveCurrentSettingTemplate,duplicateSettingTemplate,setDefaultSettingTemplate,deleteSettingTemplate,exportSettingTemplate,importSettingTemplate,refreshSettingTemplateChoices,renderSettingTemplatePreview,manualRollingSummary,mimaFilterLibrary,mimaToggleFavorite,goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,choosePngResourceInspection,playInspectedPngInCompat,savePngSelectedResources,exportPngInspection,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,exportStoryTranscript,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,loadMemoryModels,selectMemoryModel,startFactMemoryEdit,cancelFactMemoryEdit,saveFactMemoryEdit,toggleMergeFactSelection,previewFactMemoryMerge,cancelFactMemoryMerge,confirmFactMemoryMerge,undoFactMemoryMerge,clearCoreMemory,deleteFactMemory,clearAllFactMemories,revokeRollingMemory,restoreRollingMemory,discardMemoryCandidate,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,mimaLoadLargeCssForEdit,stopAtelierAndRestoreCss,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,apiIdentityDraftChanged,syncTemperature,updateStoryTypography,resetStoryTypography,setAppearancePreviewSurface,setBuiltInTheme,dismissGenerationPanel,previewFailedGenerationRaw,recoverFailedGenerationRaw,repairFailedGenerationHtml,retryFailedGeneration,retryGenerationReconciliation,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,regenerateCurrentMsg,continueMsg,autoAdvance,restoreMessageVersion,stopGeneration,abandonUnknownGeneration,toggleGenerationPanelMinimize,restoreGenerationPanel,saveGenerationContextAndPreview,resumeGenerationAfterCapacityPreview});
 
 
 window.MimaTavernBridge={

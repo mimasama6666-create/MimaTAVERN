@@ -2920,7 +2920,7 @@
       const persisted=normalizeState(await window.MimaLocalStore.loadState());
       const latest=persisted.sessions.find(x=>x.id===id);
       if(signal?.aborted)throw new DOMException('生成已取消，结果未提交','AbortError');
-      if(!latest||latest.pendingGeneration?.id!==pending.id||latest.pendingGeneration.attempt!==pending.attempt||JSON.stringify(latest.messages)!==JSON.stringify(sourceBeforeReply))throw new ApiError('E_CANONICAL_CONFLICT','生成期间剧情原文被其他操作修改；拒绝以旧回复覆盖新时间线。');
+      if(!latest||latest.pendingGeneration?.id!==pending.id||latest.pendingGeneration.attempt!==pending.attempt||latest.pendingGeneration.status!=='prepared'||JSON.stringify(latest.messages)!==JSON.stringify(sourceBeforeReply))throw new ApiError('E_CANONICAL_CONFLICT','生成期间剧情原文被其他操作修改；拒绝以旧回复覆盖新时间线。');
       // Rebase the one generated turn onto a verified current Session. Style,
       // manual memory and other settings changed while thinking are retained.
       state=persisted;
@@ -2953,7 +2953,7 @@
       // Persist only request lifecycle metadata, never rejected model content in canonical data.
       try{
         const persisted=normalizeState(await window.MimaLocalStore.loadState()),latest=persisted.sessions.find(x=>x.id===id);
-        if(latest?.pendingGeneration?.id===pending.id&&latest.pendingGeneration.attempt===pending.attempt){
+        if(latest?.pendingGeneration?.id===pending.id&&latest.pendingGeneration.attempt===pending.attempt&&latest.pendingGeneration.status==='prepared'){
           state=persisted;await saveSession({...latest,pendingGeneration:{...latest.pendingGeneration,status:'failed',errorCode:e?.code||e?.name||'E_STORY_RUNTIME'}});
           void recoverStore.generationReceipt(identity,e?.name==='AbortError'?'ABORTED_SETTLED':'FAILED_SETTLED',{errorCode:e?.code||e?.name||'E_STORY_RUNTIME'}).catch(err=>console.error('失败回执记录失败；canonical 已结算',{sessionId:id,generationId:pending.id,error:err}));
         }
@@ -2966,6 +2966,38 @@
       }
       throw e;
     }
+  }
+  // Explicit recovery from a lost UI owner. The upstream request can remain
+  // billable: this settles ONLY the local canonical lock, never reports API cancel.
+  async function abandonUnknownStoryGeneration(id,body={}){
+    const store=window.MimaLocalStore;
+    const persisted=normalizeState(await store.loadState());
+    const session=persisted.sessions.find(s=>s.id===id);
+    const pending=session?.pendingGeneration;
+    if(!session||!pending||pending.status!=='prepared'||
+       pending.id!==String(body.generationId||'')||pending.attempt!==Number(body.attempt))
+      throw new ApiError('E_UNKNOWN_GENERATION_IDENTITY_CHANGED','原任务状态已改变，未修改剧情。请免费重新核对。');
+    if(pending.canonicalFingerprint!==memorySourceFingerprint(session.messages,session.messages.length))
+      throw new ApiError('E_UNKNOWN_GENERATION_SOURCE_CHANGED','剧情原文在生成后变化，不能按旧状态解除锁定。');
+    const identity={sessionId:id,generationId:pending.id,attempt:pending.attempt};
+    // Missing/corrupt recovery store is not proof of missing data. Never claim
+    // a successful transition if the independent receipt cannot even be read.
+    const recovery=await store.generationRead(identity),oldReceipt=recovery?.receipt||{};
+    state=persisted;
+    const saved=await saveSession({...session,pendingGeneration:{...pending,status:'failed',errorCode:'E_GENERATION_OWNER_ABANDONED',abandonedAt:nowIso()}});
+    // generationReceipt replaces the top-level receipt record. Carry forward
+    // transport-dispatch evidence instead of rewriting an attempted paid request
+    // as if it was never sent.
+    try{await store.generationReceipt(identity,'OWNER_ABANDONED',{
+      errorCode:'E_GENERATION_OWNER_ABANDONED',
+      ownerId:oldReceipt.ownerId||pending.ownerId,
+      sourceFingerprint:oldReceipt.sourceFingerprint||pending.canonicalFingerprint,
+      ...(oldReceipt.recordRevision!==undefined?{recordRevision:oldReceipt.recordRevision}:{}),
+      ...(oldReceipt.requestDispatchAttempted!==undefined?{requestDispatchAttempted:oldReceipt.requestDispatchAttempted}:{}),
+      ...(oldReceipt.finishKind!==undefined?{finishKind:oldReceipt.finishKind}:{})
+    });}
+    catch(error){console.warn('本机已解锁，恢复回执的辅助更新失败；原草稿未清空',{sessionId:id,error});}
+    return saved;
   }
   // An HTML-invalid Provider reply is not a canonical assistant message. This
   // pathway repairs the durable rejected diagnostic without a second API call,
@@ -3279,6 +3311,7 @@
       m=path.match(/^\/sessions\/([^/]+)$/);if(m&&method==='GET'){const s=getSession(m[1]);return s?ok(s):fail('未找到剧本');}
       if(m&&method==='PATCH'){const s=getSession(m[1]);return s?ok(await saveSession({...s,...body,id:s.id,createdAt:s.createdAt})):fail('未找到剧本');}
       if(m&&method==='DELETE'){const before=state.sessions.length;state.sessions=state.sessions.filter(x=>x.id!==m[1]);await persist();return ok({deleted:state.sessions.length<before});}
+      m=path.match(/^\/sessions\/([^/]+)\/generation-abandon$/);if(m&&method==='POST')return ok(await abandonUnknownStoryGeneration(m[1],body||{}));
       m=path.match(/^\/sessions\/([^/]+)\/chat$/);if(m&&method==='POST')return ok(await processStoryTurn(m[1],body?.text,body?.action||'send',signal,body?.temperature,{directorNote:body?.directorNote||'',targetMessageId:body?.targetMessageId||null,expectedRecordRevision:body?.expectedRecordRevision??null,expectedSourceFingerprint:body?.expectedSourceFingerprint||null,diagnosticTurnId:body?.diagnosticTurnId||'',diagnosticTraceId:body?.diagnosticTraceId||'',regenerationContext:body?.regenerationContext||'original',retryParameters:body?.retryParameters==='current'?'current':'original',confirmUnknownTakeover:body?.confirmUnknownTakeover===true},progress));
       m=path.match(/^\/sessions\/([^/]+)\/recover-reply$/);if(m&&method==='POST')return ok(await restoreRejectedReply(m[1],body||{}));
       m=path.match(/^\/sessions\/([^/]+)\/recover-reply\/html-repair$/);if(m&&method==='POST')return ok(await prepareRejectedHtmlRepair(m[1],body?.diagnosticId));
