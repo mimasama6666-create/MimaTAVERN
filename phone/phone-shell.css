@@ -670,3 +670,14 @@ body.mima-phone-active{
   border:0;border-radius:100px;background:var(--phone-field);
   color:var(--phone-muted);font-size:12px;padding:8px 16px;
 }
+
+/* Direct, discoverable contact actions and visible user identity. */
+#mima-phone-root .phone-contact-actions{display:flex;align-items:center;gap:5px;flex:0 0 auto}
+#mima-phone-root .phone-contact-actions .phone-btn{min-height:35px;padding:6px 10px;font-size:12px;border-radius:11px;white-space:nowrap}
+#mima-phone-root .phone-contact-info-open{cursor:pointer}
+#mima-phone-root .phone-contact-info-open:focus-visible{outline:2px solid var(--phone-accent);outline-offset:3px;border-radius:7px}
+#mima-phone-root .phone-user-identity{margin:0 0 13px}
+#mima-phone-root .phone-user-identity .phone-line{display:flex;flex-wrap:wrap;gap:9px}
+#mima-phone-root .phone-user-identity select{flex:1 1 140px;min-width:0}
+#mima-phone-root .phone-user-identity .phone-btn{min-height:42px;flex:0 0 auto}
+@media(max-width:370px){#mima-phone-root .phone-contact-actions{gap:3px}#mima-phone-root .phone-contact-actions .phone-btn{padding:5px 7px;font-size:11px}}

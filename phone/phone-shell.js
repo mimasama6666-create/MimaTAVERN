@@ -208,8 +208,18 @@
    const list=dom('div','phone-contacts-list');main.append(list);
    for(const mask of masks){const present=existing.find(x=>x.maskId===mask.id);const card=dom('div','phone-contact-row');card.append(face(mask.id,present));
      const info=dom('div','phone-contact-info');info.append(dom('strong','',present?.displayNick||mask.name));info.append(dom('small','',present?(present.signature||'已添加 · 点击查看资料'):'未添加到小手机'));card.append(info);
-     if(present){card.append(button('›',()=>navigate('profile',mask.id),'phone-chevron'));}
-     else card.append(button('添加',async()=>{await D().addContact(mask.id);await render();},'phone-contact-add'));
+     if(present){
+       // The two everyday actions must be available in the contact list itself.
+       // The canonical private-thread command reuses an existing conversation.
+       const actions=dom('div','phone-contact-actions');
+       actions.append(button('聊天',async()=>{const chat=await D().createConversation([present.id]);await navigate('chat',chat.id);},'phone-contact-chat phone-primary'));
+       actions.append(button('资料',()=>navigate('profile',present.id),'phone-contact-detail'));
+       info.classList.add('phone-contact-info-open');info.tabIndex=0;info.role='button';
+       info.setAttribute('aria-label','查看 '+(present.displayNick||mask.name)+' 的联系人资料');
+       info.onclick=()=>safe(()=>navigate('profile',present.id));
+       info.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();info.click();}};
+       card.append(actions);
+     }else card.append(button('添加',async()=>{const added=await D().addContact(mask.id);await navigate('profile',added.id);},'phone-contact-add'));
      list.append(card);
    }
    if(!masks.length)main.append(dom('p','phone-empty','尚没有可用的 Char 面具，请先在咪嘛馆创建角色。'));
@@ -889,10 +899,20 @@
    buttons.append(queryButton);card.append(buttons);
  }
  async function screenSettings(main){main.append(dom('h1','phone-page-heading','我的'));
+   const prefs=await D().settings(),users=R().listUserMasks(),all=R().state();
+   // User identity is a normal phone setting, not an advanced engineering option.
+   const identity=box(main,'当前 User 面具');identity.classList.add('phone-user-identity');
+   const current=users.find(u=>u.id===prefs.userMaskId);
+   identity.append(dom('p','phone-setting-text',current?'当前身份：'+current.name:'尚未选择手机身份'));
+   const userSelect=dom('select','phone-input');userSelect.setAttribute('aria-label','切换小手机 User 面具');
+   for(const u of users){const opt=dom('option','',u.name);opt.value=u.id;opt.selected=prefs.userMaskId===u.id;userSelect.append(opt);}
+   const useMask=button('切换身份',async()=>{if(!userSelect.value)throw Error('没有可使用的 User 面具');await D().setSettings({userMaskId:userSelect.value});await render();say('小手机身份已切换，剧情身份不会改变');},'phone-primary');
+   useMask.disabled=!users.length;line(identity,userSelect,useMask);
+   if(!users.length)identity.append(dom('p','phone-helper','先在咪嘛馆建立 User 面具，再回到这里选择。'));
    const quick=dom('section','phone-my-shortcuts');quick.append(button('◈  我的钱包',()=>navigate('wallet'),'phone-shortcut'),button('▤  任务记录',()=>navigate('tasks'),'phone-shortcut'));main.append(quick);
-   const advanced=dom('details','phone-advanced');advanced.append(dom('summary','','设置与高级管理'));main.append(advanced);const settingsHost=dom('section');advanced.append(settingsHost);main=settingsHost;const prefs=await D().settings(),users=R().listUserMasks(),all=R().state();
-   const palette=box(quick.parentElement,'聊天外观');palette.append(dom('p','phone-setting-text','蓝白简约或绿白社交风格，只影响小手机。'));tones(palette,prefs);
-   await apiConfigUI(main,prefs);const settings=box(main,'身份与资料');const select=dom('select','phone-input');for(const u of users){const opt=dom('option','',u.name);opt.value=u.id;opt.selected=prefs.userMaskId===u.id;select.append(opt);}line(settings,select,button('使用这个 User 面具',async()=>{await D().setSettings({userMaskId:select.value});await render();},'phone-primary'));
+   const palette=box(main,'聊天外观');palette.append(dom('p','phone-setting-text','蓝白简约或绿白社交风格，只影响小手机。'));tones(palette,prefs);
+   const advanced=dom('details','phone-advanced');advanced.append(dom('summary','','设置与高级管理'));main.append(advanced);const settingsHost=dom('section');advanced.append(settingsHost);main=settingsHost;
+   await apiConfigUI(main,prefs);
    const presets=box(main,'全局预设（只读挂载）');for(const p of all.presets.filter(x=>x.enabled!==false)){const l=dom('label','phone-check'),ck=document.createElement('input');ck.type='checkbox';ck.checked=(prefs.presetIds||[]).includes(p.id);ck.onchange=()=>safe(async()=>{const ps=new Set((await D().settings()).presetIds||[]);ck.checked?ps.add(p.id):ps.delete(p.id);await D().setSettings({presetIds:[...ps]});});l.append(ck,document.createTextNode(p.name));presets.append(l);}
    const worlds=box(main,'世界书（只读挂载）');for(const w of all.worldbooks.filter(x=>x.enabled!==false)){const l=dom('label','phone-check'),ck=document.createElement('input');ck.type='checkbox';ck.checked=(prefs.worldbookIds||[]).includes(w.id);ck.onchange=()=>safe(async()=>{const ids=new Set((await D().settings()).worldbookIds||[]);ck.checked?ids.add(w.id):ids.delete(w.id);await D().setSettings({worldbookIds:[...ids]});});l.append(ck,document.createTextNode(w.name));worlds.append(l);}
    const overrides=box(main,'每个角色独立挂载（仅手机生效）');const characters=await D().contacts();
