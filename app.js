@@ -259,7 +259,15 @@ function restoreGenerationView(){
         beginGenerationProgress(owner.action);
         if(owner.lastProgress)setGenerationProgress(owner.lastProgress);
         if(owner.action==='send'&&!owner.userSaved&&!arr(currentSessionData?.messages).some(m=>m.content===owner.text&&m.role==='user'))renderPendingUserMessage(owner.text);
-        if(owner.streamText){const st=ensureLiveStreamBubble(owner);if(st){st.targetText=owner.streamText;st.displayText=owner.streamText;renderLiveStreamText();}}
+        if(owner.streamText||owner.thinkingProgress){const st=ensureLiveStreamBubble(owner);if(st){
+          if(owner.thinkingProgress&&MimaStandalone.getApiConfig()?.showThinking!==false){
+            st.thinkingNode=document.createElement('details');st.thinkingNode.className='mima-thinking-panel';
+            const head=document.createElement('summary');head.textContent='🧠 模型 Thinking（接收中）';
+            const body=document.createElement('div');body.className='mima-thinking-body';body.textContent=owner.thinkingProgress;
+            st.thinkingNode.append(head,body);st.node.insertBefore(st.thinkingNode,st.contentNode);
+          }
+          if(owner.streamText){st.targetText=owner.streamText;st.displayText=owner.streamText;renderLiveStreamText();}
+        }}
     }else if(durablePending?.status==='prepared'){showUnknownGeneration(durablePending);}
     else if(lastGenerationFailure){showGenerationError(lastGenerationFailure,lastGenerationFailure.action,true);}
     const degraded=generationReconcileStates.get(currentSessionId);
@@ -2643,7 +2651,13 @@ function syncGenerationMinimizedBadge(percent=0){const badge=qs('generation-mini
 function setGenerationPanelMinimized(next){const panel=qs('generation-panel'),badge=qs('generation-minimized-badge');generationPanelMinimized=!!next;panel?.classList.toggle('minimized',generationPanelMinimized);const minimizable=!!currentGenerationOwner()||!!panel?.classList.contains('error');badge?.classList.toggle('hidden',!generationPanelMinimized||!minimizable);if(!generationPanelMinimized)badge?.classList.add('hidden');}
 function toggleGenerationPanelMinimize(force){if(!currentGenerationOwner()&&!qs('generation-panel')?.classList.contains('error')){dismissGenerationPanel();return;}setGenerationPanelMinimized(force===undefined?!generationPanelMinimized:!!force);}
 function restoreGenerationPanel(){setGenerationPanelMinimized(false);}
-function setGenerationProgress(payload={}){const panel=qs('generation-panel'),bar=qs('generation-progress-bar'),label=qs('generation-label'),pct=qs('generation-percent'),detail=qs('generation-detail');if(!panel)return;panel.classList.remove('hidden','error','done');const n=Math.max(2,Math.min(100,Number(payload.percent)||2));bar.style.width=`${n}%`;pct.textContent=`${Math.round(n)}%`;syncGenerationMinimizedBadge(n);if(payload.label)label.textContent=payload.label;if(payload.detail)detail.textContent=payload.detail}
+function setGenerationProgress(payload={}){const panel=qs('generation-panel'),bar=qs('generation-progress-bar'),label=qs('generation-label'),pct=qs('generation-percent'),detail=qs('generation-detail');if(!panel)return;panel.classList.remove('hidden','error','done');
+    // Thinking, usage and diagnostics are phase-only updates. They MUST NOT
+    // reset an already established transport percentage to the default 2%.
+    if(payload.percent!==undefined&&payload.percent!==null&&Number.isFinite(Number(payload.percent))){
+      const n=Math.max(2,Math.min(100,Number(payload.percent)));bar.style.width=`${n}%`;pct.textContent=`${Math.round(n)}%`;syncGenerationMinimizedBadge(n);
+    }
+    if(payload.label)label.textContent=payload.label;if(payload.detail)detail.textContent=payload.detail}
 function setGenerationRetryVisible(visible){for(const id of ['generation-retry','generation-retry-current'])qs(id)?.classList.toggle('hidden',!visible);}
 function beginGenerationProgress(action){hideFailedStreamControls();qs('generation-recovery-draft')?.classList.add('hidden');qs('generation-copy-failed-stream')?.classList.add('hidden');deferredGenerationProgress=null;currentGenerationAction=action;lastGenerationFailure=null;contextRecoveryReceipt=null;setGenerationRetryVisible(false);setGenerationPanelMinimized(false);qs('generation-capacity-recovery')?.classList.add('hidden');qs('generation-resume-unanswered')?.classList.add('hidden');const panel=qs('generation-panel');panel?.classList.remove('hidden','error','done');setGenerationProgress({percent:4,label:`🤍 ${generationActionLabel(action)}`,detail:'正在准备本轮剧情…'})}
 function isStoryNearBottom(box,threshold=96){return !box||((box.scrollHeight-box.scrollTop-box.clientHeight)<=threshold)}
@@ -2732,7 +2746,14 @@ function handleGenerationProgress(payload,owner=currentGenerationOwner()){
         if(st&&MimaStandalone.getApiConfig()?.showThinking!==false&&payload?.thinkingText!==undefined){
           if(!st.thinkingNode){st.thinkingNode=document.createElement('details');st.thinkingNode.className='mima-thinking-panel';const head=document.createElement('summary');head.textContent='🧠 模型 Thinking（接收中）';const body=document.createElement('div');body.className='mima-thinking-body';st.thinkingNode.append(head,body);st.node.insertBefore(st.thinkingNode,st.contentNode);}
           st.thinkingNode.lastElementChild.textContent=owner.thinkingProgress;}
-        if(st&&payload?.streamText!==undefined&&!blocked){st.targetText=owner.streamText;st.visualPaused=isSettingsOpen();pumpLiveStream();}
+        if(st&&payload?.streamText!==undefined&&!blocked){
+          st.targetText=owner.streamText;st.visualPaused=isSettingsOpen();
+          // Render the first visible body delta immediately: otherwise a fast
+          // completing response can clear the placeholder before the first RAF.
+          if(!st.visualPaused&&st.paints===0&&st.targetText&&st.targetText.length<=8000){
+            st.displayText=st.targetText;st.lastPaintAt=performance.now();renderLiveStreamText();
+          }else pumpLiveStream();
+        }
     }
 }
 function clearLiveStream(){
@@ -3125,6 +3146,7 @@ function mimaThinkingPanel(record,caption='模型 Thinking（上游返回）'){
     const note=document.createElement('div');note.className='mima-thinking-note';
     note.textContent=record.text?'这是上游提供的推理文本或摘要，不代表内部完整思维链。':'该接口没有提供 Thinking 文本。';
     if(record.timingNote)note.textContent+=' '+record.timingNote;
+    if(Number(record.thoughtSnapshotsMerged)>0)note.textContent+=` 已合并 ${record.thoughtSnapshotsMerged} 次疑似累计/重复 Thinking 帧；这不代表删除了剧情正文。`;
     details.appendChild(note);return details;
 }
 function renderMessageToUI(msg,renderTarget=null){const box=renderTarget||qs('story-chat-box');const liveMsg=()=>currentSessionData?.messages?.find(m=>m.id===msg.id)||msg;const role=msg.role||'system';const div=document.createElement('article');div.className=`message ${role}-msg`;div.dataset.msgId=msg.id||'';const header=document.createElement('div');header.className='msg-header';const roleName=role==='user'?(currentUser()?.name||'你'):(role==='assistant'?(currentChar()?.name||(currentSessionData?.mode==='sandalphon'?'圣德芬':'角色')):'系统');header.textContent=`${roleName}${msg.isEdited?' · 已编辑':''}${msg.versions?.length?` · ${msg.versions.length} 个旧版本`:''}`;div.appendChild(header);if(role==='assistant'&&MimaStandalone.getApiConfig()?.showThinking!==false){const r=msg.metadata?.thinking;const panel=mimaThinkingPanel(r);if(panel)div.appendChild(panel);for(const [i,item] of (msg.metadata?.thinkingContinuations||[]).entries()){const extra=mimaThinkingPanel(item,'续写 Thinking '+(i+1));if(extra)div.appendChild(extra);}}const content=document.createElement('div');const allowHtml=role==='assistant'&&currentSessionData?.renderMode==='safe_html';content.className=`msg-content tavern-story-content${allowHtml?' safe-html-content':''}`;const displayText=role==='assistant'&&MimaStandalone.applyRegexForSession?MimaStandalone.applyRegexForSession(currentSessionId,msg.content||'','display'):msg.content||'';appendRenderedContent(content,cleanCorruptText(displayText),allowHtml,role==='assistant');div.appendChild(content);

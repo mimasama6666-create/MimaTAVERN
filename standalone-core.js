@@ -1157,6 +1157,9 @@
     const reader=res.body.getReader(),decoder=new TextDecoder();
     let buffer='',reply='',eventCount=0,finalPayload=null,streamUsage=null,receivedDone=false,finishReason='',finishKind='unknown',badEvents=0,refusalSeen=false,terminalConflict=false,firstByteMarked=false,transportBytes=0;
     let thoughtText='',thoughtSource='',thoughtStart=null,firstContentAt=null,reasoningTokens=null,lastThoughtUiAt=-Infinity;
+    // A provider may send complete reasoning snapshots instead of append-only deltas.
+    // Count cumulative/replayed frames without adding their already-seen prefix again.
+    let thoughtSnapshotsMerged=0;
     const startedAt=performance.now();
     const publishMeta=()=>{if(onProgress?.resultMeta)Object.assign(onProgress.resultMeta,{finishReason:finishReason||'unknown',finishKind,receivedDone,refused:refusalSeen});};
     let eventType='message';
@@ -1184,8 +1187,27 @@
       const observed=captureUsageMetrics(payload,model,null);if(observed)streamUsage=observed;
       const thought=extractProviderThought(payload,true),usageTokens=thinkingUsageTokens(payload);
       if(usageTokens!==null)reasoningTokens=usageTokens;
-      if(thought){if(thoughtStart===null)thoughtStart=performance.now();thoughtText+=thought.text;thoughtSource=thoughtSource||thought.source;
-        const uiNow=performance.now();if(uiNow-lastThoughtUiAt>=120){lastThoughtUiAt=uiNow;emitProgress(onProgress,{phase:'thinking',thinkingText:thoughtText,thinkingSource:thoughtSource,detail:'已收到上游 Thinking 内容（可能仅为摘要）'});}}
+      if(thought){
+        if(thoughtStart===null)thoughtStart=performance.now();
+        const incoming=thought.text;
+        if(thought.updateMode==='snapshot'){
+          // message.reasoning_content is a full message snapshot, not a delta.
+          if(thoughtText)thoughtSnapshotsMerged++;
+          thoughtText=incoming;
+        }else if(thoughtText&&incoming.length>thoughtText.length&&incoming.startsWith(thoughtText)){
+          // Some OpenAI-compatible relays incorrectly send an expanding cumulative
+          // snapshot in delta.reasoning_content. The existing prefix is not new text.
+          thoughtText=incoming;thoughtSnapshotsMerged++;
+        }else if(thoughtText.length>=64&&incoming===thoughtText){
+          // A repeated whole, substantial frame is almost certainly a replay.
+          // Do not suppress normal short repeated deltas (e.g. two identical words).
+          thoughtSnapshotsMerged++;
+        }else{
+          thoughtText+=incoming;
+        }
+        thoughtSource=thoughtSource||thought.source;
+        const uiNow=performance.now();if(uiNow-lastThoughtUiAt>=120){lastThoughtUiAt=uiNow;emitProgress(onProgress,{phase:'thinking',thinkingText:thoughtText,thinkingSource:thoughtSource,detail:thoughtSnapshotsMerged?'已合并上游重复/累计 Thinking 帧；继续等待剧情正文':'已收到上游 Thinking 内容（可能仅为摘要）'});}
+      }
       const piece=extractStreamDelta(payload);if(piece){if(firstContentAt===null)firstContentAt=performance.now();reply+=piece;emitProgress(onProgress,{phase:'streaming',percent:Math.min(90,58+Math.log10(reply.length+1)*12),receivedChars:reply.length,delta:piece,streamText:reply,detail:`已接收 ${reply.length} 个字符`});}
     };
     try{
@@ -1220,7 +1242,7 @@
     if(thoughtText)emitProgress(onProgress,{phase:'thinking',thinkingText:thoughtText,thinkingSource:thoughtSource,detail:'上游 Thinking 内容接收完成'});
     if(streamUsage)emitProgress(onProgress,{phase:'cache_usage',percent:92,detail:streamUsage.cachedTokens>0?`上游报告缓存命中 ${streamUsage.cachedTokens} tokens`:'上游返回 usage',usage:clone(streamUsage)});
     if(onProgress?.resultMeta){onProgress.resultMeta.finishReason=finishReason||'unknown';onProgress.resultMeta.finishKind=finishKind;onProgress.resultMeta.receivedDone=receivedDone;
-      onProgress.resultMeta.thinking={kind:'provider_returned',source:thoughtSource||null,text:thoughtText,reasoningTokens,
+      onProgress.resultMeta.thinking={kind:'provider_returned',source:thoughtSource||null,text:thoughtText,reasoningTokens,thoughtSnapshotsMerged,
         observedThinkingMs:thoughtStart!==null&&firstContentAt!==null?Math.max(0,Math.round(firstContentAt-thoughtStart)):null,
         firstContentWaitMs:firstContentAt!==null?Math.max(0,Math.round(firstContentAt-startedAt)):null,
         totalResponseMs:Math.max(0,Math.round(performance.now()-startedAt)),
@@ -1264,17 +1286,22 @@
   }
   function extractProviderThought(payload,stream=false){
     const choice=payload?.choices?.[0]||{};
-    const msg=stream?(choice.delta||choice.message||{}):(choice.message||{});
+    const isDelta=stream&&choice.delta&&typeof choice.delta==='object';
+    const msg=stream?(isDelta?choice.delta:(choice.message||{})):(choice.message||{});
     let source='';let value='';
+    // These are alternative provider aliases for the SAME reasoning payload.
+    // Concatenating every nonempty alias repeats one chunk two or four times.
     for(const key of ['reasoning_content','reasoning','thinking','thoughts']){
-      const candidate=thinkingText(msg[key]);if(candidate){value+=candidate;source=source||key;}
+      const candidate=thinkingText(msg[key]);if(candidate){value=candidate;source=key;break;}
     }
     const content=msg.content;
     const parts=Array.isArray(content)?content:Array.isArray(content?.parts)?content.parts:[];
-    for(const part of parts){if(part?.thought===true||['reasoning','thinking'].includes(part?.type)){
-      value+=thinkingText(part);source=source||'thought_part';
-    }}
-    return value?{text:value,source}:null;
+    const partText=parts.filter(part=>part?.thought===true||['reasoning','thinking'].includes(part?.type)).map(thinkingText).join('');
+    if(partText){
+      if(!value){value=partText;source='thought_part';}
+      else if(!value.includes(partText)&&!partText.includes(value))value+=partText;
+    }
+    return value?{text:value,source,updateMode:isDelta?'delta':'snapshot'}:null;
   }
   function thinkingUsageTokens(payload){const u=payload?.usage||payload?.usageMetadata||payload?.usage_metadata||{};
     return finiteUsageNumber(u.completion_tokens_details?.reasoning_tokens,u.reasoning_tokens,u.thoughtsTokenCount,u.thoughts_token_count,u.output_token_details?.reasoning_tokens);
