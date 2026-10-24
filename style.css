@@ -1093,15 +1093,58 @@ body.mima-reading-mode #story-chat-box[data-mima-chat-wallpaper="1"]::before{
 .mima-thinking-note{padding:6px 12px 10px;font-size:.74rem;opacity:.75;line-height:1.5;}
 @media(max-width:480px){.mima-thinking-panel{margin:6px 4px 10px}.mima-thinking-body{max-height:45vh;}}
 
+/* R19 feature-menu surface: the navigation exists outside the chat scroll area.
+   Without this rule it becomes an unstyled transparent grid row over the story. */
+.app-shell > .mima-feature-menu:not(.hidden){
+  position:absolute;
+  z-index:35;
+  top:calc(68px + env(safe-area-inset-top));
+  left:12px;
+  right:12px;
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:7px;
+  padding:12px;
+  max-height:min(72dvh,650px);
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  border:1px solid var(--line);
+  border-radius:20px;
+  color:var(--text);
+  background:color-mix(in srgb,var(--skin-panel,var(--panel-solid,#f7f8f9)) 90%,transparent);
+  -webkit-backdrop-filter:blur(28px) saturate(1.32);
+  backdrop-filter:blur(28px) saturate(1.32);
+  box-shadow:0 18px 55px rgba(20,23,30,.23),inset 0 1px rgba(255,255,255,.48);
+}
+.app-shell > .mima-feature-menu > button{
+  min-width:0; min-height:44px;
+  padding:12px 11px;
+  border-radius:13px;
+  border:1px solid var(--line);
+  background:color-mix(in srgb,var(--panel-solid,#f7f8f9) 78%,transparent);
+  color:var(--text);
+  text-align:left;
+  font-size:.86rem;
+  font-weight:650;
+  line-height:1.45;
+  white-space:normal;
+  overflow-wrap:anywhere;
+}
+.app-shell > .mima-feature-menu > button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media(max-width:620px){.app-shell>.mima-feature-menu:not(.hidden){top:calc(62px + env(safe-area-inset-top));left:7px;right:7px;padding:9px;gap:6px}}
 /* R19 global interface density. The root viewport, user CSS source and stored story typography remain untouched. */
 :root{--mima-ui-scale:.8}
-.app-shell{zoom:var(--mima-ui-scale);height:100%;max-height:none}
+/* Zoom reduces the painted size, so a 100% layout height left a visible
+   unowned strip above the keyboard. Compensate against the VISUAL viewport. */
+.app-shell{zoom:var(--mima-ui-scale);height:calc(var(--mima-viewport-height,100dvh) / var(--mima-ui-scale));max-height:none}
 .session-drawer{zoom:var(--mima-ui-scale)}
+/* Keep the dialog viewport anchor at physical 100%, but scale its actual panel,
+   including px-sized buttons, headings, spacing, and content. */
 .modal{zoom:1}
-.modal > .modal-panel{font-size:calc(1rem * var(--mima-ui-scale, .8))}
+.modal > .modal-panel{zoom:var(--mima-ui-scale);font-size:1rem}
 #compat-lab{zoom:var(--mima-ui-scale)}
 /* Keep native iOS focus controls at a readable, non-auto-zoom CSS size. */
-@supports (-webkit-touch-callout:none){.app-shell input,.app-shell textarea,.modal input,.modal textarea,.modal select{font-size:max(16px,1em)}}
+@supports (-webkit-touch-callout:none){.app-shell input,.app-shell textarea,.modal input,.modal textarea,.modal select{font-size:max(calc(16px / var(--mima-ui-scale)),1em)}}
 /* Fixed modal backdrops must fill the true visual screen after zoom, not 80% of its height. */
 /* The viewport host must not inherit the 80% content density. */
 .modal{left:var(--mima-viewport-left,0px);top:var(--mima-viewport-top,0px);right:auto;bottom:auto;width:var(--mima-viewport-width,100vw);height:var(--mima-viewport-height,100dvh)}
@@ -1121,10 +1164,10 @@ html #compat-lab.in-chat .compat-main{height:calc(100% - 70px - env(safe-area-in
     align-self:flex-start;
     width:100%;
     max-width:none;
-    height:min(850px,calc(var(--mima-viewport-height,100dvh) - 16px));
-    max-height:calc(var(--mima-viewport-height,100dvh) - 16px);
+    /* Inside a zoomed panel, sizes are in unscaled layout pixels. */
+    height:calc((var(--mima-viewport-height,100dvh) - 16px) / var(--mima-ui-scale));
+    max-height:calc((var(--mima-viewport-height,100dvh) - 16px) / var(--mima-ui-scale));
     min-height:0;
-    zoom:1;
     border-radius:20px 20px 0 0;
   }
   #settings-modal .settings-tabs{min-width:0;overflow-x:auto}
@@ -1133,13 +1176,13 @@ html #compat-lab.in-chat .compat-main{height:calc(100% - 70px - env(safe-area-in
 
 /* R19 keyboard-safe shared overlays: one unscaled visualViewport coordinate frame. */
 .modal:not(.hidden){max-width:none;max-height:none;min-height:0;box-sizing:border-box;overflow:hidden}
-.modal > .modal-panel{min-height:0;min-width:0;max-height:calc(var(--mima-viewport-height,100dvh) - 16px);overscroll-behavior:contain}
+.modal > .modal-panel{min-height:0;min-width:0;max-height:calc((var(--mima-viewport-height,100dvh) - 16px) / var(--mima-ui-scale));overscroll-behavior:contain}
 .modal .editor-body,.modal .settings-content{scroll-padding-block:18px;min-height:0;overscroll-behavior:contain}
 .modal :is(input,textarea,select){scroll-margin-block:18px}
 @media(max-width:620px),(max-height:500px) and (orientation:landscape){
  .modal{padding:8px max(6px,env(safe-area-inset-right)) max(6px,env(safe-area-inset-bottom)) max(6px,env(safe-area-inset-left));align-items:flex-end}
- #editor-modal>.editor-panel{height:calc(var(--mima-viewport-height,100dvh) - 16px);max-height:calc(var(--mima-viewport-height,100dvh) - 16px)}
- #settings-modal>.settings-panel{height:calc(var(--mima-viewport-height,100dvh) - 16px);max-height:calc(var(--mima-viewport-height,100dvh) - 16px)}
+ #editor-modal>.editor-panel{height:calc((var(--mima-viewport-height,100dvh) - 16px) / var(--mima-ui-scale));max-height:calc((var(--mima-viewport-height,100dvh) - 16px) / var(--mima-ui-scale))}
+ #settings-modal>.settings-panel{height:calc((var(--mima-viewport-height,100dvh) - 16px) / var(--mima-ui-scale));max-height:calc((var(--mima-viewport-height,100dvh) - 16px) / var(--mima-ui-scale))}
  .modal .modal-head{padding:9px 12px}
  .modal .editor-actions{padding:8px 12px}
 }

@@ -256,6 +256,14 @@ function compile(project,mode='live',options={}){
   }
   if(proseRules.length)result+=`${phrase}{${proseRules.join(';')}}\n`;
  }
+ if(key==='safeHtmlHost' && pol.messageSurface.inkMode==='explicit'){
+  // Safe HTML was excluded from ordinary message ink and also excluded by
+  // styleRules(key==='safeHtmlHost'): nothing supplied the selected text color.
+  // Only set inherited host properties; authored status HTML with explicit
+  // color/background rules remains authoritative on its descendants.
+  const color=hex(sourceStyle.ink);
+  result+=`${selectors}{color:${color};--text:${color};--mima-html-ink:${color};}\n`;
+ }
  if(key==='status'&&pol.statusHtml.inkMode==='explicit')result+=`${selectors}{color:${hex(project.elements.status.ink)}}\n`;
  const orn=project.elements[key]?.ornament;
  if((key==='button'||key==='secondary')&&['double','dotted','cream','inset'].includes(orn)){
