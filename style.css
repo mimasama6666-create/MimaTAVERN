@@ -1284,3 +1284,14 @@ html.mima-composer-keyboard .app-shell>.composer-shell{padding-bottom:10px}
  #settings-modal .settings-panel .settings-tabs{gap:8px;padding:8px 12px;scrollbar-width:thin;overscroll-behavior-x:contain}
  #settings-modal .settings-panel .settings-tabs button{min-height:calc(46px / var(--mima-ui-scale, 1));min-width:calc(70px / var(--mima-ui-scale, 1));padding:calc(10px / var(--mima-ui-scale, 1)) calc(14px / var(--mima-ui-scale, 1));font-size:calc(.93rem / var(--mima-ui-scale, 1));line-height:1.25;white-space:nowrap;touch-action:manipulation}
 }
+
+/* R19 iOS keyboard focus regression: do not wait for :focus to enlarge text.
+   WebKit decides input auto-zoom at tap time, before focus styles settle.
+   This keeps the actual pre-focus painted glyphs above the 16px threshold
+   even when the user has selected a compact (70-90%) interface density. */
+@supports (-webkit-touch-callout: none){
+ .app-shell>.composer-shell>.composer-row textarea,
+ .app-shell>.composer-shell>.composer-row textarea:focus{
+  font-size:max(17px,calc(17px / var(--mima-ui-scale,1)));
+ }
+}

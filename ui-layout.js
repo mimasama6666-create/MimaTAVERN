@@ -4,8 +4,13 @@ const doc=document,stack=[],previous=new WeakMap();let raf=0,composing=false,res
 function visible(n){return !n.hidden&&!n.classList.contains('hidden');}
 function viewport(){
  const v=window.visualViewport,root=doc.documentElement,r=root.style;
- const height=Math.max(1,v?.height||innerHeight),width=Math.max(1,v?.width||innerWidth);
- const top=v?.offsetTop||0,left=v?.offsetLeft||0;
+ // Pinch/automatic input zoom narrows visualViewport without changing the
+ // app's layout viewport. Never resize the whole app to that already-zoomed
+ // rectangle: doing so feeds Safari's focus-pan/resize cycle.
+ const zoomed=!!(v && Number(v.scale||1)>1.01);
+ const height=Math.max(1,(zoomed?innerHeight:v?.height)||innerHeight);
+ const width=Math.max(1,(zoomed?innerWidth:v?.width)||innerWidth);
+ const top=zoomed?0:(v?.offsetTop||0),left=zoomed?0:(v?.offsetLeft||0);
  r.setProperty('--mima-viewport-height',height+'px');
  r.setProperty('--mima-viewport-width',width+'px');
  r.setProperty('--mima-viewport-top',top+'px');
@@ -26,7 +31,9 @@ function viewport(){
    restingViewportHeight=Math.max(restingViewportHeight,height);
  }
  const referenceHeight=Math.max(restingViewportHeight,window.innerHeight||0,root.clientHeight||0);
- const keyboardVisible=!!(composerFocused && v &&
+ // When the user (or WebKit) zooms, let native browser panning own the
+ // focused field; our fixed keyboard shell only operates at scale 1.
+ const keyboardVisible=!!(composerFocused && v && !zoomed &&
    (referenceHeight-height>100 || Math.abs(top)>30));
  root.classList.toggle('mima-composer-keyboard',keyboardVisible);
 }
