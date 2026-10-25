@@ -1,98 +1,34 @@
 /* Shared keyboard-safe viewport for production dialogs; never scales the fixed layer. */
 (function(){'use strict';
-const doc=document,stack=[],previous=new WeakMap();
-let raf=0,composing=false,restingViewportHeight=0,restingViewportWidth=0;
-let storyHeight=0,keyboardOpen=false,lastViewportScale=1;
-const viewportTrace=[];
-let traceEnabled=false;
-// Opt-in, in-memory diagnostics. No story text, field values or personal data.
-window.MimaViewportDiagnostics={
- enable(){traceEnabled=true;viewportTrace.length=0;},
- disable(){traceEnabled=false;},
- read(){return viewportTrace.map(frame=>({...frame}));},
- clear(){viewportTrace.length=0;}
-};
+const doc=document,stack=[],previous=new WeakMap();let raf=0,composing=false,restingViewportHeight=0,restingViewportWidth=0;
 function visible(n){return !n.hidden&&!n.classList.contains('hidden');}
-function putViewportVar(style,name,value){
- // A visualViewport.scroll event by itself must not invalidate the app grid.
- if(style.getPropertyValue(name)!==value)style.setProperty(name,value);
-}
 function viewport(){
  const v=window.visualViewport,root=doc.documentElement,r=root.style;
+ const height=Math.max(1,v?.height||innerHeight),width=Math.max(1,v?.width||innerWidth);
+ const top=v?.offsetTop||0,left=v?.offsetLeft||0;
+ r.setProperty('--mima-viewport-height',height+'px');
+ r.setProperty('--mima-viewport-width',width+'px');
+ r.setProperty('--mima-viewport-top',top+'px');
+ r.setProperty('--mima-viewport-left',left+'px');
+ // iOS Safari may move the visual viewport *and* the layout scroll position
+ // while focusing the composer. Height compensation alone leaves the entire
+ // zoomed app in the layout viewport, exposing a large blank strip above the OS keyboard.
  const active=doc.activeElement;
  const editableFocused=!!active?.matches?.('input,textarea,select,[contenteditable="true"]');
  const composerFocused=!!(editableFocused && active.closest('.app-shell > .composer-shell'));
- const layoutHeight=Math.max(1,window.innerHeight||root.clientHeight||1);
- const layoutWidth=Math.max(1,window.innerWidth||root.clientWidth||1);
- const scale=Math.max(1,Number(v?.scale)||1);
- // visualViewport.height is measured in visual CSS pixels. On pinch/focus
- // zoom it gets smaller even when the keyboard has not changed. Convert it
- // back to unzoomed screen pixels BEFORE measuring keyboard occlusion.
- // A zoom transition must never substitute innerHeight for an open keyboard.
- const visualHeight=Math.max(1,Number(v?.height)||layoutHeight);
- const visibleHeight=Math.min(layoutHeight,Math.max(1,visualHeight*scale));
- const scaleChanged=Math.abs(scale-lastViewportScale)>0.015;
- lastViewportScale=scale;
- // Use the LAYOUT viewport width for orientation changes: vv.width itself
- // decreases under pinch zoom, which must not reset our keyboard baseline.
- if(!restingViewportHeight || Math.abs(layoutWidth-restingViewportWidth)>40){
-  restingViewportHeight=layoutHeight;
-  restingViewportWidth=layoutWidth;
-  storyHeight=visibleHeight;
-  keyboardOpen=false;
+ // Focusout happens before the iOS keyboard has finished dismissing. Never
+ // mistake that intermediate, shortened viewport for the unoccluded height.
+ // Also cover edits inside settings: those controls open the same OS keyboard.
+ if(!restingViewportHeight || Math.abs(width-restingViewportWidth)>40){
+   restingViewportHeight=Math.max(height,window.innerHeight||0,root.clientHeight||0);
+   restingViewportWidth=width;
  }else if(!editableFocused){
-  // A real resize while no keyboard is being edited resets the baseline.
-  // Never learn a shortened keyboard viewport as the new resting height.
-  if(visibleHeight>=layoutHeight-80){restingViewportHeight=layoutHeight;}
+   restingViewportHeight=Math.max(restingViewportHeight,height);
  }
- const referenceHeight=Math.max(restingViewportHeight,layoutHeight);
- const occlusion=referenceHeight-visibleHeight;
- const wasKeyboardOpen=keyboardOpen;
- if(!composerFocused){
-  keyboardOpen=false;
- }else if(wasKeyboardOpen && scaleChanged){
-  // Safari may report intermediate vv dimensions while zooming. A scale
-  // transition alone is not proof that the keyboard has been dismissed.
-  keyboardOpen=true;
- }else if(wasKeyboardOpen){
-  keyboardOpen=occlusion>70;
- }else{
-  keyboardOpen=occlusion>115;
- }
- // During a confirmed keyboard session, ignore small vv-height jitter and
- // hold the previous height across a simultaneous scale transition. Genuine
- // keyboard resizes with a stable scale still update the available space.
- let nextStoryHeight=keyboardOpen?visibleHeight:(composerFocused?layoutHeight:visibleHeight);
- if(composerFocused && wasKeyboardOpen && keyboardOpen){
-  if(scaleChanged || Math.abs(nextStoryHeight-storyHeight)<24){
-   nextStoryHeight=storyHeight;
-  }
- }
- storyHeight=Math.max(1,nextStoryHeight);
- putViewportVar(r,'--mima-story-height',storyHeight+'px');
- // Story layout and overlays are separate consumers. In the composer state,
- // keep the overlay height on the same stable screen basis, but do not move
- // the document to vv.offsetTop/Left as Safari pans the focused input.
- const overlayHeight=composerFocused?storyHeight:visibleHeight;
- const overlayWidth=(scale>1.01||composerFocused)?layoutWidth:Math.max(1,Number(v?.width)||layoutWidth);
- const top=(scale>1.01||composerFocused)?0:(Number(v?.offsetTop)||0);
- const left=(scale>1.01||composerFocused)?0:(Number(v?.offsetLeft)||0);
- putViewportVar(r,'--mima-viewport-height',overlayHeight+'px');
- putViewportVar(r,'--mima-viewport-width',overlayWidth+'px');
- putViewportVar(r,'--mima-viewport-top',top+'px');
- putViewportVar(r,'--mima-viewport-left',left+'px');
- if(root.classList.contains('mima-composer-keyboard')!==keyboardOpen){
-  root.classList.toggle('mima-composer-keyboard',keyboardOpen);
- }
- if(traceEnabled){
-  const b=doc.querySelector('.app-shell')?.getBoundingClientRect();
-  viewportTrace.push({time:Math.round(performance.now()),innerHeight:layoutHeight,
-   visualHeight,visualWidth:Number(v?.width)||layoutWidth,scale,
-   offsetTop:Number(v?.offsetTop)||0,offsetLeft:Number(v?.offsetLeft)||0,
-   focus:composerFocused?'composer':editableFocused?'other-input':'none',
-   keyboardOpen,storyHeight,appTop:b?.top??null,appHeight:b?.height??null});
-  if(viewportTrace.length>30)viewportTrace.shift();
- }
+ const referenceHeight=Math.max(restingViewportHeight,window.innerHeight||0,root.clientHeight||0);
+ const keyboardVisible=!!(composerFocused && v &&
+   (referenceHeight-height>100 || Math.abs(top)>30));
+ root.classList.toggle('mima-composer-keyboard',keyboardVisible);
 }
 function focusedControlVisible(){
  if(composing)return;
