@@ -8,9 +8,17 @@ function viewport(){
  // app's layout viewport. Never resize the whole app to that already-zoomed
  // rectangle: doing so feeds Safari's focus-pan/resize cycle.
  const zoomed=!!(v && Number(v.scale||1)>1.01);
+ const active=doc.activeElement;
+ const editableFocused=!!active?.matches?.('input,textarea,select,[contenteditable="true"]');
+ const composerFocused=!!(editableFocused && active.closest('.app-shell > .composer-shell'));
+ // During story composition, the visual viewport can pan independently of
+ // the document. Never feed its left/top/zoom width back into the page grid.
+ // Only the unzoomed visible height is used to make room for the keyboard.
+ const composerFrame=!!composerFocused;
  const height=Math.max(1,(zoomed?innerHeight:v?.height)||innerHeight);
- const width=Math.max(1,(zoomed?innerWidth:v?.width)||innerWidth);
- const top=zoomed?0:(v?.offsetTop||0),left=zoomed?0:(v?.offsetLeft||0);
+ const width=Math.max(1,(zoomed||composerFrame?innerWidth:v?.width)||innerWidth);
+ const top=(zoomed||composerFrame)?0:(v?.offsetTop||0);
+ const left=(zoomed||composerFrame)?0:(v?.offsetLeft||0);
  r.setProperty('--mima-viewport-height',height+'px');
  r.setProperty('--mima-viewport-width',width+'px');
  r.setProperty('--mima-viewport-top',top+'px');
@@ -18,9 +26,6 @@ function viewport(){
  // iOS Safari may move the visual viewport *and* the layout scroll position
  // while focusing the composer. Height compensation alone leaves the entire
  // zoomed app in the layout viewport, exposing a large blank strip above the OS keyboard.
- const active=doc.activeElement;
- const editableFocused=!!active?.matches?.('input,textarea,select,[contenteditable="true"]');
- const composerFocused=!!(editableFocused && active.closest('.app-shell > .composer-shell'));
  // Focusout happens before the iOS keyboard has finished dismissing. Never
  // mistake that intermediate, shortened viewport for the unoccluded height.
  // Also cover edits inside settings: those controls open the same OS keyboard.

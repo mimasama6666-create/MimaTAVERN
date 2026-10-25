@@ -1191,18 +1191,21 @@ html #compat-lab.in-chat .compat-main{height:calc(100% - 70px - env(safe-area-in
 .editor-discard-card{width:min(350px,100%);padding:18px;background:#fff;border-radius:18px;box-shadow:0 15px 46px #22172944;display:grid;gap:12px;font-size:14px;line-height:1.5}
 .editor-discard-card>div{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
 
-/* R19 iOS keyboard regression: the scaled story shell must follow the VISUAL
-   viewport origin as well as its size. The document is not the composer scroll
-   surface; chat-box retains its own independent scroll position. */
+/* R19 iOS keyboard regression fix (video 2026-10-26): do not change the
+   WHOLE story grid from relative to fixed when the keyboard opens. After
+   enabling pinch zoom, visualViewport.offsetTop/width are not the layout
+   origin and may change in response to that very positioning. Keep the
+   normal grid's stable positioning and only resize its available height.
+   This preserves the 80% UI density, user themes, scrollable chat, native
+   two-finger pinch, and the compact composer above the keyboard. */
 html.mima-composer-keyboard,
 html.mima-composer-keyboard body{overflow:hidden;overscroll-behavior:none}
 html.mima-composer-keyboard .app-shell{
-  position:fixed;
-  top:calc(var(--mima-viewport-top,0px) / var(--mima-ui-scale,1));
-  left:calc(var(--mima-viewport-left,0px) / var(--mima-ui-scale,1));
-  width:calc(var(--mima-viewport-width,100vw) / var(--mima-ui-scale,1));
+  position:relative;
+  top:auto;left:auto;right:auto;bottom:auto;
+  width:auto;max-width:1100px;margin:auto;
   height:calc(var(--mima-viewport-height,100dvh) / var(--mima-ui-scale,1));
-  max-width:none;margin:0;overflow:hidden;
+  overflow:visible;
 }
 /* The keyboard already provides a bottom safe area; do not apply the home
    indicator's safe-area inset again below the composer. */
