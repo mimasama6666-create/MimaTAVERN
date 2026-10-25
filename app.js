@@ -916,7 +916,7 @@ function setupImmersiveReading(){
 }
 // User-facing release notes: once per distinct production release by default.
 // Avoid touching Store/History or making automatic announcements mandatory.
-const MIMA_RELEASE_NOTES_VERSION='R19-20261026-SEAL-P1-REWORK-DEV';
+const MIMA_RELEASE_NOTES_VERSION='R19-20261026-IOS-VIEWPORT-R3-DEV';
 const MIMA_RELEASE_NOTES_SEEN='mima-release-notes-seen:'+MIMA_RELEASE_NOTES_VERSION;
 const MIMA_RELEASE_NOTES_OPTOUT='mima-release-notes-disable-auto-v1';
 function openMimaReleaseNotice(){

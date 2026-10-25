@@ -1134,9 +1134,9 @@ body.mima-reading-mode #story-chat-box[data-mima-chat-wallpaper="1"]::before{
 @media(max-width:620px){.app-shell>.mima-feature-menu:not(.hidden){top:calc(62px + env(safe-area-inset-top));left:7px;right:7px;padding:9px;gap:6px}}
 /* R19 global interface density. The root viewport, user CSS source and stored story typography remain untouched. */
 :root{--mima-ui-scale:.8}
-/* Zoom reduces the painted size, so a 100% layout height left a visible
-   unowned strip above the keyboard. Compensate against the VISUAL viewport. */
-.app-shell{zoom:var(--mima-ui-scale);height:calc(var(--mima-viewport-height,100dvh) / var(--mima-ui-scale));max-height:none}
+/* The story uses its own keyboard-aware, zoom-normalized screen height.
+   Dialog/overlay viewport changes must not resize the story grid. */
+.app-shell{zoom:var(--mima-ui-scale);height:calc(var(--mima-story-height,100dvh) / var(--mima-ui-scale));max-height:none}
 .session-drawer{zoom:var(--mima-ui-scale)}
 /* Keep the dialog viewport anchor at physical 100%, but scale its actual panel,
    including px-sized buttons, headings, spacing, and content. */
@@ -1204,7 +1204,7 @@ html.mima-composer-keyboard .app-shell{
   position:relative;
   top:auto;left:auto;right:auto;bottom:auto;
   width:auto;max-width:1100px;margin:auto;
-  height:calc(var(--mima-viewport-height,100dvh) / var(--mima-ui-scale,1));
+  height:calc(var(--mima-story-height,100dvh) / var(--mima-ui-scale,1));
   overflow:visible;
 }
 /* The keyboard already provides a bottom safe area; do not apply the home
