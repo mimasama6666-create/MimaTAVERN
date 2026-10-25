@@ -29,6 +29,7 @@
   let regeneratingIndex=-1;
   let editingIndex=-1;
   let assistantFollowTail=true;
+  let generationEpoch=0; // Late replies from aborted/restored sessions may never rewrite new data.
 
   function clone(v){return JSON.parse(JSON.stringify(v));}
   function esc(v){return String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch]));}
@@ -60,6 +61,7 @@
   function unwrapArtifactBlockValue(raw,{trim=true}={}){
     let text=String(raw??'');
     const cdata=text.match(/^\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*$/i);
+    if(/^\s*<!\[CDATA\[/.test(text)&&!cdata)throw Error('CDATA 内容包含未转义的 ]]> 或缺少正确结束符，请先安全编码再保存，原文未修改');
     if(cdata){
       text=cdata[1];
       if(text.startsWith('\r\n'))text=text.slice(2);else if(text.startsWith('\n'))text=text.slice(1);
@@ -273,11 +275,12 @@
   }
 
   function open(type='regex'){
+    if(generating&&TYPES.includes(type)&&type!==activeType){notify('当前助手尚在生成。请先停止或完成本轮，再切换工具；旧回复不会写入其他助手。');return;}
     if(TYPES.includes(type))activeType=type;
     const modal=document.getElementById('assistant-modal');if(!modal)return;
     modal.classList.remove('hidden');nextQuickMode='';assistantFollowTail=true;render();
   }
-  function close(){if(controller)controller.abort();controller=null;generating=false;draftAssistantText='';generationMode='send';regeneratingIndex=-1;editingIndex=-1;document.getElementById('assistant-modal')?.classList.add('hidden');}
+  function close(){generationEpoch++;if(controller)controller.abort();controller=null;generating=false;draftAssistantText='';generationMode='send';regeneratingIndex=-1;editingIndex=-1;document.getElementById('assistant-modal')?.classList.add('hidden');}
   function switchType(type){if(!TYPES.includes(type)||generating)return;activeType=type;nextQuickMode='';draftAssistantText='';editingIndex=-1;assistantFollowTail=true;render();}
   function setQuickMode(){nextQuickMode=activeType;render();setTimeout(()=>document.getElementById('assistant-input')?.focus(),20);}
 
@@ -297,7 +300,7 @@
     const repaired=detail?.repaired?`<span class="tag">${detail.repairLevel==='self_heal'?'已自愈 JSON':'已自动修复 JSON 格式'}</span>`:'';
     if(artifact.kind==='regex_bundle')return `<div class="assistant-artifact-card"><div class="assistant-artifact-title"><strong>🧬 已识别 Regex Bundle</strong>${protocol}${repaired}</div><div class="row-sub">包含配套预设 + 正则包，可一键保存并挂载到当前剧情。</div><div class="toolbar"><button class="primary-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'all')">一键保存 + 挂载</button><button class="ghost-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'regex')">只存正则</button><button class="ghost-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'preset')">只存预设</button></div><details><summary>查看解析后的 canonical 工件</summary><pre class="prompt-pre">${esc(JSON.stringify(artifact,null,2))}</pre></details></div>`;
     if(artifact.kind==='preset')return `<div class="assistant-artifact-card"><div class="assistant-artifact-title"><strong>🧩 已识别 Preset</strong>${protocol}${repaired}</div><div class="toolbar"><button class="primary-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'preset')">保存并挂载预设</button></div><details><summary>查看解析后的 canonical 工件</summary><pre class="prompt-pre">${esc(JSON.stringify(artifact,null,2))}</pre></details></div>`;
-    if(artifact.kind==='css_preset')return `<div class="assistant-artifact-card"><div class="assistant-artifact-title"><strong>🎨 已识别 CSS Preset</strong>${protocol}${repaired}</div><div class="toolbar"><button class="primary-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'css')">保存并应用 CSS</button></div><details><summary>查看解析后的 canonical 工件</summary><pre class="prompt-pre">${esc(JSON.stringify(artifact,null,2))}</pre></details></div>`;
+    if(artifact.kind==='css_preset')return `<div class="assistant-artifact-card"><div class="assistant-artifact-title"><strong>🎨 已识别 CSS Preset</strong>${protocol}${repaired}</div><div class="toolbar"><button class="primary-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'css')">保存并按目标作用域处理</button></div><details><summary>查看解析后的 canonical 工件</summary><pre class="prompt-pre">${esc(JSON.stringify(artifact,null,2))}</pre></details></div>`;
     return `<div class="assistant-artifact-card assistant-artifact-error"><strong>⚠️ 未支持的工件类型</strong><div class="row-sub">kind = ${esc(artifact.kind||'(empty)')}。原文未删除。</div></div>`;
   }
   function messagesHtml(){
@@ -333,9 +336,9 @@
   function lastAssistantIndex(){for(let i=thread().length-1;i>=0;i--)if(thread()[i]?.role==='assistant')return i;return-1;}
   function startEdit(index){if(generating||!thread()[index])return;editingIndex=index;render();requestAnimationFrame(()=>{const el=document.getElementById(`assistant-edit-${index}`);if(el){el.focus();el.setSelectionRange?.(el.value.length,el.value.length);el.scrollIntoView?.({block:'center'})}});}
   function cancelEdit(){editingIndex=-1;render();}
-  function saveEdit(index){if(generating)return;const msg=thread()[index],el=document.getElementById(`assistant-edit-${index}`);if(!msg||!el)return;const content=String(el.value??'');if(!content.trim())return notify('历史消息不能保存为空；如果不要这条，请直接点“删除”。');msg.content=content;if(msg.role==='user')msg.requestContent=msg.quickMode?`${quickInstruction(activeType)}\n\n【用户素材】\n${content}`:content;msg.editedAt=new Date().toISOString();saveState();editingIndex=-1;render();notify('历史消息已编辑');}
+  function saveEdit(index){if(generating)return;const msg=thread()[index],el=document.getElementById(`assistant-edit-${index}`);if(!msg||!el)return;const content=String(el.value??'');if(!content.trim())return notify('历史消息不能保存为空；如果不要这条，请直接点“删除”。');if(msg.content!==content){delete msg.savedArtifactIds;}msg.content=content;if(msg.role==='user')msg.requestContent=msg.quickMode?`${quickInstruction(activeType)}\n\n【用户素材】\n${content}`:content;msg.editedAt=new Date().toISOString();saveState();editingIndex=-1;render();notify('历史消息已编辑');}
   function deleteMessage(index){if(generating||!thread()[index])return;if(!confirm('删除这一条助手历史消息？只删除本地聊天记录，不会删除已经保存的预设 / 正则 / CSS。'))return;thread().splice(index,1);editingIndex=-1;saveState();render();notify('这条历史消息已删除');}
-  function stop(){if(controller)controller.abort();controller=null;generating=false;draftAssistantText='';generationMode='send';regeneratingIndex=-1;render();}
+  function stop(){generationEpoch++;if(controller)controller.abort();controller=null;generating=false;draftAssistantText='';generationMode='send';regeneratingIndex=-1;render();}
 
   async function send(){
     if(generating)return;
@@ -345,11 +348,12 @@
     thread().push({role:'user',content:raw,requestContent:userContent,quickMode,time:new Date().toISOString()});saveState();nextQuickMode='';generating=true;generationMode='send';regeneratingIndex=-1;editingIndex=-1;draftAssistantText='';assistantFollowTail=true;render();
     const history=thread().slice(-30).map(m=>({role:m.role,content:m.role==='user'?(m.requestContent||m.content):m.content}));
     const messages=[{role:'system',content:systemPrompt(activeType)},...history];
-    const cfg={...storyCfg,model,temperature:p.temperature,stream:p.stream,sendTemperature:p.sendTemperature!==false,maxTokens:Number(p.maxTokens)||0};controller=new AbortController();
+    const cfg=window.MimaStandalone.effectiveRequestConfig({...storyCfg,model,temperature:p.temperature,stream:p.stream,sendTemperature:p.sendTemperature!==false,maxTokens:Number(p.maxTokens)||0});controller=new AbortController();const runEpoch=++generationEpoch;
     try{
-      const reply=await window.MimaStandalone.callModelWithConfig(messages,cfg,p.temperature,controller.signal,{streamOverride:p.stream,onProgress:payload=>{if(payload?.streamText!==undefined){draftAssistantText=String(payload.streamText||'');const textEl=document.querySelector('.assistant-chat-streaming .assistant-chat-text');if(textEl)textEl.innerHTML=esc(visibleAssistantText(draftAssistantText)||'…').replace(/\n/g,'<br>');const sc=document.getElementById('assistant-chat-scroll');if(sc&&assistantFollowTail)sc.scrollTop=sc.scrollHeight;updateAssistantFollowButton();}}});
+      const reply=await window.MimaStandalone.callModelWithConfig(messages,cfg,p.temperature,controller.signal,{streamOverride:p.stream,onProgress:payload=>{if(runEpoch===generationEpoch&&payload?.streamText!==undefined){draftAssistantText=String(payload.streamText||'');const textEl=document.querySelector('.assistant-chat-streaming .assistant-chat-text');if(textEl)textEl.innerHTML=esc(visibleAssistantText(draftAssistantText)||'…').replace(/\n/g,'<br>');const sc=document.getElementById('assistant-chat-scroll');if(sc&&assistantFollowTail)sc.scrollTop=sc.scrollHeight;updateAssistantFollowButton();}}});
+      if(runEpoch!==generationEpoch)return;
       thread().push({role:'assistant',content:reply,time:new Date().toISOString()});saveState();generating=false;generationMode='send';regeneratingIndex=-1;draftAssistantText='';controller=null;render();
-    }catch(e){generating=false;generationMode='send';regeneratingIndex=-1;draftAssistantText='';controller=null;if(e?.name==='AbortError'){notify('助手生成已停止');render();return}const status=Number(e?.status)||0;const billing=/余额|insufficient|balance|quota|credit|billing/i.test(String(e?.message||''));const extra=billing?'；这是上游/中转站计费拒绝，不代表本地数据丢失。已确保助手不再继承正文 Max Tokens，可保持助手 Max Tokens=0 后重试。':(e?.hint?`；${e.hint}`:'');notify(`助手调用失败${status?` · HTTP ${status}`:''}：${e.message||e}${extra}`);render();}
+    }catch(e){if(runEpoch!==generationEpoch)return;generating=false;generationMode='send';regeneratingIndex=-1;draftAssistantText='';controller=null;if(e?.name==='AbortError'){notify('助手生成已停止');render();return}const status=Number(e?.status)||0;const billing=/余额|insufficient|balance|quota|credit|billing/i.test(String(e?.message||''));const extra=billing?'；这是上游/中转站计费拒绝，不代表本地数据丢失。已确保助手不再继承正文 Max Tokens，可保持助手 Max Tokens=0 后重试。':(e?.hint?`；${e.hint}`:'');notify(`助手调用失败${status?` · HTTP ${status}`:''}：${e.message||e}${extra}`);render();}
   }
 
   async function regenerate(index){
@@ -360,11 +364,12 @@
     const history=before.slice(-30).map(m=>({role:m.role,content:m.role==='user'?(m.requestContent||m.content):m.content}));
     const messages=[{role:'system',content:systemPrompt(activeType)},...history];
     generating=true;generationMode='regenerate';regeneratingIndex=index;editingIndex=-1;draftAssistantText='';assistantFollowTail=true;render();
-    const cfg={...storyCfg,model,temperature:p.temperature,stream:p.stream,sendTemperature:p.sendTemperature!==false,maxTokens:Number(p.maxTokens)||0};controller=new AbortController();
+    const cfg=window.MimaStandalone.effectiveRequestConfig({...storyCfg,model,temperature:p.temperature,stream:p.stream,sendTemperature:p.sendTemperature!==false,maxTokens:Number(p.maxTokens)||0});controller=new AbortController();const runEpoch=++generationEpoch;
     try{
-      const reply=await window.MimaStandalone.callModelWithConfig(messages,cfg,p.temperature,controller.signal,{streamOverride:p.stream,onProgress:payload=>{if(payload?.streamText!==undefined){draftAssistantText=String(payload.streamText||'');const streamCards=document.querySelectorAll?.('.assistant-chat-streaming .assistant-chat-text');const textEl=streamCards?.[streamCards.length-1];if(textEl)textEl.innerHTML=esc(visibleAssistantText(draftAssistantText)||'…').replace(/\n/g,'<br>');const sc=document.getElementById('assistant-chat-scroll');if(sc&&assistantFollowTail)sc.scrollTop=sc.scrollHeight;updateAssistantFollowButton();}}});
-      const current=thread()[index];if(!current||current.role!=='assistant')throw new Error('历史位置已经变化，为避免覆盖错误消息，本次重说未写入。');current.content=reply;current.time=new Date().toISOString();current.regeneratedAt=current.time;saveState();generating=false;generationMode='send';regeneratingIndex=-1;draftAssistantText='';controller=null;render();notify('助手已经重说这一条 ✨');
-    }catch(e){generating=false;generationMode='send';regeneratingIndex=-1;draftAssistantText='';controller=null;if(e?.name==='AbortError'){notify('助手重说已停止，原回复保留');render();return}const status=Number(e?.status)||0;const billing=/余额|insufficient|balance|quota|credit|billing/i.test(String(e?.message||''));const extra=billing?'；这是上游/中转站计费拒绝，原回复仍然保留。':(e?.hint?`；${e.hint}`:'');notify(`助手重说失败${status?` · HTTP ${status}`:''}：${e.message||e}${extra}`);render();}
+      const reply=await window.MimaStandalone.callModelWithConfig(messages,cfg,p.temperature,controller.signal,{streamOverride:p.stream,onProgress:payload=>{if(runEpoch===generationEpoch&&payload?.streamText!==undefined){draftAssistantText=String(payload.streamText||'');const streamCards=document.querySelectorAll?.('.assistant-chat-streaming .assistant-chat-text');const textEl=streamCards?.[streamCards.length-1];if(textEl)textEl.innerHTML=esc(visibleAssistantText(draftAssistantText)||'…').replace(/\n/g,'<br>');const sc=document.getElementById('assistant-chat-scroll');if(sc&&assistantFollowTail)sc.scrollTop=sc.scrollHeight;updateAssistantFollowButton();}}});
+      if(runEpoch!==generationEpoch)return;
+      const current=thread()[index];if(!current||current.role!=='assistant')throw new Error('历史位置已经变化，为避免覆盖错误消息，本次重说未写入。');rotateSavedArtifactIdentity(current,reply,'regenerate');current.content=reply;current.time=new Date().toISOString();current.regeneratedAt=current.time;saveState();generating=false;generationMode='send';regeneratingIndex=-1;draftAssistantText='';controller=null;render();notify('助手已经重说这一条 ✨');
+    }catch(e){if(runEpoch!==generationEpoch)return;generating=false;generationMode='send';regeneratingIndex=-1;draftAssistantText='';controller=null;if(e?.name==='AbortError'){notify('助手重说已停止，原回复保留');render();return}const status=Number(e?.status)||0;const billing=/余额|insufficient|balance|quota|credit|billing/i.test(String(e?.message||''));const extra=billing?'；这是上游/中转站计费拒绝，原回复仍然保留。':(e?.hint?`；${e.hint}`:'');notify(`助手重说失败${status?` · HTTP ${status}`:''}：${e.message||e}${extra}`);render();}
   }
 
   async function repairArtifact(index){
@@ -378,12 +383,13 @@
     const p=profile(),storyCfg=window.MimaStandalone.getApiConfig();const model=(p.model||storyCfg.model||'').trim();if(!storyCfg.apiBase||!model)return notify('先配置 API，并给助手选择模型猫。');
     const repairSystem=`你是 MIMA 工件“运输层救援器”。输入可能是坏掉的 Legacy JSON，也可能是不完整的 V2。你的唯一任务是：在不改变任何业务语义的前提下，把它重新封装成 MIMA_ARTIFACT_V2 Zero-Escape 格式。\n\n绝对禁止：删除规则、合并规则、改写 pattern、改写 replacement、改写 HTML/CSS、缩短 preset、改变字段顺序、重新设计内容。\n允许且必须做的只有：恢复明显的字符串边界/字段归属，并把大文本原样放进对应 CDATA。\n输出且只输出一个完整 <MIMA_ARTIFACT_V2 ...>...</MIMA_ARTIFACT_V2>，不要解释，不要 Markdown code fence，不要再输出 JSON。\n\n${artifactV2Protocol()}`;
     const repairUser=`下面是原始工件。把它逐字段搬运到 V2；业务内容与规则顺序全部保持原样：\n\n${originalBlock}`;
-    generating=true;generationMode='repair';regeneratingIndex=index;editingIndex=-1;draftAssistantText='';assistantFollowTail=true;render();controller=new AbortController();
+    generating=true;generationMode='repair';regeneratingIndex=index;editingIndex=-1;draftAssistantText='';assistantFollowTail=true;render();controller=new AbortController();const runEpoch=++generationEpoch;
     const repairTemp=Math.min(.2,Math.max(.1,Number(p.temperature)||.1));
-    const cfg={...storyCfg,model,temperature:repairTemp,stream:false,sendTemperature:p.sendTemperature!==false,maxTokens:Number(p.maxTokens)||0};
+    const cfg=window.MimaStandalone.effectiveRequestConfig({...storyCfg,model,temperature:repairTemp,stream:false,sendTemperature:p.sendTemperature!==false,maxTokens:Number(p.maxTokens)||0});
     let reply='';
     try{
       reply=await window.MimaStandalone.callModelWithConfig([{role:'system',content:repairSystem},{role:'user',content:repairUser}],cfg,repairTemp,controller.signal,{streamOverride:false});
+      if(runEpoch!==generationEpoch)return;
       const current=thread()[index];if(!current||current.role!=='assistant')throw new Error('历史位置已经变化，为避免覆盖错误消息，本次修复未写入。');
       const parsed=parseArtifactDetailed(reply),repairAccepted=!!parsed.artifact&&parsed.protocol==='v2';
       current.repairAttempts=Array.isArray(current.repairAttempts)?current.repairAttempts:[];
@@ -393,39 +399,103 @@
       if(!repairAccepted){saveState();throw new Error(`AI 已返回内容并完成计费，但本地验收未通过：${repairError}。修复结果已保存，可展开查看；不会自动再次调用模型。`)}
       const repairedV2=extractArtifactV2(reply);if(!repairedV2.found)throw new Error('AI 修复结果通过解析，但没有可保存的 V2 原始块。');
       current.versions=Array.isArray(current.versions)?current.versions:[];current.versions.push({content:current.content,time:new Date().toISOString(),reason:'artifact_v2_ai_rescue'});
-      current.content=String(current.content||'').replace(originalBlock,repairedV2.full);current.editedAt=new Date().toISOString();current.artifactRepairedAt=current.editedAt;current.artifactProtocol='v2';
+      const repairedContent=String(current.content||'').replace(originalBlock,repairedV2.full);rotateSavedArtifactIdentity(current,repairedContent,'repair');current.content=repairedContent;current.editedAt=new Date().toISOString();current.artifactRepairedAt=current.editedAt;current.artifactProtocol='v2';
       saveState();generating=false;generationMode='send';regeneratingIndex=-1;draftAssistantText='';controller=null;render();notify('工件已转换为 V2 Zero-Escape，并通过本地校验 ✨');
     }catch(e){
+      if(runEpoch!==generationEpoch)return;
       const current=thread()[index];if(reply&&current&&current.role==='assistant'&&!(current.repairAttempts||[]).some(a=>a.content===reply)){
         current.repairAttempts=Array.isArray(current.repairAttempts)?current.repairAttempts:[];current.repairAttempts.push({time:new Date().toISOString(),model,content:reply,success:false,error:e?.message||String(e)});current.repairAttempts=current.repairAttempts.slice(-5);saveState();
       }
       generating=false;generationMode='send';regeneratingIndex=-1;draftAssistantText='';controller=null;if(e?.name==='AbortError'){notify('AI 救援修复已停止，原工件完整保留');render();return}notify(`修复工件失败：${e.message||e}；原工件完整保留。`);render();
     }
   }
+  // A saved artifact ID names immutable content, NOT a mutable chat message.
+  // Preserve the old mapping for archived versions and reuse it only when the
+  // entire reply text is identical. A new generated reply gets new IDs.
+  function rotateSavedArtifactIdentity(msg,nextContent,reason){
+    const before=String(msg.content??''),after=String(nextContent??'');
+    if(before===after)return;
+    if(msg.savedArtifactIds&&Object.keys(msg.savedArtifactIds).length){
+      msg.savedArtifactVersions=Array.isArray(msg.savedArtifactVersions)?msg.savedArtifactVersions:[];
+      if(!msg.savedArtifactVersions.some(v=>v.content===before))msg.savedArtifactVersions.push({content:before,ids:{...msg.savedArtifactIds},time:new Date().toISOString(),reason});
+    }
+    const prior=(msg.savedArtifactVersions||[]).find(v=>v.content===after&&v.ids);
+    if(prior)msg.savedArtifactIds={...prior.ids};else delete msg.savedArtifactIds;
+  }
+  function stableArtifactId(msg,key,prefix){
+    if(!msg.savedArtifactIds)msg.savedArtifactIds={};
+    if(!msg.savedArtifactIds[key]){msg.savedArtifactIds[key]=`${prefix}-${globalThis.crypto?.randomUUID?.()||`${Date.now()}-${Math.random().toString(36).slice(2)}`}`;saveState();}
+    return msg.savedArtifactIds[key];
+  }
   async function saveArtifact(index,mode){
-    const msg=thread()[index];const detail=parseArtifactDetailed(msg?.content);const artifact=detail.artifact;if(!artifact)return notify(detail.found?`检测到工件标记，但工件解析失败：${detail.error}`:'这条消息里没有可保存的结构化工件。');
+    const msg=thread()[index];const detail=parseArtifactDetailed(msg?.content);const artifact=detail.artifact;if(!artifact)return notify(detail.found?`检测到工件标记，但解析失败：${detail.error}`:'这条消息没有可保存的工件。');
     const bridge=window.MimaTavernBridge,session=bridge?.getSession?.();
+    let phase='尚未提交',savedRegex=null,savedPreset=null,savedCss=null;
     try{
-      if(artifact.kind==='regex_bundle'&&mode==='all'&&!artifact.preset?.content)throw new Error('工件缺少 preset.content，未写入任何新工件。');
-      if(artifact.kind==='css_preset'&&mode==='css'&&!artifact.cssPreset?.css)throw new Error('工件缺少 CSS 内容，未写入任何新工件。');
-      let savedRegex=null,savedPreset=null,savedCss=null;
-      if(artifact.kind==='regex_bundle'&&(mode==='all'||mode==='regex')){
-        const checked=window.MimaRegexEngine.validatePack({...artifact.regexPack,id:undefined,createdAt:undefined,updatedAt:undefined});if(!checked.ok)throw new Error(`正则无效：${checked.invalid.map(x=>`${x.name}: ${x.error}`).join('；')}`);
-        const res=await window.MimaStandalone.handle('/regex-packs','POST',checked.pack);if(!res.success)throw new Error(res.msg||'正则包保存失败');savedRegex=res.data;
+      if(artifact.kind==='regex_bundle'&&mode==='all'){
+        if(!artifact.preset?.content)throw Error('Bundle 缺少配套预设');
+        const bundleId=stableArtifactId(msg,'regex','regex-asst');
+        const pack={...artifact.regexPack,id:bundleId,rules:(artifact.regexPack.rules||[]).map((r,i)=>({...r,id:r.id||`${bundleId}-rule-${i}`}))},preset={...artifact.preset,id:stableArtifactId(msg,'preset','preset-asst')};
+        const r=await window.MimaStandalone.handle('/assistant/regex-bundle','POST',{regexPack:pack,preset,sessionId:session?.id||null});
+        if(!r.success)throw Error(r.msg||'Bundle 事务提交失败');phase='两份资源已原子提交';
+        await bridge?.reload?.();
+        return notify(r.data.mounted?'正则包和预设已在同一次事务中保存并挂载':'正则包和预设已同时保存；打开剧情后可挂载');
       }
-      if((artifact.kind==='regex_bundle'&&(mode==='all'||mode==='preset'))||(artifact.kind==='preset'&&mode==='preset')){
-        const preset=artifact.kind==='preset'?artifact.preset:artifact.preset;if(!preset?.content)throw new Error('工件缺少 preset.content');const res=await window.MimaStandalone.handle('/presets','POST',{...preset,id:undefined,createdAt:undefined,updatedAt:undefined});if(!res.success)throw new Error(res.msg||'预设保存失败');savedPreset=res.data;
+      if(artifact.kind==='regex_bundle'&&(mode==='regex'||mode==='preset')){
+        if(mode==='regex'){
+          const bundleId=stableArtifactId(msg,'regex','regex-asst');
+          const checked=window.MimaRegexEngine.validatePack({...artifact.regexPack,id:bundleId,rules:(artifact.regexPack.rules||[]).map((r,i)=>({...r,id:r.id||`${bundleId}-rule-${i}`}))});
+          if(!checked.ok)throw Error('正则无效：'+checked.invalid.map(x=>x.error).join('；'));
+          const r=await window.MimaStandalone.handle('/regex-packs','POST',checked.pack);if(!r.success)throw Error(r.msg||'正则保存失败');savedRegex=r.data;
+        }else{
+          if(!artifact.preset?.content)throw Error('缺少预设内容');
+          const r=await window.MimaStandalone.handle('/presets','POST',{...artifact.preset,id:stableArtifactId(msg,'preset','preset-asst')});if(!r.success)throw Error(r.msg||'预设保存失败');savedPreset=r.data;
+        }
+      }else if(artifact.kind==='preset'&&mode==='preset'){
+        if(!artifact.preset?.content)throw Error('缺少预设内容');
+        const r=await window.MimaStandalone.handle('/presets','POST',{...artifact.preset,id:stableArtifactId(msg,'preset','preset-asst')});if(!r.success)throw Error(r.msg||'预设保存失败');savedPreset=r.data;
       }
       if(artifact.kind==='css_preset'&&mode==='css'){
-        const css=artifact.cssPreset;if(!css?.css)throw new Error('工件缺少 CSS 内容');const res=await window.MimaStandalone.handle('/css-presets','POST',{...css,id:undefined,createdAt:undefined,updatedAt:undefined});if(!res.success)throw new Error(res.msg||'CSS 保存失败');savedCss=res.data;
+        const css=artifact.cssPreset;
+        if(!String(css?.css||'').trim())throw Error('CSS 内容为空');
+        if(!['app','global','story','novel','assistant'].includes(css.scope))throw Error('CSS 作用域未知，未写入数据');
+        const input={...css,id:stableArtifactId(msg,'css','css-asst'),atelierReleaseKey:''};
+        if(css.scope==='app'){
+          if(/[?&]noCss=1(?:&|$)/.test(window.location?.search||''))throw Error('当前是 CSS 紧急禁用模式，未提交新全局主题；请退出安全模式再应用');
+          input.surface='global';
+          const r=await window.MimaStandalone.handle('/assistant/css-publish','POST',{preset:input});
+          if(!r.success)throw Error(r.msg||'全局 CSS 保存失败');phase='全局主题已提交';savedCss=r.data.preset;
+          const visual=await bridge?.reload?.();
+          const selected=bridge?.getThemeSettings?.();
+          if(selected?.globalCssPresetId!==savedCss.id)throw Error('全局选择回读与提交不一致，主库已提交但显示状态未知');
+          if(visual?.status!=='APPLIED')return notify(`全局 CSS「${savedCss.name}」已提交，但尚未成功显示，原画面保留：${visual?.error||'视觉确认尚未完成'}`);
+          return notify(`全局 CSS「${savedCss.name}」已保存并在全局画面生效`);
+        }
+        input.surface=css.scope==='novel'?'novel':css.scope==='assistant'?'assistant':'chat';
+        const r=await window.MimaStandalone.handle('/css-presets','POST',input);if(!r.success)throw Error(r.msg||'CSS 保存失败');savedCss=r.data;phase='CSS 已保存';
+        if(css.scope==='novel'||css.scope==='assistant'){
+          await bridge?.reload?.();return notify(`CSS「${savedCss.name}」已存入${css.scope==='novel'?'小说':'助手'}专用资源库；请在对应页面选择应用（当前剧情及全局主题未改变）`);
+        }
       }
-      if(session&&bridge){
-        const patch={};if(savedRegex)patch.regexPackIds=[...new Set([...(session.regexPackIds||[]),savedRegex.id])];if(savedPreset)patch.presetIds=[...new Set([...(session.presetIds||[]),savedPreset.id])];if(savedCss&&['story','global','app'].includes(savedCss.scope)){patch.customCssId=savedCss.id;patch.customCssEnabled=true;}if(Object.keys(patch).length){const patched=await bridge.patchCurrent(patch);if(!patched)throw new Error('工件已经保存，但挂载当前剧情失败；未覆盖任何旧数据。');}
-        await bridge.reload();
+      phase='工件已保存';
+      if(session?.id){
+        const patch={sessionId:session.id,presetId:savedPreset?.id||'',regexId:savedRegex?.id||'',cssId:savedCss&&['story','global'].includes(savedCss.scope)?savedCss.id:''};
+        if(patch.presetId||patch.regexId||patch.cssId){
+          // This exact session remains the target even if the user switches
+          // stories while resource saving is pending. Backend uses latest
+          // canonical lists, never the stale client-side session snapshot.
+          const mounted=await window.MimaStandalone.handle('/assistant/mount','POST',patch);
+          if(!mounted.success)throw Error(mounted.msg||'原剧情挂载失败，资源仍已保存');
+        }
+        await bridge?.reload?.();
       }
-      const mounted=!!session;if(savedCss){const autoMounted=mounted&&['story','global','app'].includes(savedCss.scope);notify(autoMounted?`CSS「${savedCss.name}」已保存并应用`:`CSS「${savedCss.name}」已保存${['novel','assistant'].includes(savedCss.scope)?'；它属于独立 Surface，不会误挂到当前剧情':''}`);}else if(savedRegex&&savedPreset)notify(mounted?'正则包 + 配套预设已保存并挂载 ✨':'正则包 + 配套预设已保存；打开剧情后即可挂载 ✨');else if(savedRegex)notify(mounted?`正则包「${savedRegex.name}」已保存并挂载`:`正则包「${savedRegex.name}」已保存`);else if(savedPreset)notify(mounted?`预设「${savedPreset.name}」已保存并挂载`:`预设「${savedPreset.name}」已保存`);
-    }catch(e){notify(`保存工件失败：${e.message||e}`)}
+      if(savedCss)notify(session?`当前剧情 CSS「${savedCss.name}」已保存并选择；全局主题未改变`:`CSS「${savedCss.name}」已保存；进入剧情后可选择应用`);
+      else if(savedRegex&&savedPreset)notify('正则包和配套预设已保存');
+      else if(savedRegex)notify(session?`正则包「${savedRegex.name}」已保存并挂载`:`正则包「${savedRegex.name}」已保存`);
+      else if(savedPreset)notify(session?`预设「${savedPreset.name}」已保存并挂载`:`预设「${savedPreset.name}」已保存`);
+    }catch(e){notify(`${phase==='尚未提交'?'保存失败':phase+'，后续操作未完成'}：${e.message||e}。可再次执行同一工件以安全补完。`)}
   }
 
-  window.MimaAssistantStudio={open,close,switchType,setQuickMode,setConfigOpen,setProfileField,selectModel,loadModels,clearThread,startEdit,cancelEdit,saveEdit,deleteMessage,stop,send,regenerate,repairArtifact,followLatest,saveArtifact,inspectArtifact:raw=>clone(parseArtifactDetailed(raw)),getState:()=>clone(state)};
+  function reloadState(){generationEpoch++;if(generating){controller?.abort();controller=null;generating=false;}state=loadState();editingIndex=-1;regeneratingIndex=-1;draftAssistantText='';nextQuickMode='';generationMode='send';render();return clone(state);}
+  window.MimaAssistantStudio={reloadState,open,close,switchType,setQuickMode,setConfigOpen,setProfileField,selectModel,loadModels,clearThread,startEdit,cancelEdit,saveEdit,deleteMessage,stop,send,regenerate,repairArtifact,followLatest,saveArtifact,inspectArtifact:raw=>clone(parseArtifactDetailed(raw)),getState:()=>clone(state)};
 })();

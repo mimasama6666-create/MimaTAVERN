@@ -520,7 +520,7 @@
    const signature=JSON.stringify(payload);must(signature&&signature.length<3000,'交易内容无效');
    return S().transaction(['drafts'],'readwrite',async t=>{
      const key='wallet_intent:'+slot,existing=await t.get('drafts',key);
-     if(existing&&existing.status!=='committed'){must(existing.signature===signature,'上一笔交易尚未核实，请先用原条件核对，不能另起扣款');return existing;}
+     if(existing&&!['committed','rejected'].includes(existing.status)){must(existing.signature===signature,'上一笔交易尚未核实，请先用原条件核对，不能另起扣款');return existing;}
      // A finished purchase is not a permanent lock. A *new confirmed action*
      // gets a new command ID; an unresolved operation keeps its original ID.
      const row={id:key,commandId:id('cmd_wallet'),signature,slot,status:'pending',createdAt:now()};await t.put('drafts',row);return row;
@@ -529,6 +529,16 @@
  async function finishWalletIntent(slot,commandId,receipt){return S().transaction(['drafts'],'readwrite',async t=>{
    const key='wallet_intent:'+slot,row=await t.get('drafts',key);must(row&&row.commandId===commandId,'交易意图已经更新');
    const next={...row,status:'committed',receipt,finishedAt:now()};await t.put('drafts',next);return next;
+ });}
+ // A wallet command and its event receipt commit in ONE IDB transaction. Resolve a
+ // confirmed local failure against that receipt; never clear an unknown outcome.
+ async function resolveWalletIntentFailure(slot,commandId,reason){return S().transaction(['drafts','events'],'readwrite',async t=>{
+   const key='wallet_intent:'+slot,row=await t.get('drafts',key);
+   must(row&&row.commandId===commandId,'交易意图身份已经变化，不能清理新的交易');
+   const receipts=await t.byIndex('events','commandId',commandId);
+   if(receipts.length){const next={...row,status:'committed',receipt:receipts[0].result,finishedAt:now(),reconciled:true};await t.put('drafts',next);return {status:'committed',result:receipts[0].result};}
+   const next={...row,status:'rejected',error:String(reason||'本地交易未完成').slice(0,500),finishedAt:now()};
+   await t.put('drafts',next);return {status:'rejected'};
  });}
  async function resetWalletIntent(slot){return S().transaction(['drafts'],'readwrite',async t=>{await t.delete('drafts','wallet_intent:'+slot);return true;});}
  async function readWalletIntent(slot){return S().read('drafts','wallet_intent:'+slot);}
@@ -702,5 +712,5 @@
      const done={...job,status:'failed',error:String(error),raw:String(raw),finishedAt:now()};await t.put('drafts',done);return done;
    });
  }
- window.MimaPhoneDomain=Object.freeze({owner,walletIntent,finishWalletIntent,resetWalletIntent,readWalletIntent,prepareSocialGeneration,stageSocialCandidate,stageSocialPlan,reviseSocialPlan,finishSocialPlan,finishSocialGeneration,failSocialGeneration,cancelSocialGeneration,pendingSocialGenerations,settings,setSettings,promptDigest,transferInThread,giftInThread,actorResources,setActorResources,effectiveResources,selectSpeakers,readNotice,addContact,contacts,updateContact,createConversation,threads,thread,updateThread,history,allMessages,post,editMessage,restoreMessage,prepareGeneration,restartGeneration,finishGeneration,checkpointGenerationDraft,cancelGeneration,failGeneration,recoverGeneration,generations,moments,createMoment,editMoment,comments,comment,editComment,deleteComment,react,reactions,notices,acl,balance,issue,transfer,catalog,buyGift,giftItem,settleGift,inventory,orders,ledger,addMemory,approveMemory,allMemories,memories,grantMemory,revokeMemory,beginMemorySummary,finishMemorySummary,failMemorySummary,cancelMemorySummary,saveDraft,readDraft});
+ window.MimaPhoneDomain=Object.freeze({owner,walletIntent,finishWalletIntent,resolveWalletIntentFailure,resetWalletIntent,readWalletIntent,prepareSocialGeneration,stageSocialCandidate,stageSocialPlan,reviseSocialPlan,finishSocialPlan,finishSocialGeneration,failSocialGeneration,cancelSocialGeneration,pendingSocialGenerations,settings,setSettings,promptDigest,transferInThread,giftInThread,actorResources,setActorResources,effectiveResources,selectSpeakers,readNotice,addContact,contacts,updateContact,createConversation,threads,thread,updateThread,history,allMessages,post,editMessage,restoreMessage,prepareGeneration,restartGeneration,finishGeneration,checkpointGenerationDraft,cancelGeneration,failGeneration,recoverGeneration,generations,moments,createMoment,editMoment,comments,comment,editComment,deleteComment,react,reactions,notices,acl,balance,issue,transfer,catalog,buyGift,giftItem,settleGift,inventory,orders,ledger,addMemory,approveMemory,allMemories,memories,grantMemory,revokeMemory,beginMemorySummary,finishMemorySummary,failMemorySummary,cancelMemorySummary,saveDraft,readDraft});
 })();

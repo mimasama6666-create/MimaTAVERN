@@ -6,6 +6,9 @@
   const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
   let expandedDetails=new Map(),chapterSearch='',lastRenderedProject='',lastRenderedChapter='',pendingEditors=new Map();
   let novelMemoryTask=null;
+  let viewEpoch=0;
+  // Serialise PATCHes only within the same novel: unrelated novels must remain navigable.
+  const chapterSelectionQueues=new Map();
   let summaries=[],project=null,assets={presets:[],worldbooks:[],cssPresets:[],themeSettings:{theme:'default'}},mobileTab='reader',busy=false,progressState=null,promptInspector=null;
   const notify=msg=>typeof root.toast==='function'?root.toast(msg):console.info('[Novel Studio]',msg);
   async function route(path,method='GET',body=null,progress=null){
@@ -24,82 +27,148 @@
   function activeChapter(){return project&&root.MimaNovelEngine.getChapter(project,project.activeChapterId)}
   function chapterText(c=activeChapter()){return root.MimaNovelEngine.getChapterText(c||{})}
   function latestDraft(){if(!project)return null;return arr(project.drafts).filter(d=>d.chapterId===project.activeChapterId&&!['rejected','accepted'].includes(d.status)).sort((a,b)=>String(b.updatedAt).localeCompare(String(a.updatedAt)))[0]||null}
-  async function refreshAssets(){assets=await route('/novel-assets')}
-  async function refresh(projectId=project?.id){summaries=await route('/novels');await refreshAssets();if(projectId){try{project=await route(`/novels/${projectId}`)}catch(_){project=null}}else if(!project&&summaries.length)project=await route(`/novels/${summaries[0].id}`);render();return project}
-  async function open(projectId=null){$('novel-modal')?.classList.remove('hidden');mobileTab='reader';await refresh(projectId)}
-  function close(){$('novel-modal')?.classList.add('hidden')}
-  async function createProject(){const title=prompt('小说项目名称','未命名小说');if(title===null)return;project=await route('/novels','POST',{title});summaries=await route('/novels');render()}
+  function captureView(){return {projectId:project?.id??null,chapterId:project?.activeChapterId??null,epoch:viewEpoch};}
+  function mayApplyResponse(view){return !!view&&view.epoch===viewEpoch&&project?.id===view.projectId&&project?.activeChapterId===view.chapterId;}
+  function applyProjectResponse(view,saved,{renderNow=true}={}){
+    if(!mayApplyResponse(view))return false;
+    project=saved;if(renderNow)render();return true;
+  }
+  async function refresh(projectId=project?.id){
+    const epoch=++viewEpoch;
+    const nextSummaries=await route('/novels');
+    const nextAssets=await route('/novel-assets');
+    let nextProject=null;
+    const targetId=projectId||(nextSummaries.length?nextSummaries[0].id:null);
+    if(targetId){try{nextProject=await route(`/novels/${targetId}`)}catch(e){if(epoch!==viewEpoch)return project;console.warn('小说目标项目读取失败',e)}}
+    if(epoch!==viewEpoch)return project;
+    summaries=nextSummaries;assets=nextAssets;project=nextProject;promptInspector=null;render();return project;
+  }
+  async function open(projectId=null){$('novel-modal')?.classList.remove('hidden');mobileTab='reader';await refresh(projectId||project?.id||null)}
+  function close(){++viewEpoch;$('novel-modal')?.classList.add('hidden')}
+  async function createProject(){
+    const title=prompt('小说项目名称','未命名小说');if(title===null)return;
+    const epoch=++viewEpoch,created=await route('/novels','POST',{title});
+    const nextSummaries=await route('/novels');
+    if(epoch!==viewEpoch){notify('新小说项目已保存，可在项目列表重新打开');return}
+    project=created;summaries=nextSummaries;promptInspector=null;render();
+  }
   function chooseTxt(){$('novel-file-input').value='';$('novel-file-input').click()}
   async function decodeTxtFile(file){const buf=await file.arrayBuffer(),u8=new Uint8Array(buf);if(u8[0]===0xff&&u8[1]===0xfe)return{encoding:'utf-16le',text:new TextDecoder('utf-16le').decode(buf)};if(u8[0]===0xef&&u8[1]===0xbb&&u8[2]===0xbf)return{encoding:'utf-8',text:new TextDecoder('utf-8').decode(buf)};try{return{encoding:'utf-8',text:new TextDecoder('utf-8',{fatal:true}).decode(buf)}}catch(_){}try{return{encoding:'gb18030',text:new TextDecoder('gb18030',{fatal:true}).decode(buf)}}catch(_){}return{encoding:'utf-8-lossy',text:new TextDecoder('utf-8').decode(buf)};}
-  async function importTxt(file){if(!file)return;busy=true;render();try{const decoded=await decodeTxtFile(file);project=await route('/novels/import','POST',{title:file.name.replace(/\.[^.]+$/,''),sourceName:file.name,sourceEncoding:decoded.encoding,text:decoded.text});summaries=await route('/novels');notify(`已识别 ${project.chapterOrder.length} 个篇章 · ${decoded.encoding}`);}catch(e){reportNovelError(e,'导入 TXT')}finally{busy=false;render()}}
+  async function importTxt(file){if(!file)return;const epoch=++viewEpoch;busy=true;render();try{const decoded=await decodeTxtFile(file);const saved=await route('/novels/import','POST',{title:file.name.replace(/\.[^.]+$/,''),sourceName:file.name,sourceEncoding:decoded.encoding,text:decoded.text});const nextSummaries=await route('/novels');if(epoch===viewEpoch){project=saved;summaries=nextSummaries;promptInspector=null;}notify(`已识别 ${saved.chapterOrder.length} 个篇章 · ${decoded.encoding}`);}catch(e){reportNovelError(e,'导入 TXT')}finally{busy=false;render()}}
   async function reparseChapters(){if(!project||busy)return;
     if(!confirm('从原始 TXT 重新识别章节？仅限未人工编辑、未生成续写的原始项目，不会改动最初导入的 TXT。'))return;
-    try{project=await route(`/novels/${project.id}/reparse`,'POST',{});notify(`现已识别 ${project.chapterOrder.length} 个篇章`);render();}catch(e){reportNovelError(e,'重新识别章节')}
+    const view=captureView();try{const saved=await route(`/novels/${view.projectId}/reparse`,'POST',{});applyProjectResponse(view,saved);notify(`现已识别 ${saved.chapterOrder.length} 个篇章`);}catch(e){reportNovelError(e,'重新识别章节')}
   }
 
-  async function patchProject(patch){if(!project)return;project=await route(`/novels/${project.id}`,'PATCH',patch);summaries=await route('/novels');render()}
-  async function selectProject(id){project=await route(`/novels/${id}`);mobileTab='reader';promptInspector=null;render()}
-  async function selectChapter(id){mobileTab='reader';await patchProject({activeChapterId:id});}
-  async function saveChapter(){const c=activeChapter(),ta=$('novel-chapter-editor');if(!c||!ta)return;const submitted=ta.value,chapterKey=`${project.id}:${c.id}`;project=await route(`/novels/${project.id}/chapters/${c.id}`,'PATCH',{action:'replace_text',content:submitted});if(ta.value===submitted){ta.dataset.dirty='0';pendingEditors.delete(chapterKey);}else{pendingEditors.set(chapterKey,ta.value);}notify('正文已保存；相关剧情档案已标记需要更新');render()}
-  async function chapterAction(action,payload={}){const c=activeChapter();if(!c)return;try{project=await route(`/novels/${project.id}/chapters/${c.id}`,'PATCH',{action,...payload});render()}catch(e){alert(e.message)}}
+  async function patchProject(patch){
+    if(!project)return;const view=captureView();
+    const saved=await route(`/novels/${view.projectId}`,'PATCH',patch);
+    applyProjectResponse(view,saved);
+    const nextSummaries=await route('/novels');if(mayApplyResponse(view))summaries=nextSummaries;
+  }
+  function stillViewing(projectId,chapterId,epoch){return mayApplyResponse({projectId,chapterId,epoch});}
+  async function selectProject(id){const epoch=++viewEpoch;const loaded=await route(`/novels/${id}`);if(epoch!==viewEpoch)return;project=loaded;mobileTab='reader';promptInspector=null;render();}
+  async function selectChapter(id){
+    if(!project)return;
+    const projectId=project.id,epoch=++viewEpoch;mobileTab='reader';
+    const run=async()=>{
+      // A queued selection superseded by subsequent navigation must not write an obsolete target.
+      if(epoch!==viewEpoch||project?.id!==projectId)return;
+      const saved=await route(`/novels/${projectId}`,'PATCH',{activeChapterId:id});
+      if(epoch!==viewEpoch||project?.id!==projectId)return;
+      project=saved;render();
+    };
+    const preceding=chapterSelectionQueues.get(projectId)||Promise.resolve();
+    const task=preceding.then(run,run).catch(e=>{
+      // A failed PATCH is not a successful chapter change. Report it, even if the user moved on.
+      if(epoch===viewEpoch&&project?.id===projectId)reportNovelError(e,'切换小说章节');
+      else notify(`小说 ${projectId} 的章节切换失败：${e?.message||String(e)}（当前阅读位置未改变）`);
+    });
+    chapterSelectionQueues.set(projectId,task);
+    void task.finally(()=>{
+      // A completed earlier task must not delete a newer queued selection for this novel.
+      if(chapterSelectionQueues.get(projectId)===task)chapterSelectionQueues.delete(projectId);
+    });
+    return task;
+  }
+  async function saveChapter(){
+    const c=activeChapter(),ta=$('novel-chapter-editor');if(!c||!ta)return;
+    const view=captureView(),submitted=ta.value,chapterKey=`${view.projectId}:${c.id}`;
+    const saved=await route(`/novels/${view.projectId}/chapters/${c.id}`,'PATCH',{action:'replace_text',content:submitted});
+    if(pendingEditors.get(chapterKey)===submitted)pendingEditors.delete(chapterKey);
+    if(mayApplyResponse(view)){
+      if($('novel-chapter-editor')===ta&&ta.value===submitted){ta.dataset.dirty='0';pendingEditors.delete(chapterKey)}
+      else if($('novel-chapter-editor')===ta)pendingEditors.set(chapterKey,ta.value);
+      applyProjectResponse(view,saved);
+    }
+    notify('正文已保存；相关剧情档案已标记需要更新');
+  }
+  async function chapterAction(action,payload={}){
+    const c=activeChapter();if(!c)return;const view=captureView();
+    try{const saved=await route(`/novels/${view.projectId}/chapters/${c.id}`,'PATCH',{action,...payload});applyProjectResponse(view,saved)}catch(e){alert(e.message)}
+  }
   async function renameChapter(){const c=activeChapter(),title=prompt('章节标题',c?.title||'');if(title!==null)await chapterAction('rename',{title})}
   async function splitChapter(){const ta=$('novel-chapter-editor');let at=ta&&ta.selectionStart>0&&ta.selectionStart<ta.value.length?ta.selectionStart:null;
     if(at===null){const text=chapterText(),answer=prompt(`请先展开「编辑本章合并正文」，将光标停在分章位置；或输入拆分字符位置（1-${Math.max(1,text.length-1)}）`,String(Math.max(1,Math.floor(text.length/2))));if(answer===null)return;at=Number(answer)}
     if(Number.isInteger(at)&&at>0)await chapterAction('split',{index:at});
   }
   async function saveSegment(id){const input=$(`novel-segment-editor-${id}`),c=activeChapter();if(!input||!c)return;
-    try{project=await route(`/novels/${project.id}/chapters/${c.id}`,'PATCH',{action:'edit_segment',segmentId:id,content:input.value});notify('片段已保存，相关剧情档案需要更新');render()}catch(e){reportNovelError(e,'保存续写/原文片段')}
+    const view=captureView(),content=input.value;try{const saved=await route(`/novels/${view.projectId}/chapters/${c.id}`,'PATCH',{action:'edit_segment',segmentId:id,content});applyProjectResponse(view,saved);notify('片段已保存，相关剧情档案需要更新')}catch(e){reportNovelError(e,'保存续写/原文片段')}
   }
 
   async function moveChapter(delta){const c=activeChapter();if(!c)return;const i=project.chapterOrder.indexOf(c.id),to=Math.max(0,Math.min(project.chapterOrder.length-1,i+Number(delta||0)));if(to===i)return;await chapterAction('move',{toIndex:to})}
   async function deleteChapter(){if(confirm('删除当前章节？此操作不会修改最初导入的 source snapshot，但会让后续剧情档案失效。'))await chapterAction('delete')}
-  async function deleteProject(){if(!project||!confirm(`删除小说项目「${project.title}」？`))return;await route(`/novels/${project.id}`,'DELETE');project=null;await refresh()}
-  async function previewPrompt(){if(!project)return;try{promptInspector=await route(`/novels/${project.id}/prompt-preview`,'POST',{directorNote:$('novel-director-note')?.value||''});mobileTab='memory';render()}catch(e){alert(`Prompt 预览失败：${e.message}`)}}
+  async function deleteProject(){if(!project||!confirm(`删除小说项目「${project.title}」？`))return;const id=project.id,epoch=++viewEpoch;await route(`/novels/${id}`,'DELETE');if(epoch!==viewEpoch||project?.id!==id)return;project=null;await refresh(null)}
+  async function previewPrompt(){if(!project)return;const view=captureView(),directorNote=$('novel-director-note')?.value||'';try{const result=await route(`/novels/${view.projectId}/prompt-preview`,'POST',{directorNote});if(mayApplyResponse(view)){promptInspector=result;mobileTab='memory';render()}}catch(e){alert(`Prompt 预览失败：${e.message}`)}}
   function generationProgress(ev){progressState=ev||{};renderDraftArea()}
   async function continueNovel(mode='current'){
     if(!project||busy)return;
-    // Capture user input BEFORE render() removes and recreates the textarea.
-    const directorNote=$('novel-director-note')?.value||'';
-    const requestedMinimum=$('novel-minimum')?.value;
-    const minimumChars=requestedMinimum===''||requestedMinimum===undefined?project.generationSettings.minimumChars:Math.max(0,Number(requestedMinimum)||0);
+    const projectId=project.id,chapterId=project.activeChapterId,epoch=viewEpoch;
+    const directorNote=$('novel-director-note')?.value||'',rawMinimum=$('novel-minimum')?.value;
+    const minimumChars=rawMinimum===''||rawMinimum===undefined?project.generationSettings.minimumChars:Math.max(0,Number(rawMinimum)||0);
     busy=true;progressState={phase:'requesting',percent:2,detail:'正在准备续写…'};render();
     try{
-      if(mode==='new'){project=await route(`/novels/${project.id}/chapters`,'POST',{title:''});}
-      const res=await route(`/novels/${project.id}/continue`,'POST',{chapterId:project.activeChapterId,directorNote,minimumChars},generationProgress);
-      project=res.project||await route(`/novels/${project.id}`);
+      // The backend creates a candidate chapter and its Generation together;
+      // never issue a separate irreversible 'new chapter' POST first.
+      const res=await route(`/novels/${projectId}/continue`,'POST',{chapterId,directorNote,minimumChars,newChapter:mode==='new'},ev=>{if(stillViewing(projectId,chapterId,epoch))generationProgress(ev)});
+      if(stillViewing(projectId,chapterId,epoch)){const saved=res.project||await route(`/novels/${projectId}`);if(stillViewing(projectId,chapterId,epoch))project=saved;}
       notify(res.interrupted?'生成中断；保留收到的 Draft 和错误详情':'Draft 已生成；确认后采纳进入正文');
-    }catch(e){try{project=await route(`/novels/${project.id}`)}catch(_){}reportNovelError(e,mode==='new'?'新篇章续写':'本章续写')}
-    finally{busy=false;progressState=null;render()}
+    }catch(e){
+      if(stillViewing(projectId,chapterId,epoch)){try{const updated=await route(`/novels/${projectId}`);if(stillViewing(projectId,chapterId,epoch))project=updated}catch(_){}}
+      reportNovelError(e,mode==='new'?'新篇章续写':'本章续写');
+    }finally{busy=false;progressState=null;render()}
   }
 
   async function continueDraft(id=null){const d=id?draftById(id):latestDraft();if(!d||busy)return;
+    const projectId=project.id,chapterId=project.activeChapterId,epoch=viewEpoch;
     const directorNote=$('novel-director-note')?.value||'',minimumChars=$('novel-minimum')?.value;
     busy=true;progressState={phase:'requesting',percent:2,detail:'继续同一个 Generation…'};render();
-    try{const res=await route(`/novels/${project.id}/drafts/${d.id}/continue`,'POST',{directorNote,minimumChars:minimumChars===''?project.generationSettings.minimumChars:Number(minimumChars)},generationProgress);project=res.project;notify(res.interrupted?'仍有传输中断，已保留 Draft':'本次 Draft 已继续补写')}catch(e){reportNovelError(e,'继续补写')}finally{busy=false;progressState=null;render()}
+    try{const res=await route(`/novels/${projectId}/drafts/${d.id}/continue`,'POST',{directorNote,minimumChars:minimumChars===''?project.generationSettings.minimumChars:Number(minimumChars)},ev=>{if(stillViewing(projectId,chapterId,epoch))generationProgress(ev)});if(stillViewing(projectId,chapterId,epoch))project=res.project;notify(res.interrupted?'仍有传输中断，已保留 Draft':'本次 Draft 已继续补写')}
+    catch(e){reportNovelError(e,'继续补写')}finally{busy=false;progressState=null;render()}
   }
-  async function editDraft(id=null){const d=id?draftById(id):latestDraft();if(!d||['accepted','rejected'].includes(d.status))return;const next=prompt('编辑这一条 Draft',d.content);if(next===null)return;try{project=await route(`/novels/${project.id}/drafts/${d.id}`,'PATCH',{content:next});render()}catch(e){reportNovelError(e,'编辑 Draft')}}
-  async function rejectDraft(id=null){const d=id?draftById(id):latestDraft();if(!d||['accepted','rejected'].includes(d.status))return;if(confirm('丢弃本条 Draft？正文和已归档续写不受影响。')){project=await route(`/novels/${project.id}/drafts/${d.id}`,'DELETE');render()}}
+  async function editDraft(id=null){const d=id?draftById(id):latestDraft();if(!d||['accepted','rejected'].includes(d.status))return;const next=prompt('编辑这一条 Draft',d.content);if(next===null)return;const view=captureView();try{const saved=await route(`/novels/${view.projectId}/drafts/${d.id}`,'PATCH',{content:next});applyProjectResponse(view,saved)}catch(e){reportNovelError(e,'编辑 Draft')}}
+  async function rejectDraft(id=null){const d=id?draftById(id):latestDraft();if(!d||['accepted','rejected'].includes(d.status))return;if(confirm('丢弃本条 Draft？正文和已归档续写不受影响。')){const view=captureView();const saved=await route(`/novels/${view.projectId}/drafts/${d.id}`,'DELETE');applyProjectResponse(view,saved)}}
   async function regenerateDraft(id=null){const d=id?draftById(id):latestDraft();if(!d||busy||['accepted','rejected'].includes(d.status))return;
-    const directorNote=$('novel-director-note')?.value||'';busy=true;render();try{const res=await route(`/novels/${project.id}/drafts/${d.id}/regenerate`,'POST',{directorNote},generationProgress);project=res.project;}catch(e){reportNovelError(e,'重写 Draft')}finally{busy=false;render()}
+    const projectId=project.id,chapterId=project.activeChapterId,epoch=viewEpoch;const directorNote=$('novel-director-note')?.value||'';busy=true;render();try{const res=await route(`/novels/${projectId}/drafts/${d.id}/regenerate`,'POST',{directorNote},ev=>{if(stillViewing(projectId,chapterId,epoch))generationProgress(ev)});if(stillViewing(projectId,chapterId,epoch))project=res.project;}catch(e){reportNovelError(e,'重写 Draft')}finally{busy=false;render()}
   }
-  async function acceptDraft(id=null){const d=id?draftById(id):latestDraft();if(!d||busy||['accepted','rejected'].includes(d.status))return;busy=true;render();try{project=await route(`/novels/${project.id}/drafts/${d.id}/accept`,'POST',{},generationProgress);notify('已采纳；正在按实际正文增量更新剧情档案')}catch(e){reportNovelError(e,'采纳 Draft')}finally{busy=false;render()}}
+  async function acceptDraft(id=null){const d=id?draftById(id):latestDraft();if(!d||busy||['accepted','rejected'].includes(d.status))return;const projectId=project.id,chapterId=project.activeChapterId,epoch=viewEpoch;busy=true;render();try{const saved=await route(`/novels/${projectId}/drafts/${d.id}/accept`,'POST',{},ev=>{if(stillViewing(projectId,chapterId,epoch))generationProgress(ev)});if(stillViewing(projectId,chapterId,epoch)){project=saved;if(saved?.memoryStatus?.status==='degraded'){notify('正文已成功采纳并保存，但剧情档案分析失败；原文安全保留，可在「剧情档案」单独重建。');alert('正文已保存，不需要重复采纳。\n剧情档案更新失败：'+(saved.memoryStatus.error||'未知错误')+'\n请前往「剧情档案」重试分析。');}else{notify(saved?.memoryStatus?.status==='fresh'?'正文已采纳，剧情档案同步成功':'正文已采纳并保存；剧情档案状态：'+(saved?.memoryStatus?.status||'待检查'));}}}catch(e){reportNovelError(e,'采纳 Draft')}finally{busy=false;render()}}
 
   function novelMemoryProgress(ev){
     if(!novelMemoryTask)return;
     const previous=Number(novelMemoryTask.progress?.percent)||0;
     novelMemoryTask.progress={...novelMemoryTask.progress,...ev,percent:Math.max(previous,Number(ev?.percent)||0)};
-    const node=$('novel-memory-progress');if(node)node.textContent=novelMemoryTask.progress.detail||'正在总结章节…';
+    const node=mayApplyResponse(novelMemoryTask.view)?$('novel-memory-progress'):null;if(node)node.textContent=novelMemoryTask.progress.detail||'正在总结章节…';
   }
   async function runNovelMemory(kind){
     if(!project||busy)return;
-    const projectId=project.id,chapterId=project.activeChapterId;
-    const task={projectId,kind,progress:{percent:3,detail:'正在准备章节材料…'}};
+    const view=captureView(),projectId=view.projectId,chapterId=view.chapterId;
+    const task={projectId,kind,view,progress:{percent:3,detail:'正在准备章节材料…'}};
     busy=true;novelMemoryTask=task;render();
     try{
       const routePath=kind==='chapter'?`/novels/${projectId}/memory/chapter/${chapterId}`:`/novels/${projectId}/memory/rebuild`;
       const saved=await route(routePath,'POST',{},novelMemoryProgress);
       // Preserve project selection when user has browsed elsewhere during the task.
-      if(project?.id===projectId)project=saved;
+      applyProjectResponse(task.view,saved,{renderNow:false});
       notify(kind==='chapter'?`已保存章节档案 · ${projectId}`:`已保存重建的剧情档案 · ${projectId}`);
     }catch(e){reportNovelError(e,kind==='chapter'?'总结章节':'重建剧情档案')}
     finally{if(novelMemoryTask===task)novelMemoryTask=null;busy=false;render()}
@@ -107,11 +176,11 @@
   async function analyzeCurrent(){return runNovelMemory('chapter')}
   async function rebuildMemory(){if(!project||busy||!confirm('重新分析全部章节？不会更改正文。'))return;return runNovelMemory('rebuild')}
   async function resetModelSettings(){await patchProject({modelSettings:{model:'',temperature:null,sendTemperature:null,streaming:null,maxTokens:0}});notify('小说模型设置已恢复继承主 API')}
-  async function testNovelConnection(){if(!project||busy)return;busy=true;render();try{const r=await route(`/novels/${project.id}/test-connection`,'POST');notify(`小说连接通过 · ${r.model}`);alert(`连接测试通过：${r.model}。\n总结（非流式）：${r.summary_nonstream?.chars||0} 字符\n续写（${r.streamSetting?'流式':'非流式'}）：${r.continuation?.chars||0} 字符。`)}catch(e){reportNovelError(e,'测试小说模型连接')}finally{busy=false;render()}}
+  async function testNovelConnection(){if(!project||busy)return;const view=captureView();busy=true;render();try{const r=await route(`/novels/${view.projectId}/test-connection`,'POST');notify(`小说连接通过 · ${r.model}`);alert(`连接测试通过：${r.model}。\n总结（非流式）：${r.summary_nonstream?.chars||0} 字符\n续写（${r.streamSetting?'流式':'非流式'}）：${r.continuation?.chars||0} 字符。`)}catch(e){reportNovelError(e,'测试小说模型连接')}finally{busy=false;render()}}
 
   async function setTheme(theme){const saved=await route('/theme','PATCH',{theme});assets.themeSettings={...assets.themeSettings,...saved};root.MimaThemeEngine?.apply?.(saved);render()}
-  async function setProjectValue(path,value){const patch={};if(path.startsWith('model.'))patch.modelSettings={...project.modelSettings,[path.slice(6)]:value};else if(path.startsWith('generation.'))patch.generationSettings={...project.generationSettings,[path.slice(11)]:value};else if(path.startsWith('appearance.'))patch.appearance={...project.appearance,[path.slice(11)]:value};if(!project)return;
-    project=await route(`/novels/${project.id}`,'PATCH',patch);
+  async function setProjectValue(path,value){if(!project)return;const view=captureView(),source=project;const patch={};if(path.startsWith('model.'))patch.modelSettings={...source.modelSettings,[path.slice(6)]:value};else if(path.startsWith('generation.'))patch.generationSettings={...source.generationSettings,[path.slice(11)]:value};else if(path.startsWith('appearance.'))patch.appearance={...source.appearance,[path.slice(11)]:value};const saved=await route(`/novels/${view.projectId}`,'PATCH',patch);
+    if(!mayApplyResponse(view))return;project=saved;
     // Do not replace the editor DOM on input blur: the click that follows may be cancelled, losing the Director Note.
     if(path.startsWith('appearance.'))applyProjectAppearance();
   }
@@ -135,17 +204,33 @@
     box.innerHTML=`${live?`<section class="novel-draft"><div class="novel-draft-head"><strong>正在生成本轮续写</strong><span>${root.MimaNovelEngine.countVisibleChars(live)} 字</span></div><div class="novel-draft-prose">${proseHtml(live)}</div></section>`:''}`+
       (drafts.length?`<section class="novel-draft-history"><h3>续写记录 · ${drafts.length} 条</h3>${drafts.map((d,i)=>{
         const archive=['accepted','rejected'].includes(d.status),size=root.MimaNovelEngine.countVisibleChars(d.content||'');
-        return `<details data-state-key="draft:${d.id}" class="novel-draft-record" ${!archive&&i===0?'open':''}><summary><strong>第 ${drafts.length-i} 次续写</strong><span>${esc(d.metadata?.requiresRebase?'合并后需重写':d.status)} · ${size} 字</span></summary><div class="novel-draft-record-body">${archive?'<p class="row-sub">已归档。已采纳正文在上方按段落查看，废弃草稿不会影响正文。</p>':`<div class="novel-draft-prose">${proseHtml(d.content)}</div><div class="novel-draft-actions">${!d.metadata?.requiresRebase&&['interrupted','incomplete'].includes(d.status)?`<button class="ghost-btn" onclick="MimaNovelStudio.continueDraft('${d.id}')">继续补写</button>`:''}<button class="ghost-btn" onclick="MimaNovelStudio.editDraft('${d.id}')">编辑</button><button class="ghost-btn" onclick="MimaNovelStudio.regenerateDraft('${d.id}')">↻ 重写</button><button class="danger-btn" onclick="MimaNovelStudio.rejectDraft('${d.id}')">删除</button><button class="primary-btn" ${d.metadata?.requiresRebase?'disabled title="合并章节后输入依据已变化，请先重写"':''} onclick="MimaNovelStudio.acceptDraft('${d.id}')">✓ 采纳</button></div>`}</div></details>`;
+        return `<details data-state-key="draft:${d.id}" class="novel-draft-record" ${!archive&&i===0?'open':''}><summary><strong>第 ${drafts.length-i} 次续写</strong><span>${esc(d.metadata?.requiresRebase?'合并后需重写':d.status==='generating'&&!busy?'上次请求状态未知（可查看本机已收草稿）':d.status)} · ${size} 字</span></summary><div class="novel-draft-record-body">${archive?'<p class="row-sub">已归档。已采纳正文在上方按段落查看，废弃草稿不会影响正文。</p>':`<div class="novel-draft-prose">${proseHtml(d.content)}</div><div class="novel-draft-actions">${!d.metadata?.requiresRebase&&(['interrupted','incomplete'].includes(d.status)||(d.status==='generating'&&!busy))?`<button class="ghost-btn" onclick="MimaNovelStudio.continueDraft('${d.id}')">手动继续补写（可能计费）</button>`:''}<button class="ghost-btn" onclick="MimaNovelStudio.editDraft('${d.id}')">编辑</button><button class="ghost-btn" onclick="MimaNovelStudio.regenerateDraft('${d.id}')">↻ 重写</button><button class="danger-btn" onclick="MimaNovelStudio.rejectDraft('${d.id}')">删除</button><button class="primary-btn" ${d.metadata?.requiresRebase||d.status==='generating'?'disabled title="续写尚未完成或输入依据已改变，不能采纳；请先手动完成或编辑"':''} onclick="MimaNovelStudio.acceptDraft('${d.id}')">✓ 采纳</button></div>`}</div></details>`;
       }).join('')}</section>`:'');
   }
-  function readerHtml(){const c=activeChapter(),body=chapterText(c);if(!c)return'<div class="novel-empty">选择或导入一本小说。</div>';return `<div class="novel-reader-head"><div><span class="eyebrow">NOVEL READER</span><button class="tool-mini novel-quick-chapters" onclick="MimaNovelStudio.setTab('chapters')">☷ 章节目录 · ${project.chapterOrder.length}</button><h2>${esc(c.title)}</h2><small>${root.MimaNovelEngine.countVisibleChars(body)} 字 · ${c.segments.length} 段归档</small></div><div class="toolbar"><button class="tool-mini" onclick="MimaNovelStudio.renameChapter()">改名</button><button class="tool-mini" onclick="MimaNovelStudio.splitChapter()">拆章</button><button class="tool-mini" onclick="MimaNovelStudio.moveChapter(-1)">↑ 上移</button><button class="tool-mini" onclick="MimaNovelStudio.moveChapter(1)">↓ 下移</button><button class="tool-mini" onclick="MimaNovelStudio.chapterAction('merge_next')">并下章</button><button class="tool-mini danger" onclick="MimaNovelStudio.deleteChapter()">删除</button></div></div><div class="novel-chapter-archive">${renderChapterArchive(c)}</div><details class="novel-editor-details"><summary>编辑本章合并正文（会合并归档片段）</summary><textarea id="novel-chapter-editor" class="field textarea novel-editor">${esc(body)}</textarea><button class="primary-btn" onclick="MimaNovelStudio.saveChapter()">保存整章</button></details><div id="novel-draft-area"></div><section class="novel-director-box"><label>续写要求（可选）</label><textarea id="novel-director-note" class="field textarea" placeholder="例如：这一段重点写争执；暂时不要揭露凶手身份。"></textarea><div class="novel-generate-row"><label>最低字数 <input id="novel-minimum" class="field" type="number" min="0" value="${Number(project.generationSettings?.minimumChars)||0}" onchange="MimaNovelStudio.setProjectValue('generation.minimumChars',Number(this.value))"></label><div class="novel-generation-actions"><button class="primary-btn novel-continue-btn" ${busy?'disabled':''} onclick="MimaNovelStudio.continueNovel('current')">✒ 续写本章</button><button class="ghost-btn" ${busy?'disabled':''} onclick="MimaNovelStudio.continueNovel('new')">＋ 新篇章续写</button></div></div></section>`;}
+  function canDiscardEmptyAutoChapter(){
+    const c=activeChapter();if(!c?.autoCreatedRunId||busy||c.revision!==1||c.updatedAt!==c.createdAt||
+      c.title!==c.autoCreatedInitialTitle||c.segments?.length)return false;
+    const drafts=(project.drafts||[]).filter(d=>d.chapterId===c.id),runs=(project.generations||[]).filter(g=>g.chapterId===c.id);
+    return drafts.length===1&&runs.length===1&&drafts[0].generationId===runs[0].id&&
+      runs[0].runIdentity===c.autoCreatedRunId&&!String(drafts[0].content||'').length;
+  }
+  async function discardEmptyAutoChapter(){
+    if(!project||!canDiscardEmptyAutoChapter())return;
+    if(!confirm('这是一次未完成的自动新篇章，尚未收到任何正文。若其它标签页仍在生成，撤销后其迟到结果将不能写入。确认安全撤销这个空章吗？'))return;
+    const id=project.id,chapterId=project.activeChapterId,epoch=viewEpoch;
+    try{const saved=await route(`/novels/${id}/chapters/${chapterId}/discard-empty-auto`,'POST',{});
+      if(stillViewing(id,chapterId,epoch)){project=saved;render()}
+      notify('已安全撤销未完成的自动空篇章；原正文及其他 Draft 未改动');
+    }catch(e){reportNovelError(e,'撤销自动空篇章')}
+  }
+  function readerHtml(){const c=activeChapter(),body=chapterText(c);if(!c)return'<div class="novel-empty">选择或导入一本小说。</div>';return `<div class="novel-reader-head"><div><span class="eyebrow">NOVEL READER</span><button class="tool-mini novel-quick-chapters" onclick="MimaNovelStudio.setTab('chapters')">☷ 章节目录 · ${project.chapterOrder.length}</button><h2>${esc(c.title)}</h2><small>${root.MimaNovelEngine.countVisibleChars(body)} 字 · ${c.segments.length} 段归档</small></div><div class="toolbar"><button class="tool-mini" onclick="MimaNovelStudio.renameChapter()">改名</button><button class="tool-mini" onclick="MimaNovelStudio.splitChapter()">拆章</button><button class="tool-mini" onclick="MimaNovelStudio.moveChapter(-1)">↑ 上移</button><button class="tool-mini" onclick="MimaNovelStudio.moveChapter(1)">↓ 下移</button><button class="tool-mini" onclick="MimaNovelStudio.chapterAction('merge_next')">并下章</button><button class="tool-mini danger" onclick="MimaNovelStudio.deleteChapter()">删除</button></div></div><div class="novel-chapter-archive">${renderChapterArchive(c)}</div><details class="novel-editor-details"><summary>编辑本章合并正文（会合并归档片段）</summary><textarea id="novel-chapter-editor" class="field textarea novel-editor">${esc(body)}</textarea><button class="primary-btn" onclick="MimaNovelStudio.saveChapter()">保存整章</button></details><div id="novel-draft-area"></div>${canDiscardEmptyAutoChapter()?'<div class="novel-auto-chapter-recovery"><p class="row-sub">这是上次请求留下的自动空篇章，尚未收到可保存正文。不会自动发起收费重试。</p><button class="ghost-btn" onclick="MimaNovelStudio.discardEmptyAutoChapter()">撤销未完成的空篇章</button></div>':''}<section class="novel-director-box"><label>续写要求（可选）</label><textarea id="novel-director-note" class="field textarea" placeholder="例如：这一段重点写争执；暂时不要揭露凶手身份。"></textarea><div class="novel-generate-row"><label>最低字数 <input id="novel-minimum" class="field" type="number" min="0" value="${Number(project.generationSettings?.minimumChars)||0}" onchange="MimaNovelStudio.setProjectValue('generation.minimumChars',Number(this.value))"></label><div class="novel-generation-actions"><button class="primary-btn novel-continue-btn" ${busy?'disabled':''} onclick="MimaNovelStudio.continueNovel('current')">✒ 续写本章</button><button class="ghost-btn" ${busy?'disabled':''} onclick="MimaNovelStudio.continueNovel('new')">＋ 新篇章续写</button></div></div></section>`;}
 
   async function reviewLegacyItem(field,index){
     if(!project)return;
     const chapter=activeChapter();
     if(!chapter)return;
     if(!confirm(`请核对正文：此条旧档案是否在「${chapter.title}」结束前已发生？确认后仅从此章开始参与续写；改章或重新分析会使核查失效。`))return;
-    try{project=await route(`/novels/${project.id}/memory/legacy-review`,'POST',{field,index,chapterId:chapter.id});notify('已将该条旧记忆绑定当前章节（不更改原始档案）');render()}
+    const view=captureView();try{const saved=await route(`/novels/${view.projectId}/memory/legacy-review`,'POST',{field,index,chapterId:chapter.id});applyProjectResponse(view,saved);notify('已将该条旧记忆绑定当前章节（不更改原始档案）')}
     catch(e){reportNovelError(e,'核查旧剧情记忆')}
   }
   function legacyArchiveHtml(status){
@@ -161,7 +246,7 @@
   }
   function memoryHtml(){if(!project)return'<div class="novel-empty">没有项目</div>';const c=activeChapter(),status=project.memoryStatus?.status||'missing',legacy=root.MimaNovelMemory?.legacyCheckpointStatus?.(project,project.activeChapterId)||'none';const novelProgress=novelMemoryTask?.projectId===project.id?`<section class="novel-memory-card" id="novel-memory-progress" role="status">${esc(novelMemoryTask.progress?.detail||'正在总结章节…')}</section>`:'';const legacyNote=legacy==='verified_legacy'?'旧版人物、关系与剧情线已按原章节来源快照挂载；建议重新分析全部章节以迁移为逐章档案。':legacy==='needs_review'?'旧版人物与关系资料来源不完整，暂列待核查；续写时以实际正文为准。':legacy==='invalidated'?'旧版剧情档案所依赖的章节已修改，旧事实已从续写上下文撤回；可重新分析章节恢复。':'';return`<div class="novel-inspector-head"><div><span class="eyebrow">NARRATIVE DOSSIER</span><h3>剧情档案</h3></div><span class="tag novel-memory-status ${status}">${esc(status)}</span></div>${legacyNote?`<section class="novel-memory-card"><small>${esc(legacyNote)}</small></section>`:''}${novelProgress}<div class="toolbar"><button class="ghost-btn" onclick="MimaNovelStudio.analyzeCurrent()">分析当前章</button><button class="ghost-btn" onclick="MimaNovelStudio.rebuildMemory()">重建全部</button></div>${c?`<section class="novel-memory-card"><h4>${esc(c.title)} · 章节概括</h4><p>${esc(c.summary?.overview||'尚未分析')}</p>${c.summaryStatus==='stale'?'<small>当前摘要来自旧正文，需要更新。</small>':''}</section>`:''}${legacyArchiveHtml(legacy)}${memoryCards()}${promptInspectorHtml()}`}
   function optionChecks(items,ids,kind){return arr(items).map(x=>`<label class="novel-check"><input type="checkbox" ${ids.includes(x.id)?'checked':''} onchange="MimaNovelStudio.toggleMount('${kind}','${x.id}',this.checked)"><span>${esc(x.name)}</span></label>`).join('')||'<p class="row-sub">暂无可用项目</p>'}
-  function settingsHtml(){if(!project)return'<div class="novel-empty">没有项目</div>';const m=project.modelSettings||{},g=project.generationSettings||{},a=project.appearance||{},themes=root.MimaThemeEngine?.getBuiltins?.()||[];return`<div class="novel-settings"><section class="novel-settings-card"><h3>项目</h3><label>项目标题<input class="field" value="${esc(project.title)}" onchange="MimaNovelStudio.patchProject({title:this.value})"></label></section><section class="novel-settings-card"><h3>模型与生成</h3><label>Model Override<input class="field" value="${esc(m.model||'')}" onchange="MimaNovelStudio.setProjectValue('model.model',this.value)"></label><label>Temperature<input class="field" type="number" min="0.1" max="2" step="0.05" value="${m.temperature??''}" placeholder="继承主 API" onchange="MimaNovelStudio.setProjectValue('model.temperature',this.value===''?null:Number(this.value))"></label><label>Temperature 参数策略<select class="field" onchange="MimaNovelStudio.setProjectValue('model.sendTemperature',this.value==='inherit'?null:this.value==='yes')"><option value="inherit" ${m.sendTemperature===null?'selected':''}>跟随主 API</option><option value="yes" ${m.sendTemperature===true?'selected':''}>发送</option><option value="no" ${m.sendTemperature===false?'selected':''}>不发送</option></select></label><label>Max Output Tokens<input class="field" type="number" min="0" value="${Number(m.maxTokens)||0}" onchange="MimaNovelStudio.setProjectValue('model.maxTokens',Number(this.value))"></label><label>Streaming 传输<select class="field" onchange="MimaNovelStudio.setProjectValue('model.streaming',this.value==='inherit'?null:this.value==='yes')"><option value="inherit" ${m.streaming===null?'selected':''}>跟随主 API</option><option value="yes" ${m.streaming===true?'selected':''}>开启 SSE</option><option value="no" ${m.streaming===false?'selected':''}>关闭流式</option></select></label><label>自动补写上限<input class="field" type="number" min="0" max="8" value="${Number(g.maxAppendAttempts)||0}" onchange="MimaNovelStudio.setProjectValue('generation.maxAppendAttempts',Number(this.value))"></label><button class="ghost-btn" onclick="MimaNovelStudio.previewPrompt()">🔬 Prompt 预览</button><button class="ghost-btn" onclick="MimaNovelStudio.testNovelConnection()">◎ 测试小说模型连接（2 次小请求）</button><button class="tool-mini" onclick="MimaNovelStudio.resetModelSettings()">↻ 跟随主 API 配置</button></section><section class="novel-settings-card"><h3>挂载 Preset</h3>${optionChecks(assets.presets,project.presetIds,'preset')}</section><section class="novel-settings-card"><h3>挂载 Worldbook</h3>${optionChecks(assets.worldbooks,project.worldbookIds,'worldbook')}</section><section class="novel-settings-card"><h3>主题</h3><div class="novel-theme-grid">${themes.map(t=>`<button class="novel-theme-card ${assets.themeSettings?.theme===t.id?'active':''}" data-theme-choice="${t.id}" onclick="MimaNovelStudio.setTheme('${t.id}')"><strong>${esc(t.name)}</strong><span>${esc(t.description)}</span></button>`).join('')}</div></section><section class="novel-settings-card"><h3>阅读排版</h3><label>字体族<input class="field" value="${esc(a.fontFamily||'')}" placeholder="留空则继承咪嘛馆剧情字体" onchange="MimaNovelStudio.setProjectValue('appearance.fontFamily',this.value)"></label><label>字号<input class="field" type="number" min="12" max="30" value="${a.fontSize||17}" onchange="MimaNovelStudio.setProjectValue('appearance.fontSize',Number(this.value))"></label><label>行高<input class="field" type="number" min="1.2" max="2.8" step=".05" value="${a.lineHeight||1.9}" onchange="MimaNovelStudio.setProjectValue('appearance.lineHeight',Number(this.value))"></label><label>段距<input class="field" type="number" min="0" max="3" step=".1" value="${a.paragraphGap||1}" onchange="MimaNovelStudio.setProjectValue('appearance.paragraphGap',Number(this.value))"></label><label>首行缩进<input class="field" type="number" min="0" max="4" step=".25" value="${a.firstLineIndent??2}" onchange="MimaNovelStudio.setProjectValue('appearance.firstLineIndent',Number(this.value))"></label><label>正文宽度<input class="field" type="number" min="420" max="1200" value="${a.maxWidth||760}" onchange="MimaNovelStudio.setProjectValue('appearance.maxWidth',Number(this.value))"></label><label>Novel CSS<select class="field" onchange="MimaNovelStudio.setProjectValue('appearance.customCssId',this.value||null)"><option value="">不挂载</option>${arr(assets.cssPresets).filter(x=>x.scope==='novel'||x.surface==='novel').map(x=>`<option value="${x.id}" ${a.customCssId===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}</select></label><label class="novel-check"><input type="checkbox" ${a.customCssEnabled!==false?'checked':''} onchange="MimaNovelStudio.setProjectValue('appearance.customCssEnabled',this.checked)"> 启用项目 CSS</label></section><section class="novel-settings-card"><h3>导出 / 项目</h3><div class="toolbar"><button class="ghost-btn" onclick="MimaNovelStudio.exportProject('txt')">导出 TXT</button><button class="ghost-btn" onclick="MimaNovelStudio.exportProject('json')">导出 JSON</button><button class="danger-btn" onclick="MimaNovelStudio.deleteProject()">删除项目</button></div></section></div>`}
+  function settingsHtml(){if(!project)return'<div class="novel-empty">没有项目</div>';const m=project.modelSettings||{},g=project.generationSettings||{},a=project.appearance||{},themes=root.MimaThemeEngine?.getBuiltins?.()||[];return`<div class="novel-settings"><section class="novel-settings-card"><h3>项目</h3><label>项目标题<input class="field" value="${esc(project.title)}" onchange="MimaNovelStudio.patchProject({title:this.value})"></label></section><section class="novel-settings-card"><h3>模型与生成</h3><label>Model Override<input class="field" value="${esc(m.model||'')}" onchange="MimaNovelStudio.setProjectValue('model.model',this.value)"></label><label>Temperature<input class="field" type="number" min="0.1" max="2" step="0.05" value="${m.temperature??''}" placeholder="继承主 API" onchange="MimaNovelStudio.setProjectValue('model.temperature',this.value===''?null:Number(this.value))"></label><label>Temperature 参数策略<select class="field" onchange="MimaNovelStudio.setProjectValue('model.sendTemperature',this.value==='inherit'?null:this.value==='yes')"><option value="inherit" ${m.sendTemperature===null?'selected':''}>跟随主 API</option><option value="yes" ${m.sendTemperature===true?'selected':''}>发送</option><option value="no" ${m.sendTemperature===false?'selected':''}>不发送</option></select></label><label>Max Output Tokens<input class="field" type="number" min="0" value="${Number(m.maxTokens)||0}" onchange="MimaNovelStudio.setProjectValue('model.maxTokens',Number(this.value))"></label><label>Streaming 传输<select class="field" onchange="MimaNovelStudio.setProjectValue('model.streaming',this.value==='inherit'?null:this.value==='yes')"><option value="inherit" ${m.streaming===null?'selected':''}>跟随主 API</option><option value="yes" ${m.streaming===true?'selected':''}>开启 SSE</option><option value="no" ${m.streaming===false?'selected':''}>关闭流式</option></select></label><label>整份请求上下文字符上限（包含预设、世界书和正文）<input class="field" type="number" min="4000" step="1000" value="${g.contextBudgetChars||48000}" onchange="MimaNovelStudio.setProjectValue('generation.contextBudgetChars',Number(this.value))"></label><p class="row-sub">会优先保留完整规则、世界书和剧情档案；如果固定内容已超预算，会拒绝发送并说明实际字符数。这个数字是字符估算，不是模型的精确 Token 上限。</p><label>自动补写上限<input class="field" type="number" min="0" max="8" value="${Number(g.maxAppendAttempts)||0}" onchange="MimaNovelStudio.setProjectValue('generation.maxAppendAttempts',Number(this.value))"></label><button class="ghost-btn" onclick="MimaNovelStudio.previewPrompt()">🔬 Prompt 预览</button><button class="ghost-btn" onclick="MimaNovelStudio.testNovelConnection()">◎ 测试小说模型连接（2 次小请求）</button><button class="tool-mini" onclick="MimaNovelStudio.resetModelSettings()">↻ 跟随主 API 配置</button></section><section class="novel-settings-card"><h3>小说宏身份（仅本小说使用）</h3><p class="row-sub">有 {{user}} 或 {{char}} 时，选择对应面具名称再发送；不继承当前剧情记录，未选择则中止请求并提示。</p><label>小说中的 User 面具<select class="field" onchange="MimaNovelStudio.patchProject({macroUserMaskId:this.value})"><option value="">未指定</option>${arr(assets.masks).map(x=>`<option value="${esc(x.id)}" ${project.macroUserMaskId===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}</select></label><label>小说中的 Char 面具<select class="field" onchange="MimaNovelStudio.patchProject({macroCharMaskId:this.value})"><option value="">未指定</option>${arr(assets.masks).map(x=>`<option value="${esc(x.id)}" ${project.macroCharMaskId===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}</select></label></section><section class="novel-settings-card"><h3>挂载 Preset</h3>${optionChecks(assets.presets,project.presetIds,'preset')}</section><section class="novel-settings-card"><h3>挂载 Worldbook</h3>${optionChecks(assets.worldbooks,project.worldbookIds,'worldbook')}</section><section class="novel-settings-card"><h3>主题</h3><div class="novel-theme-grid">${themes.map(t=>`<button class="novel-theme-card ${assets.themeSettings?.theme===t.id?'active':''}" data-theme-choice="${t.id}" onclick="MimaNovelStudio.setTheme('${t.id}')"><strong>${esc(t.name)}</strong><span>${esc(t.description)}</span></button>`).join('')}</div></section><section class="novel-settings-card"><h3>阅读排版</h3><label>字体族<input class="field" value="${esc(a.fontFamily||'')}" placeholder="留空则继承咪嘛馆剧情字体" onchange="MimaNovelStudio.setProjectValue('appearance.fontFamily',this.value)"></label><label>字号<input class="field" type="number" min="12" max="30" value="${a.fontSize||17}" onchange="MimaNovelStudio.setProjectValue('appearance.fontSize',Number(this.value))"></label><label>行高<input class="field" type="number" min="1.2" max="2.8" step=".05" value="${a.lineHeight||1.9}" onchange="MimaNovelStudio.setProjectValue('appearance.lineHeight',Number(this.value))"></label><label>段距<input class="field" type="number" min="0" max="3" step=".1" value="${a.paragraphGap||1}" onchange="MimaNovelStudio.setProjectValue('appearance.paragraphGap',Number(this.value))"></label><label>首行缩进<input class="field" type="number" min="0" max="4" step=".25" value="${a.firstLineIndent??2}" onchange="MimaNovelStudio.setProjectValue('appearance.firstLineIndent',Number(this.value))"></label><label>正文宽度<input class="field" type="number" min="420" max="1200" value="${a.maxWidth||760}" onchange="MimaNovelStudio.setProjectValue('appearance.maxWidth',Number(this.value))"></label><label>Novel CSS<select class="field" onchange="MimaNovelStudio.setProjectValue('appearance.customCssId',this.value||null)"><option value="">不挂载</option>${arr(assets.cssPresets).filter(x=>x.scope==='novel'||x.surface==='novel').map(x=>`<option value="${x.id}" ${a.customCssId===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}</select></label><label class="novel-check"><input type="checkbox" ${a.customCssEnabled!==false?'checked':''} onchange="MimaNovelStudio.setProjectValue('appearance.customCssEnabled',this.checked)"> 启用项目 CSS</label></section><section class="novel-settings-card"><h3>导出 / 项目</h3><div class="toolbar"><button class="ghost-btn" onclick="MimaNovelStudio.exportProject('txt')">导出 TXT</button><button class="ghost-btn" onclick="MimaNovelStudio.exportProject('json')">导出 JSON</button><button class="danger-btn" onclick="MimaNovelStudio.deleteProject()">删除项目</button></div></section></div>`}
   async function toggleMount(kind,id,on){const key=kind==='preset'?'presetIds':'worldbookIds',next=new Set(project[key]);on?next.add(id):next.delete(id);await patchProject({[key]:[...next]})}
   function applyProjectAppearance(){if(!project)return;const a=project.appearance||{},el=$('novel-studio-root');if(!el)return;const inheritedFont=root.MimaFontManager?.getSelected?.('story')||'inherit';el.style.setProperty('--novel-reader-font',a.fontFamily||inheritedFont);el.style.setProperty('--novel-reader-size',`${a.fontSize||17}px`);el.style.setProperty('--novel-reader-line-height',String(a.lineHeight||1.9));el.style.setProperty('--novel-reader-letter-spacing',`${a.letterSpacing||0}em`);el.style.setProperty('--novel-reader-paragraph-gap',`${a.paragraphGap||1}em`);el.style.setProperty('--novel-reader-indent',`${a.firstLineIndent??2}em`);el.style.setProperty('--novel-reader-max-width',`${a.maxWidth||760}px`);let style=$('novel-project-custom-css');if(!style){style=document.createElement('style');style.id='novel-project-custom-css';document.head.appendChild(style)}if(new URLSearchParams(location.search).get('noCss')==='1'){style.textContent='';return}const css=assets.cssPresets.find(x=>x.id===a.customCssId);const compiled=css?(root.MimaTavernBridge?.compileCustomCss?.(css,'novel')||''):'';style.textContent=a.customCssEnabled&&css?`/* Novel project custom CSS */\n${compiled}`:'';}
   function render(){const box=$('novel-studio-root');if(!box)return;
@@ -180,6 +265,6 @@
   function setTab(tab){mobileTab=['chapters','reader','memory','settings'].includes(tab)?tab:'reader';render()}
   function download(name,text,type='text/plain;charset=utf-8'){const blob=new Blob([text],{type}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
   async function exportProject(kind){if(!project)return;const data=await route(`/novels/${project.id}/export/${kind}`);if(kind==='txt')download(data.name,data.text);else download(data.name,JSON.stringify(data.project,null,2),'application/json')}
-  root.MimaNovelStudio={open,close,refresh,createProject,chooseTxt,importTxt,reparseChapters,selectProject,selectChapter,saveChapter,saveSegment,patchProject,chapterAction,renameChapter,splitChapter,moveChapter,deleteChapter,deleteProject,previewPrompt,continueNovel,continueDraft,testNovelConnection,resetModelSettings,editDraft,rejectDraft,regenerateDraft,acceptDraft,analyzeCurrent,rebuildMemory,setTheme,setProjectValue,toggleMount,setTab,filterChapters,reviewLegacyItem,exportProject,renderChapterArchive,formatMemoryObject,decodeTxtFile};
+  root.MimaNovelStudio={open,close,refresh,createProject,chooseTxt,importTxt,reparseChapters,selectProject,selectChapter,discardEmptyAutoChapter,saveChapter,saveSegment,patchProject,chapterAction,renameChapter,splitChapter,moveChapter,deleteChapter,deleteProject,previewPrompt,continueNovel,continueDraft,testNovelConnection,resetModelSettings,editDraft,rejectDraft,regenerateDraft,acceptDraft,analyzeCurrent,rebuildMemory,setTheme,setProjectValue,toggleMount,setTab,filterChapters,reviewLegacyItem,exportProject,renderChapterArchive,formatMemoryObject,decodeTxtFile};
   window.addEventListener('DOMContentLoaded',()=>{$('novel-file-input')?.addEventListener('change',e=>importTxt(e.target.files?.[0]));});
 })();

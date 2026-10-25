@@ -84,7 +84,9 @@ function patternCSS(p){
   default:return null;
   }
 }
-function patternLayers(pats,part){const a=(pats||[]).filter(p=>p.enabled!==false&&p.type!=='none'&&patternCSS(p));return a.flatMap(p=>{const x=patternCSS(p);if(part==='position')return [`${clamp(p.offsetX??0,-500,500)}px ${clamp(p.offsetY??0,-500,500)}px`];return x[part]?[x[part]]:part==='size'?['auto']:[]});}
+function countCssLayers(source){let level=0,quote='',escaped=false,count=String(source||'').trim()?1:0;for(const ch of String(source||'')){if(escaped){escaped=false;continue;}if(ch==='\\'){escaped=true;continue;}if(quote){if(ch===quote)quote='';continue;}if(ch==='\"'||ch==="'"){quote=ch;continue;}if(ch==='(')level++;else if(ch===')')level=Math.max(0,level-1);else if(ch===','&&level===0)count++;}return count;}
+function patternLayers(pats,part){const a=(pats||[]).filter(p=>p.enabled!==false&&p.type!=='none'&&patternCSS(p));return a.flatMap(p=>{const x=patternCSS(p);if(part==='position')return Array.from({length:countCssLayers(x.image)},()=>`${clamp(p.offsetX??0,-500,500)}px ${clamp(p.offsetY??0,-500,500)}px`);
+    return x[part]?[x[part]]:part==='size'?['auto']:[]});}
 function atlasEffect(s){
  const color=rgba(s.decorColor,s.decorOpacity),soft=rgba(s.decorColor,Math.min(60,s.decorOpacity+12));
  const size=clamp(s.decorSize,6,100);
@@ -111,7 +113,7 @@ function atlasEffect(s){
 }
 function styleRules(s0,pattern=[],key='',options={}){const s={...DEFAULT,...s0},bg=rgba(s.fill,s.alpha),bd=rgba(s.borderColor,s.borderAlpha);
   const structural=['topbar','composer','panel','status','safeHtmlHost'].includes(key),prose=key==='message',shapeSafe=['button','secondary'].includes(key);
-  let images=patternLayers(pattern,'image'),sizes=patternLayers(pattern,'size'),positions=patternLayers(pattern,'position');const effect=atlasEffect(s);if(effect){const layerCount=effect.image.split(/,(?=\s*(?:radial-gradient|linear-gradient|repeating-|conic-gradient))/).length;images.push(effect.image);sizes.push(effect.size);positions.push('0 0');}
+  let images=patternLayers(pattern,'image'),sizes=patternLayers(pattern,'size'),positions=patternLayers(pattern,'position');const effect=atlasEffect(s);if(effect){const layerCount=countCssLayers(effect.image);images.push(effect.image);sizes.push(effect.size);positions.push(Array.from({length:layerCount},()=> '0 0').join(','));}
   let gradientImage='';if(s.gradient!=='none'){const to=rgba(s.gradientTo,s.alpha);const gradient=s.gradient==='radial'?`radial-gradient(circle at 28% 20%,${to},${bg})`:s.gradient==='conic'?`conic-gradient(from ${clamp(s.angle,0,360)}deg,${bg},${to},${bg})`:`linear-gradient(${clamp(s.angle,0,360)}deg,${to},${bg})`;gradientImage=gradient;}
   if(s.image){
     if(s.imageOpacity<100){images.push(`linear-gradient(${rgba(s.fill,100-clamp(s.imageOpacity,0,100))},${rgba(s.fill,100-clamp(s.imageOpacity,0,100))})`);sizes.push('cover');positions.push('0 0');}
@@ -161,18 +163,35 @@ function baseTheme(id='liquid-frost'){
  elements.field={...base,fill:'#ffffff',alpha:78,blur:3};
  elements.message={...base,fill:'#ffffff',alpha:kind==='glass'?58:kind==='aqua'?62:24,border:kind==='glass'||kind==='aqua'?1:0,blur:kind==='glass'?14:kind==='aqua'?10:0,shadow:0};
  elements.safeHtmlHost={...elements.message}; // Data survives when a historical project's HTML surface is not enabled.
- return {id:uid(),name:`${name} · 自定义`,format:'mima-atl-project',schema:1,template:id,originPreset:'',layoutRecipe:'story',cssPriority:'mix-atelier',regions:{...defaultRegions(),safeHtmlHost:true},htmlSurfaceFollowsMessage:true,readingBoard:normalizedReadingBoard(),proseTypography:false,textPolicy:normalizeTextPolicy({storyProse:{inkMode:'explicit'}},false),nightMode:'app',elements,patterns:[],stickers:[],fonts:[],favorites:[],variants:{},extraCss:'',draftVersion:0,createdAt:Date.now(),updatedAt:Date.now()};
+ return {id:uid(),name:`${name} · 自定义`,format:'mima-atl-project',schema:1,template:id,originPreset:'',layoutRecipe:'story',cssPriority:'atelier-only',regions:{...defaultRegions(),safeHtmlHost:true},htmlSurfaceFollowsMessage:true,readingBoard:normalizedReadingBoard(),proseTypography:false,textPolicy:normalizeTextPolicy({storyProse:{inkMode:'explicit'}},false),nightMode:'app',elements,patterns:[],stickers:[],fonts:[],favorites:[],variants:{},extraCss:'',draftVersion:0,createdAt:Date.now(),updatedAt:Date.now()};
 }
-function normalized(raw){if(!raw||raw.format!=='mima-atl-project'||raw.schema!==1||!raw.elements||typeof raw.elements!=='object')throw new Error('不支持或损坏的主题工程格式');const obj=baseTheme(raw.template||'minimal-clear');obj.id=String(raw.id||uid());obj.name=safeName(raw.name);obj.originPreset=/^[a-z][a-z0-9-]{0,100}$/.test(String(raw.originPreset||''))?String(raw.originPreset):'';obj.layoutRecipe=/^[a-z][a-z0-9-]{0,80}$/.test(String(raw.layoutRecipe||''))?String(raw.layoutRecipe):'story';obj.cssPriority=PRESENTATION.includes(raw.cssPriority)?raw.cssPriority:raw.cssPriority==='regions-first'?'mix-atelier':raw.cssPriority==='legacy-first'?'mix-legacy':'atelier-only';obj.proseTypography=raw.proseTypography===true;obj.textPolicy=normalizeTextPolicy(raw.textPolicy,obj.proseTypography);obj.nightMode=['app','system','light','dark'].includes(raw.nightMode)?raw.nightMode:'app';obj.regions=defaultRegions();obj.htmlSurfaceFollowsMessage=raw.htmlSurfaceFollowsMessage===true;obj.readingBoard=normalizedReadingBoard(raw.readingBoard);if(raw.regions&&typeof raw.regions==='object')for(const k of REGION_KEYS)if(Object.prototype.hasOwnProperty.call(raw.regions,k))obj.regions[k]=raw.regions[k]===true;if(obj.htmlSurfaceFollowsMessage)obj.regions.safeHtmlHost=true;obj.createdAt=Number(raw.createdAt)||Date.now();obj.updatedAt=Number(raw.updatedAt)||Date.now();obj.draftVersion=Math.max(0,Number(raw.draftVersion)||0);obj.linkedCssId=/^css[-_a-zA-Z0-9]+$/.test(String(raw.linkedCssId||''))?String(raw.linkedCssId):'';for(const k of Object.keys(TARGETS)){if(raw.elements[k]&&typeof raw.elements[k]==='object'){
+function assertProjectAssets(raw){
+ if(!raw||typeof raw!=='object')throw Error('主题工程数据无效');
+ const rules={
+  fonts:x=>/^data:(font\/(woff2?|ttf|otf)|application\/(font-woff|x-font-ttf|x-font-opentype|octet-stream));base64,[A-Za-z0-9+/=]+$/.test(x?.src||'')&&x.src.length<12*1024*1024&&/^MimaAtelierFont_[A-Za-z0-9]+$/.test(x.family||''),
+  patterns:x=>!!TARGETS[x?.target]&&PATTERNS.includes(x?.type),
+  stickers:x=>validImage(x?.src)&&!!TARGETS[x?.anchor||'shell'],
+  favorites:x=>!!x&&typeof x.name==='string'&&!!x.style&&typeof x.style==='object'
+ };
+ for(const [kind,valid] of Object.entries(rules)){
+  if(raw[kind]!==undefined&&!Array.isArray(raw[kind]))throw Error('主题工程的 '+kind+' 不是有效列表，拒绝覆盖原存档');
+  if(Array.isArray(raw[kind])){
+   const invalid=raw[kind].findIndex(x=>!valid(x));
+   if(invalid>=0)throw Error('主题工程的 '+kind+' 第 '+(invalid+1)+' 项无效，拒绝静默删除该素材');
+  }
+ }
+}
+function normalized(raw){if(!raw||raw.format!=='mima-atl-project'||raw.schema!==1||!raw.elements||typeof raw.elements!=='object')throw new Error('不支持或损坏的主题工程格式');assertProjectAssets(raw);const obj=baseTheme(raw.template||'minimal-clear');obj.id=String(raw.id||uid());obj.name=safeName(raw.name);obj.originPreset=/^[a-z][a-z0-9-]{0,100}$/.test(String(raw.originPreset||''))?String(raw.originPreset):'';obj.layoutRecipe=/^[a-z][a-z0-9-]{0,80}$/.test(String(raw.layoutRecipe||''))?String(raw.layoutRecipe):'story';obj.cssPriority=PRESENTATION.includes(raw.cssPriority)?raw.cssPriority:raw.cssPriority==='regions-first'?'mix-atelier':raw.cssPriority==='legacy-first'?'mix-legacy':'atelier-only';obj.proseTypography=raw.proseTypography===true;obj.textPolicy=normalizeTextPolicy(raw.textPolicy,obj.proseTypography);obj.nightMode=['app','system','light','dark'].includes(raw.nightMode)?raw.nightMode:'app';obj.regions=defaultRegions();obj.htmlSurfaceFollowsMessage=raw.htmlSurfaceFollowsMessage===true;obj.readingBoard=normalizedReadingBoard(raw.readingBoard);if(raw.regions&&typeof raw.regions==='object')for(const k of REGION_KEYS)if(Object.prototype.hasOwnProperty.call(raw.regions,k))obj.regions[k]=raw.regions[k]===true;if(obj.htmlSurfaceFollowsMessage)obj.regions.safeHtmlHost=true;obj.createdAt=Number(raw.createdAt)||Date.now();obj.updatedAt=Number(raw.updatedAt)||Date.now();obj.draftVersion=Math.max(0,Number(raw.draftVersion)||0);obj.linkedCssId=/^css[-_a-zA-Z0-9]+$/.test(String(raw.linkedCssId||''))?String(raw.linkedCssId):'';for(const k of Object.keys(TARGETS))if(raw.elements[k]?.image && !validImage(raw.elements[k].image))throw Error('区域 '+TARGETS[k].label+' 的背景素材无效或超出 8MB 单图限制，未删除其存档');
+ for(const k of Object.keys(TARGETS)){if(raw.elements[k]&&typeof raw.elements[k]==='object'){
  const e={...obj.elements[k]};for(const field of Object.keys(DEFAULT))if(Object.prototype.hasOwnProperty.call(raw.elements[k],field)){
  const v=raw.elements[k][field];e[field]=typeof DEFAULT[field]==='number'?clamp(v,-10000,10000):typeof v==='string'?v.slice(0,250):DEFAULT[field];
  } e.fill=hex(e.fill);e.ink=hex(e.ink);e.borderColor=hex(e.borderColor);e.strokeColor=hex(e.strokeColor);e.gradientTo=hex(e.gradientTo);e.maskColor=hex(e.maskColor);e.image=validImage(raw.elements[k].image)?raw.elements[k].image:'';obj.elements[k]=e;}}
- obj.fonts=Array.isArray(raw.fonts)?raw.fonts.slice(0,20).filter(x=>/^data:(font\/(woff2?|ttf|otf)|application\/(font-woff|x-font-ttf|x-font-opentype|octet-stream));base64,[A-Za-z0-9+/=]+$/.test(x?.src||'')&&x.src.length<12*1024*1024&&/^MimaAtelierFont_[A-Za-z0-9]+$/.test(x.family||'')).map(x=>({family:x.family,name:safeName(x.name),format:String(x.format||'woff2').replace(/[^a-z0-9]/gi,'').slice(0,6),src:x.src})):[];
+ obj.fonts=Array.isArray(raw.fonts)?raw.fonts.filter(x=>/^data:(font\/(woff2?|ttf|otf)|application\/(font-woff|x-font-ttf|x-font-opentype|octet-stream));base64,[A-Za-z0-9+/=]+$/.test(x?.src||'')&&x.src.length<12*1024*1024&&/^MimaAtelierFont_[A-Za-z0-9]+$/.test(x.family||'')).map(x=>({family:x.family,name:safeName(x.name),format:String(x.format||'woff2').replace(/[^a-z0-9]/gi,'').slice(0,6),src:x.src})):[];
  for(const key of Object.keys(TARGETS))if(!['inherit','system-ui','serif','monospace'].includes(obj.elements[key].fontFamily)&&!obj.fonts.some(x=>x.family===obj.elements[key].fontFamily))obj.elements[key].fontFamily='inherit';
- obj.patterns=Array.isArray(raw.patterns)?raw.patterns.slice(0,60).filter(x=>TARGETS[x.target]&&PATTERNS.includes(x.type)).map(x=>({id:String(x.id||uid()),target:x.target,type:x.type,color:hex(x.color),opacity:clamp(x.opacity,0,100),size:clamp(x.size,5,160),weight:clamp(x.weight,.5,25),angle:clamp(x.angle,0,360),offsetX:clamp(x.offsetX??0,-500,500),offsetY:clamp(x.offsetY??0,-500,500),enabled:x.enabled!==false})):[];
- obj.stickers=Array.isArray(raw.stickers)?raw.stickers.slice(0,40).filter(x=>validImage(x.src)&&TARGETS[x.anchor||'shell']).map(x=>({id:String(x.id||uid()),name:safeName(x.name),src:x.src,anchor:x.anchor||'shell',x:clamp(x.x,-150,250),y:clamp(x.y,-150,250),width:clamp(x.width,4,200),rotate:clamp(x.rotate,-360,360),opacity:clamp(x.opacity,0,100),hidden:!!x.hidden,plane:x.plane==='behind'?'behind':'front',targetMessageId:(x.anchor==='message'||x.anchor==='status')&&typeof x.targetMessageId==='string'?x.targetMessageId.slice(0,160):''})):[];
- obj.extraCss=String(raw.extraCss||'').slice(0,100000);
- obj.favorites=Array.isArray(raw.favorites)?raw.favorites.slice(0,40).filter(x=>x&&typeof x.name==='string'&&x.style&&typeof x.style==='object').map(x=>({id:String(x.id||uid()),name:safeName(x.name),style:{...obj.elements.button,...Object.fromEntries(Object.keys(DEFAULT).filter(k=>Object.hasOwn(x.style,k)).map(k=>[k,x.style[k]]))}})):[];
+ obj.patterns=Array.isArray(raw.patterns)?raw.patterns.filter(x=>TARGETS[x.target]&&PATTERNS.includes(x.type)).map(x=>({id:String(x.id||uid()),target:x.target,type:x.type,color:hex(x.color),opacity:clamp(x.opacity,0,100),size:clamp(x.size,5,160),weight:clamp(x.weight,.5,25),angle:clamp(x.angle,0,360),offsetX:clamp(x.offsetX??0,-500,500),offsetY:clamp(x.offsetY??0,-500,500),enabled:x.enabled!==false})):[];
+ obj.stickers=Array.isArray(raw.stickers)?raw.stickers.filter(x=>validImage(x.src)&&TARGETS[x.anchor||'shell']).map(x=>({id:String(x.id||uid()),name:safeName(x.name),src:x.src,anchor:x.anchor||'shell',x:clamp(x.x,-150,250),y:clamp(x.y,-150,250),width:clamp(x.width,4,200),rotate:clamp(x.rotate,-360,360),opacity:clamp(x.opacity,0,100),hidden:!!x.hidden,plane:x.plane==='behind'?'behind':'front',targetMessageId:(x.anchor==='message'||x.anchor==='status')&&typeof x.targetMessageId==='string'?x.targetMessageId.slice(0,160):''})):[];
+ obj.extraCss=String(raw.extraCss||'');
+ obj.favorites=Array.isArray(raw.favorites)?raw.favorites.filter(x=>x&&typeof x.name==='string'&&x.style&&typeof x.style==='object').map(x=>({id:String(x.id||uid()),name:safeName(x.name),style:{...obj.elements.button,...Object.fromEntries(Object.keys(DEFAULT).filter(k=>Object.hasOwn(x.style,k)).map(k=>[k,x.style[k]]))}})):[];
  obj.variants={};if(raw.variants&&typeof raw.variants==='object'&&raw.variants.night?.elements){const v=normalized({...raw,elements:raw.variants.night.elements,patterns:raw.variants.night.patterns||[],stickers:[],favorites:[],variants:null,extraCss:''});obj.variants.night={elements:v.elements,patterns:v.patterns};}
  return obj;}
 function atlasLayout(project,scope,mode){
@@ -226,7 +245,7 @@ function compile(project,mode='live',options={}){
  const standalone=mode==='standalone'||mode==='portable';const scope=mode==='preview'?'[data-atl-preview]':standalone?'html':'html[data-mima-atelier-active]';
  const assetUrl=options.assetUrl||((src)=>options.assetMode==='omit'?'':src);
  let result=`/* MIMA Theme Atelier | ${safeName(project.name)} | generated stylesheet */\n`;
- if(!options.skipFonts)for(const font of project.fonts||[])if(/^MimaAtelierFont_[A-Za-z0-9]+$/.test(font.family)){const src=assetUrl(font.src,'font',font);if(src)result+=`@font-face{font-family:"${font.family}";src:url("${src}") format("${font.format}");font-display:swap;}\n`;}
+ if(!options.skipFonts)for(const font of project.fonts||[])if(/^MimaAtelierFont_[A-Za-z0-9]+$/.test(font.family)){const src=assetUrl(font.src,'font',font);if(src)result+=`@font-face{font-family:"${font.family}";src:url("${src}") format("${({ttf:'truetype',otf:'opentype',truetype:'truetype',opentype:'opentype',woff:'woff',woff2:'woff2'})[String(font.format||'').toLowerCase()]||'truetype'}");font-display:swap;}\n`;}
  for(const [key,target] of Object.entries(TARGETS)){
  if(project.regions?.[key]===false)continue;
  const pol=normalizeTextPolicy(project.textPolicy,project.proseTypography===true);
@@ -435,11 +454,46 @@ function liveLegacyLayers(){
  });
 }
 
-function syncPriority(){if(!style?.isConnected)return;
+let canonicalAppearanceId='', canonicalEpoch=0;
+function releaseLegacyPresentation(){
+ const oldStyle=ensureStyle();oldStyle.textContent='';oldStyle.media='not all';
+ document.documentElement.removeAttribute('data-mima-atelier-active');releaseAssets('atelier');
+ for(const [el,prior] of pausedStyles){if(prior===null)el.removeAttribute('media');else el.setAttribute('media',prior);}
+ pausedStyles.clear();
+}
+async function syncGlobalAppearance(preset,{allowLegacy=false,preparedProject=undefined}={}){
+ const revision=++canonicalEpoch;
+ if(livePreviewOrigin)return false;
+ // Compatibility read only happens for a trusted legacy record on a database
+ // without canonical Atelier releases. Explicitly disabled CSS never revives it.
+ if(!preset){
+  canonicalAppearanceId='';
+  if(!allowLegacy){releaseLegacyPresentation();applied=null;removeDecor();syncDecorObserver();}
+  return true;
+ }
+ // Prepare FIRST. A missing/corrupt snapshot leaves the previous CSS, image
+ // objects and stickers visibly mounted; never clear them before this await.
+ let next=null;
+ if(preset.atelierReleaseKey){
+  const stored=preparedProject===undefined?await get(preset.atelierReleaseKey):preparedProject;
+  if(revision!==canonicalEpoch||livePreviewOrigin)return false;
+  if(!stored)throw Error('选中的全局主题缺少工坊素材快照；旧画面仍在，主库选择未修改，请恢复素材备份');
+  next=normalized(stored);
+ }
+ if(revision!==canonicalEpoch||livePreviewOrigin)return false;
+ if(canonicalAppearanceId===preset.id&&((!next&&!applied)||(next&&applied&&next.id===applied.id&&next.updatedAt===applied.updatedAt&&next.draftVersion===applied.draftVersion)))return true;
+ canonicalAppearanceId=preset.id;
+ releaseLegacyPresentation();
+ applied=next;
+ if(next)drawDecor(next);else removeDecor();
+ syncDecorObserver();if(next)positionDecor();
+ return true;
+}
+function syncPriority(){if(canonicalAppearanceId&&!livePreviewOrigin){releaseLegacyPresentation();return;}if(!style?.isConnected)return;
  const legacy=['mima-custom-css-style','mima-global-css-style'].map(id=>document.getElementById(id)).filter(Boolean);
  const {plan}=presentationLayers(applied,liveLegacyLayers()); 
  const pause=!!applied&&!plan.legacyEnabled;
- for(const el of legacy){if(pause){if(!pausedStyles.has(el))pausedStyles.set(el,el.getAttribute('media'));el.setAttribute('media','not all');}else if(pausedStyles.has(el)){const prior=pausedStyles.get(el);if(prior===null)el.removeAttribute('media');else el.setAttribute('media',prior);pausedStyles.delete(el);}}
+ for(const el of legacy){const pauseThis=pause&&(!livePreviewOrigin||el.id==='mima-global-css-style');if(pauseThis){if(!pausedStyles.has(el))pausedStyles.set(el,el.getAttribute('media'));el.setAttribute('media','not all');}else if(pausedStyles.has(el)){const prior=pausedStyles.get(el);if(prior===null)el.removeAttribute('media');else el.setAttribute('media',prior);pausedStyles.delete(el);}}
  for(const [el,prior] of pausedStyles){if(!legacy.includes(el)){if(prior===null)el.removeAttribute('media');else el.setAttribute('media',prior);pausedStyles.delete(el);}}
  const after=plan.order==='legacy-then-atelier';
  // Moving an already correctly ordered STYLE node can invalidate computed
@@ -452,7 +506,7 @@ function syncPriority(){if(!style?.isConnected)return;
  }
  const nextMedia=plan.themeEnabled?'':'not all';if(style.media!==nextMedia)style.media=nextMedia;
 }
-function activate(project){if(bypass()){deactivate();return;}
+function activate(project){if(!livePreviewOrigin)canonicalAppearanceId='';if(bypass()){deactivate();return;}
  const result=compiledWithAssets(project,'live','atelier');
  try{const style=ensureStyle();if(style.textContent!==result.css)style.textContent=result.css;document.documentElement.setAttribute('data-mima-atelier-active','1');applied=clone(project);commitAssetOwner('atelier',result.used);syncPriority();if(applied.cssPriority==='legacy-only')removeDecor();else drawDecor(applied);window.dispatchEvent(new Event('mima-atelier-presentation-change'));}
  catch(e){for(const [src,url] of assetPool)if(![...assetOwners.values()].some(set=>set.has(src))){URL.revokeObjectURL(url);assetPool.delete(src)}throw e;}
@@ -568,7 +622,7 @@ async function beginLivePreview(project){
  livePreviewOrigin=origin;pendingExternalRevision=0;reportPreview('STARTING');
  try{
    // An external broadcast is advisory; the canonical read on exit is mandatory.
-   activate(normalized(project));reportPreview('TEMPORARY');
+   activate(normalized({...project,cssPriority:'atelier-only'}));reportPreview('TEMPORARY');
    return {status:'TEMPORARY_LIVE_PREVIEW',storageCommitted:false,activeVersion:origin.active.version,opId:origin.opId};
  }catch(err){
    // Share one recovery authority with the normal exit path. A failed mount
@@ -587,7 +641,7 @@ function updateLivePreview(project,expectedOpId){
   throw Object.assign(new Error('试穿状态已改变；拒绝覆盖新的正式主题或其他试穿'),{code:'E_ATL_PREVIEW_REVISION_STALE'});
  }
  try{
-  activate(normalized(project));
+  activate(normalized({...project,cssPriority:'atelier-only'}));
   return {status:'TEMPORARY_UPDATED',storageCommitted:false,opId:current.opId};
  }catch(error){
   restoreKnownVisualDuringStorageFailure(current.verifiedVisual);
@@ -617,7 +671,17 @@ async function endLivePreview(){
      if(check===2)throw Object.assign(new Error('其他标签持续发布，正式版本仍待确认'),{code:'E_ATL_EXTERNAL_REVISION_PENDING'});
    }
    // Notices arriving after settlement are handled by the channel handler.
-   if(livePreviewOrigin===origin){livePreviewOrigin=null;pendingExternalRevision=0;reportPreview('RESTORED_VERIFIED');}
+   if(livePreviewOrigin===origin){
+     livePreviewOrigin=null;pendingExternalRevision=0;
+     // Drop ONLY temporary preview ownership. The main CSS app will restore
+     // its last successful global stylesheet via the following event.
+     deactivate();
+     const snapshot=window.MimaStandalone?.getState?.();
+     const global=snapshot?.cssPresets?.find(x=>x.id===snapshot?.themeSettings?.globalCssPresetId&&snapshot.themeSettings?.globalCssEnabled!==false&&x.scope==='app');
+     if(global)await syncGlobalAppearance(global,{allowLegacy:false});
+     reportPreview('RESTORED_VERIFIED');
+     window.dispatchEvent(new Event('mima-atelier-presentation-change'));
+   }
    return {status:'RESTORED_VERIFIED',version:latest.version,opId:origin.opId};
   }catch(cause){
    restoreKnownVisualDuringStorageFailure(origin.verifiedVisual);
@@ -628,10 +692,13 @@ async function endLivePreview(){
  })();
  return previewSettlement;
 }
-function deactivate(){observer.disconnect();ensureStyle().textContent='';ensureStyle().media='';document.documentElement.removeAttribute('data-mima-atelier-active');applied=null;removeDecor();releaseAssets('atelier');syncPriority();window.dispatchEvent(new Event('mima-atelier-presentation-change'));}
+function deactivate(){observer.disconnect();stickerResizeObserver?.disconnect();ensureStyle().textContent='';ensureStyle().media='';document.documentElement.removeAttribute('data-mima-atelier-active');applied=null;removeDecor();releaseAssets('atelier');syncPriority();window.dispatchEvent(new Event('mima-atelier-presentation-change'));}
 function disabled(){sessionStorage.setItem('mima-atl-safe-disabled','1');deactivate();}
 function reaffirm(){syncPriority();}
-async function initialize(){if(initialized)return;initialized=true;try{active=await get('active')||{id:null,version:0};if(active.id&&!bypass()){const p=await get(active.releaseKey||('release:'+active.id+':'+active.version));if(!p)throw Error('激活版本的固定快照不存在；保留原始界面且不覆盖任何资料');activate(normalized(p));} if(typeof BroadcastChannel!=='undefined'){channel=new BroadcastChannel(DB);channel.onmessage=async e=>{if(e.data?.kind==='activated'){
+async function initialize(){if(initialized)return;initialized=true;try{active=await get('active')||{id:null,version:0};
+ // Legacy active is migration-only. Canonical global CSS selection is resolved
+ // by the main app after its Store finishes opening; never mount it on boot.
+ if(typeof BroadcastChannel!=='undefined'){channel=new BroadcastChannel(DB);channel.onmessage=async e=>{if(e.data?.kind==='activated'){
   try{const a=await get('active');if(!a||a.version<=(active?.version||0))return;
    // Both checks are needed: a try-on can begin while the DB reads are pending.
    if(livePreviewOrigin||publishInFlight){pendingExternalRevision=Math.max(pendingExternalRevision,a.version);if(livePreviewOrigin)reportPreview(previewPhase,previewError);return;}
@@ -639,7 +706,11 @@ async function initialize(){if(initialized)return;initialized=true;try{active=aw
    if(a.id&&!p)throw new Error('跨窗口主题内容丢失');
    if(livePreviewOrigin||publishInFlight){pendingExternalRevision=Math.max(pendingExternalRevision,a.version);if(livePreviewOrigin)reportPreview(previewPhase,previewError);return;}
    if(a.version<=(active?.version||0))return;
-   if(p&&!bypass())activate(normalized(p));else deactivate();active=a;
+   active=a;
+   // Broadcast refers to historical records, not the canonical CSS choice.
+   // Ignore it for presentation; the main Store drives all visible changes.
+   const snapshot=window.MimaStandalone?.getState?.();const global=snapshot?.cssPresets?.find(x=>x.id===snapshot?.themeSettings?.globalCssPresetId&&snapshot.themeSettings?.globalCssEnabled!==false&&x.scope==='app');
+   if(global)await syncGlobalAppearance(global);
   }catch(err){console.error('[Theme Atelier] cross-tab sync',err);}
  }};}}
  catch(e){console.error('[Theme Atelier] startup failed; legacy theme unchanged',e);deactivate();throw e;}}
@@ -648,8 +719,34 @@ let positionQueued=false;function schedulePositionDecor(){if(positionQueued||!ap
  window.addEventListener('resize',schedulePositionDecor);window.visualViewport?.addEventListener('resize',schedulePositionDecor); // Anchored stickers move with their DOM owner during scroll; no read/write measurement on every scroll.
 // App renders portions of the UI asynchronously; keep attachments in sync without touching source containers.
 // Preserve original anchor semantics for arbitrary author CSS and evolving HTML.
-const observer=new MutationObserver(()=>schedulePositionDecor());
-function syncDecorObserver(){observer.disconnect();if(applied?.stickers?.some(s=>!s.hidden)&&document.body)observer.observe(document.body,{childList:true,subtree:true});}
+const stickerMutationSelectors='.message,.msg-content,.topbar,.composer-shell,.modal-panel,.session-drawer,.session-item,.library-card,details,system,#story-chat-box';
+function isRelevantStickerMutation(node){
+ if(node.nodeType!==1)return false;
+ // New narrative paragraphs do not move message-bound sticker anchors. Re-check
+ // when entire message hosts, status details or other stickerable regions change.
+ return node.matches?.(stickerMutationSelectors)||!!node.querySelector?.(stickerMutationSelectors);
+}
+const observer=new MutationObserver(records=>{
+ for(const record of records){
+  if([...record.addedNodes,...record.removedNodes].some(isRelevantStickerMutation)){
+   schedulePositionDecor();break;
+  }
+ }
+});
+const stickerResizeObserver=typeof ResizeObserver==='function'?new ResizeObserver(()=>schedulePositionDecor()):null;
+function syncDecorObserver(){
+ observer.disconnect();stickerResizeObserver?.disconnect();
+ if(!applied?.stickers?.some(s=>!s.hidden)||!document.body)return;
+ observer.observe(document.body,{childList:true,subtree:true});
+ // Text and image loads often change the box without inserting a new anchor.
+ // Measure only the exact live sticker anchors, not every streamed DOM element.
+ const targets=new Set();
+ for(const sticker of applied.stickers||[]){if(sticker.hidden||sticker.anchor==='shell')continue;
+  const target=getStickerTarget(sticker.anchor,sticker.targetMessageId);
+  if(target?.isConnected)targets.add(target);
+ }
+ for(const target of targets)stickerResizeObserver?.observe(target);
+}
  window.addEventListener('DOMContentLoaded',syncDecorObserver);
 async function saveHistory(key,project){await putMany([[key,normalized(project)]]);}
 async function latestHistory(id){const found=(await keys()).filter(k=>String(k).startsWith('history:'+id+':')).sort();return found.length?await get(found[found.length-1]):null;}
@@ -731,12 +828,9 @@ function verifyMountedTheme(project){
 }
 function hexToComputedColor(color){const c=hex(color);return `rgb(${parseInt(c.slice(1,3),16)}, ${parseInt(c.slice(3,5),16)}, ${parseInt(c.slice(5,7),16)})`;}
 async function restoreLatestCommittedTheme(){
+ // 'active' is no longer a presentation authority: only read it to settle
+ // legacy broadcast identity. Never repaint its obsolete CSS after preview.
  const latest=await get('active')||{id:null,version:0};
- if(latest.id&&!bypass()){
-   const record=await get(latest.releaseKey||('release:'+latest.id+':'+latest.version));
-   if(!record)throw new Error('E_ATL_ACTIVE_RELEASE_MISSING');
-   activate(normalized(record));
- }else deactivate();
  active=latest;
  return latest;
 }
@@ -839,8 +933,104 @@ async function unapply(){
 async function resolveLibraryCss(preset,owner='library-global'){if(!preset?.atelierReleaseKey)return preset?.css||'';
  const p=await get(preset.atelierReleaseKey);if(!p)throw Error('工坊 CSS 引用的独立资源快照不存在，原 CSS 预设未被修改');
  const checked=normalized(p),compiled=compiledWithAssets(checked,'standalone',owner);
- // Don't overwrite the active CSS assets until a caller has accepted the stylesheet.
- return {css:compiled.css,accept:()=>commitAssetOwner(owner,compiled.used),discard:()=>{for(const [src,url] of assetPool)if(![...assetOwners.values()].some(set=>set.has(src))){URL.revokeObjectURL(url);assetPool.delete(src);}}};
+ // A pending render owns a temporary lease. Stale async resolves cannot revoke
+ // Blob URLs still needed by another pending render.
+ const lease='pending:'+uid();assetOwners.set(lease,compiled.used);let settled=false;
+ return {css:compiled.css,project:checked,accept:()=>{if(settled)return;settled=true;assetOwners.set(owner,compiled.used);assetOwners.delete(lease);commitAssetOwner(owner,compiled.used);},discard:()=>{if(settled)return;settled=true;assetOwners.delete(lease);commitAssetOwner(owner,assetOwners.get(owner)||new Set());}};
+}
+async function exportRecords(){
+ await ready;
+ const db=await getDB();return new Promise((resolve,reject)=>{
+  const tx=db.transaction(STORE,'readonly'),store=tx.objectStore(STORE),q=store.getAllKeys(),v=store.getAll();
+  let names=null,values=null,problem=null;
+  q.onsuccess=()=>{names=q.result;};v.onsuccess=()=>{values=v.result;};
+  q.onerror=()=>{problem=q.error;tx.abort();};v.onerror=()=>{problem=v.error;tx.abort();};
+  tx.oncomplete=()=>{if(!names||!values||names.length!==values.length)return reject(Error('工坊备份读取不完整'));
+   resolve({format:'mima-atelier-records',version:1,records:names.map((key,i)=>[key,values[i]])});};
+  tx.onabort=()=>reject(problem||tx.error||Error('工坊备份事务中断'));
+ });
+}
+function validateRecordImport(payload){
+ if(!payload||payload.format!=='mima-atelier-records'||payload.version!==1||!Array.isArray(payload.records))throw Error('工坊素材备份格式无效');
+ const seen=new Set();
+ for(const row of payload.records){if(!Array.isArray(row)||row.length!==2||typeof row[0]!=='string'||!(/^(project:|manual:|history:|release:|css-release:|css-sync:)/.test(row[0])||['active','lastEdited'].includes(row[0]))||seen.has(row[0]))throw Error('工坊素材记录键重复或无效');seen.add(row[0]);
+  if(/^(project:|manual:|history:|release:|css-release:)/.test(row[0]))normalized(row[1]);
+ }
+ return payload.records;
+}
+// Editable project drafts are versioned, not immutable releases. A restore must
+// preserve BOTH revisions; publishing snapshots remain strict immutable assets.
+function importRecordPlan(rows,existing){
+ const planned=[],seen=new Set(),stats={total:rows.length,toImport:0,alreadyPresent:0,devicePointersPreserved:0,forkedDrafts:0};
+ const fingerprint=value=>{const text=JSON.stringify(value);let h=2166136261;for(let i=0;i<text.length;i++){h=Math.imul(h^text.charCodeAt(i),16777619);}return(h>>>0).toString(16).padStart(8,'0');};
+ for(const [inputKey,inputValue] of rows){let key=inputKey,value=inputValue;
+  const previous=existing.get(key);
+  if(previous!==undefined&&JSON.stringify(previous)!==JSON.stringify(value)){
+   if(key.startsWith('project:')){
+    const forkId=String(inputValue.id)+'_restored_'+fingerprint(inputValue);
+    key='project:'+forkId;
+    value=normalized({...inputValue,id:forkId,draftVersion:0,name:String(inputValue.name||'主题')+' · 备份版本'});
+    stats.forkedDrafts++;
+   }else if(key.startsWith('css-sync:')||key==='active'||key==='lastEdited'){
+    // These are local progress pointers; do not replace newer local state.
+    stats.devicePointersPreserved++;continue;
+   }else throw Error('工坊不可变资源与现有记录冲突：'+key+'。原资产和备份都未被覆盖');
+  }
+  if(seen.has(key))throw Error('工坊备份映射存在重复主键：'+key);seen.add(key);
+  const target=existing.get(key);
+  if(target===undefined){stats.toImport++;planned.push([key,value]);}
+  else if(JSON.stringify(target)===JSON.stringify(value))stats.alreadyPresent++;
+  else throw Error('工坊导入副本键冲突：'+key+'。未覆盖原草稿');
+ }
+ return{records:planned,summary:stats};
+}
+async function previewRecordImport(payload){
+ await ready;const rows=validateRecordImport(payload),db=await getDB();
+ return new Promise((resolve,reject)=>{
+  const tx=db.transaction(STORE,'readonly'),store=tx.objectStore(STORE),all=store.getAllKeys(),values=store.getAll();let issue=null;
+  all.onerror=()=>{issue=all.error;tx.abort();};values.onerror=()=>{issue=values.error;tx.abort();};
+  tx.oncomplete=()=>{try{if(!all.result||!values.result||all.result.length!==values.result.length)throw Error('工坊预检读取不完整');const existing=new Map(all.result.map((k,i)=>[k,values.result[i]]));resolve(importRecordPlan(rows,existing).summary);}catch(error){reject(error);}};
+  tx.onabort=()=>reject(issue||tx.error||Error('工坊预检中止'));
+ });
+}
+async function importRecords(payload){
+ await ready;const rows=validateRecordImport(payload),db=await getDB();return new Promise((resolve,reject)=>{
+  const tx=db.transaction(STORE,'readwrite'),store=tx.objectStore(STORE),all=store.getAllKeys(),values=store.getAll();let issue=null,results=null,keysReady=false,valuesReady=false;
+  const proceed=()=>{if(!keysReady||!valuesReady)return;try{if(all.result.length!==values.result.length)throw Error('工坊导入读取不完整');
+   const existing=new Map(all.result.map((k,i)=>[k,values.result[i]]));results=importRecordPlan(rows,existing);for(const [key,value] of results.records)store.put(value,key);
+  }catch(e){issue=e;tx.abort();}};
+  all.onsuccess=()=>{keysReady=true;proceed();};values.onsuccess=()=>{valuesReady=true;proceed();};
+  all.onerror=()=>{issue=all.error;tx.abort();};values.onerror=()=>{issue=values.error;tx.abort();};
+  tx.oncomplete=()=>resolve({imported:results?.records.length||0,existing:results?.summary?.alreadyPresent||0,forkedDrafts:results?.summary?.forkedDrafts||0,devicePointersPreserved:results?.summary?.devicePointersPreserved||0});
+  tx.onabort=()=>reject(issue||tx.error||Error('工坊素材导入事务已撤销'));
+ });
+}
+let legacyMigrationPromise=null;
+async function migrateLegacyTheme(){
+ if(legacyMigrationPromise)return legacyMigrationPromise;
+ legacyMigrationPromise=(async()=>{
+  await ready;
+  const state=window.MimaStandalone?.getState?.();
+  if(!state||!Array.isArray(state.cssPresets))throw Error('主资料库尚未就绪，不能核对旧工坊主题');
+  const setting=state.themeSettings||{};
+  if(bypass()||setting.globalCssEnabled===false||setting.globalCssPresetId||state.cssPresets.some(p=>p.atelierReleaseKey))return {status:'NOT_NEEDED'};
+  const pointer=await get('active');if(!pointer?.id)return {status:'NO_LEGACY'};
+  const key=pointer.releaseKey||('release:'+pointer.id+':'+pointer.version);
+  const raw=await get(key);if(!raw)throw Error('旧工坊主题素材缺失，保留旧 active 指针且拒绝伪迁移');
+  const project=normalized(raw);
+  // The immutable snapshot is staged first. The canonical pointer is written
+  // only by /atelier/publish, which handles idempotency and CAS.
+  const payload=JSON.stringify(project),digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(payload)))).map(b=>b.toString(16).padStart(2,'0')).join('');
+  const releaseKey='css-release:'+project.id+':'+digest,stableId='css-atl-'+digest;
+  const existing=await get(releaseKey);
+  if(existing&&JSON.stringify(existing)!==payload)throw Error('旧主题迁移遇到不可变快照冲突：'+releaseKey);
+  if(!existing)await putMany([[releaseKey,project]]);
+  const css=compile(project,'standalone',{assetMode:'omit'});
+  const receipt=await window.MimaStandalone.handle('/atelier/publish','POST',{preset:{id:stableId,name:project.name+' · 旧工坊迁移',css,scope:'app',surface:'global',category:'主题工坊',atelierReleaseKey:releaseKey}});
+  if(!receipt?.success||receipt.data?.id!==stableId)throw Error(receipt?.msg||'旧主题迁移提交未通过核验');
+  return {status:'MIGRATED',id:stableId};
+ })();
+ try{return await legacyMigrationPromise;}finally{legacyMigrationPromise=null;}
 }
 function portableBundle(project){const files={},seen=new Map();let n=0;
  const css=compile(normalized(project),'portable',{assetUrl(src,kind,font){if(!src?.startsWith('data:'))return src;let p=seen.get(src);if(!p){const ext=kind==='font'?(font?.format||'woff2'):/^data:image\/([^;]+)/.exec(src)?.[1]||'png';p=`assets/asset_${++n}.${String(ext).replace(/[^a-z0-9]/gi,'')}`;const raw=atob(src.slice(src.indexOf(',')+1));const bytes=new Uint8Array(raw.length);for(let i=0;i<raw.length;i++)bytes[i]=raw.charCodeAt(i);files[p]=bytes;seen.set(src,p);}return p;}});
@@ -848,5 +1038,5 @@ function portableBundle(project){const files={},seen=new Map();let n=0;
 // Blob URLs are document-scoped. BFCache pagehide keeps this document and CSS alive.
 // Never revoke its live resources on pagehide; normal owner changes still reclaim stale URLs,
 // and the browser reclaims all object URLs when the document is actually destroyed.
-window.MimaAtelierCore={cssSyncStatus,settleCssSync,appearanceWarnings,resolvePresentationPlan,presentationLayers,liveLegacyLayers,beginLivePreview,updateLivePreview,endLivePreview,appearanceDiagnostics,normalizeTextPolicy,computeStickerRect,renderAudit,getLastApplyReceipt:()=>lastApplyReceipt&&clone(lastApplyReceipt),getPreviewState:()=>previewSnapshot(),getPublishState:()=>({busy:publishInFlight,receipt:lastApplyReceipt&&clone(lastApplyReceipt),activeVersion:active?.version||0}),TARGETS,DEFAULT,STYLES,PATTERNS,baseTheme,normalized,clone,clamp,hex,esc,rgba,uid,patternCSS,compile,get,saveDraft,apply,unapply,disabled,reaffirm,bypass,ready,_historySave:saveHistory,_historyLatest:latestHistory,listProjects,saveManual,listManual,forkDraft,exportPresetCss,resolveLibraryCss,releaseAssets,portableBundle,previewCss,getActive:()=>clone(active||{id:null,version:0}),getApplied:()=>applied&&clone(applied),getPresentationMode:()=>applied?.cssPriority||'',positionDecor};
+window.MimaAtelierCore={syncGlobalAppearance,migrateLegacyTheme,exportRecords,validateRecordImport,previewRecordImport,importRecords,cssSyncStatus,settleCssSync,appearanceWarnings,resolvePresentationPlan,presentationLayers,liveLegacyLayers,beginLivePreview,updateLivePreview,endLivePreview,appearanceDiagnostics,normalizeTextPolicy,computeStickerRect,renderAudit,getLastApplyReceipt:()=>lastApplyReceipt&&clone(lastApplyReceipt),getPreviewState:()=>previewSnapshot(),getPublishState:()=>({busy:publishInFlight,receipt:lastApplyReceipt&&clone(lastApplyReceipt),activeVersion:active?.version||0}),TARGETS,DEFAULT,STYLES,PATTERNS,baseTheme,normalized,clone,clamp,hex,esc,rgba,uid,patternCSS,compile,get,saveDraft,apply,unapply,disabled,reaffirm,bypass,ready,_historySave:saveHistory,_historyLatest:latestHistory,listProjects,saveManual,listManual,forkDraft,exportPresetCss,resolveLibraryCss,releaseAssets,portableBundle,previewCss,getActive:()=>clone(active||{id:null,version:0}),getApplied:()=>applied&&clone(applied),getPresentationMode:()=>applied?.cssPriority||'',positionDecor};
 })();

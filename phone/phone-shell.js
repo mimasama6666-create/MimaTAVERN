@@ -271,11 +271,23 @@
  async function runWalletIntent(slot,payload,perform){
    if(state.pendingWalletActions.has(slot))return;
    state.pendingWalletActions.add(slot);
+   let record=null;
    try{
-     const record=await D().walletIntent(slot,payload);
-     const result=await perform(record.commandId);
-     await D().finishWalletIntent(slot,record.commandId,result);
-     return result;
+     const amount=payload?.amount;
+     if(amount!==undefined&&(!Number.isSafeInteger(amount)||amount<=0||(slot==='mint'&&amount>100000000)))throw Error('金额必须是合法的正整数，发放上限为一亿虚拟币');
+     if(payload?.from&&payload?.to&&payload.from===payload.to)throw Error('不能向自己转账');
+     record=await D().walletIntent(slot,payload);
+     try{
+       const result=await perform(record.commandId);
+       await D().finishWalletIntent(slot,record.commandId,result);
+       return result;
+     }catch(error){
+       // Verify IDB's unique command receipt before releasing an intent.
+       // If the local DB cannot be consulted, preserve pending for replay.
+       const resolved=await D().resolveWalletIntentFailure(slot,record.commandId,error.message);
+       if(resolved.status==='committed')return resolved.result;
+       throw error;
+     }
    }finally{state.pendingWalletActions.delete(slot);}
  }
  async function issueIntent(kind,signature,perform){
@@ -311,9 +323,10 @@
      pane.onsubmit=e=>{e.preventDefault();void safe(async()=>{
        const to=recipient.value,coins=Number(amount.value);
        if(!Number.isSafeInteger(coins)||coins<=0){error.hidden=false;error.textContent='请输入有效的正整数金额';return;}
-       save.disabled=true;try{await issueIntent('transfer-card',thread.id+':'+to+':'+coins,key=>D().transferInThread(thread.id,D().owner,to,coins,key));finish();await render();}
+       if(state.activeThreadRounds.has(thread.id)||state.postingThreads.has(thread.id)){error.hidden=false;error.textContent='这段聊天正在生成/发送，转账尚未提交；其它聊天不受影响';return;}
+       state.postingThreads.add(thread.id);save.disabled=true;try{await issueIntent('transfer-card',thread.id+':'+to+':'+coins,key=>D().transferInThread(thread.id,D().owner,to,coins,key));finish();await render();}
        catch(err){error.hidden=false;error.textContent=err.message||String(err);}
-       finally{save.disabled=false;}
+       finally{save.disabled=false;state.postingThreads.delete(thread.id);}
      });};
      backdrop.append(pane);backdrop.onclick=e=>{if(e.target===backdrop)finish();};
      backdrop.addEventListener('keydown',e=>{if(e.key==='Escape')finish();});root().append(backdrop);
@@ -337,10 +350,12 @@
      const finish=()=>{if(state.activeChoice!==finish)return;state.activeChoice=null;backdrop.remove();resolve();};state.activeChoice=finish;
      const save=dom('button','phone-btn phone-primary','确认送礼');save.type='submit';line(pane,button('取消',finish),save);
      pane.onsubmit=e=>{e.preventDefault();void safe(async()=>{
-       const to=recipient.value,itemId=itemSelect.value;save.disabled=true;
+       const to=recipient.value,itemId=itemSelect.value;
+       if(state.activeThreadRounds.has(thread.id)||state.postingThreads.has(thread.id)){error.hidden=false;error.textContent='这段聊天正在生成/发送，礼物尚未提交';return;}
+       state.postingThreads.add(thread.id);save.disabled=true;
        try{await issueIntent('gift-card',thread.id+':'+itemId+':'+to,key=>D().giftInThread(thread.id,itemId,D().owner,to,key));finish();await render();}
        catch(err){error.hidden=false;error.textContent=err.message||String(err);}
-       finally{save.disabled=false;}
+       finally{save.disabled=false;state.postingThreads.delete(thread.id);}
      });};
      backdrop.append(pane);backdrop.onclick=e=>{if(e.target===backdrop)finish();};
      backdrop.addEventListener('keydown',e=>{if(e.key==='Escape')finish();});root().append(backdrop);
@@ -509,7 +524,8 @@
    attachments.append(button('发送图片',()=>attachImage(thread.id)));
    attachments.append(button(state.recording?'停止录音':'录音',()=>recordAudio(thread.id)));
    attachments.append(button('文字语音',async()=>{const txt=prompt('输入要以模拟语音发送的话');if(txt?.trim()){
-     const sent=await D().post(thread.id,{content:txt,type:'voice_text'});await render();if(settings.userMaskId&&(thread.kind!=='group'||thread.settings?.autoReply!==false))await produceThreadReplies(thread.id,sent.id);
+     if(state.activeThreadRounds.has(thread.id)||state.postingThreads.has(thread.id))throw Error('当前聊天正在发送/生成，文字语音没有提交');
+     state.postingThreads.add(thread.id);try{const sent=await D().post(thread.id,{content:txt,type:'voice_text'});await render();if(settings.userMaskId&&(thread.kind!=='group'||thread.settings?.autoReply!==false))await produceThreadReplies(thread.id,sent.id);}finally{state.postingThreads.delete(thread.id);}
    }}));
    attachments.append(button('虚拟转账',()=>sendChatTransfer(thread)));
    attachments.append(button('送礼物',()=>sendChatGift(thread)));
@@ -584,7 +600,15 @@
        if(!Array.isArray(extraMemories))throw Error('旧手机生成缺少冻结的记忆授权快照，请重新发起生成');
        const extra=extraMemories.map(m=>'已授权的手机记忆（'+m.id+'）：'+m.content).join('\n');
        const mounts=await D().effectiveResources(actor,prefs);
-       const source=all.find(m=>m.id===sourceId)||all.at(-1),parts=source?.assetIds?.length?await MimaPhoneMedia.visionParts(source.assetIds.filter(Boolean)):[];
+       const source=sourceId?visible.find(m=>m.id===sourceId):visible.at(-1);
+       if(sourceId&&!source)throw Error('回复引用的主人消息不在当前角色可见范围，拒绝发送附件或对话');
+       const allowedImages=[];
+       for(const assetId of source?.assetIds||[]){const asset=await MimaPhoneMedia.load(assetId);
+         if(['image/jpeg','image/png','image/webp','image/gif'].includes(asset.mime))allowedImages.push(assetId);
+         // Audio is kept intact in phone storage; reliable transcript already
+         // travels as source message text, never misrouted to image vision.
+       }
+       const parts=allowedImages.length?await MimaPhoneMedia.visionParts(allowedImages):[];
        returned=await MimaPhoneModel.generate({actorId:actor,userMaskId:prefs.userMaskId,history:visible,presetIds:mounts.presetIds,worldbookIds:mounts.worldbookIds,scope:thread.kind,extra,visionParts:parts,speakerNames,apiSettings:prefs,signal:controller.signal,onProgress});
        await flushDraft().catch(e=>console.warn('手机最后草稿检查点写入失败',e));
        const committed=await D().finishGeneration(generated.id,returned.bubbles,returned.raw,generated.attempt,await D().promptDigest(actor));state.animatedMessageIds=new Set(committed.resultIds||[]);canonicalDone=true;say(nick+' 的回复已保存');
@@ -605,9 +629,20 @@
      if(state.open&&state.screen==='chat'&&state.threadId===threadId)try{await render();}catch(e){console.warn('结束手机生成后的刷新失败；记录仍在本地',e);}
    }}
  function mustUser(prefs){if(!prefs.userMaskId)throw Error('先在「我的手机」选择 User 面具');}
- async function attachImage(threadId){const picker=dom('input');picker.type='file';picker.accept='image/*';picker.onchange=()=>safe(async()=>{const file=picker.files?.[0];if(!file)return;const asset=await MimaPhoneMedia.save(file);const sent=await D().post(threadId,{type:'image',content:'[发送了一张图片]',assetIds:[asset.id]});await render();const prefs=await D().settings();if(prefs.userMaskId){const thread=await D().thread(threadId);if(thread.kind!=='group'||thread.settings?.autoReply!==false)await produceThreadReplies(threadId,sent.id);}});picker.click();}
- async function recordAudio(threadId){if(state.recording){const recorder=state.recording;state.recording=null;const result=await recorder.stop(),saved=await MimaPhoneMedia.save(result.blob);const sent=await D().post(threadId,{type:'voice_audio',content:result.transcript?'[录音转写] '+result.transcript:'[语音录音，未取得可靠转写]',assetIds:[saved.id]});await render();const prefs=await D().settings();if(prefs.userMaskId&&result.transcript){const thread=await D().thread(threadId);if(thread.kind!=='group'||thread.settings?.autoReply!==false)await produceThreadReplies(threadId,sent.id);}return;}
-   if(!confirm('麦克风录音会保存在本机小手机数据库。若浏览器支持语音识别，浏览器服务可能将语音传送至识别提供方。确认开启吗？'))return;state.recording=await MimaPhoneMedia.recordAndTranscribe({onTranscript:x=>say('转写：'+x),onStatus:say});say('正在录音，点击「录音」按钮结束并保存');}
+ async function attachImage(threadId){if(state.activeThreadRounds.has(threadId)||state.postingThreads.has(threadId)){say('这段聊天正在生成回复，不能继续发送附件；其它聊天不受影响');return;}const picker=dom('input');picker.type='file';picker.accept='image/*';picker.onchange=()=>safe(async()=>{const file=picker.files?.[0];if(!file)return;if(state.activeThreadRounds.has(threadId)||state.postingThreads.has(threadId))throw Error('当前聊天有生成/发送任务，图片没有提交');state.postingThreads.add(threadId);try{const asset=await MimaPhoneMedia.save(file);const sent=await D().post(threadId,{type:'image',content:'[发送了一张图片]',assetIds:[asset.id]});await render();const prefs=await D().settings();if(prefs.userMaskId){const thread=await D().thread(threadId);if(thread.kind!=='group'||thread.settings?.autoReply!==false)await produceThreadReplies(threadId,sent.id);}}finally{state.postingThreads.delete(threadId);}});picker.click();}
+ async function recordAudio(threadId){
+   if(state.recording){const recorder=state.recording,originalId=recorder.threadId;
+     if(originalId!==threadId){say('这段录音属于另一个聊天，请返回原聊天停止录音，绝不转发到这里');return;}
+     if(state.activeThreadRounds.has(originalId)||state.postingThreads.has(originalId)){say('原聊天正在生成/发送，先结束原聊天任务再发送录音');return;}
+     state.recording=null;state.postingThreads.add(originalId);
+     try{const result=await recorder.stop(),saved=await MimaPhoneMedia.save(result.blob);
+       const sent=await D().post(originalId,{type:'voice_audio',content:result.transcript?'[录音转写] '+result.transcript:'[语音录音，未取得可靠转写]',assetIds:[saved.id]});await render();
+       const prefs=await D().settings();if(prefs.userMaskId&&result.transcript){const thread=await D().thread(originalId);if(thread.kind!=='group'||thread.settings?.autoReply!==false)await produceThreadReplies(originalId,sent.id);}
+     }finally{state.postingThreads.delete(originalId);}return;
+   }
+   if(state.activeThreadRounds.has(threadId)||state.postingThreads.has(threadId))throw Error('这段聊天正在生成/发送，不开始新录音');
+   if(!confirm('麦克风录音会保存在本机小手机数据库。若浏览器支持语音识别，浏览器服务可能将语音传送至识别提供方。确认开启吗？'))return;
+   const recorder=await MimaPhoneMedia.recordAndTranscribe({onTranscript:x=>say('转写：'+x),onStatus:say});state.recording={...recorder,threadId};say('正在录音，点击「录音」按钮结束并保存');}
  async function screenGroupEdit(main){const row=await D().thread(state.threadId);const title=input('群聊名称',row.title);line(box(main,'群名称'),title,button('保存群名',async()=>{await D().updateThread(row.id,{title:title.value});await navigate('chat',row.id);}));
    const max=input('一轮最多发言角色数',String(row.settings?.maxSpeakerTurns||3));max.type='number';max.min=1;max.max=row.memberIds.length;line(box(main,'群聊调度'),max,button('保存',async()=>{await D().updateThread(row.id,{settings:{maxSpeakerTurns:Math.max(1,Math.min(row.memberIds.length,Number(max.value)||1))}});await render();}));
    const muted=(row.settings?.mutedIds||[]).map(id=>row.memberIds.indexOf(id));
@@ -656,7 +691,7 @@
      const m=momentId?await S().read('moments',momentId):null;
      const history=m?[{actorId:D().owner,content:'有权限可见的动态：'+m.body},...(await D().comments(momentId)).map(c=>({actorId:c.actorId,content:(c.id===parentCommentId?'请回复这条评论：':'评论：')+c.body}))]: (await D().moments(actorId)).map(item=>({actorId:item.authorId,content:'角色有权看到的朋友圈动态：'+item.body}));
      const mounts=await D().effectiveResources(actorId,prefs);
-     const extra=kind==='moment'?'请以角色本人名义写一条朋友圈动态，不引用任何未授权私聊。':'请根据可见动态及评论自然回应，不要捏造未见资料。';
+     const extra=(kind==='moment'?'请以角色本人名义写一条朋友圈动态，不引用任何未授权私聊。':'请根据可见动态及评论自然回应，不要捏造未见资料。')+'\n【本轮已授权手机记忆】\n'+JSON.stringify((gen.memorySnapshot||[]).map(m=>({id:m.id,kind:m.kind,content:m.content})));
      reply=await MimaPhoneModel.generate({actorId,userMaskId:prefs.userMaskId,history,presetIds:mounts.presetIds,worldbookIds:mounts.worldbookIds,task:kind,scope:m?.audience||'public',extra,apiSettings:prefs});
      await D().stageSocialCandidate(gen.id,{attempt:gen.attempt,raw:reply.raw,bubbles:reply.bubbles,sourceDigest:await D().promptDigest(actorId)});staged=true;
      if(confirm('发布以下角色内容？\n\n'+reply.bubbles.map(b=>b.content).join('\n'))){

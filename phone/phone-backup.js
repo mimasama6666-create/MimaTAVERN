@@ -4,7 +4,9 @@
  const toBase64=blob=>new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]||'');reader.onerror=()=>reject(reader.error);reader.readAsDataURL(blob);});
  function fromBase64(source,type){const bin=atob(source),arr=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);return new Blob([arr],{type});}
  const sha=async text=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text)))].map(x=>x.toString(16).padStart(2,'0')).join('');
- async function build(){const tables={};for(const name of store().stores){const rows=await store().all(name);tables[name]=[];for(const row of rows){if(name==='media'&&row.blob){tables[name].push({...row,blobBase64:await toBase64(row.blob),blob:undefined});}else tables[name].push(row);}}
+ async function build(){const names=store().stores;
+   const frozen=await store().transaction(names,'readonly',async tx=>Object.fromEntries(await Promise.all(names.map(async name=>[name,await tx.all(name)]))));
+   const tables={};for(const name of names){const rows=frozen[name];tables[name]=[];for(const row of rows){if(name==='media'&&row.blob){tables[name].push({...row,blobBase64:await toBase64(row.blob),blob:undefined});}else tables[name].push(row);}}
    const data={schema:'mima_phone_archive_v1',createdAt:new Date().toISOString(),tables},canonical=JSON.stringify(data);return {format:'MIMA_PHONE_FULL_BACKUP',sha256:await sha(canonical),data};}
  async function exportToFile(){const archive=await build();const raw=JSON.stringify(archive),url=URL.createObjectURL(new Blob([raw],{type:'application/json'}));
    const a=document.createElement('a');a.href=url;a.download='MimaPhone_full_'+new Date().toISOString().slice(0,10)+'.json';document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);}
@@ -19,6 +21,16 @@
    
    for(const [id,row] of Object.entries(tables)){if(!Array.isArray(row))throw Error('备份表格式无效：'+id);const keys=new Set();for(const item of row){const key=id==='prefs'||id==='meta'?item.key:item.id;if(!key||keys.has(key))throw Error('备份记录重复或缺主键：'+id);keys.add(key);}}
    if([...messages].length!==(tables.messages||[]).length)throw Error('备份包含重复消息');
+   const maxSeq=new Map(),usedSeq=new Map();for(const m of tables.messages||[]){
+     if(!Number.isSafeInteger(m.seq)||m.seq<1)throw Error('归档消息序号无效：'+m.id);
+     const used=usedSeq.get(m.threadId)||new Set();if(used.has(m.seq))throw Error('同一会话包含重复消息序号：'+m.threadId);used.add(m.seq);usedSeq.set(m.threadId,used);
+     maxSeq.set(m.threadId,Math.max(maxSeq.get(m.threadId)||0,m.seq));
+   }
+   for(const c of tables.conversations||[]){
+     if(!Number.isSafeInteger(c.lastSeq)||c.lastSeq<(maxSeq.get(c.id)||0))throw Error('会话序号与消息不一致：'+c.id+'；未导入');
+   }
+   for(const g of tables.generations||[])for(const resultId of g.resultIds||[])if(!messages.has(resultId))throw Error('生成任务引用了不存在的消息：'+g.id);
+
  }
  async function importFile(file){if(!(file instanceof File))throw Error('请先选择完整备份文件');const raw=JSON.parse(await file.text());if(raw?.format!=='MIMA_PHONE_FULL_BACKUP'||raw?.data?.schema!=='mima_phone_archive_v1')throw Error('不是本版本完整小手机归档');const digest=await sha(JSON.stringify(raw.data));if(digest!==raw.sha256)throw Error('备份完整性校验失败，未修改数据库');
    const tables=raw.data.tables;for(const name of store().stores)if(!Array.isArray(tables?.[name]))throw Error('归档缺少数据表：'+name);validateRecords(tables);

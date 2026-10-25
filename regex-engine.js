@@ -63,26 +63,41 @@
     return { ok:invalid.length===0, pack:normalized, invalid };
   }
 
+  function applicable(packs,phase){return arr(packs).some(p=>p&&p.enabled!==false&&arr(p.rules).some(r=>r&&r.enabled!==false&&r.phase===phase));}
+  // Synchronous evaluation is forbidden for user-supplied expressions: a
+  // RegExp has no built-in deadline and can freeze the UI before a timer fires.
   function apply(input,packs=[],phase='display',diagnostics=null) {
-    let out = text(input);
-    const sortedPacks = arr(packs).filter(p=>p&&p.enabled!==false).slice().sort((a,b)=>Number(a.priority??50)-Number(b.priority??50));
-    for (const rawPack of sortedPacks) {
-      const pack = normalizePack(rawPack);
-      const rules = pack.rules.filter(r=>r.enabled!==false && r.phase===phase).slice().sort((a,b)=>Number(a.priority??50)-Number(b.priority??50));
-      for (const rule of rules) {
-        const compiled = compileRule(rule);
-        if (!compiled.ok) {
-          if (Array.isArray(diagnostics)) diagnostics.push({ packId:pack.id, packName:pack.name, ruleId:rule.id, ruleName:rule.name, error:compiled.error });
-          continue;
-        }
-        try { out = out.replace(compiled.regex, rule.replacement); }
-        catch (e) {
-          if (Array.isArray(diagnostics)) diagnostics.push({ packId:pack.id, packName:pack.name, ruleId:rule.id, ruleName:rule.name, error:e?.message||String(e) });
-        }
-      }
+    if(applicable(packs,phase)){
+      const e=new Error('原生正则需要隔离执行；请使用 applyAsync（原文未修改）');e.code='E_REGEX_ASYNC_REQUIRED';throw e;
     }
-    return out;
+    return text(input);
   }
-
-  window.MimaRegexEngine = { PHASES:[...PHASES], normalizeFlags, normalizeRule, normalizePack, compileRule, validatePack, apply };
+  function applyBatchAsync(entries,packs=[],options={}){
+    const list=arr(entries).map(e=>({input:text(e.input),phase:e.phase||'display'}));
+    if(!list.length)return Promise.resolve([]);
+    if(!list.some(e=>applicable(packs,e.phase)))return Promise.resolve(list.map(e=>({output:e.input,diagnostics:[]})));
+    if(typeof Worker!=='function')return Promise.reject(Object.assign(new Error('此环境没有可终止的正则 Worker，原文保留'),{code:'E_REGEX_ISOLATION_UNAVAILABLE'}));
+    if(window.location?.protocol==='file:')return Promise.reject(Object.assign(new Error('file:// 不允许加载隔离 Worker，请使用 HTTPS 打开咪嘛馆；原文保留'),{code:'E_REGEX_WORKER_ORIGIN'}));
+    const budgetMs=Math.max(100,Math.min(8000,Number(options.budgetMs)||Math.min(5000,900+list.length*12)));
+    return new Promise((resolve,reject)=>{
+      let worker,timer,finished=false;
+      const failure=(code,message)=>Object.assign(new Error(message),{code});
+      const cleanup=()=>{if(finished)return false;finished=true;clearTimeout(timer);options.signal?.removeEventListener?.('abort',abort);worker?.terminate();return true;};
+      const abort=()=>{if(cleanup())reject(failure('E_REGEX_ABORTED','正则操作已取消；原文保留'));};
+      try{worker=new Worker(new URL('./regex-native-worker.js?native=20261025-r3',document.baseURI),{name:'mima-native-regex'});}
+      catch(e){reject(failure('E_REGEX_ISOLATION_UNAVAILABLE','正则隔离启动失败：'+(e?.message||e)));return;}
+      worker.onmessage=event=>{if(!cleanup())return;const packet=event.data;if(packet?.ok)resolve(packet.results);else reject(failure('E_REGEX_WORKER_FAILED',packet?.error||'正则线程执行失败'));};
+      worker.onerror=event=>{if(cleanup())reject(failure('E_REGEX_WORKER_FAILED','正则隔离线程异常：'+(event?.message||'未知错误')));};
+      timer=setTimeout(()=>{if(cleanup())reject(failure('E_REGEX_BUDGET',`正则执行超过 ${budgetMs} 毫秒；已终止线程，原文完整保留`));},budgetMs);
+      if(options.signal?.aborted){abort();return;}
+      options.signal?.addEventListener?.('abort',abort,{once:true});
+      try{worker.postMessage({entries:list,packs});}catch(e){if(cleanup())reject(failure('E_REGEX_WORKER_FAILED','正则线程无法接收规则：'+e.message));}
+    });
+  }
+  async function applyAsync(input,packs=[],phase='display',diagnostics=null,options={}){
+    const [result]=await applyBatchAsync([{input,phase}],packs,options);
+    if(Array.isArray(diagnostics))diagnostics.push(...result.diagnostics);
+    return result.output;
+  }
+  window.MimaRegexEngine = { PHASES:[...PHASES], normalizeFlags, normalizeRule, normalizePack, compileRule, validatePack, apply, applyAsync, applyBatchAsync };
 })();

@@ -111,3 +111,55 @@
 .atl-reading-board{border-color:#c8b1cc;background:linear-gradient(155deg,#faf6fc,#fff)}
 .atl-reading-board input[type=range]{width:100%;accent-color:#9b78a8}
 @media(max-width:850px){:host(.atl-live-dock) .atl-toolbar-primary{gap:5px}.atl-inspiration{font-size:10px;padding:5px 7px}}
+
+/* R19 canonical-publish editor: compact mobile layout, real preview remains opt-in. */
+@media(max-width:850px){
+ .atl-main{grid-template-rows:minmax(116px,28%) minmax(0,72%)}
+ .atl-preview-section{min-height:0}
+ .atl-preview-frame{min-height:85px}
+ .atl-editor-content{padding:10px 12px 22px}
+ .atl-header{padding:5px 7px}
+ .atl-toolbar-primary{gap:6px}
+ .atl-toolbar-primary .atl-apply{min-height:40px;white-space:nowrap}
+ .atl-tabs{display:grid;grid-template-columns:repeat(5,minmax(0,1fr))}
+ .atl-tabs button{min-width:0;min-height:40px;padding:8px 2px;font-size:11px}
+ :host(.atl-live-dock) .atl-main{display:flex}
+}
+
+/* R19 UX: three primary destinations; specialist tools remain discoverable.
+   Real-page preview is the fidelity authority; the small scene is a thumbnail. */
+.atl-tabs{overflow:visible;position:relative;z-index:5}
+.atl-tab-more{flex:1;min-width:0;position:relative;align-self:stretch}
+.atl-tab-more summary{display:flex;align-items:center;justify-content:center;list-style:none;min-height:46px;cursor:pointer;font-size:12px;color:#65596c}
+.atl-tab-more summary::-webkit-details-marker{display:none}
+.atl-more-actions{position:absolute;right:4px;top:100%;min-width:134px;z-index:30;padding:7px;display:flex;flex-direction:column;gap:5px;background:#fff;border:1px solid #d9cede;border-radius:12px;box-shadow:0 7px 24px #23142d30}
+.atl-more-actions button{min-height:40px;border-radius:8px;background:#f9f6fa;border:1px solid #e3d9e6;padding:9px 12px;flex:unset}
+.atl-effect-warnings{padding:0 10px;max-height:none!important}
+.atl-effect-warnings summary{font-size:11px;cursor:pointer;padding:6px 0;font-weight:600}
+.atl-effect-warnings[open]{max-height:132px!important;overflow:auto;padding-bottom:7px}
+@media(max-width:850px){
+ .atl-main{grid-template-rows:minmax(116px,25%) minmax(0,75%)}
+ .atl-preview-frame{min-height:72px;border-radius:12px}
+ .atl-preview-toolbar{flex-wrap:nowrap}
+ .atl-preview-toolbar strong{font-size:10px}
+ .atl-preview-toolbar button,.atl-preview-toolbar select{min-height:34px}
+ .atl-preview-foot{font-size:9px;line-height:1.25}
+ .atl-header .atl-apply{min-height:42px;font-size:11px}
+ .atl-tabs button{min-height:44px}
+ .atl-effect-warnings{flex-shrink:0}
+}
+
+/* Single-row mobile header with an accessible overflow for undo/redo and
+   real-DOM picker. No destructive removal of any existing operation. */
+.atl-toolbar-secondary{position:relative;display:block;width:auto;flex:0 0 auto;overflow:visible;padding:0!important}
+.atl-toolbar-secondary summary{list-style:none;display:flex;align-items:center;justify-content:center;min-width:40px;min-height:40px;cursor:pointer;border:1px solid #e2d9e6;border-radius:10px;background:#faf8fb;font-size:20px}
+.atl-toolbar-secondary summary::-webkit-details-marker{display:none}
+.atl-aux-actions{position:absolute;top:calc(100% + 5px);right:0;z-index:60;min-width:172px;max-width:80vw;display:flex;flex-direction:column;gap:6px;padding:8px;background:#fff;border:1px solid #dccfe4;border-radius:12px;box-shadow:0 8px 28px #2d173444}
+.atl-aux-actions button{width:100%;min-height:44px;text-align:center}
+@media(max-width:850px){
+ .atl-header{gap:0;min-height:0;padding-bottom:4px}
+ .atl-toolbar-primary{gap:5px}
+ .atl-toolbar-primary .atl-heading small{display:none}
+ .atl-toolbar-primary .atl-heading b{font-size:11px}
+ .atl-toolbar-primary .atl-apply{min-width:89px;min-height:42px}
+}

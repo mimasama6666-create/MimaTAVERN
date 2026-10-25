@@ -197,7 +197,7 @@
   function normalizePreset(p = {}) {
     const createdAt = p.createdAt || nowIso();
     return { id: p.id || makeId('preset'), name: text(p.name || '未命名预设'), type: text(p.type || 'style'),
-      description: text(p.description), content: text(p.content), category:text(p.category||'未分类').slice(0,60), favorite:!!p.favorite, priority: Number.isFinite(Number(p.priority)) ? Number(p.priority) : 50,
+      description: text(p.description), content: String(p.content??''), category:text(p.category||'未分类').slice(0,60), favorite:!!p.favorite, priority: Number.isFinite(Number(p.priority)) ? Number(p.priority) : 50,
       enabled: p.enabled !== false, createdAt, updatedAt: p.updatedAt || createdAt };
   }
 
@@ -295,18 +295,57 @@
     };
   }
 
-  async function persist() {
-    const snapshot=clone(state), revision=Number(state.storeRevision)||0;
-    try {
-      const committed=await window.MimaLocalStore.saveState(snapshot,revision);
-      // Concurrent writers must not restore a stale in-memory snapshot after commit.
-      state.storeRevision=committed.storeRevision;
-      return committed;
-    } catch(e) {
-      // Reload only verified persisted data; never initialize blank state on read failure.
-      state=normalizeState(await window.MimaLocalStore.loadState());
-      throw e;
-    }
+  // Canonical edits never mutate a shared global object before the IDB commit.
+  // Serialize with story saves; each task reads the latest verified record, edits
+  // a detached copy and publishes to RAM only after the CAS transaction finishes.
+  function commitLibraryEdit(edit){
+    const commit=async()=>{
+      try{
+        const stored=normalizeState(await window.MimaLocalStore.loadState());
+        const result=edit(stored);
+        const committed=await window.MimaLocalStore.saveState(stored,stored.storeRevision);
+        state=normalizeState(committed);
+        return result;
+      }catch(error){
+        // A real CAS refusal must not leave obsolete resources on screen. The
+        // failed proposal has never touched state, and a verified reload may
+        // safely expose the current winner without disguising the failure.
+        try{state=normalizeState(await window.MimaLocalStore.loadState());}
+        catch(readError){console.error('E_CANONICAL_REFRESH_FAILED_AFTER_WRITE',readError);}
+        throw error;
+      }
+    };
+    const task=sessionSaveTail.then(commit,commit);
+    sessionSaveTail=task.then(()=>{},()=>{});
+    return task;
+  }
+  function resourceChanged(a,b){return JSON.stringify(a) !== JSON.stringify(b);}
+  function assertResourceFresh(table,id,stored){
+    const seen=state[table].find(item=>item.id===id)||null;
+    const current=stored[table].find(item=>item.id===id)||null;
+    if(resourceChanged(seen,current))throw new ApiError('E_CANONICAL_CONFLICT',
+      '资料在其他窗口或任务中发生变化，请刷新后重新编辑：'+table+'/'+id);
+    return current;
+  }
+  function commitResource(table,value,expectedUpdatedAt){
+    const input=clone(value);
+    return commitLibraryEdit(stored=>{
+      const current=assertResourceFresh(table,input.id,stored);
+      if(current&&expectedUpdatedAt&&String(expectedUpdatedAt)!==String(current.updatedAt||''))
+        throw new ApiError('E_CANONICAL_CONFLICT','资源已更新，旧编辑不能覆盖新内容：'+table+'/'+input.id);
+      const items=stored[table],index=items.findIndex(x=>x.id===input.id);
+      if(index<0)items.push(input);else items[index]=input;
+      return clone(input);
+    });
+  }
+  function deleteResource(table,id,unlink){
+    return commitLibraryEdit(stored=>{
+      const current=assertResourceFresh(table,id,stored);
+      if(!current)return {deleted:false};
+      stored[table]=stored[table].filter(item=>item.id!==id);
+      unlink?.(stored,id);
+      return {deleted:true};
+    });
   }
   async function init() {
     state = normalizeState(await window.MimaLocalStore.loadState());window.MimaThemeEngine?.apply?.(state.themeSettings);
@@ -408,22 +447,121 @@
     };
     const task=sessionSaveTail.then(commit,commit);sessionSaveTail=task.then(()=>{},()=>{});return task;
   }
-  async function saveMask(m) { const n=normalizeMask({ ...m, updatedAt:nowIso() }); const i=state.masks.findIndex(x=>x.id===n.id); if(i>=0)state.masks[i]=n;else state.masks.push(n); await persist(); return n; }
-  async function savePreset(p) { const n=normalizePreset({ ...p, updatedAt:nowIso() }); const i=state.presets.findIndex(x=>x.id===n.id); if(i>=0)state.presets[i]=n;else state.presets.push(n); await persist(); return n; }
-  async function saveWorldbook(w) { const n=normalizeWorldbook({ ...w, updatedAt:nowIso() }); const i=state.worldbooks.findIndex(x=>x.id===n.id); if(i>=0)state.worldbooks[i]=n;else state.worldbooks.push(n); await persist(); return n; }
-  async function saveCssPreset(p) { const n=normalizeCssPreset({ ...p, updatedAt:nowIso() }); const i=state.cssPresets.findIndex(x=>x.id===n.id); if(i>=0)state.cssPresets[i]=n;else state.cssPresets.push(n); await persist(); return n; }
-  async function saveRegexPack(p) { const checked=window.MimaRegexEngine?.validatePack?window.MimaRegexEngine.validatePack(p):{ok:true,pack:normalizeRegexPack(p),invalid:[]}; if(!checked.ok)throw new ApiError('E_REGEX_INVALID',`正则包含无效规则：${checked.invalid.map(x=>`${x.name}: ${x.error}`).join('；')}`,{hint:'请检查 Pattern（匹配式）与 Flags（标志）；无效规则不会被静默保存。'}); const n=normalizeRegexPack({ ...checked.pack, updatedAt:nowIso() }); const i=state.regexPacks.findIndex(x=>x.id===n.id); if(i>=0)state.regexPacks[i]=n;else state.regexPacks.push(n); await persist(); return n; }
-  async function saveNovelProject(p,{allowCreate=false}={}) {
+  async function saveMask(m){return commitResource('masks',normalizeMask({...m,updatedAt:nowIso()}),m.updatedAt);}
+  async function savePreset(p){return commitResource('presets',normalizePreset({...p,updatedAt:nowIso()}),p.updatedAt);}
+  async function saveWorldbook(w){return commitResource('worldbooks',normalizeWorldbook({...w,updatedAt:nowIso()}),w.updatedAt);}
+  async function saveCssPreset(p){return commitResource('cssPresets',normalizeCssPreset({...p,updatedAt:nowIso()}),p.updatedAt);}
+  async function publishAtelierCss(body){
+    if(!body||!body.preset||typeof body.preset!=='object')throw Error('工坊正式发布缺少 CSS 快照');
+    const input=body.preset;
+    if(!/^css-atl-[a-f0-9]{64}$/.test(input.id||'')||!/^css-release:[a-zA-Z0-9:_-]{1,180}$/.test(input.atelierReleaseKey||''))throw Error('工坊发布指纹无效');
+    if(input.scope!=='app'||input.surface!=='global')throw Error('工坊 CSS 必须以全局主题方式发布');
+    const stored=normalizeState(await window.MimaLocalStore.loadState());
+    const preset=normalizeCssPreset({...input,createdAt:nowIso(),updatedAt:nowIso()});
+    const old=stored.cssPresets.find(x=>x.id===preset.id||x.atelierReleaseKey===preset.atelierReleaseKey);
+    if(old&&(old.id!==preset.id||old.atelierReleaseKey!==preset.atelierReleaseKey||old.css!==preset.css))throw Error('同一工坊发布指纹对应不同 CSS，拒绝覆盖历史版本');
+    if(!old)stored.cssPresets.push(preset);
+    stored.themeSettings=window.MimaThemeEngine?.normalizeSettings?window.MimaThemeEngine.normalizeSettings({...stored.themeSettings,globalCssPresetId:preset.id,globalCssEnabled:true,updatedAt:nowIso()}):{...stored.themeSettings,globalCssPresetId:preset.id,globalCssEnabled:true,updatedAt:nowIso()};
+    // CSS record and active global selection live in the SAME versioned store CAS.
+    const committed=await window.MimaLocalStore.saveState(stored,stored.storeRevision);
+    state=normalizeState(committed);
+    try{window.MimaThemeEngine?.apply?.(state.themeSettings);}catch(e){console.error('[Atelier] canonical CSS committed; theme repaint pending',e);}
+    return {preset:clone(old||preset),themeSettings:clone(state.themeSettings),storeRevision:state.storeRevision};
+  }
+  // Assistant Studio: a regular CSS becomes canonical global UI CSS in one
+  // store transaction; do not create a fake Atelier asset/legacy active pointer.
+  async function publishAssistantCss(body={}){
+    const input=body.preset||{};
+    if(input.scope!=='app'||input.surface!=='global'||!String(input.css||'').trim())throw Error('助手全局 CSS 作用域或正文无效');
+    const stored=normalizeState(await window.MimaLocalStore.loadState());
+    const preset=normalizeCssPreset({...input,atelierReleaseKey:'',updatedAt:nowIso()});
+    const existing=stored.cssPresets.find(p=>p.id===preset.id);
+    if(existing&&(existing.css!==preset.css||existing.scope!=='app'||existing.atelierReleaseKey))throw Error('同 ID 助手 CSS 与原版本冲突；拒绝修改既有预设');
+    if(!existing)stored.cssPresets.push(preset);
+    stored.themeSettings=window.MimaThemeEngine?.normalizeSettings?window.MimaThemeEngine.normalizeSettings({...stored.themeSettings,globalCssPresetId:preset.id,globalCssEnabled:true,updatedAt:nowIso()}):{...stored.themeSettings,globalCssPresetId:preset.id,globalCssEnabled:true,updatedAt:nowIso()};
+    const committed=await window.MimaLocalStore.saveState(stored,stored.storeRevision);
+    state=normalizeState(committed);
+    try{window.MimaThemeEngine?.apply?.(state.themeSettings);}catch(e){console.error('[Assistant CSS] canonical global CSS committed, repaint pending',e);}
+    return{preset:clone(existing||preset),themeSettings:clone(state.themeSettings)};
+  }
+  async function mountAssistantResources(body={}){
+    const targetId=String(body.sessionId||'');if(!targetId)throw new ApiError('E_ASSISTANT_SESSION_REQUIRED','请选择原目标剧情');
+    const adds={presetIds:String(body.presetId||''),regexPackIds:String(body.regexId||''),customCssId:String(body.cssId||'')};
+    if(!Object.values(adds).some(Boolean))throw Error('没有可挂载的助手资源');
+    const persisted=normalizeState(await window.MimaLocalStore.loadState());
+    const session=persisted.sessions.find(s=>s.id===targetId);
+    if(!session)throw new ApiError('E_STORY_SESSION_MISSING','原剧情已删除：资源已经保存，但挂载未执行');
+    if(adds.presetIds&&!persisted.presets.some(x=>x.id===adds.presetIds))throw Error('要挂载的预设不存在');
+    if(adds.regexPackIds&&!persisted.regexPacks.some(x=>x.id===adds.regexPackIds))throw Error('要挂载的正则包不存在');
+    if(adds.customCssId&&!persisted.cssPresets.some(x=>x.id===adds.customCssId))throw Error('要挂载的 CSS 不存在');
+    if(adds.presetIds)session.presetIds=[...new Set([...arr(session.presetIds),adds.presetIds])];
+    if(adds.regexPackIds)session.regexPackIds=[...new Set([...arr(session.regexPackIds),adds.regexPackIds])];
+    if(adds.customCssId){session.customCssId=adds.customCssId;session.customCssEnabled=true;}
+    session.recordRevision=(Number(session.recordRevision)||0)+1;session.updatedAt=nowIso();
+    const committed=await window.MimaLocalStore.saveState(persisted,Number(persisted.storeRevision)||0);
+    state=normalizeState(committed);
+    return clone(state.sessions.find(s=>s.id===targetId));
+  }
+  // A regex bundle and its accompanying preset must either both be recorded,
+  // with the optional session mounts, or neither be recorded.
+  async function publishAssistantRegexBundle(body={}){
+    const input=body.regexPack||{},presetInput=body.preset||{};
+    const checked=window.MimaRegexEngine?.validatePack?.(input);
+    if(!checked?.ok)throw Error('Regex Bundle 含无效正则：'+(checked?.invalid||[]).map(x=>x.error).join('；'));
+    if(!String(presetInput.content||'').trim())throw Error('Regex Bundle 配套预设为空');
+    const stored=normalizeState(await window.MimaLocalStore.loadState());
+    const regex=normalizeRegexPack({...checked.pack,id:input.id,updatedAt:nowIso()});
+    const preset=normalizePreset({...presetInput,updatedAt:nowIso()});
+    const oldRegex=stored.regexPacks.find(x=>x.id===regex.id),oldPreset=stored.presets.find(x=>x.id===preset.id);
+    if(oldRegex&&JSON.stringify(oldRegex.rules)!==JSON.stringify(regex.rules))throw Error('Regex Bundle ID 冲突，拒绝覆盖旧正则');
+    if(oldPreset&&oldPreset.content!==preset.content)throw Error('Regex Bundle 配套预设 ID 冲突，拒绝覆盖旧预设');
+    if(!oldRegex)stored.regexPacks.push(regex);
+    if(!oldPreset)stored.presets.push(preset);
+    let mounted=false;
+    if(body.sessionId){const session=stored.sessions.find(x=>x.id===body.sessionId);
+      if(!session)throw Error('目标剧情已不存在，未写入 Bundle');
+      session.regexPackIds=[...new Set([...arr(session.regexPackIds),regex.id])];
+      session.presetIds=[...new Set([...arr(session.presetIds),preset.id])];
+      session.recordRevision=(Number(session.recordRevision)||0)+1;mounted=true;
+    }
+    const committed=await window.MimaLocalStore.saveState(stored,stored.storeRevision);
+    state=normalizeState(committed);
+    return{regexPack:clone(oldRegex||regex),preset:clone(oldPreset||preset),mounted};
+  }
+  async function saveRegexPack(p){
+    const checked=window.MimaRegexEngine?.validatePack?window.MimaRegexEngine.validatePack(p):{ok:true,pack:normalizeRegexPack(p),invalid:[]};
+    if(!checked.ok)throw new ApiError('E_REGEX_INVALID',`正则包含无效规则：${checked.invalid.map(x=>`${x.name}: ${x.error}`).join('；')}`,{hint:'请检查 Pattern（匹配式）与 Flags（标志）；无效规则不会被静默保存。'});
+    return commitResource('regexPacks',normalizeRegexPack({...checked.pack,updatedAt:nowIso()}),p.updatedAt);
+  }
+  async function saveNovelProject(p,{allowCreate=false}={}){
     if(!window.MimaNovelEngine)throw new Error('Novel Engine 未加载');
     const n=window.MimaNovelEngine.normalizeProject({...p,updatedAt:nowIso()});
-    const i=state.novelProjects.findIndex(x=>x.id===n.id);
-    if(i<0 && !allowCreate)throw new ApiError('E_CANONICAL_STALE','小说已删除，迟到结果不允许重新创建');
-    if(i>=0 && Number(state.novelProjects[i].recordRevision)!==Number(n.recordRevision))throw new ApiError('E_CANONICAL_STALE','小说正文/章节/草稿已更新，旧异步结果不能覆盖新编辑');
-    n.recordRevision++;
-    if(i>=0)state.novelProjects[i]=n;else state.novelProjects.push(n);
-    await persist();p.recordRevision=n.recordRevision;return n;
+    return commitLibraryEdit(stored=>{
+      const existing=stored.novelProjects.find(x=>x.id===n.id);
+      if(!existing&&!allowCreate)throw new ApiError('E_CANONICAL_STALE','小说已删除，迟到结果不能复活它');
+      if(existing&&Number(existing.recordRevision)!==Number(n.recordRevision))
+        throw new ApiError('E_CANONICAL_STALE','小说已被其他任务修改，旧章节、草稿或记忆不得覆盖新版本');
+      if(existing&&allowCreate)throw new ApiError('E_CANONICAL_CONFLICT','同 ID 小说已经存在，禁止覆盖旧项目');
+      const result={...n,recordRevision:(Number(n.recordRevision)||0)+1};
+      const index=stored.novelProjects.findIndex(x=>x.id===result.id);
+      if(index<0)stored.novelProjects.push(result);else stored.novelProjects[index]=result;
+      // Do not change caller revision before the actual durable commit.
+      return result;
+    }).then(result=>{p.recordRevision=result.recordRevision;return result;});
   }
-  async function saveThemeSettings(input={}) { state.themeSettings=window.MimaThemeEngine?.normalizeSettings?window.MimaThemeEngine.normalizeSettings({...state.themeSettings,...input,updatedAt:nowIso()}):{theme:text(input.theme||'default'),updatedAt:nowIso()}; window.MimaThemeEngine?.apply?.(state.themeSettings); await persist(); return clone(state.themeSettings); }
+  async function saveThemeSettings(input={}){
+    const baseline=clone(state.themeSettings);
+    const next=await commitLibraryEdit(stored=>{
+      if(resourceChanged(baseline,stored.themeSettings))
+        throw new ApiError('E_CANONICAL_CONFLICT','外观已在其他窗口修改，请刷新后再调整');
+      stored.themeSettings=window.MimaThemeEngine?.normalizeSettings?
+        window.MimaThemeEngine.normalizeSettings({...stored.themeSettings,...input,updatedAt:nowIso()}):
+        {...stored.themeSettings,...input,updatedAt:nowIso()};
+      return clone(stored.themeSettings);
+    });
+    try{window.MimaThemeEngine?.apply?.(next);}catch(e){console.error('E_THEME_APPLY_AFTER_CANONICAL_COMMIT',e);}
+    return next;
+  }
 
   // ---------- Prompt Assembler ----------
   const asText = v => String(v || '').trim();
@@ -441,6 +579,14 @@
   }
   function activeRegexPacks(session){return arr(session?.regexPackIds).map(getRegexPack).filter(p=>p&&p.enabled!==false).sort((a,b)=>Number(a.priority??50)-Number(b.priority??50));}
   function applyRegexForSession(sessionOrId,input,phase='display',diagnostics=null){const session=typeof sessionOrId==='string'?getSession(sessionOrId):sessionOrId;if(!session)return String(input??'');const transformed=window.MimaRegexEngine?.apply?window.MimaRegexEngine.apply(String(input??''),activeRegexPacks(session),phase,diagnostics):String(input??'');return phase==='display'||phase==='prompt'?resolveMacrosForSession(session,transformed):transformed;}
+  async function applyRegexForSessionAsync(sessionOrId,input,phase='display',diagnostics=null,options={}){
+    const session=typeof sessionOrId==='string'?getSession(sessionOrId):sessionOrId;
+    if(!session)return String(input??'');
+    const raw=String(input??''),packs=activeRegexPacks(session);
+    const transformed=await window.MimaRegexEngine.applyAsync(raw,packs,phase,diagnostics,options);
+    return phase==='display'||phase==='prompt'?resolveMacrosForSession(session,transformed):transformed;
+  }
+
   function historyHtmlProjection(textInput,session){
     const content=String(textInput??'');
     if(session?.promptSettings?.historyHtmlMode==='raw')return {text:content,changed:false,beforeChars:content.length,afterChars:content.length,reason:'disabled'};
@@ -449,8 +595,8 @@
     if(!engine?.project)throw new ApiError('E_HISTORY_HTML_PROJECTION_UNAVAILABLE','历史 HTML 投影模块未加载；已中止新请求，不会损坏剧情。',{hint:'请检查 history-html-projection.js 是否与当前版本一并部署，以及浏览器是否使用了旧缓存。'});
     return engine.project(content);
   }
-  function messagePromptContent(m,session,stats=null){
-    const original=applyRegexForSession(session,m?.content||'', 'prompt');
+  function messagePromptContent(m,session,stats=null,precomputed=null){
+    const original=precomputed===null?applyRegexForSession(session,m?.content||'', 'prompt'):resolveMacrosForSession(session,precomputed);
     const projection=historyHtmlProjection(original,session);
     if(stats)stats.set(m.id,projection);
     // Historical status panels and fabricated social feeds are snapshots,
@@ -473,13 +619,13 @@
     if(mode==='raw'||!window.MimaUserInputSemanticParser?.compile)return raw;
     return window.MimaUserInputSemanticParser.compile(raw,{mode}).prompt;
   }
-  function userMessagePromptContent(m,session){
-    const content=window.MimaRegexEngine?.apply?window.MimaRegexEngine.apply(String(m?.content??''),activeRegexPacks(session),'prompt'):String(m?.content??'');
+  function userMessagePromptContent(m,session,precomputed=null){
+    const content=precomputed===null?window.MimaRegexEngine.apply(String(m?.content??''),activeRegexPacks(session),'prompt'):precomputed;
     return compileUserInputForPrompt(session,content,inputSemanticMode(session,m));
   }
   function keywordMatches(hay, keyword, entry) {
     const k=String(keyword||'').trim(); if(!k)return false;
-    if(entry.useRegex){ try{return new RegExp(k,entry.caseSensitive?'u':'iu').test(String(hay||''));}catch(_){return false;} }
+    if(entry.useRegex)throw new ApiError('E_WORLDBOOK_ASYNC_REQUIRED','正则世界书只能在隔离线程匹配');
     const a=entry.caseSensitive?String(hay||''):String(hay||'').toLocaleLowerCase();
     const b=entry.caseSensitive?k:k.toLocaleLowerCase(); return a.includes(b);
   }
@@ -502,6 +648,22 @@
   // provider weights or automatically resolve conflicts in free-text rules.
   function sortedPresets(session){return arr(session.presetIds).map(getPreset).filter(p=>p&&p.enabled!==false).sort((a,b)=>Number(a.priority??50)-Number(b.priority??50));}
   function collectWorldbookEntries(session){const matched=[],skipped=[];for(const book of mountedWorldbooks(session)){for(const entry of arr(book.entries)){const activation=entryActivation(entry,session),item={book,entry,activation};(activation.active?matched:skipped).push(item);}}matched.sort((a,b)=>Number(a.entry.depth||0)-Number(b.entry.depth||0)||Number(a.entry.priority??50)-Number(b.entry.priority??50));return {matched,skipped};}
+  async function collectWorldbookEntriesAsync(session,signal=null){
+    const books=mountedWorldbooks(session).map(clone);
+    const booksSignature=JSON.stringify(books);
+    const items=books.flatMap(book=>arr(book.entries).map(entry=>({book,entry})));
+    // Pass exactly the union of each entry's configured scanDepth, not the
+    // entire long canonical History. The source History is never modified.
+    const depth=items.reduce((n,x)=>Math.max(n,Math.max(1,Number(x.entry.scanDepth)||12)),0);
+    const msg=depth?(session.messages||[]).filter(m=>m?.content&&m.role!=='system'&&m.role!=='director').slice(-depth).map(m=>String(m.content)):[];
+    if(!window.MimaWorldbookMatcher?.evaluate)throw new ApiError('E_WORLDBOOK_ISOLATION_UNAVAILABLE','世界书隔离模块未加载；未发送请求');
+    const results=await window.MimaWorldbookMatcher.evaluate(items.map(x=>x.entry),msg,{signal});
+    if(JSON.stringify(mountedWorldbooks(session))!==booksSignature)throw new ApiError('E_WORLDBOOK_SOURCE_CHANGED','世界书在匹配期间被修改，请重新生成；未使用旧规则继续');
+    const matched=[],skipped=[];
+    items.forEach((item,i)=>{const activation=results[i],row={...item,activation};(activation.active?matched:skipped).push(row);});
+    matched.sort((a,b)=>Number(a.entry.depth||0)-Number(b.entry.depth||0)||Number(a.entry.priority??50)-Number(b.entry.priority??50));
+    return {matched,skipped};
+  }
   function formatMask(mask,kind){if(!mask)return'';const blocks=[`【${kind==='user'?'当前玩家 Persona':'当前角色 Persona'}：${mask.name}】`];if(mask.description)blocks.push(`简介：${mask.description}`);
     // normalizeMask intentionally keeps legacy content = description fallback.
     // Never send that same fallback a second time in one provider request.
@@ -509,7 +671,7 @@
     if(mask.scenario&&kind==='character')blocks.push(`【角色卡 Scenario】\n${mask.scenario}`);if(mask.exampleDialogue&&kind==='character')blocks.push(`【Example Dialogue】\n${mask.exampleDialogue}`);return blocks.join('\n');}
   // The owner chooses reference material for memory generation independently
   // of ordinary story prompt mounting and forward memory-injection toggles.
-  function memoryReferenceSnapshot(session){
+  function memoryReferenceSnapshot(session,verifiedMatchedRefs=null){
     const settings=normalizeManualMemory(session.manualMemory).settings.summaryContext;
     const records=[];
     const add=(kind,id,content,authority)=>{if(String(content||'').trim())records.push({kind,id,content:String(content),authority});};
@@ -519,11 +681,7 @@
     for(const id of settings.presetIds){const preset=getPreset(id);if(!mounted.has(id)||!preset||preset.enabled===false)throw new ApiError('E_MEMORY_REFERENCE_MISSING','选择用于记忆的预设已卸载或停用：'+id);add('preset',id,resolveMacrosForSession(session,preset.content),'generation_instruction');}
     if(settings.worldbookMode!=='none'){
       const activated=settings.worldbookMode==='matched_entries'?
-        new Set((window.MimaWorldbookRefs?.resolveMatchedWorldbookRefs?.({
-          bookIds:settings.worldbookIds,
-          books:settings.worldbookIds.map(id=>getWorldbook(id)).filter(Boolean),
-          messages:session.messages
-        })||[]).map(ref=>JSON.stringify(ref))):null;
+        new Set((verifiedMatchedRefs??window.MimaWorldbookRefs?.resolveMatchedWorldbookRefs?.({bookIds:settings.worldbookIds,books:settings.worldbookIds.map(id=>getWorldbook(id)).filter(Boolean),messages:session.messages})??[]).map(ref=>JSON.stringify(ref))):null;
       if(settings.worldbookMode==='matched_entries'&&!window.MimaWorldbookRefs?.resolveMatchedWorldbookRefs)
         throw new ApiError('E_MEMORY_REFERENCE_RESOLVER_MISSING','记忆匹配规则未加载');
       const mountedBooks=new Set(arr(session.worldbookIds));
@@ -551,6 +709,22 @@
       }
     }
     return records;
+  }
+  async function memoryReferenceSnapshotAsync(session,signal=null){
+    const settings=normalizeManualMemory(session.manualMemory).settings.summaryContext;
+    let refs=null;
+    if(settings.worldbookMode==='matched_entries'){
+      const books=settings.worldbookIds.map(id=>getWorldbook(id)).filter(Boolean);
+      const booksSignature=JSON.stringify(books);
+      const entries=books.flatMap(book=>arr(book.entries).map(entry=>({bookId:book.id,entry})));
+      const depth=entries.reduce((n,x)=>Math.max(n,Math.max(1,Number(x.entry.scanDepth)||12)),0);
+      const msg=depth?(session.messages||[]).filter(m=>m?.content&&m.role!=='system'&&m.role!=='director').slice(-depth).map(m=>String(m.content)):[];
+      if(!window.MimaWorldbookMatcher?.evaluate)throw new ApiError('E_WORLDBOOK_ISOLATION_UNAVAILABLE','记忆来源匹配 Worker 未加载');
+      const matched=await window.MimaWorldbookMatcher.evaluate(entries.map(x=>x.entry),msg,{signal});
+      if(JSON.stringify(settings.worldbookIds.map(id=>getWorldbook(id)).filter(Boolean))!==booksSignature)throw new ApiError('E_MEMORY_REFERENCE_CHANGED','记忆世界书在匹配期间已修改，不能使用过期激活结果');
+      refs=entries.filter((item,i)=>matched[i].active).map(x=>[x.bookId,x.entry.id]);
+    }
+    return {records:memoryReferenceSnapshot(session,refs),matchedRefs:refs};
   }
   function referencePromptMessages(records){
     return records.map(x=>({role:'system',content:`【记忆生成参考 / ${x.kind} / ${x.id}】【${x.authority==='generation_instruction'?'用户选择的总结指令':'仅供人物背景消歧，不得记作已发生剧情'}】\n${x.content}`}));
@@ -608,12 +782,11 @@
     const replay=session.promptLineageProjection===true;
     const memory=normalizeManualMemory(session.manualMemory||{}),memoryTrace=[];
     const rollingText=session.rollingSummary||session.summary||session.longSummary;
-    const rollingSourceCurrent=!session.rollingSourceFingerprint
-      ?!(session.legacyMemoryQuarantined||replay)
-      :session.rollingSourceCount>0&&session.messages.length>=session.rollingSourceCount&&memorySourceFingerprint(session.messages,session.rollingSourceCount)===session.rollingSourceFingerprint;
-    const rollingIncluded=options.excludeRollingSummary!==true&&session.promptSettings?.injectSavedRolling!==false&&!!rollingText&&(!replay||rollingSourceCurrent);
+    const rollingStatus=rollingCoverageStatus(session);
+    const rollingSourceCurrent=rollingStatus.valid||(!rollingStatus.stale&&!replay&&!session.legacyMemoryQuarantined);
+    const rollingIncluded=options.excludeRollingSummary!==true&&session.promptSettings?.injectSavedRolling!==false&&!!rollingText&&rollingSourceCurrent;
     memoryTrace.push({kind:'rolling',chars:rollingText.length,injected:rollingIncluded,sourceCurrent:rollingSourceCurrent,
-      reason:options.excludeRollingSummary===true?'explicit_exclusion':session.promptSettings?.injectSavedRolling===false?'disabled':!rollingText?'empty':replay&&!rollingSourceCurrent?'historical_replay_boundary':rollingSourceCurrent?'included':'source_changed_included'});
+      reason:options.excludeRollingSummary===true?'explicit_exclusion':session.promptSettings?.injectSavedRolling===false?'disabled':!rollingText?'empty':replay&&!rollingSourceCurrent?'historical_replay_boundary':rollingSourceCurrent?'included':'source_changed_excluded'});
     if(rollingIncluded)add('story_summary',`【剧情摘要 / Rolling Summary】\n${rollingText}`);
     const coreSourceCurrent=memorySourceValid(session,memory.core);
     const coreIncluded=!!(memory.settings.injectCore&&memory.core.content&&(!replay||coreSourceCurrent));
@@ -668,7 +841,7 @@
     if(options.directorNote||session.directorNote)add('director_note',options.directorNote||session.directorNote);
     return {prompt:chunks.join('\n\n'),sections,memoryTrace};
   }
-  function toHistoryMessage(m,session,stats=null){
+  function toHistoryMessage(m,session,stats=null,precomputed=null){
     if(!m?.content)return null;
     // Preserve legacy evidence in canonical/version storage, but never replay
     // a positively identified provider refusal as character dialogue.
@@ -679,7 +852,7 @@
     if(m.role==='assistant'&&!isManuallyRecoveredReply(m)&&
       (evidence.providerRefused===true||evidence.providerFinishKind==='blocked'||
        ['content_filter','safety','blocked','prohibited_content','refusal'].includes(evidence.providerFinishReason)))return null;
-    const content=m.role==='user'?userMessagePromptContent(m,session):messagePromptContent(m,session,stats);
+    const content=m.role==='user'?userMessagePromptContent(m,session,precomputed):messagePromptContent(m,session,stats,precomputed);
     if(m.role==='assistant'&&!content.trim())return null;
     const role=['system','user','assistant'].includes(m.role)?m.role:'system';
     return {role,content,source:{kind:'canonical_history',sourceId:m.id,messageId:m.id,originalRole:m.role}};
@@ -709,8 +882,25 @@
   // unknown provider context is NOT a verified 32k provider limit. The 32k
   // estimate may govern optional old-history retrieval, never block mandatory
   // Persona/Worldbook/recent History before the provider sees it.
-  function promptBudget(){
-    const cfg=getApiConfig(),configured=Number(cfg.contextWindowTokens);
+  // The same exact model identity must govern plan, chunking and provider call.
+  function memoryEffectiveConfig(base,model=''){
+    const effective={...base,model:String(model||base.model||'').trim()};
+    const identity=apiCapacityIdentity(effective);
+    const capacity=Number(base.modelCapacityProfiles?.[identity]);
+    effective.contextWindowTokens=Number.isSafeInteger(capacity)&&capacity>=4096?capacity:0;
+    effective.contextWindowIdentity=identity;
+    return effective;
+  }
+  function rollingCoverageStatus(session){
+    const cursor=Math.max(0,Math.floor(Number(session.lastSummarizedIndex)||0));
+    const count=Math.floor(Number(session.rollingSourceCount)||0);
+    const text=String(session.rollingSummary||session.summary||session.longSummary||'');
+    const valid=!!text&&cursor>0&&count===cursor&&session.messages.length>=cursor&&
+      !!session.rollingSourceFingerprint&&memorySourceFingerprint(session.messages,cursor)===session.rollingSourceFingerprint;
+    return {valid,stale:!!text&&cursor>0&&!valid,start:valid?cursor:0,covered:cursor};
+  }
+  function promptBudget(cfg=getApiConfig()){
+    const configured=Number(cfg.contextWindowTokens);
     const verified=Number.isFinite(configured)&&configured>=4096;
     if(!verified){
       // Unknown means unknown. Do not invent a 32k window, use it to reject
@@ -776,8 +966,8 @@
     const chosenIds=new Set(chosen.map(x=>x.m.id));
     return {chosen,omitted:older.filter(m=>!chosenIds.has(m.id)),usedTokens,terms};
   }
-  function assemble(sessionInput,options={}){
-    const session=normalizeSession(sessionInput),activation=collectWorldbookEntries(session);
+  async function assemble(sessionInput,options={}){
+    const session=normalizeSession(sessionInput),activation=await collectWorldbookEntriesAsync(session,options.signal);
     const budget=Math.max(1000,Number(session.promptSettings?.worldbookBudgetChars||16000)),budgeted=enforceBudget(activation.matched,budget),matched=budgeted.kept;
     const worldbookMountTrace=arr(session.worldbookIds).map(id=>{const book=getWorldbook(id);return {bookId:id,bookName:book?.name||'',mounted:true,enabled:book?.enabled!==false&&!!book,reason:!book?'missing_book':book.enabled===false?'disabled_book':'enabled'};});
     const maskTrace=[{kind:'character',id:session.loadedCharMaskId},{kind:'user',id:session.loadedUserMaskId}].map(x=>{const mask=x.id?getMask(x.id):null;return {kind:x.kind,id:x.id||null,loaded:!!mask,enabled:!!mask&&mask.enabled!==false,injected:!!enabledMask(x.id),reason:!x.id?'not_mounted':!mask?'missing_mask':mask.enabled===false?'disabled':'included',name:mask?.name||'',chars:mask&&mask.enabled!==false?formatMask(mask,x.kind).length:0};});
@@ -786,6 +976,10 @@
     // carry it. A fixed recentMessageLimit governs background summarization,
     // never truncates a sufficiently large model's input.
     const promptCap=promptBudget(),visibleHistory=session.messages.filter(m=>m.role!=='director');
+    const projectionPackets=await window.MimaRegexEngine.applyBatchAsync(
+      visibleHistory.map(m=>({input:String(m.content??''),phase:'prompt'})),activeRegexPacks(session),{signal:options.signal});
+    const promptProjection=new Map(visibleHistory.map((m,i)=>[m.id,projectionPackets[i].output]));
+
     const limit=Math.max(6,Number(session.promptSettings?.recentMessageLimit||34));
     const depthOnly=matched.filter(x=>Number(x.entry.depth||0)>0);
     let sys=buildSystemPrompt(session,options,matched);
@@ -812,7 +1006,7 @@
       // extend different text than the user's saved reply, breaking append.
       const preservePrefix=options.preserveTerminalAssistant===true&&m===visibleHistory[visibleHistory.length-1]&&m.role==='assistant';
       const preserveLatest=!!lastEligibleAssistantId&&m.id===lastEligibleAssistantId&&m.role==='assistant';
-      const projected=(preservePrefix||preserveLatest)?toHistoryMessage(m,{...session,promptSettings:{...session.promptSettings,historyHtmlMode:'raw'}},htmlProjectionStats):toHistoryMessage(m,session,htmlProjectionStats);
+      const projected=(preservePrefix||preserveLatest)?toHistoryMessage(m,{...session,promptSettings:{...session.promptSettings,historyHtmlMode:'raw'}},htmlProjectionStats,promptProjection.get(m.id)??null):toHistoryMessage(m,session,htmlProjectionStats,promptProjection.get(m.id)??null);
       if(preserveLatest&&projected){latestAssistantHtml.retainedChars=projected.content.length;latestAssistantHtml.estimatedTokenCost=estimateTokens(projected.content);}
       projectedHistory.set(m,projected);
       return projected;
@@ -966,6 +1160,19 @@
   // entitlement. Preserve the legacy configuration for its ORIGINAL identity.
   // Never silently carry a 1M window over to another channel or model.
   function apiCapacityIdentity(cfg){return JSON.stringify([String(cfg?.apiBase||'').trim().replace(/\/+$/,''),String(cfg?.chatEndpoint||'').trim(),String(cfg?.model||'').trim()]);}
+  // Freeze capacity at the exact endpoint and model being called. Helpers
+  // must NEVER inherit a larger main-model window after changing model.
+  function effectiveRequestConfig(input){
+    const cfg={...defaultApiConfig(),...(input||{})},identity=apiCapacityIdentity(cfg);
+    const profile=Number(cfg.modelCapacityProfiles?.[identity]);
+    const hasExplicitIdentity=cfg.contextWindowIdentity===identity;
+    const declared=hasExplicitIdentity?Number(cfg.contextWindowTokens):0;
+    cfg.contextWindowTokens=Number.isSafeInteger(profile)&&profile>=4096?profile:
+      Number.isSafeInteger(declared)&&declared>=4096?declared:0;
+    cfg.contextWindowIdentity=identity;
+    return cfg;
+  }
+
   function apiCapacityEntries(raw){
     const profiles=raw?.modelCapacityProfiles&&typeof raw.modelCapacityProfiles==='object'&&!Array.isArray(raw.modelCapacityProfiles)?{...raw.modelCapacityProfiles}:{};
     const identity=String(raw?.contextWindowIdentity||apiCapacityIdentity(raw));
@@ -1116,6 +1323,8 @@
     throw new ApiError('E_API_UNRECOGNIZED_RESPONSE','API 没有返回可识别的文本内容');
   }
   function extractStreamDelta(data){
+    const eventType=String(data?.type||'');
+    if(eventType&&/(?:reasoning|thinking|audio|image|function_call|tool_call|annotation|refusal)\b/i.test(eventType)&&!/output_text\.delta$/i.test(eventType))return '';
     const choice=data?.choices?.[0],delta=choice?.delta||{};
     const candidates=[delta.content,delta.text,choice?.text,data?.delta,data?.output_text];
     if(typeof data?.type==='string'&&/output_text\.delta$/i.test(data.type))candidates.unshift(data.delta);
@@ -1379,7 +1588,7 @@
     issue.partialDraft=candidate.slice(0,24000);throw issue;
   }
   async function callModelWithConfig(messages,cfgInput,temperature=0.85,signal,options={}){
-    const cfg={...defaultApiConfig(),...(cfgInput||{})};if(!cfg.model)throw new ApiError('E_API_CONFIG','还没有选择/填写 Model（模型）');const {chat}=buildEndpoints(cfg);
+    const cfg=effectiveRequestConfig(cfgInput);if(!cfg.model)throw new ApiError('E_API_CONFIG','还没有选择/填写 Model（模型）');const {chat}=buildEndpoints(cfg);
     // The actual serialized request, not a UI toggle, decides how its response is parsed.
     // A frozen retry can legitimately carry an earlier stream setting.
     // Direct memory / novel / auxiliary calls do not pass through assemble().
@@ -1549,11 +1758,11 @@
   // ---------- Novel Studio ----------
   function novelSummaries(){return state.novelProjects.map(p=>({id:p.id,title:p.title,updatedAt:p.updatedAt,createdAt:p.createdAt,sourceName:p.sourceName,chapterCount:arr(p.chapterOrder).length,activeChapterId:p.activeChapterId,memoryStatus:p.memoryStatus?.status||'missing'})).sort((a,b)=>String(b.updatedAt).localeCompare(String(a.updatedAt)));}
   function getNovelProject(id){const p=getNovel(id);if(!p)throw new Error('未找到小说项目');return clone(p);}
-  function novelModelConfig(project){const base=getApiConfig(),n=project.modelSettings||{};return{...base,model:text(n.model)||base.model,sendTemperature:typeof n.sendTemperature==='boolean'?n.sendTemperature:base.sendTemperature,temperature:n.temperature!==null&&n.temperature!==undefined&&Number.isFinite(Number(n.temperature))?Number(n.temperature):base.temperature,stream:typeof n.streaming==='boolean'?n.streaming:base.stream,maxTokens:Number(n.maxTokens)>0?Number(n.maxTokens):base.maxTokens};}
+  function novelModelConfig(project){const base=getApiConfig(),n=project.modelSettings||{};return effectiveRequestConfig({...base,model:text(n.model)||base.model,sendTemperature:typeof n.sendTemperature==='boolean'?n.sendTemperature:base.sendTemperature,temperature:n.temperature!==null&&n.temperature!==undefined&&Number.isFinite(Number(n.temperature))?Number(n.temperature):base.temperature,stream:typeof n.streaming==='boolean'?n.streaming:base.stream,maxTokens:Number(n.maxTokens)>0?Number(n.maxTokens):base.maxTokens});}
   function createBlankNovel(body={}){const p=window.MimaNovelEngine.createProjectFromText({title:body.title||'未命名小说',sourceName:'',sourceEncoding:'utf-8',text:''});p.createdFrom='manual';return p;}
-  async function patchNovelProject(id,body={}){const p=getNovelProject(id),allowed=['title','activeChapterId','presetIds','worldbookIds','modelSettings','generationSettings','appearance'];for(const k of allowed)if(Object.prototype.hasOwnProperty.call(body,k))p[k]=clone(body[k]);return saveNovelProject(p);}
-  function novelAssets(){return{presets:state.presets,worldbooks:state.worldbooks,cssPresets:state.cssPresets,themeSettings:state.themeSettings};}
-  function novelPromptPreview(id,body={}){const p=getNovelProject(id);return window.MimaNovelPromptAssembler.assemble({project:p,presets:state.presets,worldbooks:state.worldbooks,directorNote:body.directorNote||'',mode:body.mode||'continue',draftText:body.draftText||''}).inspector;}
+  async function patchNovelProject(id,body={}){const p=getNovelProject(id),allowed=['title','activeChapterId','presetIds','worldbookIds','modelSettings','generationSettings','appearance','macroUserMaskId','macroCharMaskId'];for(const k of allowed)if(Object.prototype.hasOwnProperty.call(body,k))p[k]=clone(body[k]);return saveNovelProject(p);}
+  function novelAssets(){return{presets:state.presets,worldbooks:state.worldbooks,masks:state.masks,cssPresets:state.cssPresets,themeSettings:state.themeSettings};}
+  async function novelPromptPreview(id,body={}){const p=getNovelProject(id);return (await window.MimaNovelPromptAssembler.assemble({project:p,presets:state.presets,worldbooks:state.worldbooks,masks:state.masks,directorNote:body.directorNote||'',mode:body.mode||'continue',draftText:body.draftText||''})).inspector;}
   function analysisPrompt(project,chapter){const body=window.MimaNovelEngine.getChapterText(chapter);return[
     {role:'system',content:'你是小说剧情档案整理器。只提取已经发生的事实，禁止预测未来、补写剧情或把本轮导演要求当事实。只输出严格 JSON，不要 Markdown。'},
     {role:'user',content:`请分析以下章节，并输出 {"summary":{"overview":"","events":[],"characterChanges":[],"revealedFacts":[],"openThreads":[],"foreshadowing":[],"endingState":""},"delta":{"storyOverview":"","currentSituation":"","characterStates":[],"relationships":[],"timeline":[],"openThreads":[],"foreshadowing":[],"revealedFacts":[],"locations":[],"closedThreads":[],"resolvedForeshadowing":[]}}。\n\n【${chapter.title}】\n${body}`}
@@ -1570,7 +1779,10 @@
     return chapter;
   }
   async function continueNovel(id,body={},signal=null,progress=null){
-    const engine=window.MimaNovelEngine,p=getNovelProject(id),resumeDraft=body.draftId?findDraft(p,body.draftId):null;
+    const engine=window.MimaNovelEngine;let p=getNovelProject(id);
+    const originalChapterId=p.activeChapterId,createNewChapter=body.newChapter===true&&!body.draftId;
+    if(createNewChapter)p=engine.appendNewChapter(p,'');
+    const resumeDraft=body.draftId?findDraft(p,body.draftId):null;
     let chapter,gen,draft;
     if(resumeDraft){
       if(['accepted','rejected'].includes(resumeDraft.status))throw new Error('当前 Draft 已终结，不能继续补写');
@@ -1578,20 +1790,63 @@
       chapter=assertNovelDraftBaseCurrent(p,draft,gen);
       gen.status='generating';draft.status='generating';gen.error='';
     }else{
-      chapter=engine.getChapter(p,body.chapterId||p.activeChapterId);if(!chapter)throw new Error('未找到续写章节');p.activeChapterId=chapter.id;
+      chapter=engine.getChapter(p,createNewChapter?p.activeChapterId:(body.chapterId||p.activeChapterId));if(!chapter)throw new Error('未找到续写章节');p.activeChapterId=chapter.id;
       gen=engine.normalizeGeneration({projectId:p.id,chapterId:chapter.id,directorNote:String(body.directorNote||''),minimumChars:Math.max(0,Number(body.minimumChars??p.generationSettings?.minimumChars)||0),status:'generating',inputSnapshot:{chapterRevision:chapter.revision,chapterHash:engine.chapterHash(chapter)}});
       draft=engine.normalizeDraft({projectId:p.id,chapterId:chapter.id,generationId:gen.id,status:'generating'});gen.draftId=draft.id;p.generations.push(gen);p.drafts.push(draft);
     }
     if(Object.prototype.hasOwnProperty.call(body,'directorNote'))gen.directorNote=String(body.directorNote||'');
     if(Object.prototype.hasOwnProperty.call(body,'minimumChars'))gen.minimumChars=Math.max(0,Number(body.minimumChars)||0);
+    // Each explicit continuation takes new ownership. A late response from the
+    // previous run cannot write into a new run's Draft (even after browser refresh).
+    const runIdentity=engine.makeId('novel-run');gen.runIdentity=runIdentity;
+    if(createNewChapter){chapter.autoCreatedRunId=runIdentity;chapter.autoCreatedOriginalChapterId=originalChapterId;chapter.autoCreatedInitialTitle=chapter.title;}
+
     const minimumChars=Math.max(0,Number(gen.minimumChars)||0),maxAppend=Number.isFinite(Number(p.generationSettings?.maxAppendAttempts))?Math.max(0,Math.min(8,Number(p.generationSettings.maxAppendAttempts))):3;
-    await saveNovelProject(p);const cfg=novelModelConfig(p);let callsThisRun=0;
+    // Budget/macro validation must run before creating any persistent candidate
+    // chapter, so a rejected prompt never leaves an empty chapter behind.
+    if(createNewChapter)await window.MimaNovelPromptAssembler.assemble({project:p,presets:state.presets,worldbooks:state.worldbooks,masks:state.masks,directorNote:gen.directorNote,mode:'continue',draftText:'',minimumChars});
+    const cfg=novelModelConfig(p);
+    if(createNewChapter&&(!cfg.apiBase||!cfg.model))throw new ApiError('E_NOVEL_API_MISSING','小说模型未配置，未创建空章节');
+    await saveNovelProject(p);let callsThisRun=0;
+    let checkpointTimer=null,checkpointError=null,checkpointSerial=Promise.resolve(),lastCheckpointLength=draft.content.length;
+    // All checkpoints and the terminal commit use fresh canonical project state.
+    // Never replace unrelated chapter edits, preset mounts, or an accepted Draft.
+    function queueCheckpoint(force=false){
+      if(checkpointTimer!==null){clearTimeout(checkpointTimer);checkpointTimer=null;}
+      const copy={content:String(draft.content||''),updatedAt:draft.updatedAt,status:draft.status,metadata:clone(draft.metadata),genStatus:gen.status,error:gen.error,completedAt:gen.completedAt,attempts:clone(gen.attempts)};
+      checkpointSerial=checkpointSerial.then(async()=>{
+        if(checkpointError)throw checkpointError;
+        const latest=getNovelProject(id),target=findDraft(latest,draft.id),owner=findGeneration(latest,gen.id);
+        if(!target||!owner||target.generationId!==gen.id||owner.runIdentity!==runIdentity)throw new ApiError('E_NOVEL_RUN_STALE','小说续写身份已改变，旧请求不能覆盖新的 Draft');
+        if(['accepted','rejected'].includes(target.status))throw new ApiError('E_NOVEL_DRAFT_FINAL','草稿已采纳或删除，旧结果不能覆盖');
+        if(!copy.content.startsWith(target.content))throw new ApiError('E_NOVEL_DRAFT_CONFLICT','小说草稿已被改写，不允许旧流式片段覆盖用户编辑');
+        target.content=copy.content;target.updatedAt=copy.updatedAt;
+        target.status=copy.status;target.metadata={...target.metadata,...copy.metadata,checkpointAt:nowIso(),runIdentity};
+        owner.status=copy.genStatus;owner.error=copy.error;owner.completedAt=copy.completedAt;owner.attempts=copy.attempts;
+        const stored=await saveNovelProject(latest);
+        lastCheckpointLength=Math.max(lastCheckpointLength,copy.content.length);
+        return stored;
+      }).catch(e=>{checkpointError=e;throw e;});
+      // A stream progress callback cannot await storage. Consume the rejection
+      // here and propagate it explicitly at the terminal boundary.
+      checkpointSerial.catch(()=>{});
+      return checkpointSerial;
+    }
+    function scheduleCheckpoint(){
+      if(draft.content.length<=lastCheckpointLength||checkpointTimer!==null)return;
+      checkpointTimer=setTimeout(()=>{checkpointTimer=null;queueCheckpoint();},650);
+    }
+    async function flushCheckpoint(){
+      if(checkpointTimer!==null||draft.content.length!==lastCheckpointLength||gen.status!=='generating')return queueCheckpoint(true);
+      return checkpointSerial;
+    }
     try{
       while(true){
+        if(checkpointError)throw checkpointError;
         const mode=draft.content?'append':'continue';
-        const built=window.MimaNovelPromptAssembler.assemble({project:p,presets:state.presets,worldbooks:state.worldbooks,directorNote:gen.directorNote,mode,draftText:draft.content,minimumChars});
+        const built=await window.MimaNovelPromptAssembler.assemble({project:p,presets:state.presets,worldbooks:state.worldbooks,masks:state.masks,directorNote:gen.directorNote,mode,draftText:draft.content,minimumChars});
         const before=draft.content;
-        const proxy=ev=>{if(ev?.streamText!==undefined){draft.content=engine.appendDraftText(before,ev.streamText||'');draft.updatedAt=nowIso();}if(progress)progress({...ev,novelDraftText:draft.content,generationId:gen.id,draftId:draft.id});};
+        const proxy=ev=>{if(ev?.streamText!==undefined){draft.content=engine.appendDraftText(before,ev.streamText||'');draft.updatedAt=nowIso();scheduleCheckpoint();}if(progress)progress({...ev,novelDraftText:draft.content,generationId:gen.id,draftId:draft.id});};
         const resultMeta={};const reply=await callModelWithConfig(built.messages,cfg,cfg.temperature,signal,{streamOverride:cfg.stream,onProgress:proxy,resultMeta,allowIncompleteDraft:true,continuation:mode==='append'});
         draft.content=engine.appendDraftText(before,reply);draft.updatedAt=nowIso();callsThisRun++;
         gen.attempts.push({index:gen.attempts.length,manualResume:!!resumeDraft,chars:engine.countVisibleChars(reply),totalChars:engine.countVisibleChars(draft.content),completedAt:nowIso(),finishReason:resultMeta.finishReason||'unknown'});
@@ -1599,13 +1854,56 @@
         if(resultMeta.refused||resultMeta.finishKind==='truncated'||['length','content_filter','tool_calls'].includes(resultMeta.finishReason)){draft.status='incomplete';draft.metadata={...draft.metadata,finishReason:resultMeta.finishReason||'refusal',achievedChars:count,requiredChars:minimumChars};gen.status='incomplete';gen.completedAt=nowIso();break;}
         if(count>=minimumChars){draft.status='ready';gen.status='ready';gen.completedAt=nowIso();break;}
         if(callsThisRun>=maxAppend+1){draft.status='incomplete';draft.metadata={...draft.metadata,achievedChars:count,requiredChars:minimumChars};gen.status='incomplete';gen.completedAt=nowIso();break;}
+        // Persist each completed model request before the next potentially billed append.
+        await flushCheckpoint();
       }
-      await saveNovelProject(p);return{project:p,draft,generation:gen};
+      const saved=await flushCheckpoint();
+      return{project:saved,draft:findDraft(saved,draft.id),generation:findGeneration(saved,gen.id)};
     }catch(e){
-      const count=engine.countVisibleChars(draft.content);draft.status='interrupted';draft.metadata={...draft.metadata,achievedChars:count,requiredChars:minimumChars,error:e?.message||String(e)};gen.status='interrupted';gen.error=e?.message||String(e);gen.completedAt=nowIso();await saveNovelProject(p);if(count>0)return{project:p,draft,generation:gen,interrupted:true};throw e;
-    }
+      const count=engine.countVisibleChars(draft.content);draft.status='interrupted';draft.metadata={...draft.metadata,achievedChars:count,requiredChars:minimumChars,error:e?.message||String(e)};gen.status='interrupted';gen.error=e?.message||String(e);gen.completedAt=nowIso();
+      let saved=null;try{saved=await flushCheckpoint();}catch(saveError){
+        throw new ApiError('E_NOVEL_CHECKPOINT',`续写中断且本地 Draft 保存未确认：${saveError.message}；请查看小说项目中的已保存片段，不要自动重复付费请求`);
+      }
+      if(count>0)return{project:saved,draft:findDraft(saved,draft.id),generation:findGeneration(saved,gen.id),interrupted:true};
+      if(createNewChapter){
+        // Remove only our untouched empty candidate. A user edit, another
+        // generation, or a changed ownership marker must never be deleted.
+        const latest=getNovelProject(id),candidate=engine.getChapter(latest,chapter.id);
+        const ownDrafts=latest.drafts.filter(d=>d.chapterId===chapter.id),ownRuns=latest.generations.filter(g=>g.chapterId===chapter.id);
+        if(candidate&&candidate.autoCreatedRunId===runIdentity&&candidate.title===chapter.autoCreatedInitialTitle&&candidate.updatedAt===candidate.createdAt&&candidate.revision===chapter.revision&&candidate.segments.length===0&&
+           !engine.getChapterText(candidate).trim()&&ownDrafts.length===1&&ownDrafts[0].id===draft.id&&
+           ownRuns.length===1&&ownRuns[0].id===gen.id&&latest.chapterOrder.length>1){
+          latest.chapters=latest.chapters.filter(c=>c.id!==chapter.id);
+          latest.chapterOrder=latest.chapterOrder.filter(x=>x!==chapter.id);
+          latest.drafts=latest.drafts.filter(d=>d.id!==draft.id);
+          latest.generations=latest.generations.filter(g=>g.id!==gen.id);
+          if(latest.activeChapterId===chapter.id)latest.activeChapterId=latest.chapterOrder.includes(originalChapterId)?originalChapterId:latest.chapterOrder[latest.chapterOrder.length-1];
+          try{await saveNovelProject(latest)}catch(cleanupError){console.warn('自动新章节回收未完成：保留候选供人工核对',cleanupError)}
+        }
+      }
+      throw e;
+    }finally{if(checkpointTimer!==null)clearTimeout(checkpointTimer);}
   }
-  async function patchNovelDraft(id,draftId,body={}){const p=getNovelProject(id),d=findDraft(p,draftId);if(!d)throw new Error('未找到草稿');if(d.status==='accepted')throw new Error('已采纳草稿不能再编辑');d.content=String(body.content??d.content);d.updatedAt=nowIso();if(['interrupted','incomplete'].includes(d.status))d.status='ready';return saveNovelProject(p);}
+
+  // Explicit recovery for a browser-terminated request. Never automatically
+  // erase an unknown-running request: the user must confirm this cleanup.
+  async function discardEmptyAutoNovelChapter(id,chapterId){
+    const engine=window.MimaNovelEngine,p=getNovelProject(id),chapter=engine.getChapter(p,chapterId);
+    if(!chapter?.autoCreatedRunId)throw new ApiError('E_NOVEL_NOT_AUTO','仅支持撤销自动创建的候选空章节');
+    const drafts=p.drafts.filter(d=>d.chapterId===chapterId),runs=p.generations.filter(g=>g.chapterId===chapterId);
+    if(p.chapterOrder.length<=1||chapter.revision!==1||chapter.updatedAt!==chapter.createdAt||
+      chapter.title!==chapter.autoCreatedInitialTitle||chapter.segments.length||engine.getChapterText(chapter)||
+      drafts.length!==1||runs.length!==1||runs[0].id!==drafts[0].generationId||
+      runs[0].runIdentity!==chapter.autoCreatedRunId||String(drafts[0].content||'').length)
+      throw new ApiError('E_NOVEL_AUTO_CHANGED','该章节或其 Draft 已变化，为防误删，必须保留；可按正常章节操作处理');
+    p.chapters=p.chapters.filter(c=>c.id!==chapterId);
+    p.chapterOrder=p.chapterOrder.filter(x=>x!==chapterId);
+    p.drafts=p.drafts.filter(d=>d.chapterId!==chapterId);
+    p.generations=p.generations.filter(g=>g.chapterId!==chapterId);
+    if(p.activeChapterId===chapterId)p.activeChapterId=p.chapterOrder.includes(chapter.autoCreatedOriginalChapterId)?chapter.autoCreatedOriginalChapterId:p.chapterOrder[p.chapterOrder.length-1];
+    return saveNovelProject(p);
+  }
+  async function patchNovelDraft(id,draftId,body={}){const p=getNovelProject(id),d=findDraft(p,draftId);if(!d)throw new Error('未找到草稿');if(d.status==='accepted')throw new Error('已采纳草稿不能再编辑');d.content=String(body.content??d.content);d.updatedAt=nowIso();if(['interrupted','incomplete','generating'].includes(d.status)){d.status='ready';const g=findGeneration(p,d.generationId);if(g){g.runIdentity=window.MimaNovelEngine.makeId('novel-manual-edit');g.status='ready';}}return saveNovelProject(p);}
   async function rejectNovelDraft(id,draftId){const p=getNovelProject(id),d=findDraft(p,draftId);if(!d)throw new Error('未找到草稿');if(d.status==='accepted')throw new Error('已采纳草稿不能删除');d.status='rejected';d.updatedAt=nowIso();const g=findGeneration(p,d.generationId);if(g)g.status='rejected';return saveNovelProject(p);}
   async function regenerateNovelDraft(id,draftId,body={},signal=null,progress=null){
     const p=getNovelProject(id),old=findDraft(p,draftId);if(!old)throw new Error('未找到草稿');
@@ -1711,7 +2009,7 @@
   // plan has been inspected and approved. Unknown provider windows are NEVER
   // guessed as 32k or 1M; the default plan is ONE full request with a warning.
   function memorySourceParts(source,refMessages=[],cfg=getApiConfig(),kind='core'){
-    const budget=promptBudget();
+    const budget=promptBudget(cfg);
     const referenceTokens=refMessages.reduce((n,m)=>n+estimateTokens(m.content)+8,0);
     // Reserve a generous prompt envelope (instructions + origin labels), distinct
     // from the model-output reserve already subtracted by promptBudget().
@@ -1801,7 +2099,7 @@
     return {levels,finalStage:layer[0],stages:levels.flat()};
   }
   function memoryWorkPlan(kind,session,opts,refs,cfg){
-    const budget=promptBudget(),results=[],referenceTokens=refs.reduce((n,m)=>n+estimateTokens(m.content)+8,0);
+    const budget=promptBudget(cfg),results=[],referenceTokens=refs.reduce((n,m)=>n+estimateTokens(m.content)+8,0);
     let core=null,facts={},rolling=null;
     const registerLeaves=(chunks,leafStages,rounds=null)=>{
       chunks.forEach((chunk,i)=>{
@@ -1834,10 +2132,10 @@
     else if(kind==='rolling'){
       if(!budget.verified)throw new ApiError('E_MEMORY_ROLLING_WINDOW_UNVERIFIED','自动滚动记忆未声明真实模型窗口，无法证明合并容量；未进行付费请求。');
       const msgs=session.messages||[],safeWindow=Math.max(18,Number(session.promptSettings?.recentMessageLimit||34)-4);
-      const end=msgs.length-safeWindow,start=session.lastSummarizedIndex||0;
+      const end=msgs.length-safeWindow,start=rollingCoverageStatus(session).start;
       if(end<=start)throw new ApiError('E_MEMORY_ROLLING_NO_SOURCE','滚动记忆无新来源。');
       const sourceParts=rollingSourceParts(session,start,end,25000);
-      const source=['【已有长期摘要】\n'+(session.rollingSummary||'(无)'),
+      const source=['【已验证且来源未变更的长期摘要】\n'+(rollingCoverageStatus(session).valid?session.rollingSummary:'(无：原摘要来源已变更，需从原始历史重建)'),
         ...sourceParts.map((x,i)=>`【本次新增旧剧情 · 第 ${i+1} 段】\n${x.text}`)].join('\n\n');
       const chunks=memorySourceParts(source,refs,cfg,'rolling');
       const leaves=chunks.map((_,i)=>chunks.length===1?'rolling_summary':'rolling_part_'+i);
@@ -1881,9 +2179,10 @@
   }
   async function previewMemoryPlan(kind,id,opts={}){
     const original=getSession(id);if(!original)throw new ApiError('E_STORY_SESSION_MISSING','剧情不存在');
-    const session=normalizeSession(clone(original)),cfg=getApiConfig(),refs=memoryReferenceSnapshot(session);
+    const session=normalizeSession(clone(original)),{records:refs}=await memoryReferenceSnapshotAsync(session);
     const referenceMessages=referencePromptMessages(refs);
     const options={...opts,model:String(opts.model??session.manualMemory.settings.memoryModel??'').trim()};
+    const cfg=memoryEffectiveConfig(getApiConfig(),options.model);
     const planned=memoryWorkPlan(kind,session,options,referenceMessages,cfg);
     const digest=await exactDigest({kind,sessionId:id,options:{...options,approvedPlanDigest:undefined},source:planned.core?.source||planned.rolling?.source||Object.values(planned.facts).map(x=>x.source),references:refs,
       api:[cfg.contextWindowTokens,cfg.maxTokens,cfg.model,options.model],planVersion:planned.summary.planVersion,stages:planned.summary.stages});
@@ -1950,13 +2249,14 @@
     const forwardAbort=()=>generationAbort.abort();
     if(signal?.aborted)forwardAbort();else signal?.addEventListener?.('abort',forwardAbort,{once:true});
     try{
-      const cfg=getApiConfig();const configSignature=fingerprint([cfg.apiBase,cfg.chatEndpoint,opts.model||cfg.model,cfg.sendTemperature,cfg.maxTokens,cfg.stream,original.promptSettings?.historyHtmlMode||'semantic',window.MimaHistoryHtmlProjection?.version||'missing']);
-      const referenceRecords=memoryReferenceSnapshot(original);
+      opts.memoryStreamMode=['on','off'].includes(opts.memoryStreamMode)?opts.memoryStreamMode:original.manualMemory.settings.memoryStreamMode;
+      const cfg=memoryEffectiveConfig(getApiConfig(),opts.model);const configSignature=fingerprint([cfg.apiBase,cfg.chatEndpoint,cfg.model,cfg.sendTemperature,cfg.maxTokens,cfg.stream,original.promptSettings?.historyHtmlMode||'semantic',window.MimaHistoryHtmlProjection?.version||'missing']);
+      const {records:referenceRecords,matchedRefs:referenceSelection}=await memoryReferenceSnapshotAsync(original,generationAbort.signal);
       const referenceMessages=referencePromptMessages(referenceRecords);
       const referenceDigest=await exactDigest(referenceRecords);
       // The exact selected-source versions used to build referenceRecords
       // must also match the durable store, before any paid model call begins.
-      const referenceContract=store.memoryReferenceContract?.(state,id);
+      const referenceContract=store.memoryReferenceContract?.(state,id,referenceSelection);
       if(!referenceContract)throw new ApiError('E_MEMORY_REFERENCE_CONTRACT_UNAVAILABLE','记忆参考资料版本合同不可用，已停止本次请求');
       const sourceFingerprint=memorySourceFingerprint(original.messages,original.messages.length);
       const targetBaseline=kind==='rolling'?JSON.stringify([original.rollingSummary||'',original.lastSummarizedIndex||0]):JSON.stringify(kind==='core'?normalizeManualMemory(original.manualMemory).core:normalizeManualMemory(original.manualMemory).facts);
@@ -1979,8 +2279,8 @@
         if(!opts.approvedPlanDigest||opts.approvedPlanDigest!==signed.digest)
           throw new ApiError('E_MEMORY_PLAN_NOT_CONFIRMED','记忆请求计划未确认或来源/配置已变动，未调用付费模型。',{details:JSON.stringify(signed)});
       }
-      job=await store.beginMemoryJob({sessionId:id,kind,options:opts,sourceHash,sourceCount:original.messages.length,sourceFingerprint,targetBaseline,configSignature,expectedReferenceContract:referenceContract});
-      job.referenceMessages=referenceMessages;job.referenceDigest=referenceDigest;job.workPlan=proposed;
+      job=await store.beginMemoryJob({sessionId:id,kind,options:opts,sourceHash,sourceCount:original.messages.length,sourceFingerprint,targetBaseline,configSignature,expectedReferenceContract:referenceContract,referenceSelection});
+      job.referenceMessages=referenceMessages;job.referenceDigest=referenceDigest;job.workPlan=proposed;job.effectiveMemoryConfig=cfg;
       await store.checkpointMemoryJob(job,'reference_snapshot',{digest:referenceDigest,selected:referenceRecords.map(x=>({kind:x.kind,id:x.id,authority:x.authority})),chars:referenceMessages.reduce((n,x)=>n+x.content.length,0)});
       // Proof of what this summary ACTUALLY reads. The all-story mode reads
       // every nonempty user/assistant timeline entry, applying configured
@@ -2128,8 +2428,8 @@
     await checkpoint(job,stage+'_request');const started=Date.now(),meta={};
     try{
       const prompt=actualPrompt;
-      const memoryCfg=getApiConfig();if(job?.options?.model)memoryCfg.model=job.options.model;
-      if(job){const declared=promptBudget();const estimated=prompt.reduce((n,m)=>n+estimateTokens(m.content)+8,0);
+      const memoryCfg=job?.effectiveMemoryConfig||memoryEffectiveConfig(getApiConfig(),job?.options?.model||'');
+      if(job){const declared=promptBudget(memoryCfg);const estimated=prompt.reduce((n,m)=>n+estimateTokens(m.content)+8,0);
         if(declared.verified&&estimated>declared.usable)throw new ApiError('E_MEMORY_REFERENCE_BUDGET','记忆请求包含的参考资料超过已配置模型窗口；不会静默裁剪。',{details:JSON.stringify({stage,estimated,usable:declared.usable})});}
       const modelProgress=ev=>{if(job?.progress){emitProgress(job.progress,{...ev,jobId:job.id,attemptId:job.attemptId,stageKey:stage,sourceRange:stageScope||null});}};
       const value=await callModelWithConfig(prompt,memoryCfg,temp,signal,{streamOverride:job?.options?.memoryStreamMode==='on'?true:job?.options?.memoryStreamMode==='off'?false:undefined,resultMeta:meta,onProgress:modelProgress,memoryContext:job?{jobId:job.id,attemptId:job.attemptId,stage}:null});
@@ -2310,8 +2610,11 @@
     if(facts.some(f=>!f))throw new ApiError('E_MEMORY_MERGE_SOURCE_CHANGED','选中的记忆已变化，请刷新');
     facts.sort((a,b)=>a.startRound-b.startRound||a.endRound-b.endRound);
     const temperature=clampTemp(opts.temperature??memory.settings.summaryTemperature),targetChars=clampInt(opts.targetChars,100,250000,6000);
-    const cfg=getApiConfig(),model=String((opts.model??memory.settings.memoryModel)||'').trim();if(model)cfg.model=model;
-    const referenceSnapshot=memoryReferenceSnapshot(session);
+    const model=String((opts.model??memory.settings.memoryModel)||'').trim();
+    const cfg=memoryEffectiveConfig(getApiConfig(),model);
+    const {records:referenceSnapshot,matchedRefs:referenceSelection}=await memoryReferenceSnapshotAsync(session,signal);
+    const mergeReferenceContract=window.MimaLocalStore?.memoryReferenceContract?.(state,id,referenceSelection);
+    if(!mergeReferenceContract)throw new ApiError('E_MEMORY_REFERENCE_CONTRACT_UNAVAILABLE','事实合并参考合同不可用，已中止请求');
     const referenceMessages=referencePromptMessages(referenceSnapshot);
     const mergeStore=window.MimaLocalStore;
     if(!mergeStore?.getMergeStage||!mergeStore?.putMergeStage||!mergeStore?.createMergeDraft)
@@ -2338,7 +2641,7 @@
     // No 16k-char fallback concatenation can masquerade as a merged result.
     const source=facts.map(f=>`【原事实记忆 ${f.id} · 第${f.startRound}–${f.endRound}轮】\n${f.content}`).join('\n\n');
     const chunks=memorySourceParts(source,referenceMessages,cfg,'facts');
-    const graphRows=[],budget=promptBudget();
+    const graphRows=[],budget=promptBudget(cfg);
     const referenceTokens=referenceMessages.reduce((n,m)=>n+estimateTokens(m.content)+8,0);
     const leaves=chunks.map((_,i)=>'fact_merge_part_'+i);
     for(let i=0;i<chunks.length;i++){
@@ -2398,7 +2701,8 @@
     const draft=await mergeStore.createMergeDraft(id,{content:output,selectedIds:facts.map(f=>f.id),sourceSignature:memoryFactSignature(memory.facts),
       sourceHistoryFingerprint:memorySourceFingerprint(session.messages,session.messages.length),
       sourceHistoryCount:session.messages.length,startRound:Math.min(...facts.map(f=>f.startRound)),endRound:Math.max(...facts.map(f=>f.endRound)),
-      targetChars,temperature,model:cfg.model,referenceDigest:await exactDigest(referenceSnapshot),outputDigest:await exactDigest(output)});
+      targetChars,temperature,model:cfg.model,referenceDigest:await exactDigest(referenceSnapshot),
+      referenceContract:mergeReferenceContract,referenceSelection,outputDigest:await exactDigest(output)});
     emitProgress(progress,{phase:'memory_merge_preview',percent:100,detail:'合并候选已持久保存，原记忆尚未变更'});
     return draft;
   }
@@ -2444,7 +2748,7 @@
   function summaryNeeded(session,{automatic=false}={}){
     const limit=Math.max(18,Number(session.promptSettings?.recentMessageLimit||34)-4);
     const end=(session.messages||[]).length-limit;
-    const pending=end-Math.max(0,Number(session.lastSummarizedIndex)||0);
+    const pending=end-rollingCoverageStatus(session).start;
     // Explicit user-triggered summaries keep the R9 behavior. Background jobs
     // respect the existing persisted setting instead of launching every turn.
     // This is an input-volume gate, never a sleep or a dropped source window.
@@ -2455,8 +2759,8 @@
     const original=clone(session);
     // Manual rolling is independently permitted even when auto billing is off.
     const msgs=session.messages||[];const safeWindow=Math.max(18,Number(session.promptSettings?.recentMessageLimit||34)-4);const unsummarizedEnd=msgs.length-safeWindow;
-    if(unsummarizedEnd<=8||(session.lastSummarizedIndex||0)>=unsummarizedEnd){if(job)await window.MimaLocalStore.settleMemoryJob(job,'skipped','E_MEMORY_ALREADY_COVERED');return session;}
-    const start=session.lastSummarizedIndex||0;
+    if(unsummarizedEnd<=8||rollingCoverageStatus(session).start>=unsummarizedEnd){if(job)await window.MimaLocalStore.settleMemoryJob(job,'skipped','E_MEMORY_ALREADY_COVERED');return session;}
+    const coverage=rollingCoverageStatus(session),start=coverage.start;
     const sourceParts=rollingSourceParts(session,start,unsummarizedEnd,25000);
     const chunk=sourceParts.map(p=>p.text).join('\n');
     if(!chunk.trim()){if(job)await window.MimaLocalStore.settleMemoryJob(job,'skipped','E_MEMORY_SOURCE_EMPTY');return session;}
@@ -2465,7 +2769,7 @@
     // instruction cannot be allowed to erase previously covered events.
     // The model may exceed that soft target; coverage remains the authority.
     const rollingLengthInstruction='优先完整保留旧摘要里仍由剧情原文支持的事件，并加入本次新增的每一个独立事件；不能为了压缩到 1000 字而丢失人物、物品、先后顺序、否定、承诺或发生次数。仅在完整覆盖能够满足时才尽量控制在 1000 字左右；否则允许更长。';
-    const p=[{role:'system',content:'你是独立剧情档案助手。只总结实际发生过的剧情，不添加新事实，不混入其他世界。'+MEMORY_TIME_CONTRACT},{role:'user',content:`【已有长期摘要】\n${session.rollingSummary||'(无)'}\n\n【本次新增旧剧情】\n${chunk}\n\n请输出更新后的剧情摘要，保留：已发生事件、人物关系变化、身体/心理状态、重要物品与地点、未解决伏笔。${rollingLengthInstruction}`}];
+    const p=[{role:'system',content:'你是独立剧情档案助手。只总结实际发生过的剧情，不添加新事实，不混入其他世界。'+MEMORY_TIME_CONTRACT},{role:'user',content:`【已验证旧摘要】\n${coverage.valid?session.rollingSummary:'(无；旧摘要来源失效，本次只能从完整原文重新建立)'}\n\n【本次新增旧剧情】\n${chunk}\n\n请输出更新后的剧情摘要，保留：已发生事件、人物关系变化、身体/心理状态、重要物品与地点、未解决伏笔。${rollingLengthInstruction}`}];
     try{
       const plan=job?.workPlan?.rolling;
       if(!plan)throw new ApiError('E_MEMORY_ROLLING_PLAN_MISSING','自动滚动记忆没有收费前完成的依赖 DAG，未调用模型。');
@@ -2679,7 +2983,7 @@
     let unsavedUserInput=false,commitStarted=false;
     if(action==='send'&&!retryPending){
       if(!String(userText||'').trim())throw new ApiError('E_STORY_EMPTY_INPUT','还没有输入内容猫！',{hint:'请输入动作、语言或剧情后再发送。'});
-      const originalUserText=String(userText||'');const transformedUserText=applyRegexForSession(session,originalUserText,'input');
+      const originalUserText=String(userText||'');const transformedUserText=await applyRegexForSessionAsync(session,originalUserText,'input',null,{signal});
       const userMsg=makeMessage('user',transformedUserText,session,{source:'manual_send',regexInputApplied:transformedUserText!==originalUserText,inputSemanticMode:inputSemanticMode(session),inputSemanticParserVersion:'1.1.7'});userMsg.rawContent=originalUserText;session.messages.push(userMsg);
       unsavedUserInput=true;
     }
@@ -2721,7 +3025,7 @@
       }
       emitProgress(progress,{phase:'prompt_ready',percent:34,detail:retryPending?(options.retryParameters==='current'?'保留原轮冻结消息，使用当前 API 模型与参数重试；不重复玩家消息。':'按原模型和参数重试冻结请求；API 设置变更不会改变本次请求。'):'使用原轮冻结上下文重新采样；旧回复与版本不进入请求。'});
     }else{
-      built=assemble(promptSession,{...opts,preserveTerminalAssistant:action==='continue'&&cfg.continuationMode==='deepseek_prefix'});
+      built=await assemble(promptSession,{...opts,signal,preserveTerminalAssistant:action==='continue'&&cfg.continuationMode==='deepseek_prefix'});
       requestBody=makeApiBody(built.messages,cfg,temp,{continuation:action==='continue',storyThinking:true});
       snapshot=generationSnapshot(session,promptSession,requestBody,built.messageSources,action,action==='continue'?target?.id:null,sourceFingerprint,built.inspector?.contextTrace);
       const detail=action==='regenerate'&&target&&options.regenerationContext!=='current'?'旧记录没有请求快照，已明确使用当前挂载重建原轮。':action==='continue'?(cfg.continuationMode==='deepseek_prefix'?'按已声明的 prefix 协议请求续写。':'普通 Chat 后续 assistant 生成；接口未声明原文前缀补全，连续性由上下文和玩家预设决定。'):`Prompt（提示词）已组装 · ${requestBody.messages.length} 条消息`;
@@ -2854,7 +3158,7 @@
     // Hard invariant: never persist a blank assistant message.
     if(!text(replyRaw))throw new ApiError('E_API_EMPTY_REPLY','模型返回空白正文，已阻止写入剧情。');
     storyMark('raw_validated');
-    const reply=applyRegexForSession(session,replyRaw,'output');
+    const reply=await applyRegexForSessionAsync(session,replyRaw,'output',null,{signal});
     storyMark('output_regex_done',{chars:reply.length});
     // Keep the complete original provider text for manual recovery if an output
     // regex erases/mangles it. The transformed text is not the raw reply.
@@ -2870,7 +3174,7 @@
     const wouldCommit=action==='continue'&&target&&proposedContinuationKind==='suffix'?target.content+'\n'+reply:reply;
     validateStoryReply(wouldCommit,canonicalAdmissionMeta);
     if(!text(reply))throw new ApiError('E_API_EMPTY_REPLY','输出正则处理后没有有效角色正文；未提交空白消息。');
-    const renderedReply=applyRegexForSession(session,reply,'display');
+    const renderedReply=await applyRegexForSessionAsync(session,reply,'display',null,{signal});
     if(diagnosticId){
       // Diagnostic work has no right to cancel an already successful Speech Turn.
       // Keep raw/canonical/display hashes off History, Memory and the critical path.
@@ -2907,7 +3211,7 @@
       session.messages.push(full);
       storyMark('full_reply_continuation_separated',{previousMessageId:target.id});
     }else if(action==='continue'&&target){
-      const i=session.messages.findIndex(m=>m.id===target.id),previousContent=session.messages[i].content,previousRaw=session.messages[i].rawContent||previousContent;archiveVersion(session.messages[i],'continue_before_append');session.messages[i].content=`${previousContent}\n${reply}`;session.messages[i].rawContent=`${previousRaw}\n${replyRaw}`;session.messages[i].renderedContent=applyRegexForSession(session,session.messages[i].content,'display');session.messages[i].metadata={...(session.messages[i].metadata||{}),continuedAt:nowIso(),...(thinkingRecord?{thinkingContinuations:[...(session.messages[i].metadata?.thinkingContinuations||[]),thinkingRecord]}:{})};session.messages[i].tokenEstimate=estimateTokens(session.messages[i].content);
+      const i=session.messages.findIndex(m=>m.id===target.id),previousContent=session.messages[i].content,previousRaw=session.messages[i].rawContent||previousContent;archiveVersion(session.messages[i],'continue_before_append');session.messages[i].content=`${previousContent}\n${reply}`;session.messages[i].rawContent=`${previousRaw}\n${replyRaw}`;session.messages[i].renderedContent=await applyRegexForSessionAsync(session,session.messages[i].content,'display',null,{signal});session.messages[i].metadata={...(session.messages[i].metadata||{}),continuedAt:nowIso(),...(thinkingRecord?{thinkingContinuations:[...(session.messages[i].metadata?.thinkingContinuations||[]),thinkingRecord]}:{})};session.messages[i].tokenEstimate=estimateTokens(session.messages[i].content);
     }else if(action==='regenerate'&&target){
       const i=session.messages.findIndex(m=>m.id===target.id);
       if(i<0)throw new ApiError('E_STORY_REGEN_TARGET_MISSING','要重说的那条回复在保存前消失了，已阻止覆盖其他剧情。');
@@ -3046,7 +3350,7 @@
     if(body.confirmed!==true)throw new ApiError('E_REPLY_RECOVERY_CONFIRM','请先确认将已收到的文本手动恢复到原剧情。');
     const record=await window.MimaDiagnosticJournal.recoveryCandidate(body.diagnosticId);
     if(record.sessionId!==id||String(record.action||'').startsWith('compat_'))throw new ApiError('E_REPLY_RECOVERY_OWNER','诊断不属于这个原生剧情。');
-    const persisted=normalizeState(await window.MimaLocalStore.loadState()),session=persisted.sessions.find(s=>s.id===id);
+    const persisted=normalizeState(await window.MimaLocalStore.loadState()),sourceSession=persisted.sessions.find(s=>s.id===id),session=sourceSession?normalizeSession(clone(sourceSession)):null;
     if(!session)throw new ApiError('E_STORY_SESSION_MISSING','原剧情已删除，未重建或覆盖存档。');
     const previous=session.messages.find(m=>m.metadata?.manualRecovery?.diagnosticId===record.id||arr(m.metadata?.manualRecoveryIds).includes(record.id));
     if(previous)return {session,messageId:previous.id,alreadyRestored:true,action:record.action};
@@ -3104,7 +3408,7 @@
     target.metadata={...(target.metadata||{}),...(htmlRepair?{htmlCodeRepair:{candidateId:htmlRepair.id,originalRawPreserved:true,approvedAt:nowIso(),recoveryDiagnosticId:record.id}}:{}),generationSnapshot:action==='continue'?target.metadata?.generationSnapshot:pending.snapshot,
       manualRecoveryIds:[...new Set([...arr(target.metadata?.manualRecoveryIds),record.id])],
       manualRecovery:{diagnosticId:record.id,generationId:pending.id,attempt:pending.attempt,action,restoredAt:nowIso(),providerFinishReason:record.finishReason||'',formatCheckOwnerOverride:!htmlRepair,originalRejectionCode:String(record.error?.code||''),contentFingerprint:manualReplyFingerprint(target)}};
-    target.renderedContent=applyRegexForSession(session,target.content,'display');target.tokenEstimate=estimateTokens(target.content);
+    target.renderedContent=await applyRegexForSessionAsync(session,target.content,'display');target.tokenEstimate=estimateTokens(target.content);
     // Explicit human action only: no Provider, retry or background summary.
     let saved;
     if(htmlRepair){
@@ -3121,7 +3425,7 @@
   }
   async function prepareHtmlRepair(id,msgId){
     state=normalizeState(await window.MimaLocalStore.loadState());
-    const session=getSession(id),message=session?.messages.find(x=>x.id===msgId);
+    const source=getSession(id),session=source?normalizeSession(clone(source)):null,message=session?.messages.find(x=>x.id===msgId);
     if(!session||!message||message.role!=='assistant')throw new ApiError('E_HTML_REPAIR_TARGET_MISSING','目标角色回复不存在。');
     const contract=session.promptSettings?.outputContract||{};
     if(!contract.requireHtml||!contract.templateMessageId)throw new ApiError('E_HTML_REPAIR_TEMPLATE_MISSING','请先在上下文设置中绑定一条正确的 HTML 模板消息。');
@@ -3144,7 +3448,7 @@
   async function prepareAiHtmlRepair(id,msgId,body={}){
     if(body.confirmedCharge!==true)throw new ApiError('E_HTML_AI_CHARGE_NOT_APPROVED','主人未确认付费重排；请求 0 次。');
     state=normalizeState(await window.MimaLocalStore.loadState());
-    const session=getSession(id),message=session?.messages.find(x=>x.id===msgId);
+    const source=getSession(id),session=source?normalizeSession(clone(source)):null,message=session?.messages.find(x=>x.id===msgId);
     if(!message||message.role!=='assistant')throw new ApiError('E_HTML_AI_TARGET_MISSING','目标角色回复不存在。');
     const contract=session.promptSettings?.outputContract||{},template=session.messages.find(x=>x.id===contract.templateMessageId&&x.role==='assistant');
     if(!contract.requireHtml||!template||!contract.bodySelector)throw new ApiError('E_HTML_AI_TEMPLATE_MISSING','请选择有效 HTML 模板与唯一正文槽。');
@@ -3182,7 +3486,7 @@
     if(!c||c.id!==candidateId||c.state!=='pending')throw new ApiError('E_HTML_REPAIR_CANDIDATE_MISSING','候选不存在或已经结算。');
     // Read current canonical, not an obsolete UI snapshot; stale tabs fail closed.
     state=normalizeState(await window.MimaLocalStore.loadState());
-    const session=getSession(id),message=session?.messages.find(x=>x.id===msgId);
+    const source=getSession(id),session=source?normalizeSession(clone(source)):null,message=session?.messages.find(x=>x.id===msgId);
     if(!message||message.role!=='assistant'||(message.branchId||'main')!==c.branchId||arr(message.versions).length!==c.baseMessageVersion||
       await exactDigest({content:message.content,rawContent:message.rawContent,versions:message.versions})!==c.baseContentDigest)
       throw new ApiError('E_HTML_REPAIR_CAS_STALE','消息或支线已经变化，禁止用过期修复覆盖。');
@@ -3205,7 +3509,7 @@
       catch(error){throw new ApiError('E_HTML_REPAIR_OWNER_CONFIRMATION_REQUIRED',String(error.message||error));}
     }
     archiveVersion(message,'owner_html_code_repair');
-    message.content=approvedContent;message.renderedContent=applyRegexForSession(session,message.content,'display');
+    message.content=approvedContent;message.renderedContent=await applyRegexForSessionAsync(session,message.content,'display');
     // The raw provider content remains immutable evidence.
     message.isEdited=true;message.metadata={...message.metadata,htmlCodeRepair:{candidateId:c.id,originalRawPreserved:true,approvedAt:nowIso()}};
     message.tokenEstimate=estimateTokens(message.content);session.legacyMemoryQuarantined=true;
@@ -3218,7 +3522,9 @@
     state=normalizeState(committed);
     return normalized;
   }
-  async function editMessage(id,msgId,content,opts={}){const s=getSession(id);if(!s)throw new Error('未找到剧本');const i=s.messages.findIndex(m=>m.id===msgId);if(i<0)throw new Error('未找到消息');const msg=s.messages[i];archiveVersion(msg,'manual_edit');msg.content=String(content||'');msg.rawContent=msg.content;msg.renderedContent=msg.role==='assistant'?applyRegexForSession(s,msg.content,'display'):msg.content;if(msg.role==='assistant'){delete msg.metadata.thinking;delete msg.metadata.thinkingContinuations;}if(msg.role==='user')msg.metadata={...(msg.metadata||{}),inputSemanticMode:inputSemanticMode(s),inputSemanticParserVersion:'1.1.7'};msg.isEdited=true;msg.editedAt=nowIso();msg.tokenEstimate=estimateTokens(msg.content);s.legacyMemoryQuarantined=true;if(opts.truncateAfter){const removed=s.messages.slice(i+1);if(removed.length){s.archivedBranches=arr(s.archivedBranches);s.archivedBranches.push({id:makeId('branch'),fromMessageId:msg.id,reason:'edit_truncate_after',archivedAt:nowIso(),messages:removed});s.messages=s.messages.slice(0,i+1);}}return saveSession(s);}
+  // Edit only a detached canonical session. A display-regex Worker may yield;
+  // leaking the edit into global state before CAS could let another save persist it.
+  async function editMessage(id,msgId,content,opts={}){const source=getSession(id),s=source?normalizeSession(clone(source)):null;if(!s)throw new Error('未找到剧本');const i=s.messages.findIndex(m=>m.id===msgId);if(i<0)throw new Error('未找到消息');const msg=s.messages[i];archiveVersion(msg,'manual_edit');msg.content=String(content||'');msg.rawContent=msg.content;msg.renderedContent=msg.role==='assistant'?await applyRegexForSessionAsync(s,msg.content,'display'):msg.content;if(msg.role==='assistant'){delete msg.metadata.thinking;delete msg.metadata.thinkingContinuations;}if(msg.role==='user')msg.metadata={...(msg.metadata||{}),inputSemanticMode:inputSemanticMode(s),inputSemanticParserVersion:'1.1.7'};msg.isEdited=true;msg.editedAt=nowIso();msg.tokenEstimate=estimateTokens(msg.content);s.legacyMemoryQuarantined=true;if(opts.truncateAfter){const removed=s.messages.slice(i+1);if(removed.length){s.archivedBranches=arr(s.archivedBranches);s.archivedBranches.push({id:makeId('branch'),fromMessageId:msg.id,reason:'edit_truncate_after',archivedAt:nowIso(),messages:removed});s.messages=s.messages.slice(0,i+1);}}return saveSession(s);}
   async function restoreMessageVersion(id,msgId,versionIndex,body={}){
     const current=getSession(id);if(!current)throw new ApiError('E_STORY_SESSION_MISSING','未找到剧情 Session。');
     const session=normalizeSession(clone(current)),msg=session.messages.find(m=>m.id===msgId);
@@ -3239,7 +3545,7 @@
     archiveVersion(msg,'version_restore');
     msg.content=version.content;msg.rawContent=raw;
     msg.renderedContent=typeof version.renderedContent==='string'?version.renderedContent:
-      (msg.role==='assistant'?applyRegexForSession(session,version.content,'display'):version.content);
+      (msg.role==='assistant'?await applyRegexForSessionAsync(session,version.content,'display'):version.content);
     msg.isEdited=version.isEdited===true;
     msg.metadata={...(version.metadata&&typeof version.metadata==='object'?clone(version.metadata):{}),
       restoredAt:nowIso(),restoredVersionIndex:index,restoredVersionId:version.versionId||null};
@@ -3249,8 +3555,10 @@
     // CAS. Neither a concurrent edit nor a late result can be overwritten.
     return saveSession(session);
   }
+  // Deleted-message archives and visible History must settle together.
+  // Do not mutate the shared session if the subsequent IDB CAS fails.
   async function deleteMessage(id,msgId){
-    const s=getSession(id);if(!s)throw new Error('未找到剧本');
+    const source=getSession(id),s=source?normalizeSession(clone(source)):null;if(!s)throw new Error('未找到剧本');
     const i=s.messages.findIndex(m=>m.id===msgId);if(i<0)throw new Error('未找到消息');
     const [removed]=s.messages.splice(i,1);
     const recovery=normalizeMessage({...clone(removed),metadata:{...(removed?.metadata||{}),deletedAt:nowIso(),deleteReason:'manual_delete'}});
@@ -3258,8 +3566,8 @@
     if(Number.isFinite(Number(s.lastSummarizedIndex)))s.lastSummarizedIndex=Math.max(0,Math.min(Number(s.lastSummarizedIndex),s.messages.length));
     return saveSession(s);
   }
-  async function addOpening(id,content){const s=getSession(id);if(!s)throw new Error('未找到剧本');if(!String(content||'').trim())throw new Error('开场白为空');const msg=makeMessage('assistant',content,s,{source:'character_first_message'});msg.renderedContent=applyRegexForSession(s,msg.content,'display');s.messages.push(msg);return saveSession(s);}
-  function previewPrompt(id,opts={}){const s=getSession(id);if(!s)throw new Error('未找到剧本');const c=normalizeSession(clone(s));if(String(opts.draft||'').trim())c.messages.push(makeMessage('user',opts.draft,c,{source:'prompt_preview_draft',inputSemanticMode:inputSemanticMode(c),inputSemanticParserVersion:'1.1.7'}));return assemble(c,{directorNote:opts.directorNote||''}).inspector;}
+  async function addOpening(id,content){const source=getSession(id),s=source?normalizeSession(clone(source)):null;if(!s)throw new Error('未找到剧本');if(!String(content||'').trim())throw new Error('开场白为空');const msg=makeMessage('assistant',content,s,{source:'character_first_message'});msg.renderedContent=await applyRegexForSessionAsync(s,msg.content,'display');s.messages.push(msg);return saveSession(s);}
+  async function previewPrompt(id,opts={}){const s=getSession(id);if(!s)throw new Error('未找到剧本');const c=normalizeSession(clone(s));if(String(opts.draft||'').trim())c.messages.push(makeMessage('user',opts.draft,c,{source:'prompt_preview_draft',inputSemanticMode:inputSemanticMode(c),inputSemanticParserVersion:'1.1.7'}));return (await assemble(c,{directorNote:opts.directorNote||''})).inspector;}
 
   // ---------- Local route compatibility ----------
   function ok(data){return{success:true,data};}
@@ -3267,6 +3575,10 @@
   async function handle(endpoint,method='GET',body=null,signal=null,progress=null){
     try{
       const path=String(endpoint||'').split('?')[0];
+      if(path==='/atelier/publish'&&method==='POST')return ok(await publishAtelierCss(body));
+      if(path==='/assistant/css-publish'&&method==='POST')return ok(await publishAssistantCss(body));
+      if(path==='/assistant/mount'&&method==='POST')return ok(await mountAssistantResources(body));
+      if(path==='/assistant/regex-bundle'&&method==='POST')return ok(await publishAssistantRegexBundle(body));
       if(path==='/theme'&&method==='GET')return ok(clone(state.themeSettings));
       if(path==='/theme'&&method==='PATCH')return ok(await saveThemeSettings(body||{}));
       if(path==='/novel-assets'&&method==='GET')return ok(novelAssets());
@@ -3275,15 +3587,16 @@
       if(path==='/novels/import'&&method==='POST'){const p=window.MimaNovelEngine.createProjectFromText({title:body?.title,sourceName:body?.sourceName||'',sourceEncoding:body?.sourceEncoding||'utf-8',text:body?.text||''});return ok(await saveNovelProject(p,{allowCreate:true}));}
       let nm=path.match(/^\/novels\/([^/]+)$/);if(nm&&method==='GET'){const p=getNovel(nm[1]);return p?ok(p):fail('未找到小说项目');}
       if(nm&&method==='PATCH')return ok(await patchNovelProject(nm[1],body||{}));
-      if(nm&&method==='DELETE'){const before=state.novelProjects.length;state.novelProjects=state.novelProjects.filter(x=>x.id!==nm[1]);await persist();return ok({deleted:state.novelProjects.length<before});}
+      if(nm&&method==='DELETE')return ok(await deleteResource('novelProjects',nm[1]));
       nm=path.match(/^\/novels\/([^/]+)\/chapters$/);if(nm&&method==='POST'){const p=getNovelProject(nm[1]);return ok(await saveNovelProject(window.MimaNovelEngine.appendNewChapter(p,body?.title||'')));}
+      nm=path.match(/^\/novels\/([^/]+)\/chapters\/([^/]+)\/discard-empty-auto$/);if(nm&&method==='POST')return ok(await discardEmptyAutoNovelChapter(nm[1],nm[2]));
       nm=path.match(/^\/novels\/([^/]+)\/reparse$/);if(nm&&method==='POST'){const p=getNovelProject(nm[1]);return ok(await saveNovelProject(window.MimaNovelEngine.reparseImportedProject(p)));}
       nm=path.match(/^\/novels\/([^/]+)\/chapters\/([^/]+)$/);if(nm&&method==='PATCH'){const p=getNovelProject(nm[1]),next=window.MimaNovelEngine.editChapter(p,nm[2],body?.action||'replace_text',body||{});return ok(await saveNovelProject(next));}
       nm=path.match(/^\/novels\/([^/]+)\/test-connection$/);if(nm&&method==='POST'){const p=getNovelProject(nm[1]),cfg=novelModelConfig(p);const stages=[{stage:'summary_nonstream',stream:false},{stage:'continuation',stream:cfg.stream}],out={model:cfg.model,streamSetting:cfg.stream};
         for(const step of stages){try{const reply=await callModelWithConfig([{role:'user',content:'请回复：连接成功'}],cfg,cfg.temperature,signal,{streamOverride:step.stream,onProgress:progress});out[step.stage]={ok:true,chars:reply.length};}
           catch(e){if(e instanceof ApiError)e.details=[`novel_test_stage: ${step.stage}`,e.details].filter(Boolean).join('; ');throw e;}}
         return ok(out);}
-      nm=path.match(/^\/novels\/([^/]+)\/prompt-preview$/);if(nm&&method==='POST')return ok(novelPromptPreview(nm[1],body||{}));
+      nm=path.match(/^\/novels\/([^/]+)\/prompt-preview$/);if(nm&&method==='POST')return ok(await novelPromptPreview(nm[1],body||{}));
       nm=path.match(/^\/novels\/([^/]+)\/continue$/);if(nm&&method==='POST')return ok(await continueNovel(nm[1],body||{},signal,progress));
       nm=path.match(/^\/novels\/([^/]+)\/drafts\/([^/]+)$/);if(nm&&method==='PATCH')return ok(await patchNovelDraft(nm[1],nm[2],body||{}));
       if(nm&&method==='DELETE')return ok(await rejectNovelDraft(nm[1],nm[2]));
@@ -3317,12 +3630,12 @@
       }
       m=path.match(/^\/sessions\/([^/]+)$/);if(m&&method==='GET'){const s=getSession(m[1]);return s?ok(s):fail('未找到剧本');}
       if(m&&method==='PATCH'){const s=getSession(m[1]);return s?ok(await saveSession({...s,...body,id:s.id,createdAt:s.createdAt})):fail('未找到剧本');}
-      if(m&&method==='DELETE'){const before=state.sessions.length;state.sessions=state.sessions.filter(x=>x.id!==m[1]);await persist();return ok({deleted:state.sessions.length<before});}
+      if(m&&method==='DELETE')return ok(await deleteResource('sessions',m[1]));
       m=path.match(/^\/sessions\/([^/]+)\/generation-abandon$/);if(m&&method==='POST')return ok(await abandonUnknownStoryGeneration(m[1],body||{}));
       m=path.match(/^\/sessions\/([^/]+)\/chat$/);if(m&&method==='POST')return ok(await processStoryTurn(m[1],body?.text,body?.action||'send',signal,body?.temperature,{directorNote:body?.directorNote||'',targetMessageId:body?.targetMessageId||null,expectedRecordRevision:body?.expectedRecordRevision??null,expectedSourceFingerprint:body?.expectedSourceFingerprint||null,diagnosticTurnId:body?.diagnosticTurnId||'',diagnosticTraceId:body?.diagnosticTraceId||'',regenerationContext:body?.regenerationContext||'original',retryParameters:body?.retryParameters==='current'?'current':'original',confirmUnknownTakeover:body?.confirmUnknownTakeover===true},progress));
       m=path.match(/^\/sessions\/([^/]+)\/recover-reply$/);if(m&&method==='POST')return ok(await restoreRejectedReply(m[1],body||{}));
       m=path.match(/^\/sessions\/([^/]+)\/recover-reply\/html-repair$/);if(m&&method==='POST')return ok(await prepareRejectedHtmlRepair(m[1],body?.diagnosticId));
-      m=path.match(/^\/sessions\/([^/]+)\/prompt-preview$/);if(m&&method==='POST'){state=normalizeState(await window.MimaLocalStore.loadState());return ok(previewPrompt(m[1],body||{}));}
+      m=path.match(/^\/sessions\/([^/]+)\/prompt-preview$/);if(m&&method==='POST'){state=normalizeState(await window.MimaLocalStore.loadState());return ok(await previewPrompt(m[1],body||{}));}
       m=path.match(/^\/sessions\/([^/]+)\/opening$/);if(m&&method==='POST')return ok(await addOpening(m[1],body?.content||''));
       m=path.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)\/html-repair$/);if(m&&method==='POST')return ok(await prepareHtmlRepair(m[1],m[2]));
       m=path.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)\/html-repair\/approve$/);if(m&&method==='POST')return ok(await applyHtmlRepair(m[1],m[2],body?.candidateId,body?.dynamicValues||{}));
@@ -3349,28 +3662,32 @@
       if(path==='/masks'&&method==='GET')return ok(state.masks);
       if(path==='/masks'&&method==='POST')return ok(await saveMask(body||{}));
       m=path.match(/^\/masks\/([^/]+)$/);if(m&&method==='PATCH'){const old=getMask(m[1]);return old?ok(await saveMask({...old,...body,id:m[1]})):fail('未找到面具');}
-      if(m&&method==='DELETE'){state.masks=state.masks.filter(x=>x.id!==m[1]);for(const s of state.sessions){if(s.loadedCharMaskId===m[1]||s.loadedUserMaskId===m[1]){if(s.loadedCharMaskId===m[1])s.loadedCharMaskId=null;if(s.loadedUserMaskId===m[1])s.loadedUserMaskId=null;s.recordRevision++;}}await persist();return ok({deleted:true});}
+      if(m&&method==='DELETE')return ok(await deleteResource('masks',m[1],(db,id)=>{for(const s of db.sessions){if(s.loadedCharMaskId===id||s.loadedUserMaskId===id){if(s.loadedCharMaskId===id)s.loadedCharMaskId=null;if(s.loadedUserMaskId===id)s.loadedUserMaskId=null;s.recordRevision++;}}}));
 
       if(path==='/presets'&&method==='GET')return ok(state.presets);
       if(path==='/presets'&&method==='POST')return ok(await savePreset(body||{}));
       m=path.match(/^\/presets\/([^/]+)$/);if(m&&method==='PATCH'){const old=getPreset(m[1]);return old?ok(await savePreset({...old,...body,id:m[1]})):fail('未找到预设');}
-      if(m&&method==='DELETE'){state.presets=state.presets.filter(x=>x.id!==m[1]);for(const s of state.sessions)if(s.presetIds.includes(m[1])){s.presetIds=s.presetIds.filter(id=>id!==m[1]);s.recordRevision++;}for(const p of state.novelProjects)if(p.presetIds.includes(m[1])){p.presetIds=p.presetIds.filter(id=>id!==m[1]);p.recordRevision++;}await persist();return ok({deleted:true});}
+      if(m&&method==='DELETE')return ok(await deleteResource('presets',m[1],(db,id)=>{for(const s of db.sessions)if(s.presetIds.includes(id)){s.presetIds=s.presetIds.filter(x=>x!==id);s.recordRevision++;}for(const p of db.novelProjects)if(p.presetIds.includes(id)){p.presetIds=p.presetIds.filter(x=>x!==id);p.recordRevision++;}}));
 
       if(path==='/css-presets'&&method==='GET')return ok(state.cssPresets);
       if(path==='/css-presets'&&method==='POST')return ok(await saveCssPreset(body||{}));
       m=path.match(/^\/css-presets\/([^/]+)$/);if(m&&method==='PATCH'){const old=getCssPreset(m[1]);return old?ok(await saveCssPreset({...old,...body,id:m[1]})):fail('未找到 CSS Preset');}
-      if(m&&method==='DELETE'){state.cssPresets=state.cssPresets.filter(x=>x.id!==m[1]);if(state.themeSettings?.globalCssPresetId===m[1])state.themeSettings={...state.themeSettings,globalCssPresetId:null,globalCssEnabled:false};for(const sess of state.sessions){if(sess.customCssId===m[1]){sess.customCssId=null;sess.customCssEnabled=false;sess.recordRevision++;}}for(const p of state.novelProjects){if(p.appearance?.customCssId===m[1]){p.appearance.customCssId=null;p.appearance.customCssEnabled=false;p.recordRevision++;}}await persist();return ok({deleted:true});}
+      if(m&&method==='DELETE'){
+        const receipt=await deleteResource('cssPresets',m[1],(db,id)=>{if(db.themeSettings?.globalCssPresetId===id)db.themeSettings={...db.themeSettings,globalCssPresetId:null,globalCssEnabled:false};for(const sess of db.sessions){if(sess.customCssId===id){sess.customCssId=null;sess.customCssEnabled=false;sess.recordRevision++;}}for(const p of db.novelProjects){if(p.appearance?.customCssId===id){p.appearance.customCssId=null;p.appearance.customCssEnabled=false;p.recordRevision++;}}});
+        if(receipt.deleted)try{window.MimaThemeEngine?.apply?.(state.themeSettings);}catch(e){console.error('E_THEME_APPLY_AFTER_CSS_DELETE',e);}
+        return ok(receipt);
+      }
 
       if(path==='/regex-packs'&&method==='GET')return ok(state.regexPacks);
       if(path==='/regex-packs'&&method==='POST')return ok(await saveRegexPack(body||{}));
       m=path.match(/^\/regex-packs\/([^/]+)$/);if(m&&method==='PATCH'){const old=getRegexPack(m[1]);return old?ok(await saveRegexPack({...old,...body,id:m[1]})):fail('未找到正则包');}
-      if(m&&method==='DELETE'){state.regexPacks=state.regexPacks.filter(x=>x.id!==m[1]);for(const sess of state.sessions)if(sess.regexPackIds.includes(m[1])){sess.regexPackIds=sess.regexPackIds.filter(id=>id!==m[1]);sess.recordRevision++;}await persist();return ok({deleted:true});}
+      if(m&&method==='DELETE')return ok(await deleteResource('regexPacks',m[1],(db,id)=>{for(const sess of db.sessions)if(sess.regexPackIds.includes(id)){sess.regexPackIds=sess.regexPackIds.filter(x=>x!==id);sess.recordRevision++;}}));
 
       if(path==='/worldbooks'&&method==='GET')return ok(state.worldbooks);
       if(path==='/worldbooks'&&method==='POST')return ok(await saveWorldbook(body||{}));
       m=path.match(/^\/worldbooks\/([^/]+)$/);if(m&&method==='GET'){const w=getWorldbook(m[1]);return w?ok(w):fail('未找到世界书');}
       if(m&&method==='PATCH'){const old=getWorldbook(m[1]);return old?ok(await saveWorldbook({...old,...body,id:m[1]})):fail('未找到世界书');}
-      if(m&&method==='DELETE'){state.worldbooks=state.worldbooks.filter(x=>x.id!==m[1]);for(const s of state.sessions)if(s.worldbookIds.includes(m[1])){s.worldbookIds=s.worldbookIds.filter(id=>id!==m[1]);s.recordRevision++;}for(const p of state.novelProjects)if(p.worldbookIds.includes(m[1])){p.worldbookIds=p.worldbookIds.filter(id=>id!==m[1]);p.recordRevision++;}await persist();return ok({deleted:true});}
+      if(m&&method==='DELETE')return ok(await deleteResource('worldbooks',m[1],(db,id)=>{for(const s of db.sessions)if(s.worldbookIds.includes(id)){s.worldbookIds=s.worldbookIds.filter(x=>x!==id);s.recordRevision++;}for(const p of db.novelProjects)if(p.worldbookIds.includes(id)){p.worldbookIds=p.worldbookIds.filter(x=>x!==id);p.recordRevision++;}}));
       return fail(`Standalone 未实现路径：${method} ${path}`);
     }catch(e){
       if(e?.name==='AbortError')return{success:false,aborted:true,code:'E_ABORTED',msg:'生成已停止'};
@@ -3382,7 +3699,7 @@
   async function exportLibrary(){
     // schemaVersion=4 spans multiple historical release shapes; new backups
     // declare the independently versioned full-data contract on export.
-    const snapshot=clone(state);
+    const snapshot=normalizeState(await window.MimaLocalStore.loadState());
     // Some historical/offline consumers supply only loadState/saveState. The
     // production store always has the validator; do not claim a modern
     // verified contract when that validator is not connected.
@@ -3393,13 +3710,46 @@
     return snapshot;
   }
   function validateLibrary(raw){return window.MimaLocalStore.validateLibrary(raw);}
-  async function prepareLibraryImport(raw,{templatePolicy='replace'}={}){
+  async function prepareLibraryImport(raw,{templatePolicy='replace',mergeMode='replace'}={}){
     const verified=validateLibrary(raw);
     if(!['replace','preserve','merge'].includes(templatePolicy))throw new ApiError('E_TEMPLATE_IMPORT_POLICY','未知的模板恢复策略，未写入资料库');
     // A fresh verified read is mandatory. Never take preservation templates from
     // a stale in-memory state or reinterpret an unreadable library as empty.
     const before=normalizeState(await window.MimaLocalStore.loadState());
-    const next=normalizeState(verified);
+    let next=normalizeState(verified);
+    if(!['replace','merge-new-only','empty-only'].includes(mergeMode))throw new ApiError('E_NATIVE_RESTORE_MODE','未知原生库恢复模式');
+    if(mergeMode!=='replace'){
+      const tables=['sessions','masks','presets','worldbooks','cssPresets','regexPacks','settingTemplates','novelProjects'];
+      const currentHasData=tables.some(name=>before[name].length>0);
+      // Empty-only includes appearance configuration. A browser with only a
+      // chosen theme/CSS is NOT an empty target. Old checks counted arrays
+      // exclusively and silently overwrote the owner's only local settings.
+      const themeAppearance=t=>JSON.stringify([t?.theme,t?.globalCssPresetId,t?.globalCssEnabled]);
+      const emptyTheme=normalizeState({}).themeSettings;
+      const existingCustomizedTheme=themeAppearance(before.themeSettings)!==themeAppearance(emptyTheme);
+      if(mergeMode==='empty-only'&&(currentHasData||existingCustomizedTheme))
+        throw new ApiError('E_NATIVE_RESTORE_NOT_EMPTY','原生资料库含剧情、资料或自定义外观；空库模式拒绝覆盖');
+      if(mergeMode==='merge-new-only'){
+        const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+        const merged={...next};
+        for(const name of tables){
+          const existing=new Map(before[name].map(item=>[item.id,item]));
+          for(const item of next[name]){
+            const old=existing.get(item.id);
+            if(old&&!same(old,item))throw new ApiError('E_NATIVE_RESTORE_ID_CONFLICT','原生库同 ID 资料内容不同，禁止静默覆盖：'+name+'/'+item.id);
+            existing.set(item.id,old||item);
+          }
+          merged[name]=[...existing.values()];
+        }
+        // updatedAt is audit metadata, not an appearance setting. The same
+        // explicit appearance identity is used by both safe merge modes.
+        if(existingCustomizedTheme&&themeAppearance(before.themeSettings)!==themeAppearance(next.themeSettings))
+          throw new ApiError('E_NATIVE_RESTORE_THEME_CONFLICT','本机已有自定义主题，与备份不同；即使没有剧情记录，也禁止静默覆盖，请先导出本机设置');
+        merged.themeSettings=existingCustomizedTheme?before.themeSettings:next.themeSettings;
+        next=merged;
+      }
+      validateLibrary(next);
+    }
     if(templatePolicy==='preserve')next.settingTemplates=clone(before.settingTemplates);
     if(templatePolicy==='merge'){
       const combined=new Map(before.settingTemplates.map(t=>[t.id,t]));
@@ -3429,8 +3779,8 @@
   async function importLibrary(raw,options={}){
     const plan=await prepareLibraryImport(raw,options);
     // The final CAS is the authority. A second tab may commit after preflight.
-    state=plan.next;
-    try{await persist();}catch(e){state=normalizeState(await window.MimaLocalStore.loadState());throw e;}
+    const committed=await window.MimaLocalStore.saveState(plan.next,plan.beforeRevision);
+    state=normalizeState(committed);
     // The canonical transaction has already committed. A rendering error must
     // not be reported as a failed import (nor trigger rollback of other stores).
     let importWarnings=[];
@@ -3442,5 +3792,5 @@
   }
 
   window.MimaMemoryContracts=Object.freeze({normalizeManualMemory});
-  window.MimaStandalone={init,handle,previewMemoryPlan,memorySourceParts,memoryWorkPlan,runRecordedMemory,memorySourceFingerprint,memoryFactSignature,manualReplyFingerprint,isManuallyRecoveredReply,getApiConfig,saveApiConfig,apiCapacityIdentity,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,validateStoryReply,classifyStoryReply,applyRegexForSession,resolveMacrosForSession,compileUserInputForPrompt,exportLibrary,importLibrary,previewLibraryImport,validateLibrary,assemble,getLastUsage,getPhoneResources:()=>({masks:clone(state.masks),presets:clone(state.presets),worldbooks:clone(state.worldbooks),themeSettings:clone(state.themeSettings),storeRevision:state.storeRevision}),getState:()=>clone(state)};
+  window.MimaStandalone={init,handle,previewMemoryPlan,memorySourceParts,memoryWorkPlan,runRecordedMemory,memorySourceFingerprint,memoryFactSignature,manualReplyFingerprint,isManuallyRecoveredReply,getApiConfig,saveApiConfig,apiCapacityIdentity,effectiveRequestConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,validateStoryReply,classifyStoryReply,applyRegexForSession,applyRegexForSessionAsync,resolveMacrosForSession,compileUserInputForPrompt,exportLibrary,importLibrary,previewLibraryImport,validateLibrary,assemble,getLastUsage,getPhoneResources:()=>({masks:clone(state.masks),presets:clone(state.presets),worldbooks:clone(state.worldbooks),themeSettings:clone(state.themeSettings),storeRevision:state.storeRevision}),getState:()=>clone(state)};
 })();

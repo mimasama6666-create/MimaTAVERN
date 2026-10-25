@@ -530,7 +530,7 @@ async function saveWorldInfoScanDepth(){
  try{
   const session=await r().getSession(sessionId);
   if(activeId!==sessionId)return;
-  const saved=await s().putCAS('compat_sessions',{...session,worldInfoBudget:budget,worldInfoScanDepth:depth,worldInfoRecursiveScan:recursive,worldInfoMaxRecursionSteps:steps,worldInfoLocalAdvancedRules:localAdvanced,experimentalChatHistorySlot:experimentalSlot,personaDescription,outputContract:{completeHtml:$('compat-complete-html').checked},authorNote:{content:$('compat-author-note').value,depth:Number($('compat-author-note-depth').value),role:'system'}},session.revision);
+  const saved=await s().putCAS('compat_sessions',{...session,worldInfoBudget:budget,worldInfoScanDepth:depth,worldInfoRecursiveScan:recursive,worldInfoMaxRecursionSteps:steps,worldInfoLocalAdvancedRules:localAdvanced,experimentalChatHistorySlot:experimentalSlot,personaDescription,outputContract:{...(session.outputContract||{}),completeHtml:$('compat-complete-html').checked},authorNote:{content:$('compat-author-note').value,depth:Number($('compat-author-note-depth').value),role:'system'}},session.revision);
   const verified=await r().getSession(sessionId);
   if(saved?.worldInfoBudget!==budget||verified.worldInfoBudget!==budget||verified.revision!==saved.revision)throw Object.assign(new Error('预算持久化结果与提交值不一致，当前值不能标记为保存成功'),{code:'E_STORE_UNVERIFIED'});
   if(activeId===sessionId){await inspectPreview();message('已保存世界书预算 '+budget+' 字符、扫描范围 '+depth+' 条、递归 '+(recursive?'开启':'关闭')+'、上限 '+steps+' 层；本地近似概率/分组 '+(localAdvanced?'开启':'关闭')+'，预设动态插槽 '+(experimentalSlot?'开启':'关闭')+'。其它剧情和原始卡片未修改。');}
@@ -598,26 +598,77 @@ async function manualSTscript(dryRun=false){
  finally{if(actionStarted)endSessionAction(sessionId);if(button)button.disabled=false;}
 }
 async function exportCompat(){try{const snapshot=await s().snapshot();download('咪嘛馆-兼容资料-哈希备份.json',await s().packBackup(snapshot));message('已导出兼容资料（包含原始卡片与兼容剧情，不包含原生账户密钥）。');}catch(e){message('备份失败，未生成假文件：'+e.message,'error');}}
-async function exportBoth(){try{const a=await s().snapshot(),native=await root.MimaStandalone.exportLibrary();root.MimaStandalone.validateLibrary(native);const again=await s().snapshot();const revisionList=o=>JSON.stringify(Object.fromEntries(s().STORES.map(name=>[name,o.records[name].map(x=>[x.id,x.revision??null]).sort((a,b)=>String(a[0]).localeCompare(String(b[0])))])));const first=revisionList(a),second=revisionList(again);if(first!==second)throw new Error('兼容库资源/会话/消息或权限修订版在快照过程中改变，请重试');const nativeAgain=await root.MimaStandalone.exportLibrary();if(native.storeRevision!==nativeAgain.storeRevision)throw new Error('原生库在快照过程中改变，请重试');const manifest={nativeSha256:await i().digest(new TextEncoder().encode(JSON.stringify(native))),compatSha256:await i().digest(new TextEncoder().encode(s().jsonify(a)))};const envelope={contractRevision:2,label:'non-atomic-dual-snapshot',nativeRevision:native.storeRevision,manifest,compat:a,native};download('咪嘛馆-双库完整备份.json',s().jsonify(envelope));message('双库数据已导出；浏览器两库无法原子同时提交，已对可见修订进行复核。');}catch(e){message('完整备份失败：'+e.message,'error');}}
+async function exportBoth(){try{const a=await s().snapshot(),native=await root.MimaStandalone.exportLibrary();root.MimaStandalone.validateLibrary(native);const again=await s().snapshot();const first=await i().digest(new TextEncoder().encode(s().jsonify(a))),second=await i().digest(new TextEncoder().encode(s().jsonify(again)));if(first!==second)throw new Error('兼容库有完整内容在快照期间改变（即使记录 ID 和 revision 没变），未导出混合备份');const nativeAgain=await root.MimaStandalone.exportLibrary();const nativeBytes=JSON.stringify(native),nativeAgainBytes=JSON.stringify(nativeAgain);if(native.storeRevision!==nativeAgain.storeRevision||nativeBytes!==nativeAgainBytes)throw new Error('原生库内容在快照过程中发生变化（即使修订号没变），拒绝导出混合备份');const manifest={nativeSha256:await i().digest(new TextEncoder().encode(nativeBytes)),compatSha256:await i().digest(new TextEncoder().encode(s().jsonify(a)))};const envelope={contractRevision:2,label:'non-atomic-dual-snapshot',nativeRevision:native.storeRevision,manifest,compat:a,native};download('咪嘛馆-双库完整备份.json',s().jsonify(envelope));message('双库数据已导出；浏览器两库无法原子同时提交，已对可见修订进行复核。');}catch(e){message('完整备份失败：'+e.message,'error');}}
 let inspectedBackup=null;
+const DUAL_RESTORE_JOURNAL='mima_dual_restore_journal_v1';
+async function inspectDual(raw,hash){
+ const envelope=JSON.parse(raw);
+ if(envelope?.contractRevision!==2||envelope.label!=='non-atomic-dual-snapshot'||
+    !envelope.compat||!envelope.native||!envelope.manifest)throw new Error('双库快照合同不完整');
+ const nativeHash=await i().digest(new TextEncoder().encode(JSON.stringify(envelope.native)));
+ const compatHash=await i().digest(new TextEncoder().encode(s().jsonify(envelope.compat)));
+ if(envelope.manifest.nativeSha256!==nativeHash||envelope.manifest.compatSha256!==compatHash)
+   throw new Error('E_DUAL_RESTORE_HASH：双库 manifest 校验失败，不允许写入');
+ if(envelope.native.storeRevision!==envelope.nativeRevision)throw new Error('E_DUAL_RESTORE_REVISION：原生快照修订不一致');
+ root.MimaStandalone.validateLibrary(envelope.native);
+ const compat=s().parseBackup(s().jsonify(envelope.compat));
+ if(![1,s().VERSION].includes(compat.dbVersion))throw new Error('E_DUAL_RESTORE_VERSION：兼容库版本不支持');
+ compat.integrityVerified=true;
+ const [compatPlan,nativePlan]=await Promise.all([
+   s().restoreVerified(compat,{dryRun:true,mode:'merge-new-only'}),
+   root.MimaStandalone.previewLibraryImport(envelope.native,{templatePolicy:'replace',mergeMode:'merge-new-only'})
+ ]);
+ if(compatPlan.conflicts.length)throw new Error('E_DUAL_RESTORE_CONFLICT：兼容库存在 '+compatPlan.conflicts.length+' 个内容冲突');
+ return {envelope,compat,compatPlan,nativePlan,hash};
+}
 async function restoreCompat(apply=false){
- const file=$('compat-restore-file').files[0];if(!file)return message('先选择兼容资料备份 JSON','error');
+ const file=$('compat-restore-file').files[0];if(!file)return message('先选择兼容或双库完整备份 JSON','error');
+ let nativeCommitted=false,compatCommitted=false;
  try{
   const raw=await file.text(),hash=await i().digest(new TextEncoder().encode(raw));
-  const parsed=await s().unpackBackup(raw),result=await s().restoreVerified(parsed,{dryRun:true,mode:'merge-new-only'});
-  if(!apply){inspectedBackup={hash};
-   message('备份校验通过（'+(parsed.integrityVerified?'SHA256 已验证':'旧版无外层哈希，仅可人工确认')+'），预计新增 '+Object.values(result.willAdd).reduce((a,b)=>a+b,0)+' 条记录；已有相同记录 '+result.alreadyPresent+' 条；冲突 '+result.conflicts.length+' 条。'+(result.conflicts.length?'存在同名不同内容，无法安全合并；已有资料不会改动。':'可以确认后安全补回缺失的记录。'));
-   return;
+  let parsedJson;try{parsedJson=JSON.parse(raw);}catch(e){throw new Error('备份不是合法 JSON：'+e.message);}
+  if(parsedJson?.label==='non-atomic-dual-snapshot'){
+   const checked=await inspectDual(raw,hash);
+   const priorRaw=localStorage.getItem(DUAL_RESTORE_JOURNAL),prior=priorRaw?JSON.parse(priorRaw):null;
+   if(prior&&prior.hash!==hash&&prior.phase!=='fully_restored')throw new Error('另一份双库恢复尚未完成；请选回原文件完成或核对恢复日志，不允许交错写入');
+   if(!apply){inspectedBackup={hash,kind:'dual'};
+    message('双库 SHA256 与结构校验通过：兼容库预计新增 '+Object.values(checked.compatPlan.willAdd).reduce((a,b)=>a+b,0)+' 条；原生库通过安全合并预检。'+(prior&&prior.hash===hash?' 发现恢复日志：'+prior.phase+'；可继续同一份备份。':''));return;}
+   if(inspectedBackup?.hash!==hash||inspectedBackup?.kind!=='dual')throw new Error('文件尚未通过本页双库只读检查');
+   if(!root.confirm('将安全合并原生库和兼容库：只新增缺失记录，不覆盖同 ID 异值条目。两个 IndexedDB 不能跨库原子提交，意外中断可用同一文件继续。确认执行？'))return;
+   const journal=(phase,extra={})=>{localStorage.setItem(DUAL_RESTORE_JOURNAL,JSON.stringify({hash,phase,updatedAt:new Date().toISOString(),...extra}));};
+   journal('preflight_verified');
+   // Stage 1 is idempotent. Stage 2 may fail, but stage 1 is durable and never
+   // rolled back silently. The next import of the SAME file resumes safely.
+   await root.MimaStandalone.importLibrary(checked.envelope.native,{templatePolicy:'replace',mergeMode:'merge-new-only'});
+   nativeCommitted=true;
+   journal('native_committed_compat_pending');
+   const applied=await s().restoreVerified(checked.compat,{dryRun:false,mode:'merge-new-only'});
+   compatCommitted=true;
+   journal('fully_restored',{compatAdded:applied.added});
+   inspectedBackup=null;
+   let refreshWarning='';try{await refreshSessionList();await refreshSourceList();}catch(e){refreshWarning='；资料已成功提交，但界面列表刷新失败：'+(e?.message||e)+'。请重新进入兼容页面';}
+   message('双库安全合并已真实提交！原生历史与兼容库记录均已确认；兼容库新增 '+Object.values(applied.added).reduce((a,b)=>a+b,0)+' 条。原生资料请在主界面重新载入。'+refreshWarning,refreshWarning?'error':undefined);return;
   }
-  if(inspectedBackup?.hash!==hash)throw new Error('恢复文件与上次预检查不同，请重新点击只读检查');
+  const parsed=await s().unpackBackup(raw),result=await s().restoreVerified(parsed,{dryRun:true,mode:'merge-new-only'});
+  if(!apply){inspectedBackup={hash,kind:'compat'};
+   message('备份校验通过（'+(parsed.integrityVerified?'SHA256 已验证':'旧版无外层哈希，仅可人工确认')+'），预计新增 '+Object.values(result.willAdd).reduce((a,b)=>a+b,0)+' 条记录；已有相同记录 '+result.alreadyPresent+' 条；冲突 '+result.conflicts.length+' 条。'+(result.conflicts.length?'存在同名不同内容，无法安全合并；已有资料不会改动。':'可以确认后安全补回缺失的记录。'));return;}
+  if(inspectedBackup?.hash!==hash||inspectedBackup?.kind!=='compat')throw new Error('恢复文件与上次预检查不同，请重新点击只读检查');
   if(result.conflicts.length)throw new Error('现有资料与备份存在 '+result.conflicts.length+' 个同 ID 冲突，不会覆盖；请在隔离站点恢复');
   if(!root.confirm('仅向兼容数据库添加缺失且经完整校验的记录，绝不覆盖已有任何记录。确认恢复吗？'))return;
   let allowLegacyUnsealed=false;
   if(!parsed.integrityVerified){if(!root.confirm('这是旧版未封装 SHA256 的备份。虽然已核对每份来源字节，但无法证明备份外层未被编辑。仍要按只增不覆盖方式恢复？'))return;allowLegacyUnsealed=true;}
   const saved=await s().restoreVerified(parsed,{dryRun:false,mode:'merge-new-only',allowLegacyUnsealed});
-  inspectedBackup=null;await refreshSessionList();await refreshSourceList();
-  message('兼容库事务已提交，新增 '+Object.values(saved.added).reduce((a,b)=>a+b,0)+' 条记录；原生存档与已有兼容条目未覆盖。');
- }catch(e){message('恢复'+(apply?'执行':'检查')+'失败，未报告假成功：'+(e.code||'E_RESTORE')+' '+e.message,'error');}
+  compatCommitted=true;
+  inspectedBackup=null;
+  let refreshWarning='';try{await refreshSessionList();await refreshSourceList();}catch(e){refreshWarning='；兼容资料已提交，但页面刷新失败：'+(e?.message||e);}
+  message('兼容库事务已提交，新增 '+Object.values(saved.added).reduce((a,b)=>a+b,0)+' 条记录；原生存档与已有兼容条目未覆盖。'+refreshWarning,refreshWarning?'error':undefined);
+ }catch(e){
+  let phase=null;try{const raw=localStorage.getItem(DUAL_RESTORE_JOURNAL);phase=raw?JSON.parse(raw)?.phase:null;}catch(_){}
+  if(nativeCommitted&&compatCommitted)message('双库都已提交成功，但记录/界面收尾发生错误：'+e.message+'；不要重复恢复覆盖。可用同一备份重新只读核对。','error');
+  else if(compatCommitted)message('兼容库已提交成功，但后续界面/记录出错：'+e.message+'；无需重复导入。','error');
+  else message('恢复'+(apply?'执行':'检查')+'未完整完成：'+(e.code||'E_RESTORE')+' '+e.message+
+   ((nativeCommitted||phase==='native_committed_compat_pending')?'。原生库已提交，兼容库未确认完成；请使用同一份文件重新只读检查并继续，切勿视作全库成功。':''),'error');
+ }
 }
 
 async function nativeAudio(file){try{if(player){player.pause();player.remove();player=null;}for(const uri of assetUrls)URL.revokeObjectURL(uri);assetUrls=[];const uri=URL.createObjectURL(file);assetUrls.push(uri);player=el('audio',{controls:'',preload:'none'},$('compat-media'));player.src=uri;await player.play();message('已由用户手势启动当前剧情的本地音频。');}catch(e){message('媒体播放需要用户手势或此格式不受浏览器支持：'+e.message,'error');}}

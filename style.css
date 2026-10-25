@@ -1262,3 +1262,18 @@ html.mima-composer-keyboard .app-shell>.composer-shell{padding-bottom:10px}
 .generation-task-text{display:block;flex:1 1 auto;min-height:76px;max-height:50dvh;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text;-webkit-user-select:text;padding:11px;border:1px solid var(--line);border-radius:12px;font:inherit;font-size:.82rem;line-height:1.6;background:var(--panel);color:inherit;margin:0;}
 .generation-task-controls{display:flex;flex-wrap:wrap;gap:7px;}
 .generation-task-controls button{flex:1 1 auto;min-height:40px;padding:8px 10px;border:1px solid var(--line);border-radius:11px;background:var(--panel);color:inherit;font-size:.76rem;}
+
+/* R19 release notes: readable at phone widths, no changes to story/atelier visuals. */
+.mima-release-note-panel{max-height:min(88dvh,760px);width:min(550px,calc(100vw - 24px));overflow:auto;gap:10px}
+.mima-release-note-panel .modal-head{padding:3px 0 7px}
+.mima-release-note-content{font-size:.84rem;line-height:1.65;color:var(--text);overflow:auto;min-height:0}
+.mima-release-note-content h3{font-size:.9rem;margin:12px 0 4px}
+.mima-release-note-content p{margin:5px 0 10px}
+.mima-release-note-content ul{padding-left:20px;margin:5px 0 10px}
+.mima-release-note-content li{margin:3px 0}
+.mima-release-note-content .check-row{margin-top:12px}
+
+/* Unfinished automatic novel chapters: explicit, non-destructive recovery. */
+.novel-auto-chapter-recovery{width:min(var(--novel-reader-max-width),100%);margin:12px auto;padding:10px 12px;border:1px dashed var(--reader-line);border-radius:12px;background:color-mix(in srgb,var(--reader-panel) 78%,transparent);font-size:.82rem}
+.novel-auto-chapter-recovery p{margin:0 0 8px;line-height:1.5}
+.novel-auto-chapter-recovery .ghost-btn{min-height:36px;max-width:100%;white-space:normal}

@@ -19,8 +19,8 @@
        .replace(/\{\{\s*char\s*\}\}/gi,()=>macros.charName);
    };
    const preamble=resolve('你正在用手机跟 {{user}} 对话。');
-   const identity=[`【当前联系人：${macros.charName}】`,actor.content||actor.description||'',actor.scenario?`【背景】\n${actor.scenario}`:'',actor.exampleDialogue?`【示例对话】\n${actor.exampleDialogue}`:'',
-     `【{{user}} 面具资料】\n${snapshot.user.content||''}`].filter(Boolean).join('\n');
+   const identity=[`【当前联系人：${macros.charName}】`,actor.description?`【角色简介】\n${actor.description}`:'',actor.content?`【角色核心设定】\n${actor.content}`:'',actor.scenario?`【背景】\n${actor.scenario}`:'',actor.exampleDialogue?`【示例对话】\n${actor.exampleDialogue}`:'',
+     snapshot.user.description?`【{{user}} 简介】\n${snapshot.user.description}`:'',snapshot.user.content?`【{{user}} 核心设定】\n${snapshot.user.content}`:''].filter(Boolean).join('\n');
    const phoneScope=`【手机会话范围】独立于主剧情；当前任务：${task}；可见范围：${scope}。不得代用户发言、不得凭聊天文字直接改动余额或库存，不引用未授权的其他私聊。`;
    const system=[preamble,resolve(identity),phoneScope,...snapshot.presets.map(p=>resolve(p.content)),...snapshot.lore.map(e=>resolve(e.content)),resolve(extra)].filter(Boolean).join('\n\n');
    // API roles are transport-level, not the identity of all group speakers.
@@ -38,7 +38,7 @@
    return out;
  }
  async function generate({actorId,userMaskId,history=[],presetIds=[],worldbookIds=[],task='chat',scope='',extra='',signal,visionParts=[],speakerNames={},apiSettings=null,onProgress=null}={}){
-   const s=MimaPhoneResources.snapshotSelection({userMaskId,charMaskIds:[actorId],presetIds,worldbookIds,visibleText:history.map(x=>x.content||'').join('\n')+'\n'+extra});
+   const s=await MimaPhoneResources.snapshotSelection({userMaskId,charMaskIds:[actorId],presetIds,worldbookIds,visibleMessages:[...history.map(x=>x.content||''),extra]});
    const actor=s.chars[0],request=messages(s,actor,history,{task,scope,extra,speakerNames});
    if(visionParts.length){request.push({role:'user',content:[{type:'text',text:'请结合这次主人发送的图片内容回复，而不是只根据文件名猜测。'},...visionParts]});}
    const config=MimaPhoneResources.resolveApiConfig(apiSettings);
@@ -64,7 +64,7 @@
    const facts=feed.map(m=>({momentId:m.id,authorId:m.authorId,body:m.body,version:m.version,
      images:(m.assetIds||[]).length?'[存在未读取的图片附件，禁止猜测图片内容]':null,
      comments:(m.comments||[]).map(c=>({commentId:c.id,authorId:c.actorId,parentCommentId:c.parentCommentId||null,body:c.body}))}));
-   const snap=MimaPhoneResources.snapshotSelection({userMaskId,charMaskIds:[actorId],presetIds,worldbookIds,
+   const snap=await MimaPhoneResources.snapshotSelection({userMaskId,charMaskIds:[actorId],presetIds,worldbookIds,
      visibleText:JSON.stringify(facts)+'\n'+memories.map(m=>m.content).join('\n')});
    const actor=snap.chars[0],request=messages(snap,actor,[{actorId:'owner',content:
      '这是你当前合法可见的朋友圈事实，只能按下列 canonical ID 引用，不能猜测不可见的信息：\n'+JSON.stringify(facts)}],
@@ -87,7 +87,7 @@
  // Explicitly requested memory extraction: returns a proposal, never edits canonical facts.
  async function summarizePhoneHistory({actorId,userMaskId,history,presetIds=[],worldbookIds=[],apiSettings=null,signal}={}){
    if(!history?.length)throw Error('本段聊天没有可以总结的已提交原文');
-   const snap=MimaPhoneResources.snapshotSelection({userMaskId,charMaskIds:[actorId],presetIds,worldbookIds,visibleText:history.map(x=>x.content||'').join('\n')});
+   const snap=await MimaPhoneResources.snapshotSelection({userMaskId,charMaskIds:[actorId],presetIds,worldbookIds,visibleMessages:history.map(x=>x.content||'')});
    const request=messages(snap,snap.chars[0],history,{task:'owner_requested_memory_extract',scope:'phone_only'});
    request.pop();
    request.push({role:'system',content:'仅提取这段已实际发生且可核对的手机对话事实。不能创造不存在的剧情、人际关系、时间或用户偏好。只返回 JSON：{"schema":"phone_memory_v1","entries":[{"kind":"fact","content":"精确且谨慎的事实","sourceIds":["真正可见的原文消息ID"]}]}。kind 可选 core（重要且长期稳定）、fact（独立事实）、rolling（原文时间段概要）、pinned（仅主人手动固定，不可由模型选择）。每项需引用一到数条真实 sourceIds；引用不存在的ID会被拒绝。可以返回空 entries。无需输出其他文本。'});

@@ -428,7 +428,7 @@
   // unrelated preset or appended History would incorrectly discard good work.
   // It is deliberately a canonical-state projection, not a UI cache or a
   // digest of the assistant's prose (which cannot establish resource version).
-  function memoryReferenceContract(canonical,sessionId){
+  function memoryReferenceContract(canonical,sessionId,referenceSelection=null){
     if(!isCanonicalStateRecord(canonical))throw new Error('E_MEMORY_REFERENCE_STATE_UNVERIFIED');
     const session=canonical.sessions.find(s=>s?.id===sessionId);
     if(!session)throw new Error('E_STORY_SESSION_MISSING');
@@ -469,12 +469,31 @@
       return find(canonical.worldbooks,id,'worldbook');
     });
     if(mode!=='none'&&(!refs?.resolveSelectedWorldbookRefs||!refs?.resolveMatchedWorldbookRefs))throw Error('E_MEMORY_REFERENCE_RESOLVER_MISSING');
+    if(mode==='matched_entries'&&!Array.isArray(referenceSelection)&&referencedBooks.some(book=>(book.entries||[]).some(entry=>entry.useRegex===true&&entry.enabled!==false)))throw Error('E_MEMORY_REFERENCE_ASYNC_REQUIRED');
     const effectiveRefs=mode==='selected_entries'?refs.resolveSelectedWorldbookRefs({
       bookIds:context.worldbookIds,books:referencedBooks,
       scopedRefs:context.worldbookEntryRefs,legacyIds:context.worldbookEntryIds
-    }):mode==='matched_entries'?refs.resolveMatchedWorldbookRefs({
-      bookIds:context.worldbookIds,books:referencedBooks,messages:session.messages
-    }):[];
+    }):mode==='matched_entries'&&Array.isArray(referenceSelection)?referenceSelection:
+      mode==='matched_entries'?refs.resolveMatchedWorldbookRefs({bookIds:context.worldbookIds,books:referencedBooks,messages:session.messages}):[];
+    if(mode==='matched_entries'&&Array.isArray(referenceSelection)){
+      const valid=new Set(referencedBooks.flatMap(book=>(book.entries||[]).map(entry=>JSON.stringify([book.id,entry.id]))));
+      if(effectiveRefs.some(ref=>!Array.isArray(ref)||!valid.has(JSON.stringify(ref))))throw Error('E_MEMORY_REFERENCE_MISSING:matched_entry');
+      // RegExp results were verified in an isolated Worker BEFORE the job.
+      // Bind every activation input, including nonmatching rule metadata and
+      // history windows. The IDB transaction can recheck bytes without
+      // executing unbounded user regex. Nonmatching content is not signed.
+      context.activationSource=referencedBooks.flatMap(book=>(book.entries||[]).map(entry=>({bookId:book.id,id:entry.id,
+        enabled:entry.enabled!==false,alwaysActive:entry.alwaysActive===true,
+        // A previously empty unmatched entry can become active solely when
+        // content is added, even if keywords and History do not change.
+        contentPresent:!!String(entry.content??'').trim(),
+        keywords:ids(entry.keywords),secondaryKeywords:ids(entry.secondaryKeywords),
+        matchMode:entry.matchMode==='all'?'all':'any',caseSensitive:entry.caseSensitive===true,
+        useRegex:entry.useRegex===true,scanDepth:Number(entry.scanDepth)||12})));
+      const depth=context.activationSource.reduce((n,e)=>Math.max(n,Math.max(1,e.scanDepth)),0);
+      context.activationHistory=depth?(session.messages||[]).filter(m=>m?.content&&m.role!=='system'&&m.role!=='director')
+        .slice(-depth).map(m=>String(m.content)):[];
+    }
     context.worldbookEntryRefs=effectiveRefs;
     context.worldbookEntryIds=[]; // obsolete aliases must not alter the effective digest
     const scoped=new Set(effectiveRefs.map(ref=>JSON.stringify(ref)));
@@ -678,8 +697,8 @@
       kv.put(record,stageV2Key(digest));return record;
     });
   }
-  async function beginMemoryJob({sessionId,kind,options,sourceHash,sourceCount,sourceFingerprint,targetBaseline,configSignature,expectedReferenceContract=null}){
-    const referenceContract=memoryReferenceContract(await loadState(),sessionId);
+  async function beginMemoryJob({sessionId,kind,options,sourceHash,sourceCount,sourceFingerprint,targetBaseline,configSignature,expectedReferenceContract=null,referenceSelection=null}){
+    const referenceContract=memoryReferenceContract(await loadState(),sessionId,referenceSelection);
     if(expectedReferenceContract!==null&&referenceContract!==expectedReferenceContract)throw new Error('E_MEMORY_REFERENCE_CHANGED_BEFORE_REQUEST');
     return memoryJobTransaction(sessionId,kind,(old,kv,tx)=>{
       const live=old?.status==='running'&&Number(old.leaseUntilEpoch||0)>Date.now();
@@ -699,7 +718,7 @@
       const now=new Date().toISOString(),recovering=old?.status==='running';
       const resumeIdentity=sameSource&&['running','failed','interrupted','aborted','needs_review'].includes(old?.status)&&old?.referenceContract===referenceContract;
       const priorAttempts=resumeIdentity?[...(old.recoverableAttempts||[]),old.attemptId].filter(Boolean):[];
-      const job={resumeCandidates,humanApprovedStages,configSignature,sourceFingerprint,targetBaseline,
+      const job={resumeCandidates,humanApprovedStages,configSignature,sourceFingerprint,targetBaseline,referenceSelection,
         referenceContract,recoverableAttempts:[...new Set(priorAttempts)],
         recoverCommittedRanges:old?.status==='partially_committed'||old?.recoverCommittedRanges===true,
         id:resumeIdentity?old.id:`mem_${Date.now()}_${Math.random().toString(36).slice(2)}`,
@@ -713,7 +732,7 @@
       sr.onerror=()=>tx.abort();
       sr.onsuccess=()=>{
         try{
-          if(memoryReferenceContract(sr.result,sessionId)!==referenceContract){tx.abort();return;}
+          if(memoryReferenceContract(sr.result,sessionId,referenceSelection)!==referenceContract){tx.abort();return;}
           const liveSession=sr.result.sessions.find(x=>x?.id===sessionId);
           if(!Array.isArray(liveSession?.messages)||liveSession.messages.length<sourceCount||
              window.MimaStandalone?.memorySourceFingerprint?.(liveSession.messages,sourceCount)!==sourceFingerprint){tx.abort();return;}
@@ -765,6 +784,7 @@
           const current=sr.result;if(!isCanonicalStateRecord(current)){fail('E_MEMORY_STORE_UNVERIFIED');return;}
           const index=current.sessions.findIndex(x=>x.id===job.sessionId);if(index<0){fail('E_STORY_SESSION_MISSING');return;}
           const latest=current.sessions[index];
+          if(!active.referenceContract||memoryReferenceContract(current,job.sessionId,active.referenceSelection)!==active.referenceContract){fail('E_MEMORY_REFERENCE_CHANGED');return;}
           if(!Array.isArray(latest.messages)||JSON.stringify(latest.messages.slice(0,snapshot.messages.length))!==JSON.stringify(snapshot.messages)){fail('E_MEMORY_SOURCE_STALE');return;}
           // Compare the same normalized, versioned contract on BOTH sides.
           // Presence of implicit defaults such as stale:false is not an edit;
@@ -823,6 +843,7 @@
           const idx=state.sessions.findIndex(x=>x?.id===sessionId);
           if(idx<0){fail('E_STORY_SESSION_MISSING');return;}
           const session=state.sessions[idx];
+          if(!job.referenceContract||memoryReferenceContract(state,sessionId,job.referenceSelection)!==job.referenceContract){fail('E_MEMORY_REVIEW_REFERENCE_CHANGED');return;}
           if(!job.sourceFingerprint||window.MimaStandalone?.memorySourceFingerprint(session.messages.slice(0,job.sourceCount),job.sourceCount)!==job.sourceFingerprint){fail('E_MEMORY_REVIEW_SOURCE_CHANGED');return;}
           const contract=window.MimaMemoryContracts;
           if(!contract?.normalizeManualMemory){fail('E_MEMORY_CONTRACT_UNAVAILABLE');return;}
@@ -961,6 +982,7 @@
           if(!isCanonicalStateRecord(state)||!impl?.memoryFactSignature||!contract?.normalizeManualMemory){fail('E_MEMORY_STORE_UNVERIFIED');return;}
           const session=state.sessions.find(x=>x.id===sessionId);
           if(!session){fail('E_STORY_SESSION_MISSING');return;}
+          if(!draft.referenceContract||memoryReferenceContract(state,sessionId,draft.referenceSelection)!==draft.referenceContract){fail('E_MEMORY_MERGE_REFERENCE_CHANGED');return;}
           if(impl.memoryFactSignature(contract.normalizeManualMemory(session.manualMemory).facts)!==draft.sourceSignature||
             session.messages.length<draft.sourceHistoryCount||
             impl.memorySourceFingerprint(session.messages,draft.sourceHistoryCount)!==draft.sourceHistoryFingerprint){fail('E_MEMORY_MERGE_SOURCE_CHANGED');return;}
@@ -1002,7 +1024,7 @@
         const request=kv.get(STATE_KEY);
         request.onerror=()=>tx.abort();
         request.onsuccess=()=>{
-          try{if(memoryReferenceContract(request.result,job.sessionId)!==record.referenceContract)tx.abort();
+          try{if(memoryReferenceContract(request.result,job.sessionId,job.referenceSelection)!==record.referenceContract)tx.abort();
             else kv.put({...record,stageOutputDigest:stageRecord.outputDigest},factRangeKey(job.id,stage));}
           catch(e){tx.abort();}
         };
@@ -1059,7 +1081,7 @@
                 const r=req.result;if(!r||r.sessionId!==sessionId||r.jobId!==jobId||(![job.attemptId,...(job.recoverableAttempts||[])].includes(r.attemptId))||r.status!=='STAGED'||r.replaceExisting||!r.fact?.content||!Number.isInteger(r.sourceStartIndex)||r.sourceStartIndex<0||!Number.isInteger(r.sourceEndExclusive)||r.sourceEndExclusive>live.messages.length||r.sourceStartIndex>=r.sourceEndExclusive||!r.sourceSliceFingerprint){fail('E_MEMORY_FACT_RANGE_INVALID');return;}
                 if(r.version!==3||!r.stageDigest||!r.referenceDigest||!r.referenceContract||
                    r.referenceContract!==job.referenceContract){fail('E_MEMORY_FACT_CONTRACT_UNVERIFIED');return;}
-                try{if(memoryReferenceContract(canonical,sessionId)!==r.referenceContract){fail('E_MEMORY_FACT_REFERENCE_CHANGED');return;}}
+                try{if(memoryReferenceContract(canonical,sessionId,job.referenceSelection)!==r.referenceContract){fail('E_MEMORY_FACT_REFERENCE_CHANGED');return;}}
                 catch(e){fail('E_MEMORY_FACT_REFERENCE_CHANGED');return;}
                 const slice=live.messages.slice(r.sourceStartIndex,r.sourceEndExclusive);
                 if(impl.memorySourceFingerprint(slice,slice.length)!==r.sourceSliceFingerprint||r.loadedCharMaskId!==(live.loadedCharMaskId||'')){fail('E_MEMORY_FACT_RANGE_SOURCE_CHANGED');return;}
@@ -1095,6 +1117,13 @@
         const idx=canonical.sessions.findIndex(x=>x?.id===sessionId);if(idx<0){fail('E_STORY_SESSION_MISSING');return;}
         const session=canonical.sessions[idx],contract=window.MimaMemoryContracts,impl=window.MimaStandalone;
         if(!contract?.normalizeManualMemory||!impl?.memoryFactSignature||!impl?.memorySourceFingerprint){fail('E_MEMORY_MERGE_CONTRACT_UNAVAILABLE');return;}
+        // Never commit an AI-generated merge against changed reference material.
+        // Older persisted drafts have no proof: require an explicit additional
+        // owner approval rather than destroying those historical candidates.
+        if(draft?.referenceContract){
+          try{if(memoryReferenceContract(canonical,sessionId,draft.referenceSelection)!==draft.referenceContract){fail('E_MEMORY_MERGE_REFERENCE_CHANGED');return;}}
+          catch(e){fail('E_MEMORY_MERGE_REFERENCE_CHANGED');return;}
+        }else if(body?.legacyReferenceApproved!==true){fail('E_MEMORY_MERGE_LEGACY_REFERENCE_REVIEW');return;}
         const manual=contract.normalizeManualMemory(session.manualMemory||{}),facts=manual.facts;
         const selectedIds=Array.isArray(body?.selectedIds)?body.selectedIds:[],chosen=new Set(selectedIds);
         const content=String(body?.content??'').trim();

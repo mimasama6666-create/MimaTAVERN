@@ -67,6 +67,7 @@
   "phone/phone-shell.css",
   "phone/phone-shell.js",
   "phone/phone-store.js",
+  "phone/phone-worldbook-worker.js",
   "plugin-frame-controller.js",
   "plugin-frame.html",
   "plugin-frame.js",
@@ -98,5 +99,8 @@
   "vendor/author-LICENSE-zod.txt",
   "vendor/author-libraries-data.js",
   "vendor/marked-17.0.5.umd.js",
-  "vendor/marked-LICENSE.md"
+  "vendor/marked-LICENSE.md",
+  "regex-native-worker.js",
+  "worldbook-match.js",
+  "worldbook-match-worker.js"
 ]
