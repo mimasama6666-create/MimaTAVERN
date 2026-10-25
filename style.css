@@ -1277,3 +1277,10 @@ html.mima-composer-keyboard .app-shell>.composer-shell{padding-bottom:10px}
 .novel-auto-chapter-recovery{width:min(var(--novel-reader-max-width),100%);margin:12px auto;padding:10px 12px;border:1px dashed var(--reader-line);border-radius:12px;background:color-mix(in srgb,var(--reader-panel) 78%,transparent);font-size:.82rem}
 .novel-auto-chapter-recovery p{margin:0 0 8px;line-height:1.5}
 .novel-auto-chapter-recovery .ghost-btn{min-height:36px;max-width:100%;white-space:normal}
+
+/* Seal pass: comfortably tappable horizontal settings navigation on phones.
+   Only this nav grows; story typography and custom themes are untouched. */
+@media (max-width:620px){
+ #settings-modal .settings-panel .settings-tabs{gap:8px;padding:8px 12px;scrollbar-width:thin;overscroll-behavior-x:contain}
+ #settings-modal .settings-panel .settings-tabs button{min-height:calc(46px / var(--mima-ui-scale, 1));min-width:calc(70px / var(--mima-ui-scale, 1));padding:calc(10px / var(--mima-ui-scale, 1)) calc(14px / var(--mima-ui-scale, 1));font-size:calc(.93rem / var(--mima-ui-scale, 1));line-height:1.25;white-space:nowrap;touch-action:manipulation}
+}

@@ -32,15 +32,20 @@
     };
   }
 
+  function stableRuleId(pack,rule){
+    const seed=String(pack.id||pack.name||'')+'|'+String(rule.pattern||'')+'|'+String(rule.replacement||'');
+    let hash=2166136261;for(const ch of seed){hash^=ch.charCodeAt(0);hash=Math.imul(hash,16777619);}
+    return (hash>>>0).toString(16);
+  }
   function normalizePack(pack={}) {
-    const createdAt = pack.createdAt || nowIso();
+    const createdAt = pack.createdAt || pack.updatedAt || (pack.id ? '' : nowIso());
     return {
       id: pack.id || makeId('regexp'),
       name: String(pack.name || '未命名正则包').trim() || '未命名正则包',
       description: String(pack.description || '').trim(),
       priority: Number.isFinite(Number(pack.priority)) ? Number(pack.priority) : 50,
       enabled: pack.enabled !== false,
-      rules: arr(pack.rules).map(normalizeRule),
+      rules: arr(pack.rules).map((rule,index)=>normalizeRule({...rule,id:rule.id || `legacy_rule_${index}_${stableRuleId(pack,rule)}`})),
       createdAt,
       updatedAt: pack.updatedAt || createdAt
     };

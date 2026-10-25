@@ -9,33 +9,36 @@
   function keywordMatch(hay,keyword,entry={}){const k=clean(keyword);if(!k)return false;if(entry.useRegex)throw Error('E_WORLDBOOK_ASYNC_REQUIRED: 请使用隔离世界书匹配');const a=entry.caseSensitive?String(hay):String(hay).toLocaleLowerCase(),b=entry.caseSensitive?k:k.toLocaleLowerCase();return a.includes(b);}
   async function selectWorldbook(project,worldbooks,directorNote='',signal=null){
     const engine=root.MimaNovelEngine,chapters=engine.orderedChapters(project),activeIndex=Math.max(0,chapters.findIndex(c=>c.id===project.activeChapterId)),past=chapters.slice(0,activeIndex+1);
-    // Each chapter/synopsis/note is a separate eligible message for scanDepth.
-    // Preserve all selected sources: only the matching window, never stored prose, changes.
-    // Scan windows are ordered oldest -> newest. The previous fifth-batch
-    // implementation appended *all summaries after all recent chapter texts*;
-    // therefore scanDepth=1 usually saw an old summary instead of the active
-    // chapter. Interleave each chapter's fresh summary BEFORE its raw text,
-    // and keep the current director note last (it is this turn's newest input).
-    // Preserve the same three full chapter texts and eight fresh summaries;
-    // this only corrects which message each scan-depth window sees.
-    const recentTextIds=new Set(past.slice(-3).map(c=>c.id));
-    const recentSummaryIds=new Set(past.slice(-8).map(c=>c.id));
-    const scanMessages=[];
-    for(const chapter of past){
-      if(recentSummaryIds.has(chapter.id)&&chapter.summaryStatus==='fresh'&&
-         !root.MimaNovelMemory?.isSummaryStale?.(chapter)){
-        const overview=String(chapter.summary?.overview??'');
-        if(overview.trim())scanMessages.push(overview);
-      }
-      if(recentTextIds.has(chapter.id)){
-        const body=String(engine.getChapterText(chapter)??'');
-        if(body.trim())scanMessages.push(body);
-      }
-    }
-    if(String(directorNote??'').trim())scanMessages.push(String(directorNote));
+    // Scan depth counts chronology of CHAPTERS, not fragments. The director
+    // instruction belongs to the current chapter's active turn and cannot
+    // displace its prose at scanDepth=1. A chapter's fresh overview and
+    // original prose share one depth slot; older chapters never leap the limit.
+    // This only affects activation matching, not stored history or the Prompt.
     const selection=JSON.parse(JSON.stringify(arr(worldbooks).filter(w=>project.worldbookIds.includes(w.id)&&w.enabled!==false)));
-    const signature=JSON.stringify(selection),projectSignature=JSON.stringify(project);
     const rows=selection.flatMap(book=>arr(book.entries).map(entry=>({book,entry})));
+    // Match the actual activation scanDepth contract (1..200). Never throw
+    // away older chapters before the isolated matcher receives them.
+    const requiredDepth=rows.filter(x=>x.entry.enabled!==false&&!!String(x.entry.content??'').trim()&&!x.entry.alwaysActive)
+      .reduce((max,x)=>Math.max(max,Math.max(1,Math.min(200,Number(x.entry.scanDepth)||12))),1);
+    const scanMessages=[];
+    for(const chapter of past.slice(-requiredDepth)){
+      const parts=[];
+      if(chapter.summaryStatus==='fresh'&&!root.MimaNovelMemory?.isSummaryStale?.(chapter)){
+        const overview=String(chapter.summary?.overview??'');
+        if(overview.trim())parts.push(overview);
+      }
+      const body=String(engine.getChapterText(chapter)??'');
+      if(body.trim())parts.push(body);
+      if(chapter.id===past[past.length-1]?.id&&String(directorNote??'').trim())parts.push(String(directorNote));
+      // Keep even empty chapters as depth positions. Otherwise an old chapter
+      // could silently move inside a shallow scan when a newer one is blank.
+      scanMessages.push(parts.join('\n\n'));
+    }
+    if(!scanMessages.length&&String(directorNote??'').trim())scanMessages.push(String(directorNote));
+    // Full-size packet checks and regex timeout are enforced by
+    // MimaWorldbookMatcher. An oversized scan must fail loudly; never silently
+    // shorten History or the worldbook's requested depth.
+    const signature=JSON.stringify(selection),projectSignature=JSON.stringify(project);
     if(!root.MimaWorldbookMatcher?.evaluate)throw Error('E_WORLDBOOK_ISOLATION_UNAVAILABLE: 小说世界书匹配模块未加载');
     const results=await root.MimaWorldbookMatcher.evaluate(rows.map(x=>x.entry),scanMessages,{signal});
     if(JSON.stringify(arr(worldbooks).filter(w=>project.worldbookIds.includes(w.id)&&w.enabled!==false))!==signature||JSON.stringify(project)!==projectSignature)throw Error('E_NOVEL_WORLDBOOK_CHANGED: 小说匹配来源在执行中被修改，拒绝使用旧结果');

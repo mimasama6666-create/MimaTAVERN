@@ -3,12 +3,12 @@
 <head>
     <!-- v1.1.4 compatibility marker: release=1.1.4 -->
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="theme-color" content="#dfe1e4">
     <title>咪嘛馆 · MimaTAVERN（酒馆） · Standalone（独立版）</title>
-    <link rel="stylesheet" href="./style.css?v=20261025-r19-viewport-density-1&hotfix=1.1.3&release=1.3.1&auditfix=1.3.2&themefix=1.4.0&memoryfix=1.3.9&uihotfix=20261013-1&ctxsave=20261013-2&diagnostics=r8&r13=20261015-1&manualrecovery=20261015-r14-2&replylayout=20261016-r16.2&librarycss=20261019-r3&templateux=20261021-r13-generation-polish&r19manual=20261022-1&settingssheet=20261023-1&r19-dual-rework=20261024&keyboard=20261025-r3&p0recovery=20261025-ui-1&density=20261025-r3&taskviewer=20261025-r2&promptclean=20261025-r1&oct25rework=novel-assist-3&reworkfix=20261025-p1-4">
+    <link rel="stylesheet" href="./style.css?v=20261025-r19-viewport-density-1&hotfix=1.1.3&release=1.3.1&auditfix=1.3.2&themefix=1.4.0&memoryfix=1.3.9&uihotfix=20261013-1&ctxsave=20261013-2&diagnostics=r8&r13=20261015-1&manualrecovery=20261015-r14-2&replylayout=20261016-r16.2&librarycss=20261019-r3&templateux=20261021-r13-generation-polish&r19manual=20261022-1&settingssheet=20261023-1&r19-dual-rework=20261024&keyboard=20261025-r3&p0recovery=20261025-ui-1&density=20261025-r3&taskviewer=20261025-r2&promptclean=20261025-r1&oct25rework=novel-assist-3&reworkfix=20261025-p1-4&seal=20261026-r19-1">
     <link rel="stylesheet" href="./theme-skin.css?v=1.4.0">
-    <link rel="stylesheet" href="./compat-style.css?v=r11-card-launch-20261014&mvustatus=r11.8&dynamic=r11.14&redesign=20261014-inline-2">
+    <link rel="stylesheet" href="./compat-style.css?v=r11-card-launch-20261014&mvustatus=r11.8&dynamic=r11.14&redesign=20261014-inline-2&seal=20261026-r19-1">
 <!-- v1.1.5 compatibility regression marker: release=1.1.5 -->
 <!-- v1.1.6 compatibility regression marker: release=1.1.6 -->
 <!-- v1.1.7 compatibility regression marker: release=1.1.7 -->
@@ -146,12 +146,12 @@ function openMimaLicenseDialog() {
 <!-- 版本更新公告：不接入剧情数据，用户可永久关闭自动提醒 -->
 <div id="mima-release-note-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mima-release-note-title">
   <div class="modal-panel compact-panel mima-release-note-panel">
-    <div class="modal-head"><div><div class="eyebrow">开发版更新公告</div><h2 id="mima-release-note-title">咪嘛馆 · R19 第七批事务一致性返工版（开发测试）</h2></div><button class="icon-btn" onclick="closeMimaReleaseNotice()" aria-label="关闭更新公告">✕</button></div>
+    <div class="modal-head"><div><div class="eyebrow">开发版更新公告</div><h2 id="mima-release-note-title">咪嘛馆 · R19 集中封版专项返工版（开发测试）</h2></div><button class="icon-btn" onclick="closeMimaReleaseNotice()" aria-label="关闭更新公告">✕</button></div>
     <div class="mima-release-note-content">
-      <p>本版承接第六批完整生产包。第七批修正资源、小说和主题保存时提前修改共享状态的问题，并保护关联引用的原子提交。保留前六批所有功能、剧情、记忆、世界书、外观与存档。</p>
+      <p>本版承接第七批完整生产包。第八批把工坊及助手的发布/挂载纳入同一数据库事务队列，修复资源删除后的模板和小说引用，并修复旧资源缺失时间戳造成的误报冲突。前七批的数据和功能原样保留。</p>
       <h3>本轮修复与新增</h3>
       <ul><li>主题工坊正式发布与工程关联 ID 持久化，防止旧发布覆盖正在编辑的新草稿</li><li>CSS 美化助手按全局、当前剧情或专用 Surface 正确处理应用路径</li><li>Regex Bundle 的正则和配套预设使用同一事务提交</li><li>小说续写预算、宏面具绑定、0 字数和流式草稿 checkpoint 修复</li><li>修复助手重说后工件身份冲突、新篇章失败留下空章、小说异步回包抢占当前阅读视图</li><li>统一保护小说异步操作的导航身份，编辑保存、章节操作、剧情档案总结、导入与刷新不会把当前页面跳回旧项目或章节</li><li>小说切章按独立项目排队：A 小说请求慢时不再阻塞 B 小说切换章节，失败会显示原因，同一小说依旧保持最终点击顺序</li><li>更新公告支持无 API 初次打开与从后台返回后的首次展示，可永久关闭自动提醒、在设置里随时查看</li></ul>
-      <h3>本轮专项修复</h3><p>主库完整备份读取最新版、密钥与额外认证头导出保护、原生会话异步写回隔离；小说续写新章绑定及新鲜摘要过滤；助手独立会话挂载与恢复后迟到请求保护；手机归档、聊天附件可见性、录音线程身份、生成中发送锁；工坊字体与壁纸备份、旧草稿安全分叉、复杂背景纹样位置和兼容 HTML 合同字段保真。第一批修复继续保留。第二批补上滚动记忆失效重建、记忆提交参考校验、记忆独立模型容量身份、完整 HTML 续写二次验收、手机角色简介与评论记忆、手机钱包失败结算核对、世界书高级匹配、工坊异步目标归属、小说采纳与记忆错误分离、STscript 最新分支变量继承及双库恢复入口；第三批已将原生四阶段正则迁至隔离 Worker，为 STscript 新回合写入按回合快照，并修复助手生成中切换类型的错写风险。第五批改为逐章节、逐摘要和本轮指令计算小说世界书扫描深度；双库导出复核原生库的全部规范化快照内容而不只比较版本号；安全合并原生备份时保留无剧情库中已有的自定义主题。第四批把主剧情、小说、记忆的世界书激活匹配迁至可终止 Worker；记忆冻结匹配结果和激活来源，在 IndexedDB 最终事务中只执行确定性签名核对，不在事务里跑正则。事实记忆手动二次合并独立核对模型容量，候选创建和采纳均检查参考合同；旧候选无合同则需主人额外确认。双库备份现在核验完整快照内容，已写入成功但刷新失败会明确区分，不再诱导重复导入。历史旧回合没有快照时继续拒绝伪继承；所有能力仍需真实设备验证。</p><h3>第六批专项修复</h3><p>小说世界书匹配源按章节时间顺序排列，同章节先读取新鲜摘要、再读取原始正文，本轮导演指令最后进入匹配窗口；扫描深度 1 在无导演指令时优先检查当前章节正文。原生备份的「仅空库恢复」现在会识别只设置过主题或 CSS 的非空配置，不再静默覆盖；安全合并仍保留第五批的独立冲突判断。手动消息编辑、删除、新增开场、HTML 修复及失败正文恢复先在独立快照中操作，Worker 中断或数据库保存失败不再将未提交文本泄漏到主内存；最终仍由剧情修订号和数据库 CAS 决定是否成功。</p><h3>第七批专项修复</h3><p>面具、预设、世界书、CSS、正则和小说项目的保存与关联资源删除，统一从最新资料库创建独立草稿，以数据库事务提交为唯一成功依据；同时检查资源更新身份、小说修订号与同 ID 冲突。失败会保留旧数据，多窗口冲突不静默覆盖。主题仅在保存成功后应用，删除 CSS 后重新应用生效的主题；双库中的原生资料库恢复不再先修改活动内存状态。</p><h3>仍需验收</h3>
+      <h3>本轮专项修复</h3><p>主库完整备份读取最新版、密钥与额外认证头导出保护、原生会话异步写回隔离；小说续写新章绑定及新鲜摘要过滤；助手独立会话挂载与恢复后迟到请求保护；手机归档、聊天附件可见性、录音线程身份、生成中发送锁；工坊字体与壁纸备份、旧草稿安全分叉、复杂背景纹样位置和兼容 HTML 合同字段保真。第一批修复继续保留。第二批补上滚动记忆失效重建、记忆提交参考校验、记忆独立模型容量身份、完整 HTML 续写二次验收、手机角色简介与评论记忆、手机钱包失败结算核对、世界书高级匹配、工坊异步目标归属、小说采纳与记忆错误分离、STscript 最新分支变量继承及双库恢复入口；第三批已将原生四阶段正则迁至隔离 Worker，为 STscript 新回合写入按回合快照，并修复助手生成中切换类型的错写风险。第五批改为逐章节、逐摘要和本轮指令计算小说世界书扫描深度；双库导出复核原生库的全部规范化快照内容而不只比较版本号；安全合并原生备份时保留无剧情库中已有的自定义主题。第四批把主剧情、小说、记忆的世界书激活匹配迁至可终止 Worker；记忆冻结匹配结果和激活来源，在 IndexedDB 最终事务中只执行确定性签名核对，不在事务里跑正则。事实记忆手动二次合并独立核对模型容量，候选创建和采纳均检查参考合同；旧候选无合同则需主人额外确认。双库备份现在核验完整快照内容，已写入成功但刷新失败会明确区分，不再诱导重复导入。历史旧回合没有快照时继续拒绝伪继承；所有能力仍需真实设备验证。</p><h3>第六批专项修复</h3><p>小说世界书匹配源按章节时间顺序排列，同章节先读取新鲜摘要、再读取原始正文，本轮导演指令最后进入匹配窗口；扫描深度 1 在无导演指令时优先检查当前章节正文。原生备份的「仅空库恢复」现在会识别只设置过主题或 CSS 的非空配置，不再静默覆盖；安全合并仍保留第五批的独立冲突判断。手动消息编辑、删除、新增开场、HTML 修复及失败正文恢复先在独立快照中操作，Worker 中断或数据库保存失败不再将未提交文本泄漏到主内存；最终仍由剧情修订号和数据库 CAS 决定是否成功。</p><h3>第七批专项修复</h3><p>面具、预设、世界书、CSS、正则和小说项目的保存与关联资源删除，统一从最新资料库创建独立草稿，以数据库事务提交为唯一成功依据；同时检查资源更新身份、小说修订号与同 ID 冲突。失败会保留旧数据，多窗口冲突不静默覆盖。主题仅在保存成功后应用，删除 CSS 后重新应用生效的主题；双库中的原生资料库恢复不再先修改活动内存状态。</p><h3>第八批专项修复</h3><p>工坊 CSS 发布、助手 CSS 发布、助手资源挂载和 Regex Bundle 的预设/规则联动均使用与剧情保存相同的数据库提交队列；发布失败不修改共享内存或错误重绘主题。删除面具、预设、世界书、CSS、正则时，在同一事务内解除剧情/小说/设置模板的失效引用并提升模板修订号，避免保留无法使用的模板。模板操作和模板建剧情也统一使用失败回读的提交机制，剧情 CAS 冲突后只读重载最新数据。旧面具、世界书及正则包缺少时间戳、旧规则缺少 ID 时采用稳定兼容身份，不再因多次标准化随机生成内容而误报修改冲突。</p><h3>集中封版返工专项</h3><p>修复编辑默认剧情模板时丢失 ★ 默认标记及更新时间、旧 History 缺失时间反复伪造当前时间导致备份快照抖动、无目标删除无意义写盘，以及小说世界书由导演指令挤占最新章节的扫描深度。手机支持系统双指缩放，设置导航扩大触控区，工坊素材菜单切换后关闭，模板说明正确渲染粗体。原生库/兼容库/工坊/壁纸的备份范围在操作界面直接说明，避免把双库备份误认为全站移机包。</p><h3>本次独立验收专项返工</h3><p>修复旧事实记忆缺少 ID 时重复导出随机生成身份的问题：按原会话、事实原始位置及内容进行稳定只读投影，保留已有真实 ID，并支持重复事实区分；没有伪造旧资料时间。小说世界书不再只扫描硬编码的最近 3 章正文和 8 章摘要，而是按条目实际扫描深度逐章读取原文与新鲜摘要，导演指令占当前章同一个位置。扫描输入过大时保留明确失败提示，不静默缩减世界书范围或原始 History。</p><h3>仍需验收</h3>
       <p>原生四阶段正则与三条世界书匹配链路已隔离执行；仍需在真实浏览器、长历史和 iOS Safari 上确认全部边界，不能仅凭静态检查标为稳定版；双库恢复为可恢复的分阶段非原子事务，仍需真实多库中断/冲突验收。iOS Safari 真机、真实 IndexedDB 完整恢复、多标签复杂 HTML 和真实 Provider 断流仍未完成端到端验收。</p>
       <label class="check-row"><input id="mima-release-note-optout" type="checkbox" onchange="setMimaReleaseNoticeOptOut(this.checked)">以后不再自动弹出更新公告（设置里仍可查看）</label>
     </div><button class="primary-btn" onclick="closeMimaReleaseNotice()">知道了</button>
@@ -289,8 +289,8 @@ function openMimaLicenseDialog() {
   <details id="compat-game-drawer" class="compat-game-drawer"><summary>功能、资源与诊断</summary><div id="compat-mount-status" role="status">进入剧情后显示实际绑定资源。</div><div id="compat-tools-stack"></div><details id="compat-diagnostics-panel"><summary>运行错误与正则诊断（不参与剧情）</summary><div id="compat-display-errors"></div><div id="compat-diagnostics"></div></details></details></div></section>
   <section class="compat-advanced-panel"><h3>互动功能（手动授权）</h3><p>不自动运行来源中的 JavaScript。保留旧 Worker 与仅 DOM 的可视化沙箱；新增作者交互宿主，可独立授权变量与事件，并选择真实离线 jQuery/lodash/Vue/Zod 和本地模块。任意远程依赖、完整 MVU/Tavern Helper 尚未实现，具体能力、权限与状态见每项说明。</p><div id="compat-plugins"></div><div id="compat-css-list"></div><div id="compat-plugin-slot"></div><div id="compat-html-preview"></div></section>
   <section class="compat-advanced-panel"><h3>我的卡片与外部资源</h3><p>原始字节可原样导出；该资源未因检查而成为可执行插件。</p><div id="compat-sources"></div><div id="compat-sessions"></div></section>
-  <section class="compat-advanced-panel"><h3>资料备份与恢复检查</h3><div class="compat-actions"><button id="compat-export">仅导出兼容数据库</button><button id="compat-export-both">导出原生 + 兼容</button><input id="compat-restore-file" type="file" accept=".json"><button id="compat-restore-check">只读检查备份</button><button id="compat-restore-apply">安全恢复缺失数据（不覆盖）</button></div>
-  <p>先检查，再手动确认：仅补充兼容数据库里缺少的记录；同名不同内容会整体拒绝，绝不覆盖旧剧情。双库备份支持分阶段安全恢复：两个 IndexedDB 之间不是单个原子事务；发生中断时需用同一备份继续核对，不能当成整库已完成。</p></section>
+  <section class="compat-advanced-panel"><h3>资料备份与恢复检查</h3><div class="compat-actions"><button id="compat-export">仅导出兼容数据库</button><button id="compat-export-both">导出原生 + 兼容（双库）</button><input id="compat-restore-file" type="file" accept=".json"><button id="compat-restore-check">只读检查备份</button><button id="compat-restore-apply">安全恢复缺失数据（不覆盖）</button></div>
+  <p><strong>备份范围：</strong>此处「双库」仅包含原生剧情资料库与酒馆兼容数据库，<strong>不包含工坊工程、壁纸、字体与本机 API 设置</strong>。如需迁移这些资料，请另外前往主设置 → 数据备份导出「原生库与素材设置备份」，两份文件都要保存。此处先检查再确认：双库安全恢复仅新增缺失记录，不覆盖同 ID 不同内容。两个 IndexedDB 不是单个原子事务；意外中断后必须使用同一文件继续。</p></section>
   <section class="compat-advanced-panel"><h3>连接完整酒馆服务（可选）</h3><p>普通聊天只需手机或电脑浏览器。需要复杂插件时，可以在 Windows、macOS、Linux 或受信任服务器运行完整 SillyTavern，再由手机安全连接；本包的 Windows 工具仅是其中一种安装方式。跨设备存档不会自动同步，远程连接必须单独配置认证与安全网络。</p><p>连接地址由你自己配置。<strong>127.0.0.1 只代表当前这台设备</strong>，手机不能用它连接电脑。请先在电脑上为 SillyTavern 配置受信任网络访问、身份验证与防火墙许可；尽量使用 HTTPS 或私有 VPN，切勿直接公开无认证端口。</p>
     <label for="compat-sidecar-url">原版酒馆服务器地址（可选，高级）</label>
     <div class="compat-actions"><input id="compat-sidecar-url" type="url" inputmode="url" autocomplete="url" placeholder="例如 https://tavern.example.com 或 http://192.168.1.20:8000"><button type="button" id="compat-sidecar-open">确认地址并打开</button></div>
@@ -304,12 +304,12 @@ function openMimaLicenseDialog() {
 <script src="./memory-worldbook-refs.js?v=20261020-r50"></script>
 <script src="./local-store.js?batch4=worldbook-20261025&v=20261023-r19-recovery-ledger&r7=20261021-contract&startup=20261023-readonly-guard&audit2=20261025-r2"></script>
 <script src="./theme-engine.js?v=1.4.0"></script>
-<script src="./regex-engine.js?v=20261025-native-worker-r3&ctxsave=20261013-2&nativeui=20261013-1&priority0=r11.2"></script>
+<script src="./regex-engine.js?batch8=stable-regex-legacy-20261026&v=20261025-native-worker-r3&ctxsave=20261013-2&nativeui=20261013-1&priority0=r11.2"></script>
 <script src="./persona-macro-resolver.js?v=1.1.6"></script>
 <script src="./user-input-semantic-parser.js?p0request=20261014-r12.3.2&v=1.1.7"></script>
 <script src="./novel-memory.js?v=1.3.1&auditfix=1.3.2&rework=1.3.3&reworkfix=1.3.4"></script>
-<script src="./novel-engine.js?v=1.3.1&auditfix=1.3.2&rework=1.3.3&oct25rework=novel-assist-3&reworkfix=20261025-p1-4&navguard=20261025-r19-p1-6"></script>
-<script src="./novel-prompt-assembler.js?batch6=novel-order-and-empty-restore-20261025&batch5=restore-novel-20261025&batch4=worldbook-20261025&p0request=20261014-r12.3.2&v=1.3.1&auditfix=1.3.2&rework=1.3.3&ctxsave=20261013-2&priority0=r11.2&oct25rework=novel-assist-3&auditfix=20261025-p1-7"></script>
+<script src="./novel-engine.js?seal=20261026-r19-1&v=1.3.1&auditfix=1.3.2&rework=1.3.3&oct25rework=novel-assist-3&reworkfix=20261025-p1-4&navguard=20261025-r19-p1-6"></script>
+<script src="./novel-prompt-assembler.js?batch6=novel-order-and-empty-restore-20261025&batch5=restore-novel-20261025&batch4=worldbook-20261025&p0request=20261014-r12.3.2&v=1.3.1&auditfix=1.3.2&rework=1.3.3&ctxsave=20261013-2&priority0=r11.2&oct25rework=novel-assist-3&auditfix=20261025-p1-7&seal=20261026-r19-p1-2"></script>
 <link rel="stylesheet" href="./history-navigator.css?v=20261022-r19-rework4">
 <script src="./history-search.js?v=r11-20261012-2"></script>
 <script src="./history-navigator.js?v=20261022-r19-p0-p5-recovery"></script>
@@ -318,11 +318,11 @@ function openMimaLicenseDialog() {
 <script src="./story-transcript-export.js?v=20261019-r44"></script>
 <script src="./mima-file-export.js?v=20261022-r19-p0-p5-recovery"></script>
 <script src="./html-structure-contract.js?v=20261021-r412&template-ux=20261022-r16-capacity-recovery&r19p6=20261022-final&r19rework=20261023-p0p1-2&r19manualturn=20261023-r5"></script>
-<script src="./standalone-core.js?batch7=canonical-atomic-20261026&batch6=novel-order-and-empty-restore-20261025&batch5=restore-novel-20261025&batch4=worldbook-20261025&v=20261025-native-worker-r3&base=20261022-r17-source-audit&template-ux=20261022-r16-capacity-recovery&provider-diagnostic=20261022-r18&unverified-window=20261022-r19&r7=20261021-contract&r9=20261021-reader-default-postcommit&r13gen=20261022-r15&r19manual=20261022-1&settingssheet=20261023-1&r19p6=20261022-final&r19recovery=20261023-p012&r19rework=20261023-p0p1-2&r19manualturn=20261023-r5&streamsave=20261025&postheader=20261025-r1&streammode=20261025-thinkingfix-r3&recovery=20261025-p0-1&taskviewer=20261025-r2&promptclean=20261025-r1&oct25rework=novel-assist-3&reworkfix=20261025-p1-4&navguard=20261025-r19-p1-6&auditfix=20261025-p1-7&audit2=20261025-r2"></script>
+<script src="./standalone-core.js?batch8=publisher-tx-legacy-20261026&batch7=canonical-atomic-20261026&batch6=novel-order-and-empty-restore-20261025&batch5=restore-novel-20261025&batch4=worldbook-20261025&v=20261025-native-worker-r3&base=20261022-r17-source-audit&template-ux=20261022-r16-capacity-recovery&provider-diagnostic=20261022-r18&unverified-window=20261022-r19&r7=20261021-contract&r9=20261021-reader-default-postcommit&r13gen=20261022-r15&r19manual=20261022-1&settingssheet=20261023-1&r19p6=20261022-final&r19recovery=20261023-p012&r19rework=20261023-p0p1-2&r19manualturn=20261023-r5&streamsave=20261025&postheader=20261025-r1&streammode=20261025-thinkingfix-r3&recovery=20261025-p0-1&taskviewer=20261025-r2&promptclean=20261025-r1&oct25rework=novel-assist-3&reworkfix=20261025-p1-4&navguard=20261025-r19-p1-6&auditfix=20261025-p1-7&audit2=20261025-r2&seal=20261026-r19-p1-2"></script>
 <script src="./font-manager.js?v=1.1.0&fontsplit=20261013-1&txguard=20261013-2&r9=20261021-reader-default-postcommit&r13gen=20261022-r15&urlfontlibrary=20261025-r3"></script>
 <script src="./png-card-import.js?v=1.4.0&r11=20261012-2"></script>
 <script src="./png-resource-inspector.js?v=1.4.0"></script>
-<script src="./app.js?batch7=canonical-atomic-20261026&batch6=novel-order-and-empty-restore-20261025&batch4=worldbook-20261025&v=20261025-native-worker-r3&streamsave=20261025&streammode=20261025-thinkingfix-r3&recovery=20261025-p0-1&followup=20261025-r3&taskviewer=20261025-r2&promptclean=20261025-r1&oct25rework=novel-assist-3&reworkfix=20261025-p1-4&navguard=20261025-r19-p1-6&auditfix=20261025-p1-7&audit2=20261025-r2"></script>
+<script src="./app.js?batch8=publisher-tx-legacy-20261026&batch7=canonical-atomic-20261026&batch6=novel-order-and-empty-restore-20261025&batch4=worldbook-20261025&v=20261025-native-worker-r3&streamsave=20261025&streammode=20261025-thinkingfix-r3&recovery=20261025-p0-1&followup=20261025-r3&taskviewer=20261025-r2&promptclean=20261025-r1&oct25rework=novel-assist-3&reworkfix=20261025-p1-4&navguard=20261025-r19-p1-6&auditfix=20261025-p1-7&audit2=20261025-r2&seal=20261026-r19-p1-2"></script>
 <div id="mima-phone-root" hidden aria-label="咪嘛馆小手机独立模式"></div>
 <script src="./sha256-browser.js?v=r11-20261012-2"></script>
 <script src="./compat-author-contract.js?v=r16-20261015-1"></script>
@@ -348,7 +348,7 @@ function openMimaLicenseDialog() {
 <script src="./vendor/marked-17.0.5.umd.js?v=r14-20261015-1"></script>
 <script src="./compat-markdown.js?v=r14-20261015-1&storymd=20261018_r1&libraryui=20261019_r4_wallpaper"></script>
 <script src="./compat-regex-ui.js?v=r14-20261015-1&manualrecovery=20261015-r14-2"></script>
-<script src="./compat-ui.js?batch5=restore-novel-20261025&batch4=dualbackup-20261025&p0request=20261014-r12.3.2&v=20261014-visual-unification-1&r13=20261015-1&r14=20261015-1&manualrecovery=20261015-r14-2&authorhost=20261015-r15-1&advanced=20261015-r16-1&r7=20261021-contract&r9=20261021-reader-default-postcommit&r13gen=20261022-r15&auditfix=20261025-p1-7&audit2=20261025-r2"></script>
+<script src="./compat-ui.js?batch5=restore-novel-20261025&batch4=dualbackup-20261025&p0request=20261014-r12.3.2&v=20261014-visual-unification-1&r13=20261015-1&r14=20261015-1&manualrecovery=20261015-r14-2&authorhost=20261015-r15-1&advanced=20261015-r16-1&r7=20261021-contract&r9=20261021-reader-default-postcommit&r13gen=20261022-r15&auditfix=20261025-p1-7&audit2=20261025-r2&seal=20261026-r19-1"></script>
 <script src="./assistant-studio.js?batch3=20261025&v=1.1.2&hotfix=1.1.3&release=1.3.1&auditfix=1.3.2&artifactpriority0=r11.2&oct25rework=novel-assist-3&reworkfix=20261025-p1-4&navguard=20261025-r19-p1-6&auditfix=20261025-p1-7"></script>
 <script src="./novel-studio.js?v=1.3.1&auditfix=1.3.2&release=1.3.1&auditfix=1.3.2&rework=1.3.3&reworkfix=1.3.4&themefix=1.4.0&memoryfix=1.3.9&pnginspect=1.4.0&oct25rework=novel-assist-3&reworkfix=20261025-p1-4&navguard=20261025-r19-p1-6&audit2=20261025-r2"></script>
 <script src="./ux-r6.js?v=r6-20261012"></script>
@@ -359,7 +359,7 @@ function openMimaLicenseDialog() {
 <script src="./atelier/atelier-core.js?v=20261025-rework-global-2&auditfix=20261025-p1-7"></script>
 <script src="./atelier/atlas-catalog.js?v=20261018-atlas-r1"></script>
 <script src="./atelier/atlas-adapter.js?v=20261019-atlas-r3"></script>
-<script src="./atelier/atelier-ui.js?v=20261025-rework-ui-2&oct25rework=novel-assist-3&audit2=20261025-r2"></script>
+<script src="./atelier/atelier-ui.js?v=20261025-rework-ui-2&oct25rework=novel-assist-3&audit2=20261025-r2&seal=20261026-r19-1"></script>
 
 <script src="./phone/phone-store.js?v=20261023-r19-phone1"></script>
 <script src="./phone/phone-resources.js?batch3=20261025&v=20261024-r19-rework-b2&audit2=20261025-r2"></script>

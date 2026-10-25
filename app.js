@@ -411,7 +411,7 @@ async function renderSettingTemplatesTab(box){
     const renderCheck=(id,label,checked)=>`<label class="mima-template-choice"><input id="${id}" type="checkbox" ${checked?'checked':''}>${label}</label>`;
     box.innerHTML=`<section class="settings-section mima-template-editor">
       <h3>🗂️ 剧情设置模板</h3>
-      <p class="helper">在这里独立创建、编辑并保存模板。**无需先打开其他剧情**。之后在「新建剧情」或「PNG 角色卡开局」选择挂载；不会携带旧 History、旧记忆、密钥或后台任务。</p>
+      <p class="helper">在这里独立创建、编辑并保存模板。<strong>无需先打开其他剧情</strong>。之后在「新建剧情」或「PNG 角色卡开局」选择挂载；不会携带旧 History、旧记忆、密钥或后台任务。</p>
       <div class="mima-template-chooser"><label class="form-label" for="tpl-edit-choice">选择要编辑的模板</label>
         <select id="tpl-edit-choice" class="field" onchange="chooseIndependentTemplate(this.value)"><option value="">＋ 全新空白模板</option>${settingTemplateCache.map(t=>`<option value="${escapeHtml(t.id)}" ${tpl?.id===t.id?'selected':''}>${t.isDefault?'★ ':''}${escapeHtml(t.name)}</option>`).join('')}</select></div>
       <div class="mima-template-actions"><button class="ghost-btn" onclick="chooseIndependentTemplate('')">＋ 创建空白模板</button><button class="ghost-btn" onclick="importCurrentSessionAsSettingTemplate()">从当前剧情复制配置</button><button class="ghost-btn" onclick="exportSettingTemplate()">导出模板</button><button class="ghost-btn" onclick="document.getElementById('setting-template-file-input').click()">导入模板</button>${tpl?'<button class="ghost-btn" onclick="copyIndependentTemplate()">复制当前模板</button><button class="ghost-btn" onclick="setIndependentTemplateDefault()">设为默认 / 取消默认</button>':''}</div>
@@ -916,7 +916,7 @@ function setupImmersiveReading(){
 }
 // User-facing release notes: once per distinct production release by default.
 // Avoid touching Store/History or making automatic announcements mandatory.
-const MIMA_RELEASE_NOTES_VERSION='R19-20261026-BATCH7-DEV';
+const MIMA_RELEASE_NOTES_VERSION='R19-20261026-SEAL-P1-REWORK-DEV';
 const MIMA_RELEASE_NOTES_SEEN='mima-release-notes-seen:'+MIMA_RELEASE_NOTES_VERSION;
 const MIMA_RELEASE_NOTES_OPTOUT='mima-release-notes-disable-auto-v1';
 function openMimaReleaseNotice(){
@@ -2063,7 +2063,7 @@ async function exportFullSettingsBackup(){
         const backup=await buildFullSettingsBackup({includeApiKey,includeFonts});
         const stamp=new Date().toISOString().slice(0,10);
         downloadJson(`mimamao-tavern-settings-${stamp}.json`,backup);
-        toast('完整咪嘛馆设置数据已导出');
+        toast('原生剧情与工坊/壁纸设置已导出；兼容库请另行备份');
     }catch(e){toast(`导出失败：${e.message}`)}
 }
 function chooseFullSettingsImport(){const input=qs('full-settings-file-input');input.value='';input.click()}
@@ -2161,7 +2161,7 @@ async function renderDataTab(box,renderEpoch=++settingsRenderEpoch){
     const cfg=MimaStandalone.getApiConfig();
     box.innerHTML=`<section class="settings-section"><h3>💾 Data Backup（数据备份）</h3><p class="helper">这里备份的不只是剧情，还包括角色卡、世界书、预设、正则包、CSS Preset（CSS 预设）、API（接口）参数、温度/流式设置、字体选择；可选把本地字体文件也一起装进备份。普通“刷新 / 强制刷新”不会删除这些数据，但 Safari 的“清除历史记录与网站数据”或删除网站数据会清掉 IndexedDB（本地数据库）和 localStorage（本地存储），所以真正保险的是导出 JSON（数据文件）到“文件”App。</p>
     <div class="data-backup-card"><div class="row-title">本机设置快照</div><div class="row-sub">${snap?`最近保存：${escapeHtml(snap.savedAt||snap.exportedAt||'已保存')}`:'尚未保存本机快照'}</div><div class="toolbar"><button class="primary-btn" onclick="saveFullSettingsSnapshot()">保存咪嘛馆设置数据</button><button class="ghost-btn" onclick="restoreSavedSettingsSnapshot()">恢复本机快照</button></div></div>
-    <div class="data-backup-card"><div class="row-title">可迁移完整备份</div><div class="row-sub">导出的文件可以在清缓存、换浏览器、换设备或重新部署后再导入。</div><label class="check-row"><input id="backup-fonts" type="checkbox" checked> 把本地字体文件也加入备份（文件可能变大）</label><label class="check-row"><input id="backup-api-key" type="checkbox"> 把 API Key（接口密钥）加入导出/快照 <strong>（敏感）</strong></label><div class="toolbar"><button class="primary-btn" onclick="exportFullSettingsBackup()">⇩ 导出完整设置</button><button class="ghost-btn" onclick="chooseFullSettingsImport()">⇧ 导入完整设置</button></div><div class="row-sub">当前 API（接口）：${cfg.apiBase?escapeHtml(cfg.apiBase):'未配置'} · Model（模型）：${cfg.model?escapeHtml(cfg.model):'未选择'}</div></div>
+    <div class="data-backup-card"><div class="row-title">原生剧情、工坊素材、壁纸与设置备份</div><div class="row-sub">这份文件包含原生剧情库、工坊工程、聊天壁纸和当前设置（含可选字体），<strong>不包含独立的酒馆兼容数据库</strong>。兼容剧情请到酒馆兼容页额外导出「原生 + 兼容（双库）」并保存第二份文件。两个备份恢复路径互相独立，不要误以为一份覆盖所有数据。</div><label class="check-row"><input id="backup-fonts" type="checkbox" checked> 把本地字体文件也加入备份（文件可能变大）</label><label class="check-row"><input id="backup-api-key" type="checkbox"> 把 API Key（接口密钥）加入导出/快照 <strong>（敏感）</strong></label><div class="toolbar"><button class="primary-btn" onclick="exportFullSettingsBackup()">⇩ 导出完整设置</button><button class="ghost-btn" onclick="chooseFullSettingsImport()">⇧ 导入完整设置</button></div><div class="row-sub">当前 API（接口）：${cfg.apiBase?escapeHtml(cfg.apiBase):'未配置'} · Model（模型）：${cfg.model?escapeHtml(cfg.model):'未选择'}</div></div>
     <div id="data-backup-status" class="api-status">${snap?'✅ 当前浏览器已有本机快照。':'建议先保存一次本机快照，再导出一份文件备份。'}</div></section>
     <section class="settings-section"><h3>🧹 Cache（缓存）说明</h3><p class="helper"><strong>只想让 GitHub Pages 加载新代码时，不需要先清除网站数据。</strong>本版已经给 CSS / JS 资源加入版本号 <code>?v=1.1.0</code>，部署后浏览器会把它们当成新资源重新拉取。若仍显示旧页面，先关闭该标签页再重新打开，或做一次强制刷新；不要直接使用会删除网站数据的清理方式，除非你已经导出了完整设置备份。</p></section>`;
 }
