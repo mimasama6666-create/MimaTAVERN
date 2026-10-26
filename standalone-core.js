@@ -7,7 +7,7 @@
   'use strict';
 
   const API_CONFIG_KEY = 'MIMAMAO_TAVERN_STANDALONE_API_V1';
-  let state = { storeRevision: 0, schemaVersion: 4, sessions: [], masks: [], presets: [], worldbooks: [], cssPresets: [], regexPacks: [], settingTemplates: [], novelProjects: [], themeSettings:{theme:'default',updatedAt:''} };
+  let state = { storeRevision: 0, schemaVersion: 4, sessions: [], masks: [], presets: [], worldbooks: [], cssPresets: [], regexPacks: [], theaterCards: [], quickCommands: [], settingTemplates: [], novelProjects: [], themeSettings:{theme:'default',updatedAt:''} };
   let lastUsage = null; // v1.1.4: upstream usage/cache telemetry only; never treated as canonical story data.
 
   const nowIso = () => new Date().toISOString();
@@ -52,7 +52,7 @@
     return {
       id: msg.id || makeId('msg'), role: msg.role || 'user',
       content: String(msg.content ?? ""), rawContent: String(msg.rawContent ?? msg.content ?? ""), renderedContent: String(msg.renderedContent ?? ""),
-      time: msg.time || nowIso(), mode: msg.mode || 'story_mode', emotion: msg.emotion || null,
+      time: msg.time || '', mode: msg.mode || 'story_mode', emotion: msg.emotion || null,
       metadata: {...(msg.metadata && typeof msg.metadata === 'object' ? msg.metadata : {}),...(!msg.time?{memoryTimeUnverified:true}:{})},
       canonLevel: msg.canonLevel || 'alternate', isEdited: !!msg.isEdited,
       parentMessageId: msg.parentMessageId || null, branchId: msg.branchId || 'main',
@@ -156,19 +156,19 @@
   }
 
   function normalizeSession(s = {}) {
-    const createdAt = s.createdAt || nowIso();
+    const createdAt = s.createdAt || s.updatedAt || (s.id ? '' : nowIso());
     return {
       id: s.id || makeId('sess'), recordRevision:Math.max(0,Number(s.recordRevision)||0), title: text(s.title || '未命名咪嘛宇宙'), createdAt,
       updatedAt: s.updatedAt || createdAt, mode: 'tavern', characterMode: 'tavern',
       loadedUserMaskId: s.loadedUserMaskId || null, loadedCharMaskId: s.loadedCharMaskId || null,
       enabledPersonaSources: { sandalphonPersona: false, userPersona: false, telegramContext: false, longTermMemory: false, sandalphonState: false },
       enabledContextSources: { storySummary: true, recentMessages: true, telegramContext: false, vectorMemory: false },
-      worldbookIds: list(s.worldbookIds), presetIds: list(s.presetIds), openingId: s.openingId || null,
+      worldbookIds: list(s.worldbookIds), presetIds: list(s.presetIds), theaterCardIds:list(s.theaterCardIds), openingId: s.openingId || null,
       canonLevel: s.canonLevel || 'alternate', status: s.status || 'active',
-      messages: arr(s.messages).map(normalizeMessage),
+      messages: arr(s.messages).map((msg,index)=>normalizeMessage({...msg,id:msg.id||stableLegacyId('legacy_msg',JSON.stringify([s.id||s.title||'',index,msg]))})),
       pendingGeneration: s.pendingGeneration&&typeof s.pendingGeneration==='object'?clone(s.pendingGeneration):null,
       lastGeneration: s.lastGeneration&&typeof s.lastGeneration==='object'?clone(s.lastGeneration):null,
-      legacyMemoryQuarantined:s.legacyMemoryQuarantined===true, promptLineageProjection:s.promptLineageProjection===true, archivedBranches: arr(s.archivedBranches), deletedMessages: arr(s.deletedMessages).map(normalizeMessage),
+      legacyMemoryQuarantined:s.legacyMemoryQuarantined===true, promptLineageProjection:s.promptLineageProjection===true, archivedBranches: arr(s.archivedBranches), deletedMessages: arr(s.deletedMessages).map((msg,index)=>normalizeMessage({...msg,id:msg.id||stableLegacyId('legacy_deleted_msg',JSON.stringify([s.id||s.title||'',index,msg]))})),
       summary: text(s.summary), rollingSummary: text(s.rollingSummary || s.summary), longSummary: text(s.longSummary),
       sceneSummary: text(s.sceneSummary), characterPsychSummary: text(s.characterPsychSummary), relationshipSummary: text(s.relationshipSummary),
       unresolvedHooks: list(s.unresolvedHooks), pinnedFacts: list(s.pinnedFacts),
@@ -238,12 +238,12 @@
 
   // Configuration templates have no History, generated Memory, source cursor,
   // running jobs, API credentials, character reply or owner private notes.
-  const templateFields=['presetIds','worldbookIds','regexPackIds','loadedUserMaskId','customCssId','customCssEnabled','promptSettings','renderMode','memoryInject'];
+  const templateFields=['presetIds','worldbookIds','regexPackIds','theaterCardIds','loadedUserMaskId','customCssId','customCssEnabled','promptSettings','renderMode','memoryInject'];
   function normalizeSettingTemplate(t={}){
     const raw=t.config&&typeof t.config==='object'&&!Array.isArray(t.config)?t.config:{};
     const config={};
     for(const key of templateFields)if(Object.prototype.hasOwnProperty.call(raw,key)){
-      if(['presetIds','worldbookIds','regexPackIds'].includes(key))config[key]=list(raw[key]);
+      if(['presetIds','worldbookIds','regexPackIds','theaterCardIds'].includes(key))config[key]=list(raw[key]);
       else if(key==='loadedUserMaskId'||key==='customCssId')config[key]=raw[key]?String(raw[key]):null;
       else if(key==='customCssEnabled')config[key]=raw[key]!==false;
       else if(key==='renderMode')config[key]=raw[key]==='safe_html'?'safe_html':'text';
@@ -265,6 +265,7 @@
     if(include.presets!==false)c.presetIds=list(session.presetIds);
     if(include.worldbooks!==false)c.worldbookIds=list(session.worldbookIds);
     if(include.regex!==false)c.regexPackIds=list(session.regexPackIds);
+    c.theaterCardIds=list(session.theaterCardIds);
     if(include.userMask===true)c.loadedUserMaskId=session.loadedUserMaskId||null;
     if(include.css===true){c.customCssId=session.customCssId||null;c.customCssEnabled=session.customCssEnabled!==false;}
     if(include.context!==false){c.promptSettings=clone(session.promptSettings);if(c.promptSettings.outputContract)c.promptSettings.outputContract.templateMessageId='';c.promptSettings.autoRollingEnabled=false;c.promptSettings.summaryEnabled=false;c.renderMode=session.renderMode;}
@@ -272,7 +273,7 @@
     return normalizeSettingTemplate({config:c}).config;
   }
   function templateMissing(state,c){const missing=[];
-    const refs=[['presetIds','presets'],['worldbookIds','worldbooks'],['regexPackIds','regexPacks']];
+    const refs=[['presetIds','presets'],['worldbookIds','worldbooks'],['regexPackIds','regexPacks'],['theaterCardIds','theaterCards']];
     for(const [field,table] of refs)for(const id of c[field]||[])if(!state[table].some(x=>x.id===id))missing.push(field+':'+id);
     if(c.loadedUserMaskId&&!state.masks.some(x=>x.id===c.loadedUserMaskId&&x.type==='user'))missing.push('userMask:'+c.loadedUserMaskId);
     if(c.customCssId&&!state.cssPresets.some(x=>x.id===c.customCssId))missing.push('css:'+c.customCssId);
@@ -286,13 +287,72 @@
     if(c.memoryInject){const defaults=normalizeManualMemory();next.manualMemory={...defaults,settings:{...defaults.settings,...c.memoryInject}};}
     return next;
   }
+  function legacyRoot(table,prefix,normalizer){
+    return arr(table).map((record,index)=>normalizer(record.id?record:{...record,id:stableLegacyId(prefix,JSON.stringify([index,record]))}));
+  }
+  // NovelEngine is intentionally unchanged: stabilize only missing legacy
+  // fields *at the persistence read boundary* (not the creation APIs).
+  function stableLegacyNovel(p,index){
+    const id=p.id||stableLegacyId('legacy_novel',JSON.stringify([index,p]));
+    const stamp=p.createdAt||p.updatedAt||'';
+    const chapters=(arr(p.chapters).length?arr(p.chapters):[{title:'正文',order:0,segments:[]}]).map((chapter,ci)=>{
+      const cid=chapter.id||stableLegacyId('legacy_chapter',JSON.stringify([id,ci,chapter]));
+      return {...chapter,id:cid,createdAt:chapter.createdAt||chapter.updatedAt||stamp,updatedAt:chapter.updatedAt||chapter.createdAt||stamp,
+        segments:arr(chapter.segments).map((segment,si)=>({ ...segment,
+          id:segment.id||stableLegacyId('legacy_segment',JSON.stringify([cid,si,segment])),
+          createdAt:segment.createdAt||segment.updatedAt||chapter.createdAt||stamp,updatedAt:segment.updatedAt||segment.createdAt||chapter.createdAt||stamp }))};
+    });
+    return {...p,id,createdAt:stamp,chapters,
+      drafts:arr(p.drafts).map((draft,di)=>({...draft,id:draft.id||stableLegacyId('legacy_draft',JSON.stringify([id,di,draft])),createdAt:draft.createdAt||draft.updatedAt||stamp})),
+      generations:arr(p.generations).map((g,gi)=>({...g,id:g.id||stableLegacyId('legacy_generation',JSON.stringify([id,gi,g])),startedAt:g.startedAt||stamp}))};
+  }
+  function theaterAccess(value={},strict=false){
+    const origins=[];
+    for(const entry of arr(value?.origins))try{
+      const u=new URL(String(entry));
+      if(u.protocol!=='https:'||u.username||u.password||u.pathname!=='/'||u.search||u.hash)throw Error('invalid origin');
+      if(!origins.includes(u.origin))origins.push(u.origin);
+    }catch(e){if(strict)throw new ApiError('E_THEATER_ORIGIN','联网来源请填写完整 HTTPS 来源，如 https://example.com；不能含路径、通配符或账号');}
+    if(origins.length>32)throw new ApiError('E_THEATER_ORIGIN','每个素材最多授权 32 个 HTTPS 来源');
+    const runScripts=value?.runScripts===true;
+    if(strict&&value?.readMessages===true&&!runScripts)throw new ApiError('E_THEATER_SCRIPT_TRUST','读取原文前，需要先明确授权此源码的脚本执行与联网能力');
+    return {runScripts,readMessages:runScripts&&value?.readMessages===true,origins};
+  }
+  function normalizePlayResource(p={},kind='command'){
+    const createdAt=stableRecordCreatedAt(p);
+    return {id:p.id||makeId(kind==='theater'?'theater':'command'),name:text(p.name)||(kind==='theater'?'未命名小剧场':'未命名指令'),
+      content:String(p.content??''),enabled:p.enabled!==false,category:text(p.category),
+      ...(kind==='theater'?{kind:p.kind==='js'?'js':'html',access:theaterAccess(p.access)}:{mode:p.mode==='fill'?'fill':'send'}),
+      sourceData:String(p.sourceData??''),createdAt,updatedAt:p.updatedAt||createdAt};
+  }
+  async function savePlayResource(table,body,id=null){
+    const old=id?state[table].find(p=>p.id===id):null;
+    if(id&&!old)throw new ApiError('E_CANONICAL_STALE','该资料已删除，未用旧编辑重新创建');
+    if(typeof body?.content!=='string'||!body.content.trim())throw new ApiError('E_PLAY_RESOURCE_EMPTY','内容不能为空');
+    const kind=table==='theaterCards'?'theater':'command';
+    if(kind==='theater'&&body.kind!==undefined&&!['html','js'].includes(body.kind))throw new ApiError('E_PLAY_RESOURCE_KIND','小剧场类型必须是 HTML 或 JS');
+    if(kind==='command'&&body.mode!==undefined&&!['send','fill'].includes(body.mode))throw new ApiError('E_PLAY_RESOURCE_MODE','指令动作必须是直接发送或仅填入');
+    const value=normalizePlayResource({...old,...body,id:old?.id||makeId(kind),createdAt:old?.createdAt||nowIso(),updatedAt:nowIso()},kind);
+    if(kind==='theater')value.access=body.accessGrant?theaterAccess(body.accessGrant,true):
+      old&&old.content===value.content&&old.kind===value.kind?theaterAccess(old.access):theaterAccess();
+    return commitResource(table,value,body.updatedAt);
+  }
+  async function importPlayResources(body){
+    for(const key of ['theaterCards','quickCommands'])if(body?.[key]!==undefined&&!Array.isArray(body[key]))throw new ApiError('E_PLAY_IMPORT_INVALID','导入集合必须为数组，资料库未更改');
+    const theaters=arr(body?.theaterCards),commands=arr(body?.quickCommands);
+    if(!theaters.length&&!commands.length)throw new ApiError('E_PLAY_IMPORT_EMPTY','没有可导入的小剧场或指令');
+    const prepare=(rows,kind)=>rows.map(p=>{if(!p||typeof p.content!=='string'||!p.content.trim()||kind==='theater'&&!['html','js'].includes(p.kind)||kind==='command'&&p.mode!==undefined&&!['send','fill'].includes(p.mode))throw new ApiError('E_PLAY_IMPORT_INVALID','导入内容或类型无效，资料库未更改');return normalizePlayResource({...p,access:{},id:makeId(kind),createdAt:nowIso(),updatedAt:nowIso()},kind);});
+    const nextTheaters=prepare(theaters,'theater'),nextCommands=prepare(commands,'command');
+    return commitLibraryEdit(stored=>{stored.theaterCards.push(...nextTheaters);stored.quickCommands.push(...nextCommands);return {theaterCards:clone(nextTheaters),quickCommands:clone(nextCommands)};});
+  }
   function normalizeState(raw = {}) {
     return {
       schemaVersion: 4, storeRevision: Math.max(0,Number(raw.storeRevision)||0),
-      sessions: arr(raw.sessions).map(normalizeSession), masks: arr(raw.masks).map(normalizeMask),
-      presets: arr(raw.presets).map(normalizePreset), worldbooks: arr(raw.worldbooks).map(normalizeWorldbook), cssPresets: arr(raw.cssPresets).map(normalizeCssPreset),
-      regexPacks: arr(raw.regexPacks).map(normalizeRegexPack),settingTemplates:arr(raw.settingTemplates).map(normalizeSettingTemplate),
-      novelProjects: arr(raw.novelProjects).map(x=>window.MimaNovelEngine?.normalizeProject?window.MimaNovelEngine.normalizeProject(x):x),
+      sessions: legacyRoot(raw.sessions,'legacy_session',normalizeSession), masks: legacyRoot(raw.masks,'legacy_mask',normalizeMask),
+      presets: legacyRoot(raw.presets,'legacy_preset',normalizePreset), worldbooks: legacyRoot(raw.worldbooks,'legacy_worldbook',normalizeWorldbook), cssPresets: legacyRoot(raw.cssPresets,'legacy_css',normalizeCssPreset),
+      regexPacks: legacyRoot(raw.regexPacks,'legacy_regexpack',normalizeRegexPack),
+      theaterCards:legacyRoot(raw.theaterCards,'legacy_theater',p=>normalizePlayResource(p,'theater')),quickCommands:legacyRoot(raw.quickCommands,'legacy_command',p=>normalizePlayResource(p,'command')),settingTemplates:legacyRoot(raw.settingTemplates,'legacy_template',normalizeSettingTemplate),
+      novelProjects: arr(raw.novelProjects).map((p,index)=>{const x=stableLegacyNovel(p,index);return window.MimaNovelEngine?.normalizeProject?window.MimaNovelEngine.normalizeProject(x):x;}),
       themeSettings: window.MimaThemeEngine?.normalizeSettings?window.MimaThemeEngine.normalizeSettings(raw.themeSettings||{}):{theme:'default',updatedAt:''}
     };
   }
@@ -300,11 +360,13 @@
   // Canonical edits never mutate a shared global object before the IDB commit.
   // Serialize with story saves; each task reads the latest verified record, edits
   // a detached copy and publishes to RAM only after the CAS transaction finishes.
+  const NO_LIBRARY_WRITE = Symbol('no-library-write');
   function commitLibraryEdit(edit){
     const commit=async()=>{
       try{
         const stored=normalizeState(await window.MimaLocalStore.loadState());
         const result=edit(stored);
+        if(result&&result[NO_LIBRARY_WRITE]===true){state=stored;return result.value;}
         const committed=await window.MimaLocalStore.saveState(stored,stored.storeRevision);
         state=normalizeState(committed);
         return result;
@@ -341,7 +403,7 @@
     });
   }
   function unlinkTemplateResource(db,table,id){
-    const mapping={masks:'loadedUserMaskId',presets:'presetIds',worldbooks:'worldbookIds',cssPresets:'customCssId',regexPacks:'regexPackIds'};
+    const mapping={masks:'loadedUserMaskId',presets:'presetIds',worldbooks:'worldbookIds',cssPresets:'customCssId',regexPacks:'regexPackIds',theaterCards:'theaterCardIds'};
     const key=mapping[table];if(!key)return;
     for(const template of db.settingTemplates){
       const config=template.config||{};
@@ -360,7 +422,7 @@
   function deleteResource(table,id,unlink){
     return commitLibraryEdit(stored=>{
       const current=assertResourceFresh(table,id,stored);
-      if(!current)return {deleted:false};
+      if(!current)return {[NO_LIBRARY_WRITE]:true,value:{deleted:false}};
       stored[table]=stored[table].filter(item=>item.id!==id);
       unlink?.(stored,id);
       unlinkTemplateResource(stored,table,id);
@@ -438,7 +500,7 @@
         if(existing&&existing.revision!==Number(body.expectedRevision))throw new ApiError('E_SETTINGS_TEMPLATE_STALE','模板已在别处修改，请刷新再保存');
         if(body.id&&!existing)throw new ApiError('E_SETTINGS_TEMPLATE_MISSING','模板已不存在，不能复活旧记录');
         const cfg=body.fromSessionId?templateFromSession(stored.sessions.find(s=>s.id===body.fromSessionId)||(()=>{throw new ApiError('E_STORY_SESSION_MISSING','模板来源剧情不存在')})(),body.include||{}):body.config;
-        const next=normalizeSettingTemplate({id:existing?.id,name:body.name||existing?.name,config:cfg,createdAt:existing?.createdAt,revision:(existing?.revision||0)+1});
+        const next=normalizeSettingTemplate({id:existing?.id,name:body.name||existing?.name,config:cfg,createdAt:existing?.createdAt,isDefault:existing?.isDefault===true,updatedAt:nowIso(),revision:(existing?.revision||0)+1});
         if(existing)stored.settingTemplates=stored.settingTemplates.map(x=>x.id===next.id?next:x);else stored.settingTemplates.push(next);
         result=next;
       }else if(action==='default'){
@@ -600,6 +662,26 @@
     const raw=String(input??''),packs=activeRegexPacks(session);
     const transformed=await window.MimaRegexEngine.applyAsync(raw,packs,phase,diagnostics,options);
     return phase==='display'||phase==='prompt'?resolveMacrosForSession(session,transformed):transformed;
+  }
+
+  // The visible transcript must not create one native Worker per historical
+  // assistant message. The full payload is still transformed without touching
+  // canonical History, using bounded groups in the caller.
+  function hasActiveRegexForSession(sessionOrId,phase='display'){
+    const session=typeof sessionOrId==='string'?getSession(sessionOrId):sessionOrId;
+    return !!session && activeRegexPacks(session).some(pack=>arr(pack.rules).some(rule=>rule&&rule.enabled!==false&&(rule.phase||'display')===phase));
+  }
+  async function applyRegexBatchForSessionAsync(sessionOrId,inputs,phase='display',options={}){
+    const originals=arr(inputs).map(input=>String(input??''));
+    if(!originals.length)return [];
+    const session=typeof sessionOrId==='string'?getSession(sessionOrId):sessionOrId;
+    if(!session)return originals;
+    const results=await window.MimaRegexEngine.applyBatchAsync(originals.map(input=>({input,phase})),activeRegexPacks(session),options);
+    if(!Array.isArray(results)||results.length!==originals.length)throw new Error('E_REGEX_BATCH_MISMATCH: 正则线程返回的项目数量不一致');
+    return results.map(item=>{
+      if(!item||typeof item.output!=='string')throw new Error('E_REGEX_BATCH_MALFORMED: 正则线程缺少结果');
+      return phase==='display'||phase==='prompt'?resolveMacrosForSession(session,item.output):item.output;
+    });
   }
 
   function historyHtmlProjection(textInput,session){
@@ -3694,6 +3776,22 @@
       }
 
       if(path==='/regex-packs'&&method==='GET')return ok(state.regexPacks);
+      if(path==='/play-tools'&&method==='GET'){state=normalizeState(await window.MimaLocalStore.loadState());return ok({theaterCards:clone(state.theaterCards),quickCommands:clone(state.quickCommands)});}
+      if(path==='/play-tools/import'&&method==='POST')return ok(await importPlayResources(body));
+      const playRoute=path.match(/^\/(theater-cards|quick-commands)(?:\/([^/]+))?$/);
+      if(playRoute){const table=playRoute[1]==='theater-cards'?'theaterCards':'quickCommands',id=playRoute[2];
+        if(!id&&method==='POST')return ok(await savePlayResource(table,body||{}));
+        if(id&&method==='PATCH')return ok(await savePlayResource(table,body||{},id));
+        if(id&&method==='DELETE'){
+          let operationId=null;
+          if(table==='theaterCards'){
+            operationId=makeId('theater_unlink');
+            await window.MimaLocalStore.putPlayToolLocal('unlink-job:'+operationId,{operationId,id,phase:'delete-requested',affected:[],createdAt:nowIso(),error:''});
+          }
+          const receipt=await deleteResource(table,id,table==='theaterCards'?(db,deleted)=>{for(const session of db.sessions)if(arr(session.theaterCardIds).includes(deleted)){session.theaterCardIds=session.theaterCardIds.filter(x=>x!==deleted);session.recordRevision=(Number(session.recordRevision)||0)+1;session.updatedAt=nowIso();}}:null);
+          return ok({...receipt,...(operationId?{operationId,compatCleanup:'pending'}:{})});
+        }
+      }
       if(path==='/regex-packs'&&method==='POST')return ok(await saveRegexPack(body||{}));
       m=path.match(/^\/regex-packs\/([^/]+)$/);if(m&&method==='PATCH'){const old=getRegexPack(m[1]);return old?ok(await saveRegexPack({...old,...body,id:m[1]})):fail('未找到正则包');}
       if(m&&method==='DELETE')return ok(await deleteResource('regexPacks',m[1],(db,id)=>{for(const sess of db.sessions)if(sess.regexPackIds.includes(id)){sess.regexPackIds=sess.regexPackIds.filter(x=>x!==id);sess.recordRevision++;}}));
@@ -3719,7 +3817,7 @@
     // production store always has the validator; do not claim a modern
     // verified contract when that validator is not connected.
     if(typeof window.MimaLocalStore?.validateLibrary==='function'){
-      snapshot.backupContractRevision=1;
+      snapshot.backupContractRevision=2;
       window.MimaLocalStore.validateLibrary(snapshot);
     }
     return snapshot;
@@ -3732,9 +3830,12 @@
     // a stale in-memory state or reinterpret an unreadable library as empty.
     const before=normalizeState(await window.MimaLocalStore.loadState());
     let next=normalizeState(verified);
+    // Backup/imported authorizations cannot grant a new plugin private access.
+    // Keep only permissions already granted locally for the identical source.
+    for(const card of next.theaterCards){const old=before.theaterCards.find(x=>x.id===card.id);card.access=old&&old.content===card.content&&old.kind===card.kind?theaterAccess(old.access):theaterAccess();}
     if(!['replace','merge-new-only','empty-only'].includes(mergeMode))throw new ApiError('E_NATIVE_RESTORE_MODE','未知原生库恢复模式');
     if(mergeMode!=='replace'){
-      const tables=['sessions','masks','presets','worldbooks','cssPresets','regexPacks','settingTemplates','novelProjects'];
+      const tables=['sessions','masks','presets','worldbooks','cssPresets','regexPacks','theaterCards','quickCommands','settingTemplates','novelProjects'];
       const currentHasData=tables.some(name=>before[name].length>0);
       // Empty-only includes appearance configuration. A browser with only a
       // chosen theme/CSS is NOT an empty target. Old checks counted arrays
@@ -3807,5 +3908,5 @@
   }
 
   window.MimaMemoryContracts=Object.freeze({normalizeManualMemory});
-  window.MimaStandalone={init,handle,previewMemoryPlan,memorySourceParts,memoryWorkPlan,runRecordedMemory,memorySourceFingerprint,memoryFactSignature,manualReplyFingerprint,isManuallyRecoveredReply,getApiConfig,saveApiConfig,apiCapacityIdentity,effectiveRequestConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,validateStoryReply,classifyStoryReply,applyRegexForSession,applyRegexForSessionAsync,resolveMacrosForSession,compileUserInputForPrompt,exportLibrary,importLibrary,previewLibraryImport,validateLibrary,assemble,getLastUsage,getPhoneResources:()=>({masks:clone(state.masks),presets:clone(state.presets),worldbooks:clone(state.worldbooks),themeSettings:clone(state.themeSettings),storeRevision:state.storeRevision}),getState:()=>clone(state)};
+  window.MimaStandalone={getPlayTools:()=>({theaterCards:state.theaterCards.map(p=>({...p})),quickCommands:state.quickCommands.map(p=>({...p}))}),init,handle,previewMemoryPlan,memorySourceParts,memoryWorkPlan,runRecordedMemory,memorySourceFingerprint,memoryFactSignature,manualReplyFingerprint,isManuallyRecoveredReply,getApiConfig,saveApiConfig,apiCapacityIdentity,effectiveRequestConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,validateStoryReply,classifyStoryReply,applyRegexForSession,applyRegexForSessionAsync,applyRegexBatchForSessionAsync,hasActiveRegexForSession,resolveMacrosForSession,compileUserInputForPrompt,exportLibrary,importLibrary,previewLibraryImport,validateLibrary,assemble,getLastUsage,getPhoneResources:()=>({masks:clone(state.masks),presets:clone(state.presets),worldbooks:clone(state.worldbooks),themeSettings:clone(state.themeSettings),storeRevision:state.storeRevision}),getState:()=>clone(state)};
 })();

@@ -1277,3 +1277,6 @@ html.mima-composer-keyboard .app-shell>.composer-shell{padding-bottom:10px}
 .novel-auto-chapter-recovery{width:min(var(--novel-reader-max-width),100%);margin:12px auto;padding:10px 12px;border:1px dashed var(--reader-line);border-radius:12px;background:color-mix(in srgb,var(--reader-panel) 78%,transparent);font-size:.82rem}
 .novel-auto-chapter-recovery p{margin:0 0 8px;line-height:1.5}
 .novel-auto-chapter-recovery .ghost-btn{min-height:36px;max-width:100%;white-space:normal}
+
+/* Batch 8 standalone: mobile settings touch targets, without altering zoom. */
+@media(max-width:620px){#settings-modal .settings-panel .settings-tabs button{min-height:55px;display:inline-flex;align-items:center;justify-content:center;font-size:.95rem}}

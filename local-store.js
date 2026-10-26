@@ -19,7 +19,7 @@
       ['sessions', 'masks', 'presets', 'worldbooks'].every(key => Array.isArray(value[key])) &&
       // Older v2/v3 / early v4 snapshots may lack these collections. However,
       // a PRESENT but malformed collection is corruption, never "empty".
-      ['cssPresets', 'regexPacks', 'novelProjects', 'settingTemplates'].every(key =>
+      ['cssPresets', 'regexPacks', 'novelProjects', 'settingTemplates', 'theaterCards', 'quickCommands'].every(key =>
         value[key] === undefined || Array.isArray(value[key])) &&
       (value.themeSettings === undefined ||
         (value.themeSettings !== null && typeof value.themeSettings === 'object' &&
@@ -78,6 +78,11 @@
       tx.onabort = () => { db.close(); reject(issue || tx.error || new Error('E_CANONICAL_WRITE_ABORTED')); };
     });
   }
+  async function listPlayToolLocal(prefix){
+    const db=await openDb(),start='play_tools_v1:'+prefix;
+    return new Promise((resolve,reject)=>{const tx=db.transaction(STORE,'readonly'),req=tx.objectStore(STORE).getAll(IDBKeyRange.bound(start,start+'\uffff'));let result,issue;
+      req.onsuccess=()=>result=req.result;req.onerror=()=>{issue=req.error;tx.abort();};tx.oncomplete=()=>{db.close();resolve(result);};tx.onabort=()=>{db.close();reject(issue||tx.error||Error('清理日志读取失败'));};});
+  }
   // Serialize compare-and-swap inside a single IndexedDB readwrite transaction.
   // Never treat a failed read as an empty library, and never silently overwrite a newer tab.
   async function commitState(candidate, expectedRevision, {signal=null}={}) {
@@ -96,6 +101,7 @@
       req.onsuccess = () => {
         if(signal?.aborted){cancel();return;}
         const current = req.result;
+        for(const key of ['theaterCards','quickCommands'])if(Array.isArray(current?.[key])&&!Array.isArray(candidate[key])){problem=new Error('E_CANONICAL_CANDIDATE_UNVERIFIED: 写入缺少 '+key+'，拒绝丢弃新功能资料');tx.abort();return;}
         if (current !== undefined && !isCanonicalStateRecord(current)) {
           problem = new Error('E_CANONICAL_STATE_UNVERIFIED: 资料库内容损坏，拒绝写入'); tx.abort(); return;
         }
@@ -121,7 +127,7 @@
         throw new Error('E_CANONICAL_STATE_UNVERIFIED: 已存在的本地资料库结构无法核实，停止初始化与写入');
       return existing;
     }
-    const blank = {schemaVersion:4,sessions:[],masks:[],presets:[],worldbooks:[],cssPresets:[],regexPacks:[],settingTemplates:[],novelProjects:[],themeSettings:{...EMPTY_THEME}};
+    const blank = {schemaVersion:4,sessions:[],masks:[],presets:[],worldbooks:[],cssPresets:[],regexPacks:[],theaterCards:[],quickCommands:[],settingTemplates:[],novelProjects:[],themeSettings:{...EMPTY_THEME}};
     return blank; // verified nonexistent; first write still uses CAS
   }
   async function saveState(state, expectedRevision, options={}) {
@@ -144,7 +150,7 @@
   async function exportAll(){
     const snapshot=await loadState();
     validateLibrary(snapshot);
-    const modern={...snapshot,backupContractRevision:1};
+    const modern={...snapshot,theaterCards:snapshot.theaterCards||[],quickCommands:snapshot.quickCommands||[],backupContractRevision:2};
     if(snapshot.schemaVersion===4){
       // Standalone Core normally migrates legacy snapshots on load. Direct
       // low-level exports must still be able to preserve an older raw store.
@@ -186,7 +192,7 @@
   // In particular, dropping a single field from a later project cannot
   // transform it into a v1.3.1 project.
   function legacyProjectContract(src, project, path, contractRevision){
-    if(contractRevision===1){
+    if(contractRevision===1||contractRevision===2){
       if(!Number.isInteger(project.recordRevision)||project.recordRevision<0)invalid(`${path}.recordRevision`,'完整快照修订号缺失或无效');
       return 'current';
     }
@@ -245,11 +251,11 @@
     const version=src.schemaVersion;
     if (!Number.isInteger(version) || version < 2 || version > 4) throw new Error('备份 schemaVersion 缺失或不受支持（仅接受 2/3/4）');
     const contractRevision=src.backupContractRevision;
-    if(contractRevision!==undefined && (version!==4||contractRevision!==1))invalid('backupContractRevision','不受支持的完整备份契约版本');
-    const required=version===4?['sessions','masks','presets','worldbooks','cssPresets','regexPacks','novelProjects']:['sessions','masks','presets','worldbooks'];
+    if(contractRevision!==undefined && (version!==4||![1,2].includes(contractRevision)))invalid('backupContractRevision','不受支持的完整备份契约版本');
+    const required=version===4?['sessions','masks','presets','worldbooks','cssPresets','regexPacks','novelProjects',...(contractRevision===2?['theaterCards','quickCommands']:[])]:['sessions','masks','presets','worldbooks'];
     for (const key of required) if (!Array.isArray(src[key])) invalid(key,'缺失必需数组字段，拒绝覆盖');
     if(version===4)mustRecord(src.themeSettings,'themeSettings',true);
-    for (const key of ['sessions','masks','presets','worldbooks','cssPresets','regexPacks','novelProjects','settingTemplates']) mustArray(src[key], key, required.includes(key));
+    for (const key of ['sessions','masks','presets','worldbooks','cssPresets','regexPacks','novelProjects','settingTemplates','theaterCards','quickCommands']) mustArray(src[key], key, required.includes(key));
     validateItems(src.sessions, 'sessions', {validate:(s,at)=>{
       persistedTextFields(s,['summary','rollingSummary','longSummary','sceneSummary','characterPsychSummary','relationshipSummary','lastScene','userNotes','aiNotes','directorNote'],at,version);
       validateMessages(mustArray(s.messages, `${at}.messages`, true), `${at}.messages`, version);
@@ -287,6 +293,10 @@
     validateItems(src.regexPacks||[], 'regexPacks', {validate:(p,at)=>{
       validateItems(mustArray(p.rules,`${at}.rules`,version>=4),`${at}.rules`,{requireId:false,validate:(rule,rp)=>persistedTextFields(rule,['pattern','replacement'],rp,version)});
     }});
+    mustArray(src.theaterCards,'theaterCards',false);mustArray(src.quickCommands,'quickCommands',false);
+    validateItems(src.theaterCards||[],'theaterCards',{validate:(p,at)=>{mustString(p.content,`${at}.content`,true);if(!['html','js'].includes(p.kind))invalid(`${at}.kind`,'不支持的小剧场类型');}});
+    validateItems(src.quickCommands||[],'quickCommands',{validate:(p,at)=>{mustString(p.content,`${at}.content`,true);if(p.mode!==undefined&&!['send','fill'].includes(p.mode))invalid(`${at}.mode`,'不支持的指令动作');}});
+    for(const [i,session]of src.sessions.entries())mustStringList(session.theaterCardIds,`sessions[${i}].theaterCardIds`,false);
     validateItems(src.novelProjects||[], 'novelProjects', {validate:(p,at)=>{
       const release=version===4?legacyProjectContract(src,p,at,contractRevision):'old';
       const chapterItems=mustArray(p.chapters,`${at}.chapters`,true);
@@ -407,6 +417,7 @@
       worldbooks:Array.isArray(src.worldbooks)?src.worldbooks:[],
       cssPresets:Array.isArray(src.cssPresets)?src.cssPresets:[],
       regexPacks:Array.isArray(src.regexPacks)?src.regexPacks:[],
+      theaterCards:Array.isArray(src.theaterCards)?src.theaterCards:[],quickCommands:Array.isArray(src.quickCommands)?src.quickCommands:[],
       settingTemplates:Array.isArray(src.settingTemplates)?src.settingTemplates:[],
       novelProjects:Array.isArray(src.novelProjects)?src.novelProjects:[],
       themeSettings:src.themeSettings&&typeof src.themeSettings==='object'?src.themeSettings:{...EMPTY_THEME}
@@ -1239,5 +1250,5 @@
     if(text.length!==receipt.persistedChars)throw new Error('E_GENERATION_FRAGMENT_INCOMPLETE');
     return {receipt,text,complete:true};
   }
-  window.MimaLocalStore={generationReceipt,generationAppendFragment,generationRead,getRollingPreflight,putRollingPreflight,clearRollingPreflight,commitHtmlRepair,putHtmlRepairCandidate,getHtmlRepairCandidate,setHtmlRepairCandidateState,listMemoryStages,inspectLegacyMemoryStages,memoryReferenceContract,putFactRangeCandidate,listFactRangeCandidates,commitVerifiedFactRanges,getMergeStage,putMergeStage,getMergeDraft,createMergeDraft,updateMergeDraft,commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,clearSettingsSnapshot,getMemoryJob,getMemoryStage,putMemoryStage,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
+  window.MimaLocalStore={listPlayToolLocal,getPlayToolLocal:key=>get('play_tools_v1:'+key),putPlayToolLocal:(key,value)=>set('play_tools_v1:'+key,value),generationReceipt,generationAppendFragment,generationRead,getRollingPreflight,putRollingPreflight,clearRollingPreflight,commitHtmlRepair,putHtmlRepairCandidate,getHtmlRepairCandidate,setHtmlRepairCandidateState,listMemoryStages,inspectLegacyMemoryStages,memoryReferenceContract,putFactRangeCandidate,listFactRangeCandidates,commitVerifiedFactRanges,getMergeStage,putMergeStage,getMergeDraft,createMergeDraft,updateMergeDraft,commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,clearSettingsSnapshot,getMemoryJob,getMemoryStage,putMemoryStage,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
 })();

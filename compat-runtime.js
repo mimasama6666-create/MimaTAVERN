@@ -410,6 +410,7 @@ function templateCapabilityContract(config={}){
  if((config.regexPackIds||[]).length)gap('regexPackIds','已挂载兼容正则执行器；原生输入/输出/显示阶段与兼容投影仍可能存在语义差异');
  ok('loadedUserMaskId','projected as player persona');
  ok('customCssId','filtered into compatibility display sandbox');
+ if((config.theaterCardIds||[]).length)ok('theaterCardIds','mounted before the opening through the shared theater renderer');
  if(c&&(c.requireHtml===true||c.completeHtml===true)){
    if(c.templateMessageId)gap('outputContract.templateMessageId','原生剧情消息 ID 不能作为新兼容剧情的模板来源');
    else ok('outputContract','完整 HTML 结构合同写入准入校验和独立格式提示');
@@ -481,6 +482,8 @@ async function prepareNativeTemplateBinding(templateId){
  const find=(table,id,label)=>{const record=canonical[table]?.find(x=>x.id===id);
    if(!record)throw error('E_SETTINGS_TEMPLATE_MISSING_RESOURCES',label+' 已删除：'+id);
    return record;};
+ const theaterCardIds=Array.isArray(c.theaterCardIds)?c.theaterCardIds.slice():[];
+ const theaterSources=[];for(const id of theaterCardIds){const card=find('theaterCards',id,'小剧场');theaterSources.push({id,updatedAt:card.updatedAt||'',sha256:await root.MimaCompatImport.digest(new TextEncoder().encode(card.content||''))});}
  const sourceId='native-settings:'+template.id;
  const push=(kind,id,name,raw)=>resources.push({id:'native-template:'+kind+':'+id,kind,
    sourceId,path:'native.settingTemplates.'+template.id+'.'+kind+'.'+id,name,raw});
@@ -527,7 +530,7 @@ async function prepareNativeTemplateBinding(templateId){
  const capabilityContract=templateCapabilityContract(c);
  const outputContract=compatOutputContract(promptSettings);
  return {version:1,templateId:template.id,templateRevision:template.revision,templateName:template.name,
-   resources,personaDescription,styleResourceId,promptSettings,outputContract,capabilityContract,renderMode:c.renderMode||'text',
+   theaterCardIds,theaterSources,resources,personaDescription,styleResourceId,promptSettings,outputContract,capabilityContract,renderMode:c.renderMode||'text',
    memoryInject:c.memoryInject||null,createdAt:new Date().toISOString()};
 }
 async function createSession(sourceId,options={}){const source=await store().get('source_capsules',sourceId);if(!source)throw error('E_STORE_UNVERIFIED','来源包不存在');const resources=await store().byIndex('resource_ir','sourceId',sourceId);const charCandidates=resources.filter(x=>x.kind==='character');const selection=options.characterResourceId?charCandidates.find(x=>x.id===options.characterResourceId):charCandidates.length===1?charCandidates[0]:null;if(!selection)throw error('E_RESOURCE_SEMANTIC_GAP','发现多个角色版本或没有角色；请先明确选择');
@@ -538,7 +541,7 @@ if(nativeTemplate?.capabilityContract?.notEquivalent?.length &&
 if(nativeTemplate&&options.expectedTemplateSnapshot){
  const expected=options.expectedTemplateSnapshot;
  if(expected.templateId!==nativeTemplate.templateId||expected.templateRevision!==nativeTemplate.templateRevision||
-    JSON.stringify(expected.resources)!==JSON.stringify(nativeTemplate.resources)||
+    JSON.stringify(expected.resources)!==JSON.stringify(nativeTemplate.resources)||JSON.stringify(expected.theaterSources||[])!==JSON.stringify(nativeTemplate.theaterSources||[])||
     JSON.stringify(expected.promptSettings)!==JSON.stringify(nativeTemplate.promptSettings)||
     expected.personaDescription!==nativeTemplate.personaDescription||
     JSON.stringify(expected.outputContract)!==JSON.stringify(nativeTemplate.outputContract)||
@@ -547,7 +550,7 @@ if(nativeTemplate&&options.expectedTemplateSnapshot){
    throw error('E_SETTINGS_TEMPLATE_SOURCE_STALE','模板预检之后内容或引用资源已改变，未创建剧情，请重新确认');
 }
 const idx=Number(options.greetingIndex??0),card=selection.raw||{},alternates=Array.isArray(card.alternate_greetings)?card.alternate_greetings:[];if(!Number.isInteger(idx)||idx<0||idx>alternates.length)throw error('E_RESOURCE_SEMANTIC_GAP','开场白索引无效');const greeting=String(idx===0?card.first_mes||'':alternates[idx-1]||'');const id=store().uid('compat'),now=new Date().toISOString(),session={id,mode:'native_compat',sourceId,characterResourceId:selection.id,title:options.title||selection.name||'兼容剧情',userName:options.userName||'玩家',activeBranchId:'main',greetingIndex:idx,revision:1,turnIndex:0,pendingTurnId:null,worldInfoBudget:Number(nativeTemplate?.promptSettings?.worldbookBudgetChars)||16000,
- nativeTemplateBinding:nativeTemplate,personaDescription:nativeTemplate?.personaDescription||'',
+ theaterCardIds:nativeTemplate?.theaterCardIds?.slice()||[],nativeTemplateBinding:nativeTemplate,personaDescription:nativeTemplate?.personaDescription||'',
  styleResourceId:nativeTemplate?.styleResourceId||null,
  outputContract:nativeTemplate?.outputContract||null,templateCapabilities:nativeTemplate?.capabilityContract||null,
  // Paid background rolling authorization does not migrate to a different engine.
@@ -1090,6 +1093,7 @@ async function sendUnfenced(sessionId,text,options={}){
   const check=await previewUnfenced(sessionId,text,{signal:options.signal});
   if(check.gaps.length&&options.strictCompat===true&&!options.acceptGaps)throw error('E_RESOURCE_SEMANTIC_GAP','资源存在未验证语义，请确认后再发送');
   const t=await beginTurn(sessionId,text);
+  try{options.onAccepted?.({accepted:true,status:'accepted',sessionId,turnId:t.turnId});}catch(e){root.console?.warn?.('游玩工具发送回执显示失败',e);}
   return dispatch(sessionId,t,options);
 }
 async function retryTurnUnfenced(sessionId,turnId,options={}){

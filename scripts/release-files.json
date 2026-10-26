@@ -102,5 +102,8 @@
   "vendor/marked-LICENSE.md",
   "regex-native-worker.js",
   "worldbook-match.js",
-  "worldbook-match-worker.js"
+  "worldbook-match-worker.js",
+  "story-play-tools.js",
+  "story-play-tools.css",
+  "story-theater-frame.html"
 ]

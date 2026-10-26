@@ -33,17 +33,33 @@
     if(!mayApplyResponse(view))return false;
     project=saved;if(renderNow)render();return true;
   }
+  function clearLoadError(){$('novel-load-error')?.remove();}
+  function showLoadError(e,targetId){
+    clearLoadError();const box=$('novel-studio-root');if(!box)return;
+    const banner=document.createElement('section');banner.id='novel-load-error';banner.className='novel-settings-card';banner.setAttribute('role','alert');
+    const detail=document.createElement('p');detail.textContent=`读取小说失败，当前项目、章节和编辑草稿已保留。${e.code||'E_NOVEL_READ'}：${e.message}`;
+    const retry=document.createElement('button');retry.className='ghost-btn';retry.textContent='重新读取';retry.onclick=()=>refresh(targetId);
+    banner.append(detail,retry);box.before(banner);console.error('[Novel Studio] verified read failed',e);
+  }
+  function checkedProject(value,id){
+    if(!value||value.id!==id||!Array.isArray(value.chapters)||!Array.isArray(value.chapterOrder))throw Object.assign(new Error('项目详情未通过校验，未替换当前小说'),{code:'E_NOVEL_READ_UNVERIFIED'});
+    return value;
+  }
   async function refresh(projectId=project?.id){
     const epoch=++viewEpoch;
-    const nextSummaries=await route('/novels');
-    const nextAssets=await route('/novel-assets');
-    let nextProject=null;
-    const targetId=projectId||(nextSummaries.length?nextSummaries[0].id:null);
-    if(targetId){try{nextProject=await route(`/novels/${targetId}`)}catch(e){if(epoch!==viewEpoch)return project;console.warn('小说目标项目读取失败',e)}}
-    if(epoch!==viewEpoch)return project;
-    summaries=nextSummaries;assets=nextAssets;project=nextProject;promptInspector=null;render();return project;
+    try{
+      const nextSummaries=await route('/novels');
+      const nextAssets=await route('/novel-assets');
+      if(!Array.isArray(nextSummaries)||nextSummaries.some(p=>!p||typeof p.id!=='string')||!nextAssets||!['presets','worldbooks','cssPresets'].every(k=>Array.isArray(nextAssets[k])))throw Object.assign(new Error('小说列表或素材读取未确认'),{code:'E_NOVEL_READ_UNVERIFIED'});
+      // A verified list without the requested id proves it is gone. A failed
+      // detail read does not: commit all three views only after it succeeds.
+      const targetId=nextSummaries.some(p=>p.id===projectId)?projectId:nextSummaries[0]?.id||null;
+      const nextProject=targetId?checkedProject(await route(`/novels/${targetId}`),targetId):null;
+      if(epoch!==viewEpoch)return project;
+      summaries=nextSummaries;assets=nextAssets;project=nextProject;promptInspector=null;clearLoadError();render();return project;
+    }catch(e){if(epoch===viewEpoch)showLoadError(e,projectId);return project;}
   }
-  async function open(projectId=null){$('novel-modal')?.classList.remove('hidden');mobileTab='reader';await refresh(projectId||project?.id||null)}
+  async function open(projectId=null){$('novel-modal')?.classList.remove('hidden');mobileTab='reader';return refresh(projectId||project?.id||null);}
   function close(){++viewEpoch;$('novel-modal')?.classList.add('hidden')}
   async function createProject(){
     const title=prompt('小说项目名称','未命名小说');if(title===null)return;
@@ -67,7 +83,7 @@
     const nextSummaries=await route('/novels');if(mayApplyResponse(view))summaries=nextSummaries;
   }
   function stillViewing(projectId,chapterId,epoch){return mayApplyResponse({projectId,chapterId,epoch});}
-  async function selectProject(id){const epoch=++viewEpoch;const loaded=await route(`/novels/${id}`);if(epoch!==viewEpoch)return;project=loaded;mobileTab='reader';promptInspector=null;render();}
+  async function selectProject(id){const epoch=++viewEpoch;try{const loaded=checkedProject(await route(`/novels/${id}`),id);if(epoch!==viewEpoch)return;project=loaded;mobileTab='reader';promptInspector=null;clearLoadError();render();}catch(e){if(epoch===viewEpoch)showLoadError(e,id);}}
   async function selectChapter(id){
     if(!project)return;
     const projectId=project.id,epoch=++viewEpoch;mobileTab='reader';
@@ -118,7 +134,7 @@
 
   async function moveChapter(delta){const c=activeChapter();if(!c)return;const i=project.chapterOrder.indexOf(c.id),to=Math.max(0,Math.min(project.chapterOrder.length-1,i+Number(delta||0)));if(to===i)return;await chapterAction('move',{toIndex:to})}
   async function deleteChapter(){if(confirm('删除当前章节？此操作不会修改最初导入的 source snapshot，但会让后续剧情档案失效。'))await chapterAction('delete')}
-  async function deleteProject(){if(!project||!confirm(`删除小说项目「${project.title}」？`))return;const id=project.id,epoch=++viewEpoch;await route(`/novels/${id}`,'DELETE');if(epoch!==viewEpoch||project?.id!==id)return;project=null;await refresh(null)}
+  async function deleteProject(){if(!project||!confirm(`删除小说项目「${project.title}」？`))return;const id=project.id,epoch=++viewEpoch;await route(`/novels/${id}`,'DELETE');if(epoch!==viewEpoch||project?.id!==id)return;project=null;clearLoadError();render();await refresh(null)}
   async function previewPrompt(){if(!project)return;const view=captureView(),directorNote=$('novel-director-note')?.value||'';try{const result=await route(`/novels/${view.projectId}/prompt-preview`,'POST',{directorNote});if(mayApplyResponse(view)){promptInspector=result;mobileTab='memory';render()}}catch(e){alert(`Prompt 预览失败：${e.message}`)}}
   function generationProgress(ev){progressState=ev||{};renderDraftArea()}
   async function continueNovel(mode='current'){

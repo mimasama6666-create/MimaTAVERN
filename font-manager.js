@@ -5,6 +5,19 @@ window.MimaFontManager = (() => {
     const UI_KEY = 'mimamao_tavern_ui_font';
     const STORY_KEY = 'mimamao_tavern_story_font';
     const loaded = new Map();
+    // The font picker only needs metadata. Keep the initial verified font list's
+    // metadata in memory instead of cloning every multi-MB ArrayBuffer on each visit.
+    let metadataCache = null;
+    // Invalidate the cached picker listing when another open tab commits fonts.
+    const fontChanges = typeof BroadcastChannel==='function' ? new BroadcastChannel('mima-tavern-font-metadata-v1') : null;
+    if(fontChanges)fontChanges.onmessage = event => { if(event.data==='changed')metadataCache=null; };
+    const notifyFontChange = () => { metadataCache=null;try{fontChanges?.postMessage('changed');}catch(_){} };
+    const metadataOf = ({id,name,family,format,size,createdAt}) => ({id,name,family,format,size,createdAt});
+    const rememberMetadata = records => { metadataCache = records.map(metadataOf); };
+    async function listMetadata() {
+        if (metadataCache === null) rememberMetadata(await all());
+        return metadataCache.map(record => ({...record}));
+    }
     const URL_LIBRARY_KEY = 'mimamao_tavern_url_fonts_v1';
 
     function openDb() {
@@ -30,7 +43,7 @@ window.MimaFontManager = (() => {
                 settled = true;
                 db.close();
                 if (error) reject(error);
-                else resolve(value);
+                else { rememberMetadata(value); resolve(value); }
             };
             try {
                 const tx = db.transaction(STORE, 'readonly');
@@ -52,7 +65,7 @@ window.MimaFontManager = (() => {
                 settled = true;
                 db.close();
                 if (error) reject(error);
-                else resolve();
+                else { notifyFontChange(); resolve(); }
             };
             try {
                 const tx = db.transaction(STORE, 'readwrite');
@@ -72,7 +85,7 @@ window.MimaFontManager = (() => {
                 settled = true;
                 db.close();
                 if (error) reject(error);
-                else resolve();
+                else { notifyFontChange(); resolve(); }
             };
             try {
                 const tx = db.transaction(STORE, 'readwrite');
@@ -113,7 +126,9 @@ window.MimaFontManager = (() => {
             try { await loadRecord(record); } catch (e) { console.warn('字体加载失败', record.name, e); }
         }
         applySelected();
-        return records;
+        // Never retain the backing ArrayBuffers in the application's font-list
+        // reference: FontFace objects already own the loaded font data.
+        return records.map(metadataOf);
     }
     function getSelected(kind) { return localStorage.getItem(kind === 'ui' ? UI_KEY : STORY_KEY) || ''; }
     function setSelected(kind, family) {
@@ -267,6 +282,7 @@ window.MimaFontManager = (() => {
         });
         // On a load error the durable binary still exists and can be restored
         // at next initialization; this is not a canonical data failure.
+        if(added.length)notifyFontChange();
         for(const record of plan.records)try{await loadRecord(record);}catch(e){console.warn('字体已保存，但暂无法加载',record.id,e);}
         return {receiptId,added};
     }
@@ -279,13 +295,13 @@ window.MimaFontManager = (() => {
                    if(r.result?.restoreReceipt===receipt.receiptId)os.delete(id);
                    else {issue=new Error('E_FONT_ROLLBACK_CONFLICT');tx.abort();}
                 };r.onerror=()=>{issue=r.error;tx.abort();};}
-                tx.oncomplete=()=>{db.close();for(const id of receipt.added){const face=loaded.get(id);if(face){document.fonts.delete(face);loaded.delete(id);}}resolve(true);};
+                tx.oncomplete=()=>{db.close();for(const id of receipt.added){const face=loaded.get(id);if(face){document.fonts.delete(face);loaded.delete(id);}}notifyFontChange();resolve(true);};
                 tx.onabort=()=>{db.close();reject(issue||tx.error||new Error('E_FONT_ROLLBACK_ABORTED'));};
             }catch(e){db.close();reject(e);}
         });
     }
     async function deleteFont(id) {
-        const records = await all();
+        const records = await listMetadata();
         const record = records.find(x => x.id === id);
         await remove(id);
         const face = loaded.get(id);
@@ -293,5 +309,5 @@ window.MimaFontManager = (() => {
         if (record && getSelected('ui') === record.family) setSelected('ui','');
         if (record && getSelected('story') === record.family) setSelected('story','');
     }
-    return { init, all, importFile, deleteFont, getSelected, setSelected, applySelected, urlFonts, addUrlFont, deleteUrlFont, exportPortable, importPortable, planPortableImport, commitPortablePlan, rollbackPortablePlan };
+    return { init, all, listMetadata, importFile, deleteFont, getSelected, setSelected, applySelected, urlFonts, addUrlFont, deleteUrlFont, exportPortable, importPortable, planPortableImport, commitPortablePlan, rollbackPortablePlan };
 })();

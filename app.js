@@ -14,6 +14,7 @@ let activeRequest = null;
 let isGenerating = false;
 let settingsTab = 'roles';
 let settingsRenderEpoch = 0;
+let nativePlayEpoch=0;
 let sessionNavigationEpoch = 0; // Only the most recent user-selected session may own the visible UI.
 let settingsNavigationTouched = false;
 let editorState = null;
@@ -230,7 +231,7 @@ function restoreComposerDraft(id){
     autoResizeInput();
 }
 function clearSubmittedDraft(owner){
-    if(owner.action!=='send'||owner.inputCleared)return;
+    if(owner.action!=='send'||owner.inputCleared||owner.preserveComposer)return;
     owner.inputCleared=true;
     const saved=sessionComposerDrafts.get(owner.sessionId);
     if(saved?.text===owner.text){sessionComposerDrafts.set(owner.sessionId,{...saved,text:''});r19PersistDraft(owner.sessionId,true);}
@@ -334,18 +335,27 @@ function renderAppearancePreview(){
       ${safeOn?`<article class="message assistant-msg typography-preview-safe-demo"><div class="msg-header">Safe HTML（兼容测试）</div><div class="msg-content tavern-story-content safe-html-content"><p class="story-prose story-paragraph typography-preview-html-prose">这是第一段 Safe HTML 正文。它显式挂载正文排版类，因此字号、行高、字间距、段间距与首行缩进都会实时变化。</p><p class="story-prose story-paragraph typography-preview-html-prose">这是第二段 Safe HTML 正文，用来直观看出段间距和首行缩进；下面的状态栏仍保持自己的 CSS，不会被正文排版强行挤坏。</p><system class="typography-preview-statusbar"><strong>STATUS BAR</strong><span>自带 CSS 的状态栏仍保持自己的字号与布局，不会被首行缩进或段间距挤坏。</span><div class="typography-preview-status-row"><span>心情　平静</span><span>时间　23:48</span></div></system></div></article>`:`<div class="typography-preview-safe-placeholder">开启下方「允许 Safe HTML 状态栏渲染」后，这里会出现 HTML 正文 + 状态栏兼容性示范。</div>`}
     </div></div>`;
 }
-let editorInitialForm=null,editorInitialDraft=null;
+let editorInitialForm=null,editorInitialDraft=null,editorDraftStructureChanged=false;
 function editorFormSnapshot(){
- const body=qs('editor-body');if(!body)return '';
- return JSON.stringify([...body.querySelectorAll('input,textarea,select')].map(el=>[el.id||el.name||'',el.type==='checkbox'||el.type==='radio'?el.checked:el.value]));
+ const body=qs('editor-body');if(!body)return [];
+ // Keep the original string values without JSON-escaping entire multi-MB fields.
+ return [...body.querySelectorAll('input,textarea,select')].map(el=>[
+  el.id||el.name||'',el.type==='checkbox'||el.type==='radio'?el.checked:el.value
+ ]);
 }
 function editorHasUnsavedChanges(){
  if(!editorState||editorInitialForm===null)return false;
- return editorFormSnapshot()!==editorInitialForm||editorInitialDraft!==JSON.stringify(editorState.draft??null);
+ const body=qs('editor-body'),controls=body?.querySelectorAll('input,textarea,select');
+ if(!controls||controls.length!==editorInitialForm.length)return true;
+ for(let i=0;i<controls.length;i++){
+  const el=controls[i],old=editorInitialForm[i];
+  if((el.id||el.name||'')!==old[0]||(el.type==='checkbox'||el.type==='radio'?el.checked:el.value)!==old[1])return true;
+ }
+ return editorDraftStructureChanged && editorInitialDraft!==JSON.stringify(editorState.draft??null);
 }
 function closeEditor(){
  const modal=qs('editor-modal');modal.querySelector('.editor-discard-confirm')?.remove();modal.classList.add('hidden');
- editorState=null;editorInitialForm=null;editorInitialDraft=null;
+ editorState=null;editorInitialForm=null;editorInitialDraft=null;editorDraftStructureChanged=false;
 }
 function requestCloseEditor(reason='cancel'){
  const modal=qs('editor-modal');if(modal.classList.contains('hidden'))return;
@@ -411,7 +421,7 @@ async function renderSettingTemplatesTab(box){
     const renderCheck=(id,label,checked)=>`<label class="mima-template-choice"><input id="${id}" type="checkbox" ${checked?'checked':''}>${label}</label>`;
     box.innerHTML=`<section class="settings-section mima-template-editor">
       <h3>🗂️ 剧情设置模板</h3>
-      <p class="helper">在这里独立创建、编辑并保存模板。**无需先打开其他剧情**。之后在「新建剧情」或「PNG 角色卡开局」选择挂载；不会携带旧 History、旧记忆、密钥或后台任务。</p>
+      <p class="helper">在这里独立创建、编辑并保存模板。<strong>无需先打开其他剧情</strong>。之后在「新建剧情」或「PNG 角色卡开局」选择挂载；不会携带旧 History、旧记忆、密钥或后台任务。</p>
       <div class="mima-template-chooser"><label class="form-label" for="tpl-edit-choice">选择要编辑的模板</label>
         <select id="tpl-edit-choice" class="field" onchange="chooseIndependentTemplate(this.value)"><option value="">＋ 全新空白模板</option>${settingTemplateCache.map(t=>`<option value="${escapeHtml(t.id)}" ${tpl?.id===t.id?'selected':''}>${t.isDefault?'★ ':''}${escapeHtml(t.name)}</option>`).join('')}</select></div>
       <div class="mima-template-actions"><button class="ghost-btn" onclick="chooseIndependentTemplate('')">＋ 创建空白模板</button><button class="ghost-btn" onclick="importCurrentSessionAsSettingTemplate()">从当前剧情复制配置</button><button class="ghost-btn" onclick="exportSettingTemplate()">导出模板</button><button class="ghost-btn" onclick="document.getElementById('setting-template-file-input').click()">导入模板</button>${tpl?'<button class="ghost-btn" onclick="copyIndependentTemplate()">复制当前模板</button><button class="ghost-btn" onclick="setIndependentTemplateDefault()">设为默认 / 取消默认</button>':''}</div>
@@ -577,6 +587,9 @@ async function loadAll() {
         if(!result?.success||!Array.isArray(result.data))
             throw new Error(`E_LIBRARY_READ_UNVERIFIED: ${names[i]} · ${result?.msg||'返回值无法验证'}`);
     }
+    // Fetches are fully validated above. Semantic versions change only when regex
+    // content changes; ordinary CSS/Persona writes rehydrate a new array identity.
+    r19AcceptRegexLibrary(results[5].data);
     [sessions,masks,presets,worldbooks,cssPresets,regexPacks]=results.map(result=>result.data);
     renderSessions();
     // If the player switched sessions while these independent reads ran, no
@@ -625,7 +638,7 @@ async function openSession(id, close=true){
     const res=await fetchStory(`/sessions/${id}/canonical-view`);
     if(epoch!==sessionNavigationEpoch)return null; // Later navigation owns the page.
     if(!res.success||res.data?.id!==id){toast(res.msg||'打开剧情失败：返回了不同的会话');return null;}
-    const switched=currentSessionId!==id;
+    const switched=currentSessionId!==id;if(switched)nativePlayEpoch++;
     if(switched){preserveComposerDraft(currentSessionId);r19PersistReading(currentSessionId);}
     if(switched)closeGenerationTaskViewer();
     currentSessionId=id;currentSessionData=res.data;
@@ -916,7 +929,7 @@ function setupImmersiveReading(){
 }
 // User-facing release notes: once per distinct production release by default.
 // Avoid touching Store/History or making automatic announcements mandatory.
-const MIMA_RELEASE_NOTES_VERSION='R19-20261026-BATCH8-DEV';
+const MIMA_RELEASE_NOTES_VERSION='R19-20261027-BATCH8-PLAYTOOLS-REWORK-DEV';
 const MIMA_RELEASE_NOTES_SEEN='mima-release-notes-seen:'+MIMA_RELEASE_NOTES_VERSION;
 const MIMA_RELEASE_NOTES_OPTOUT='mima-release-notes-disable-auto-v1';
 function openMimaReleaseNotice(){
@@ -996,7 +1009,7 @@ function openMaskEditor(type,id=null){
     setupEditorButtons(id?()=>deleteMask(id):null,saveMaskEditor); qs('editor-modal').classList.remove('hidden');
 }
 async function saveMaskEditor(){const type=editorState.maskType;const body={type,name:qs('mask-name').value.trim()||'未命名 Persona',avatar:qs('mask-avatar').value.trim(),description:qs('mask-description').value,content:qs('mask-content').value,aliases:csv(qs('mask-aliases').value),tags:csv(qs('mask-tags').value)};if(type==='character')Object.assign(body,{scenario:qs('mask-scenario').value,firstMessage:qs('mask-first').value,exampleDialogue:qs('mask-example').value,creatorNotes:qs('mask-notes').value});const path=editorState.id?`/masks/${editorState.id}`:'/masks';const res=await fetchStory(path,editorState.id?'PATCH':'POST',body);if(res.success){closeEditor();await loadAll();openSettings('roles')}else toast(res.msg||'保存失败')}
-async function deleteMask(id){if(!confirm('删除这张 Persona 卡？'))return;await fetchStory(`/masks/${id}`,'DELETE');if(currentSessionData?.loadedCharMaskId===id)await patchCurrent({loadedCharMaskId:null},true);if(currentSessionData?.loadedUserMaskId===id)await patchCurrent({loadedUserMaskId:null},true);closeEditor();await loadAll()}
+async function deleteMask(id){if(!confirm('删除这张 Persona 卡？'))return;const result=await fetchStory(`/masks/${id}`,'DELETE');if(!result?.success)return toast('面具删除失败：'+(result?.msg||'存储未确认'));if(currentSessionData?.loadedCharMaskId===id)await patchCurrent({loadedCharMaskId:null},true);if(currentSessionData?.loadedUserMaskId===id)await patchCurrent({loadedUserMaskId:null},true);closeEditor();await loadAll()}
 function choosePersonaImport(type){pendingPersonaType=type;qs('persona-file-input').value='';qs('persona-file-input').click()}
 async function importPersonaFile(file){
     if(!file)return;
@@ -1196,8 +1209,8 @@ function renderWorldbookEditorBody(){const w=editorState.draft;qs('editor-body')
 <div><label class="form-label">Depth（深度，0=系统提示区段；世界书仍属于剧情资料，不获得系统权限）</label><input data-f="depth" class="field" type="number" min="0" max="200" step="1" value="${Number(e.depth??0)}"></div><div><label class="form-label">注入位置</label><select data-f="position" class="field"><option value="front" ${e.position==='front'?'selected':''}>前</option><option value="middle" ${e.position==='middle'?'selected':''}>中</option><option value="back" ${e.position==='back'?'selected':''}>后</option></select></div><div><label class="form-label">Priority（优先级，小值优先）</label><input data-f="priority" class="field" type="number" value="${Number(e.priority??50)}"></div><div><label class="form-label">扫描最近消息数</label><input data-f="scanDepth" class="field" type="number" min="1" max="200" step="1" value="${Number(e.scanDepth||12)}"></div><div><label class="form-label">条目最大字符（0=不限）</label><input data-f="maxChars" class="field" type="number" min="0" max="100000" step="1" value="${Number(e.maxChars||0)}"></div>
 <div class="form-full"><label class="check-row"><input data-f="enabled" type="checkbox" ${e.enabled!==false?'checked':''}> 启用</label><label class="check-row"><input data-f="alwaysActive" type="checkbox" ${e.alwaysActive?'checked':''}> Always Active（始终激活）</label><label class="check-row"><input data-f="caseSensitive" type="checkbox" ${e.caseSensitive?'checked':''}> 大小写敏感</label><label class="check-row"><input data-f="useRegex" type="checkbox" ${e.useRegex?'checked':''}> Regex（正则）关键词</label></div><div class="form-full"><label class="form-label">注入内容</label><textarea data-f="content" class="field textarea tall">${escapeHtml(e.content||'')}</textarea></div><div class="form-full"><button class="danger-btn" onclick="removeWorldbookEntry(${i})">删除此条目</button></div></div>`;root.appendChild(d)})}
 function captureWorldbookDraft(){if(!editorState||editorState.type!=='worldbook')return;const w=editorState.draft;w.name=qs('wb-name')?.value||w.name;w.description=qs('wb-desc')?.value||'';w.tags=csv(qs('wb-tags')?.value||'');w.category=(qs('wb-category')?.value||'未分类').trim().slice(0,60);w.entries=qsa('[data-entry-index]',qs('wb-entry-list')).map(block=>{const get=f=>block.querySelector(`[data-f="${f}"]`);return {id:w.entries[Number(block.dataset.entryIndex)]?.id,name:get('name').value,keywords:csv(get('keywords').value),secondaryKeywords:csv(get('secondaryKeywords').value),matchMode:get('matchMode').value,depth:Number(get('depth').value||0),position:get('position').value,priority:Number(get('priority').value === '' ? 50 : get('priority').value),scanDepth:Number(get('scanDepth').value||12),maxChars:Number(get('maxChars').value||0),enabled:get('enabled').checked,alwaysActive:get('alwaysActive').checked,caseSensitive:get('caseSensitive').checked,useRegex:get('useRegex').checked,content:get('content').value}})}
-function addWorldbookEntry(){captureWorldbookDraft();editorState.draft.entries.push(defaultEntry());renderWorldbookEditorBody()}
-function removeWorldbookEntry(i){captureWorldbookDraft();editorState.draft.entries.splice(i,1);renderWorldbookEditorBody()}
+function addWorldbookEntry(){captureWorldbookDraft();editorDraftStructureChanged=true;editorState.draft.entries.push(defaultEntry());renderWorldbookEditorBody()}
+function removeWorldbookEntry(i){captureWorldbookDraft();editorDraftStructureChanged=true;editorState.draft.entries.splice(i,1);renderWorldbookEditorBody()}
 async function saveWorldbookEditor(){
     captureWorldbookDraft();
     // UI and normalizeWorldbookEntry must agree. Reject lossy normalization
@@ -1220,7 +1233,7 @@ async function saveWorldbookEditor(){
     }
     closeEditor();await loadAll();openSettings('worldbook');return res.data;
 }
-async function deleteWorldbook(id){if(!confirm('删除整个世界书？'))return;await fetchStory(`/worldbooks/${id}`,'DELETE');closeEditor();await loadAll();openSettings('worldbook')}
+async function deleteWorldbook(id){if(!confirm('删除整个世界书？'))return;try{const result=await fetchStory(`/worldbooks/${id}`,'DELETE');if(!result?.success)return toast('世界书删除失败：'+(result?.msg||'存储未确认'));closeEditor();await loadAll();openSettings('worldbook')}catch(e){toast('世界书删除失败：'+e.message)}}
 function chooseWorldbookImport(){qs('worldbook-file-input').value='';qs('worldbook-file-input').click()}
 function normalizeImportedWorldbook(raw,name){const src=raw.data||raw;let rawEntries=src.entries||[];if(!Array.isArray(rawEntries)&&rawEntries&&typeof rawEntries==='object')rawEntries=Object.values(rawEntries);const entries=arr(rawEntries).map((e,i)=>({name:e.name||e.comment||`条目 ${i+1}`,content:e.content||'',keywords:e.keywords||e.key||e.keys||[],secondaryKeywords:e.secondaryKeywords||e.keysecondary||[],enabled:e.enabled!==false&&e.disable!==true,alwaysActive:!!(e.alwaysActive||e.constant),matchMode:e.matchMode||'any',caseSensitive:!!e.caseSensitive,useRegex:!!e.useRegex,priority:Number(e.priority??e.order??50),scanDepth:Number(e.scanDepth??12),depth:Number(e.depth??0),position:['front','middle','back'].includes(e.position)?e.position:'middle',maxChars:Number(e.maxChars||0)}));return {name:src.name||name||'导入世界书',description:src.description||'',tags:src.tags||[],entries}}
 async function importWorldbookFile(file){if(!file)return;try{const raw=JSON.parse(await file.text());const body=normalizeImportedWorldbook(raw,file.name.replace(/\.json$/i,''));const res=await fetchStory('/worldbooks','POST',body);if(!res.success)throw new Error(res.msg);await loadAll();openSettings('worldbook');toast(`已导入世界书 ${res.data.name}`)}catch(e){toast(`世界书导入失败：${e.message}`)}}
@@ -1238,26 +1251,30 @@ function fillPresets(root){if(!root)return;root.innerHTML='';const active=new Se
 async function togglePreset(id,on){const set=new Set(currentSessionData.presetIds||[]);on?set.add(id):set.delete(id);await patchCurrent({presetIds:[...set]},true);renderSettings()}
 function openPresetEditor(id=null){const p=id?presets.find(x=>x.id===id):{name:'',type:'style',description:'',content:'',priority:50};editorState={type:'preset',id};qs('editor-title').textContent=id?`编辑预设 · ${p.name}`:'新建预设';qs('editor-eyebrow').textContent='PRESET（预设）';qs('editor-body').innerHTML=`<div class="form-grid"><div><label class="form-label">名称</label><input id="pre-name" class="field" value="${escapeHtml(p.name||'')}"></div><div><label class="form-label">类型</label><select id="pre-type" class="field">${['style','format','behavior','model'].map(x=>`<option value="${x}" ${p.type===x?'selected':''}>${presetTypeLabel(x)}</option>`).join('')}</select></div><div><label class="form-label">Priority（发送顺序，小值先发）</label><input id="pre-priority" type="number" class="field" value="${Number(p.priority??50)}"></div><div><label class="form-label">分类</label><input id="pre-category" class="field" value="${escapeHtml(p.category||'未分类')}"></div><div class="form-full"><label class="form-label">说明</label><input id="pre-desc" class="field" value="${escapeHtml(p.description||'')}"></div><div class="form-full"><label class="form-label">内容</label><textarea id="pre-content" class="field textarea tall">${escapeHtml(p.content||'')}</textarea></div></div>`;setupEditorButtons(id?()=>deletePreset(id):null,savePresetEditor);qs('editor-modal').classList.remove('hidden')}
 async function savePresetEditor(){const body={name:qs('pre-name').value||'未命名预设',type:qs('pre-type').value,priority:Number(qs('pre-priority').value === '' ? 50 : qs('pre-priority').value),description:qs('pre-desc').value,category:(qs('pre-category').value||'未分类').trim().slice(0,60),content:qs('pre-content').value};const res=await fetchStory(editorState.id?`/presets/${editorState.id}`:'/presets',editorState.id?'PATCH':'POST',body);if(res.success){closeEditor();await loadAll();openSettings('presets')}else toast(res.msg||'保存失败')}
-async function deletePreset(id){if(!confirm('删除这个预设？'))return;await fetchStory(`/presets/${id}`,'DELETE');closeEditor();await loadAll();openSettings('presets')}
+async function deletePreset(id){if(!confirm('删除这个预设？'))return;try{const result=await fetchStory(`/presets/${id}`,'DELETE');if(!result?.success)return toast('预设删除失败：'+(result?.msg||'存储未确认'));closeEditor();await loadAll();openSettings('presets')}catch(e){toast('预设删除失败：'+e.message)}}
 
 
 function regexPhaseLabel(v){return({display:'显示渲染（推荐 / 省 Token）',prompt:'Prompt 注入前',input:'User 发送前',output:'Assistant 保存前'}[v]||v||'display')}
 function defaultRegexRule(){return {name:'新规则',pattern:'',replacement:'',flags:'g',phase:'display',priority:50,enabled:true,description:''}}
 function renderRegexTab(box){
     const active=new Set(currentSessionData.regexPackIds||[]);
-    box.innerHTML=`<section class="settings-section"><h3>🧬 Regex（正则）</h3><p class="helper">正则包是独立 DLC：不会替换旧预设/世界书。最推荐使用 <strong>显示渲染</strong> 阶段——模型只输出短标签，咪嘛馆在前端把它展开成完整 HTML，从而减少上下文里的长 div 代码。Prompt / User / Assistant 保存前阶段也可用，但请只在明确需要时开启。</p><div class="toolbar"><button class="primary-btn" onclick="openRegexPackEditor()">＋ 新建正则包</button><button class="ghost-btn" onclick="chooseRegexImport()">⇧ 导入正则包</button><button class="ghost-btn" onclick="MimaAssistantStudio.open('regex')">✦ 打开正则助手</button></div><div id="regex-pack-list"></div></section>`;
+    box.innerHTML=`<section class="settings-section"><h3>🧬 Regex（正则）</h3><p class="helper">正则包是独立 DLC：不会替换旧预设/世界书。最推荐使用 <strong>显示渲染</strong> 阶段——模型只输出短标签，咪嘛馆在前端把它展开成完整 HTML，从而减少上下文里的长 div 代码。显示规则会重算旧 Assistant 消息，保留原始 History；Assistant 保存前只处理之后的新回复。保存规则后，还需在此勾选挂载。这里管理原生剧情；酒馆兼容故事请在其“正则工具”中配置。</p><div class="toolbar"><button class="primary-btn" onclick="openRegexPackEditor()">＋ 新建正则包</button><button class="ghost-btn" onclick="chooseRegexImport()">⇧ 导入正则包</button><button class="ghost-btn" onclick="MimaAssistantStudio.open('regex')">✦ 打开正则助手</button></div><div id="regex-pack-list"></div></section>`;
     const root=qs('regex-pack-list');if(!regexPacks.length){root.innerHTML='<div class="row-sub">还没有正则包。可以手工新建，也可以让正则助手从 HTML 输出规范一键生成。</div>';return}
-    regexPacks.slice().sort((a,b)=>Number(a.priority??50)-Number(b.priority??50)).forEach(pack=>{const row=document.createElement('div');row.className='preset-row regex-pack-row';row.innerHTML=`<input type="checkbox" ${active.has(pack.id)?'checked':''} onchange="toggleRegexPack('${pack.id}',this.checked)"><div class="row-main"><div class="row-title">${escapeHtml(pack.name)}</div><div class="row-sub">${arr(pack.rules).length} 条规则 · priority ${Number(pack.priority??50)} · ${escapeHtml(pack.description||'无说明')}</div></div><button class="ghost-btn" onclick="openRegexPackEditor('${pack.id}')">编辑</button><button class="ghost-btn" onclick="exportRegexPack('${pack.id}')">导出</button>`;root.appendChild(row)})
+    regexPacks.slice().sort((a,b)=>Number(a.priority??50)-Number(b.priority??50)).forEach(pack=>{const row=document.createElement('div');row.className='preset-row regex-pack-row';row.innerHTML=`<input type="checkbox" ${active.has(pack.id)?'checked':''} onchange="toggleRegexPack('${pack.id}',this.checked)"><div class="row-main"><div class="row-title">${escapeHtml(pack.name)}</div><div class="row-sub">${pack.enabled===false?'包已停用 · ':''}${arr(pack.rules).length} 条规则 · priority ${Number(pack.priority??50)} · ${escapeHtml(pack.description||'无说明')}</div></div><button class="ghost-btn" onclick="openRegexPackEditor('${pack.id}')">编辑</button><button class="ghost-btn" onclick="exportRegexPack('${pack.id}')">导出</button>`;root.appendChild(row)})
 }
-async function toggleRegexPack(id,on){const set=new Set(currentSessionData.regexPackIds||[]);on?set.add(id):set.delete(id);await patchCurrent({regexPackIds:[...set]},true);refreshChatBox();renderSettings()}
+async function toggleRegexPack(id,on){const set=new Set(currentSessionData.regexPackIds||[]);on?set.add(id):set.delete(id);const saved=await patchCurrent({regexPackIds:[...set]},true);if(!saved){renderSettings();return;}refreshChatBox();renderSettings();toast(on?'正则包已挂载到当前剧情':'正则包已从当前剧情卸载')}
 function openRegexPackEditor(id=null){const old=id?regexPacks.find(x=>x.id===id):null;editorState={type:'regex-pack',id,draft:clone(old||{name:'新正则包',description:'',priority:50,enabled:true,rules:[]})};qs('editor-title').textContent=id?`编辑正则 · ${old?.name||''}`:'新建 Regex 正则包';qs('editor-eyebrow').textContent='REGEX PACK（正则包）';renderRegexPackEditorBody();setupEditorButtons(id?()=>deleteRegexPack(id):null,saveRegexPackEditor);qs('editor-modal').classList.remove('hidden')}
-function renderRegexPackEditorBody(){const p=editorState.draft;qs('editor-body').innerHTML=`<div class="form-grid"><div><label class="form-label">名称</label><input id="regex-name" class="field" value="${escapeHtml(p.name||'')}"></div><div><label class="form-label">Priority（优先级）</label><input id="regex-priority" class="field" type="number" value="${Number(p.priority??50)}"></div><div class="form-full"><label class="form-label">说明</label><input id="regex-desc" class="field" value="${escapeHtml(p.description||'')}"></div></div><div class="toolbar" style="margin-top:14px"><button class="ghost-btn" onclick="addRegexRule()">＋ 新增规则</button><button class="ghost-btn" onclick="MimaAssistantStudio.open('regex')">✦ 交给正则助手</button></div><div id="regex-rule-list" class="entry-list"></div><section class="regex-tester"><h4>即时测试</h4><textarea id="regex-test-input" class="field textarea" placeholder="粘贴一段模型原始输出进行测试"></textarea><div class="toolbar"><button class="ghost-btn" onclick="testRegexDraft()">运行当前草稿</button></div><pre id="regex-test-output" class="prompt-pre">测试结果会显示在这里。</pre></section>`;const root=qs('regex-rule-list');arr(p.rules).forEach((rule,i)=>{const d=document.createElement('details');d.className='entry-card regex-rule-card';d.open=arr(p.rules).length<=3;d.dataset.regexIndex=i;d.innerHTML=`<summary><strong>${escapeHtml(rule.name||`规则 ${i+1}`)}</strong><div class="entry-meta">${escapeHtml(regexPhaseLabel(rule.phase))} · /${escapeHtml(rule.flags||'g')} · priority ${Number(rule.priority??50)}</div></summary><div class="form-grid" style="margin-top:10px"><div><label class="form-label">规则名称</label><input data-rf="name" class="field" value="${escapeHtml(rule.name||'')}"></div><div><label class="form-label">Phase（阶段）</label><select data-rf="phase" class="field">${['display','prompt','input','output'].map(x=>`<option value="${x}" ${rule.phase===x?'selected':''}>${regexPhaseLabel(x)}</option>`).join('')}</select></div><div><label class="form-label">Flags（标志）</label><input data-rf="flags" class="field" value="${escapeHtml(rule.flags||'g')}" placeholder="gimsu"></div><div><label class="form-label">Priority</label><input data-rf="priority" class="field" type="number" value="${Number(rule.priority??50)}"></div><div class="form-full"><label class="form-label">Pattern（匹配式）</label><textarea data-rf="pattern" class="field textarea mono" spellcheck="false">${escapeHtml(rule.pattern||'')}</textarea></div><div class="form-full"><label class="form-label">Replacement（替换内容，可包含 $1 / $2）</label><textarea data-rf="replacement" class="field textarea tall mono" spellcheck="false">${escapeHtml(rule.replacement||'')}</textarea></div><div class="form-full"><label class="form-label">说明</label><input data-rf="description" class="field" value="${escapeHtml(rule.description||'')}"><label class="check-row"><input data-rf="enabled" type="checkbox" ${rule.enabled!==false?'checked':''}> 启用规则</label><button class="danger-btn" onclick="removeRegexRule(${i})">删除此规则</button></div></div>`;root.appendChild(d)});if(!arr(p.rules).length)root.innerHTML='<div class="row-sub">还没有规则。显示渲染规则最适合“短标签 → 长 HTML 状态栏”。</div>'}
-function captureRegexDraft(){if(!editorState||editorState.type!=='regex-pack')return;const p=editorState.draft;p.name=qs('regex-name')?.value||p.name;p.priority=Number(qs('regex-priority')?.value === '' ? 50 : (qs('regex-priority')?.value ?? 50));p.description=qs('regex-desc')?.value||'';p.rules=qsa('[data-regex-index]',qs('regex-rule-list')).map(block=>{const get=f=>block.querySelector(`[data-rf="${f}"]`),old=p.rules[Number(block.dataset.regexIndex)]||{};return{id:old.id,name:get('name').value,phase:get('phase').value,flags:get('flags').value||'g',priority:Number(get('priority').value === '' ? 50 : get('priority').value),pattern:get('pattern').value,replacement:get('replacement').value,description:get('description').value,enabled:get('enabled').checked}})}
-function addRegexRule(){captureRegexDraft();editorState.draft.rules.push(defaultRegexRule());renderRegexPackEditorBody()}
-function removeRegexRule(i){captureRegexDraft();editorState.draft.rules.splice(i,1);renderRegexPackEditorBody()}
-async function testRegexDraft(){captureRegexDraft();const result=MimaRegexEngine.validatePack(editorState.draft);const out=qs('regex-test-output');if(!result.ok){out.textContent='❌ '+result.invalid.map(x=>`${x.name}: ${x.error}`).join('\n');return}const input=qs('regex-test-input')?.value||'';out.textContent='正在安全隔离正则…';try{const value=await MimaRegexEngine.applyAsync(input,[result.pack],'display');if(out.isConnected)out.textContent=value;}catch(e){if(out.isConnected)out.textContent=`❌ ${e.code||'E_REGEX_WORKER_FAILED'}：${e.message}；输入未更改。`;}}
+function renderRegexPackEditorBody(){const p=editorState.draft;qs('editor-body').innerHTML=`<div class="form-grid"><div><label class="form-label">名称</label><input id="regex-name" class="field" value="${escapeHtml(p.name||'')}"></div><div><label class="form-label">Priority（优先级）</label><input id="regex-priority" class="field" type="number" value="${Number(p.priority??50)}"></div><div class="form-full"><label class="form-label">说明</label><input id="regex-desc" class="field" value="${escapeHtml(p.description||'')}"></div></div><div class="toolbar" style="margin-top:14px"><button class="ghost-btn" onclick="addRegexRule()">＋ 新增规则</button><button class="ghost-btn" onclick="MimaAssistantStudio.open('regex')">✦ 交给正则助手</button></div><label class="check-row"><input id="regex-pack-enabled" type="checkbox" ${p.enabled!==false?'checked':''}> 启用正则包（还需在剧情中勾选挂载）</label><div id="regex-rule-list" class="entry-list"></div><section class="regex-tester"><h4>即时测试</h4><textarea id="regex-test-input" class="field textarea" placeholder="粘贴一段待过滤的文本，例如：极其高兴"></textarea><label class="form-label" for="regex-test-phase">测试执行阶段</label><select id="regex-test-phase" class="field"><option value="display">显示渲染</option><option value="output">Assistant 保存前</option><option value="input">User 发送前</option><option value="prompt">Prompt 注入前</option></select><div class="toolbar"><button class="ghost-btn" onclick="testRegexDraft()">运行当前草稿</button></div><pre id="regex-test-output" class="prompt-pre">测试结果会显示在这里。</pre></section>`;const root=qs('regex-rule-list');arr(p.rules).forEach((rule,i)=>{const d=document.createElement('details');d.className='entry-card regex-rule-card';d.open=arr(p.rules).length<=3;d.dataset.regexIndex=i;d.innerHTML=`<summary><strong>${escapeHtml(rule.name||`规则 ${i+1}`)}</strong><div class="entry-meta">${escapeHtml(regexPhaseLabel(rule.phase))} · /${escapeHtml(rule.flags||'g')} · priority ${Number(rule.priority??50)}</div></summary><div class="form-grid" style="margin-top:10px"><div><label class="form-label">规则名称</label><input data-rf="name" class="field" value="${escapeHtml(rule.name||'')}"></div><div><label class="form-label">Phase（阶段）</label><select data-rf="phase" class="field">${['display','prompt','input','output'].map(x=>`<option value="${x}" ${rule.phase===x?'selected':''}>${regexPhaseLabel(x)}</option>`).join('')}</select></div><div><label class="form-label">Flags（标志）</label><input data-rf="flags" class="field" value="${escapeHtml(rule.flags||'g')}" placeholder="gimsu"></div><div><label class="form-label">Priority</label><input data-rf="priority" class="field" type="number" value="${Number(rule.priority??50)}"></div><div class="form-full"><label class="form-label">Pattern（匹配式）</label><textarea data-rf="pattern" class="field textarea mono" spellcheck="false">${escapeHtml(rule.pattern||'')}</textarea></div><div class="form-full"><label class="form-label">Replacement（替换内容，可包含 $1 / $2）</label><textarea data-rf="replacement" class="field textarea tall mono" spellcheck="false">${escapeHtml(rule.replacement||'')}</textarea></div><div class="form-full"><label class="form-label">说明</label><input data-rf="description" class="field" value="${escapeHtml(rule.description||'')}"><label class="check-row"><input data-rf="enabled" type="checkbox" ${rule.enabled!==false?'checked':''}> 启用规则</label><button class="danger-btn" onclick="removeRegexRule(${i})">删除此规则</button></div></div>`;root.appendChild(d)});if(!arr(p.rules).length)root.innerHTML='<div class="row-sub">还没有规则。显示渲染规则最适合“短标签 → 长 HTML 状态栏”。</div>'}
+function captureRegexDraft(){if(!editorState||editorState.type!=='regex-pack')return;const p=editorState.draft;p.name=qs('regex-name')?.value||p.name;p.priority=Number(qs('regex-priority')?.value === '' ? 50 : (qs('regex-priority')?.value ?? 50));p.description=qs('regex-desc')?.value||'';p.enabled=qs('regex-pack-enabled')?.checked!==false;p.rules=qsa('[data-regex-index]',qs('regex-rule-list')).map(block=>{const get=f=>block.querySelector(`[data-rf="${f}"]`),old=p.rules[Number(block.dataset.regexIndex)]||{};return{id:old.id,name:get('name').value,phase:get('phase').value,flags:get('flags').value||'g',priority:Number(get('priority').value === '' ? 50 : get('priority').value),pattern:get('pattern').value,replacement:get('replacement').value,description:get('description').value,enabled:get('enabled').checked}})}
+function addRegexRule(){captureRegexDraft();editorDraftStructureChanged=true;editorState.draft.rules.push(defaultRegexRule());renderRegexPackEditorBody()}
+function removeRegexRule(i){captureRegexDraft();editorDraftStructureChanged=true;editorState.draft.rules.splice(i,1);renderRegexPackEditorBody()}
+async function testRegexDraft(){captureRegexDraft();const result=MimaRegexEngine.validatePack(editorState.draft);const out=qs('regex-test-output');if(!result.ok){out.textContent='❌ '+result.invalid.map(x=>`${x.name}: ${x.error}`).join('\n');return}const input=qs('regex-test-input')?.value||'';out.textContent='正在安全隔离正则…';try{const value=await MimaRegexEngine.applyAsync(input,[result.pack],qs('regex-test-phase')?.value||'display');if(out.isConnected)out.textContent=value;}catch(e){if(out.isConnected)out.textContent=`❌ ${e.code||'E_REGEX_WORKER_FAILED'}：${e.message}；输入未更改。`;}}
 async function saveRegexPackEditor(){captureRegexDraft();const checked=MimaRegexEngine.validatePack(editorState.draft);if(!checked.ok){toast(`正则无效：${checked.invalid[0]?.name||''} · ${checked.invalid[0]?.error||''}`);return}const res=await fetchStory(editorState.id?`/regex-packs/${editorState.id}`:'/regex-packs',editorState.id?'PATCH':'POST',checked.pack);if(res.success){closeEditor();await loadAll();openSettings('regex')}else toast(res.msg||'保存失败')}
-async function deleteRegexPack(id){if(!confirm('删除这个正则包？旧剧情原文不会被删除。'))return;await fetchStory(`/regex-packs/${id}`,'DELETE');closeEditor();await loadAll();openSettings('regex')}
+async function deleteRegexPack(id){
+ if(!confirm('删除这个正则包？旧剧情原文不会被删除。'))return;
+ try{const res=await fetchStory(`/regex-packs/${id}`,'DELETE');if(!res?.success){toast(`删除失败：${res?.code||''} ${res?.msg||'未确认删除'}`);return;}closeEditor();await loadAll();openSettings('regex');}
+ catch(e){toast(`删除或刷新失败：${e.code||''} ${e.message}；请重新核对资料列表`);}
+}
 function chooseRegexImport(){qs('regex-file-input').value='';qs('regex-file-input').click()}
 async function importRegexFile(file){if(!file)return;try{const raw=JSON.parse(await file.text()),src=raw.data||raw;const checked=MimaRegexEngine.validatePack(src);if(!checked.ok)throw new Error(checked.invalid.map(x=>`${x.name}: ${x.error}`).join('；'));const res=await fetchStory('/regex-packs','POST',{...checked.pack,id:undefined,name:checked.pack.name||file.name.replace(/\.json$/i,'')});if(!res.success)throw new Error(res.msg||'导入失败');await loadAll();openSettings('regex');toast(`已导入正则包 ${res.data.name}`)}catch(e){toast(`正则包导入失败：${e.message}`)}}
 function exportRegexPack(id){const p=regexPacks.find(x=>x.id===id);if(p)downloadJson(`${p.name}.mimamao-regex.json`,{format:'mimamao-tavern-regex-pack',version:1,data:p})}
@@ -1266,7 +1283,7 @@ function renderContextTab(box){const ps=currentSessionData.promptSettings||{};bo
 <section class="settings-section"><h3>🧠 长剧情与记忆</h3>
     <div class="context-window-link" role="status"><strong>当前 API 模型上下文总窗口：${Number(MimaStandalone.getApiConfig()?.contextWindowTokens)>=4096?`${Number(MimaStandalone.getApiConfig().contextWindowTokens).toLocaleString()} Tokens`:'未配置（0 / 未知）'}</strong><span>它决定是否需要按 10 轮规划裁剪；与最大输出 Tokens 不同。未知时不假定 32K 上限，也不裁删历史；完整请求由服务商判断能否接收。</span><button type="button" class="ghost-btn" onclick="openSettings('api')">去设置模型实际窗口</button></div><div class="form-grid"><div><label class="form-label">自动整理时，最近多少条剧情保持原样（按消息计）</label><input id="ctx-recent" class="field" type="number" min="6" max="100000" step="1" value="${Number(ps.recentMessageLimit??34)}"><div class="row-sub">这是自动整理时保留的近期消息窗口；模型容量允许时仍优先提供完整原始 History。修改后请点击下方保存。</div></div><div><label class="form-label">Prompt 超窗时每批移出最早完整剧情轮次</label><input id="ctx-trim-batch" class="field" type="number" min="1" max="100" step="1" value="${Number(ps.contextTrimBatchRounds??10)}"><div class="row-sub">默认 10 轮；只有来源已被有效滚动记忆覆盖才允许从单次请求中移出。本地 History 永不删除。</div></div><div><label class="form-label">Prompt 至少保留的最新完整剧情轮次</label><input id="ctx-trim-min-recent" class="field" type="number" min="1" max="100000" step="1" value="${Number(ps.contextMinRecentRounds??20)}"><div class="row-sub">默认 20 轮；保留后仍超窗时停止请求并提示调整，不会擅自牺牲最近剧情。</div></div><div><label class="form-label">较早剧情每积累多少条后可自动整理</label><input id="ctx-summary-trigger" class="field" type="number" min="12" max="200" value="${Number(ps.summaryTriggerMessages||28)}"><div class="row-sub">默认 28 条；不删减原始剧情，也不影响手动整理。</div></div><div><label class="form-label">世界书总预算（字符，最多 1,000,000）</label><input id="ctx-wbbudget" class="field" type="number" min="1000" max="1000000" step="1" value="${Number(ps.worldbookBudgetChars??16000)}"><div class="row-sub">这是本轮命中条目允许占用的字符上限，不保证所有条目都触发；实际仍受模型上下文窗口限制。超过窗口会报错，不会暗中删除原始剧情。</div></div><div class="form-full"><label class="form-label">🎭 AIRP 输入语义</label><select id="ctx-airp-mode" class="field"><option value="auto" ${(ps.inputSemanticMode||'raw')==='auto'?'selected':''}>智能自动（主动选择，可能误判）</option><option value="dialogue_first" ${ps.inputSemanticMode==='dialogue_first'?'selected':''}>对话优先：普通文本=台词，括号=动作/心理</option><option value="quote_dialogue" ${ps.inputSemanticMode==='quote_dialogue'?'selected':''}>引号台词：引号=台词，其余普通文本=动作</option><option value="raw" ${(ps.inputSemanticMode||'raw')==='raw'?'selected':''}>原样发送（默认）：关闭语义解析</option></select><div class="row-sub">默认按原文发送；已存消息保留当时的解析模式。选择并保存非原样模式才会对新消息启用语义改写，可能误判。智能自动会兼容两种常见 AIRP：有明确引号时把引号当台词、周围当动作；没有引号时普通文本默认台词，括号永远不是台词。括号中的明确“心想/内心/OS”等会标记为私密想法。</div></div><div class="form-full"><label class="check-row"><input id="ctx-history-html-projection" type="checkbox" ${ps.historyHtmlMode!=='raw'?'checked':''}> 历史剧情 HTML 转纯文本（仅新模型请求和记忆总结，不改存档、渲染或预设）</label><div class="row-sub">保留 HTML 正文/状态栏文字与数值，去除布局标签、CSS 和装饰代码。预设/世界书/玩家输入不转换；按原请求重说保持旧快照。含真正代码示例的剧情可关闭。</div></div><div class="form-full"><label class="check-row"><input id="ctx-summary" type="checkbox" ${ps.autoRollingEnabled===true?'checked':''}> 自动整理较早剧情（会调用模型，可能收费）</label><label class="check-row"><input id="ctx-inject-saved-rolling" type="checkbox" ${ps.injectSavedRolling!==false?'checked':''}> 让 AI 参考以前保存的剧情摘要（与自动生成独立）</label><div class="row-sub">首次自动整理一般要积累至少 ${Math.max(0,Math.max(18,Number(ps.recentMessageLimit??34)-4)+Number(ps.summaryTriggerMessages||28))} 条消息（当前尚未总结时）；消息不等于问答轮。原始剧情不会删除。曾经失败的任务将暂停，需手动确认才继续。</div><label class="form-label">自动整理单次最多允许多少次模型请求</label><input id="ctx-auto-rolling-budget" class="field" type="number" min="1" max="20" value="${Number(ps.autoRollingMaxRequests||1)}"><label class="check-row"><input id="ctx-complete-html" type="checkbox" ${ps.outputContract?.completeHtml===true?'checked':''}> 明确要求回复 HTML 标签完整闭合（普通文本不受限制）</label><label class="check-row"><input id="ctx-require-html" type="checkbox" ${ps.outputContract?.requireHtml===true?'checked':''}> 独立 HTML 结构合同：必须包含 HTML 及下面的必需结构（默认关闭）</label><div class="row-sub">缺失结构将保护性拒绝自动入库，不会后台重复调用 API；可通过坏回复诊断和手动代码修复处理。</div><label class="check-row"><input id="ctx-three-part-html" type="checkbox" ${ps.outputContract?.structureMode==='three_part_html_status'?'checked':''}> 三段式 HTML 完整性检查（开头环境栏＋正文＋八个末尾模块；仅当前剧情主动开启）</label><label class="check-row"><input id="ctx-html-strict-values" type="checkbox" ${ps.outputContract?.strictValues===true?'checked':''}> 严格检查 progress 数值（可选）</label><label class="form-label">必需 CSS 选择器（每行或逗号分隔）</label><textarea id="ctx-html-selectors" class="field textarea" rows="2">${escapeHtml(ps.outputContract?.requiredSelectors||'')}</textarea><label class="form-label">标准 HTML 参考消息（手动选择，仅角色回复）</label><select id="ctx-html-template-message" class="field"><option value="">不绑定模板</option>${arr(currentSessionData.messages).filter(m=>m.role==='assistant'&&/[<][A-Za-z]/.test(m.content||'')).map(m=>`<option value="${escapeHtml(m.id)}" ${ps.outputContract?.templateMessageId===m.id?'selected':''}>${escapeHtml((m.content||'').replace(/<[^>]*>/g,' ').trim().slice(0,70)||m.id)}</option>`).join('')}</select><label class="form-label">模板的正文容器 CSS 选择器（唯一插槽，手动代码修复必填）</label><input id="ctx-html-body-slot" class="field" value="${escapeHtml(ps.outputContract?.bodySelector||'')}" placeholder="例如 .story-body"><label class="form-label">状态容器 CSS 选择器（含实时数据时不可自动伪造）</label><input id="ctx-html-status-slot" class="field" value="${escapeHtml(ps.outputContract?.statusSelector||'')}" placeholder="例如 .status-panel"><label class="form-label">允许继承固定文字的静态容器选择器（每行一个；仅授权固定标题/说明，不得包含正文槽或状态栏）</label><textarea id="ctx-html-static-slots" class="field textarea" rows="2">${escapeHtml(ps.outputContract?.staticSelectors||'')}</textarea><label class="form-label">允许自动继承固定 CSS 的规则选择器（每行一个；仅当该规则确实不含动态状态时授权）</label><textarea id="ctx-html-static-css" class="field textarea" rows="2">${escapeHtml(ps.outputContract?.staticCssSelectors||'')}</textarea><label class="form-label">明确属于固定布局的 class / 动画名（用空格或换行分隔；例如 card-wrapper，动态状态类不要填）</label><textarea id="ctx-html-static-classes" class="field textarea" rows="2">${escapeHtml(ps.outputContract?.staticClassTokens||'')}</textarea><label class="form-label">固定 HTML/CSS 注释精确白名单（每行一个，仅填写注释内部文字）</label><textarea id="ctx-html-static-comments" class="field textarea" rows="2">${escapeHtml(ps.outputContract?.staticCommentTexts||'')}</textarea><label class="check-row"><input id="ctx-pinned-on" type="checkbox" ${ps.pinnedFactsEnabled!==false?'checked':''}> 注入 Pinned Facts（固定事实）</label></div><div class="form-full"><label class="form-label">📌 Pinned Facts（固定事实，一行一条）</label><textarea id="ctx-pinned" class="field textarea">${escapeHtml(arr(currentSessionData.pinnedFacts).join('\n'))}</textarea></div><div class="form-full"><label class="form-label">玩家备注</label><textarea id="ctx-usernotes" class="field textarea">${escapeHtml(currentSessionData.userNotes||'')}</textarea></div><div class="form-full"><label class="form-label">AI（人工智能）备注</label><textarea id="ctx-ainotes" class="field textarea">${escapeHtml(currentSessionData.aiNotes||'')}</textarea></div></div></section>
 <div class="toolbar"><button id="ctx-save" class="primary-btn" type="button" onclick="saveContextSettings()">保存长剧情与会话设置</button><span class="row-sub">保存成功后，重新打开此页面仍会显示你设定的数值。</span></div>
-<section class="settings-section"><h3>💾 本地档案</h3><p class="helper">剧情、角色卡、世界书、预设、正则包保存在当前浏览器 IndexedDB（本地数据库）。分享剧情请选“纯剧情 TXT/JSON”，不含预设与历史请求快照；“原始会话存档”和“完整剧情资料备份”保留生成请求快照等私密上下文，仅用于自己的恢复与迁移。字体与 API Key（接口密钥）不会被打进这份“剧情资料备份”。</p><div class="toolbar"><button class="primary-btn" onclick="exportStoryTranscript('txt')">⇩ 纯剧情 TXT</button><button class="ghost-btn" onclick="exportStoryTranscript('json')">⇩ 纯剧情 JSON</button><button class="ghost-btn" onclick="exportCurrentSession()">⇩ 原始会话存档（可导回）</button><button class="ghost-btn" onclick="exportWholeLibrary()">⇩ 完整剧情资料备份</button><button class="ghost-btn" onclick="chooseLibraryImport()">⇧ 导入剧情资料备份</button><button class="danger-btn" onclick="deleteCurrentSession()">删除当前剧情</button></div></section>`}
+<section class="settings-section"><h3>💾 本地档案</h3><p class="helper">剧情、角色卡、世界书、预设、正则包保存在当前浏览器 IndexedDB（本地数据库）。分享剧情请选“纯剧情 TXT/JSON”，不含预设与历史请求快照；“原始会话存档”和“完整剧情资料备份”保留生成请求快照等私密上下文，仅用于自己的恢复与迁移。字体、API Key、小手机数据库和兼容库不会被打进这份“剧情资料备份”。</p><div class="toolbar"><button class="primary-btn" onclick="exportStoryTranscript('txt')">⇩ 纯剧情 TXT</button><button class="ghost-btn" onclick="exportStoryTranscript('json')">⇩ 纯剧情 JSON</button><button class="ghost-btn" onclick="exportCurrentSession()">⇩ 原始会话存档（可导回）</button><button class="ghost-btn" onclick="exportWholeLibrary()">⇩ 原生剧情+工坊+壁纸备份</button><button class="ghost-btn" onclick="chooseLibraryImport()">⇧ 导入剧情资料备份</button><button class="danger-btn" onclick="deleteCurrentSession()">删除当前剧情</button></div></section>`}
 async function saveContextSettings(){
     if(!currentSessionId)return toast('请先选择剧情会话');
     // Treat the input as authoritative only after validating it. Backend
@@ -1971,7 +1988,7 @@ async function undoFactMemoryMerge(){
 async function clearCoreMemory(){if(!confirm('清空当前核心记忆？剧情原文不会受影响。'))return;const targetId=currentSessionId;const res=await fetchStory(`/sessions/${targetId}/memory/core`,'DELETE');if(res.success){if(currentSessionId!==targetId)return toast('原剧情记忆操作已保存，当前剧情未改变');currentSessionData=res.data;toast('核心记忆已清空');renderMemoryTab(qs('settings-content'))}else toast(res.msg||'清空失败')}
 async function deleteFactMemory(id){if(!confirm('删除这一段事实记忆？'))return;const targetId=currentSessionId;const res=await fetchStory(`/sessions/${targetId}/memory/facts/${id}`,'DELETE');if(res.success){if(currentSessionId!==targetId)return toast('原剧情记忆操作已保存，当前剧情未改变');currentSessionData=res.data;renderMemoryTab(qs('settings-content'))}else toast(res.msg||'删除失败')}
 async function clearAllFactMemories(){if(!confirm('清空全部事实记忆？核心记忆和剧情原文不会被删除。'))return;const targetId=currentSessionId;const res=await fetchStory(`/sessions/${targetId}/memory/facts`,'DELETE');if(res.success){if(currentSessionId!==targetId)return toast('原剧情记忆操作已保存，当前剧情未改变');currentSessionData=res.data;toast('事实记忆已清空');renderMemoryTab(qs('settings-content'))}else toast(res.msg||'清空失败')}
-async function exportWholeLibrary(){try{const data=await MimaStandalone.exportLibrary(),atelier=await MimaAtelierCore.exportRecords(),wallpapers=await MimaChatWallpaper.exportRecords();downloadJson('mimamao-tavern-full-backup.json',{format:'mimamao-tavern-standalone',version:2,exportedAt:new Date().toISOString(),data,atelier,wallpapers});}catch(e){toast('完整备份失败：'+e.message)}}
+async function exportWholeLibrary(){try{const data=await MimaStandalone.exportLibrary(),atelier=await MimaAtelierCore.exportRecords(),wallpapers=await MimaChatWallpaper.exportRecords();downloadJson('mimamao-tavern-full-backup.json',{format:'mimamao-tavern-standalone',version:2,exportedAt:new Date().toISOString(),data,atelier,wallpapers});toast('原生剧情、工坊与壁纸已导出；小手机和兼容库需分别备份')}catch(e){toast('完整备份失败：'+e.message)}}
 function chooseLibraryImport(){qs('library-file-input').value='';qs('library-file-input').click()}
 function chooseTemplateRestorePolicy(current,incoming){
     const mine=Array.isArray(current?.settingTemplates)?current.settingTemplates:[];
@@ -2052,7 +2069,7 @@ async function saveFullSettingsSnapshot(){
         const backup=await buildFullSettingsBackup({includeApiKey,includeFonts});
         await MimaLocalStore.saveSettingsSnapshot(backup);
         const el=qs('data-backup-status');if(el)el.textContent=`✅ 已保存本机快照 · ${new Date().toLocaleString('zh-CN')}。注意：清除“网站数据”会连这个快照一起删除。`;
-        toast('咪嘛馆设置数据已保存为本机快照');
+        toast('设置快照已保存；不含小手机和兼容独立库');
     }catch(e){const el=qs('data-backup-status');if(el)el.textContent=`❌ 保存失败：${e.message}`;toast(`保存失败：${e.message}`)}
 }
 async function exportFullSettingsBackup(){
@@ -2063,7 +2080,7 @@ async function exportFullSettingsBackup(){
         const backup=await buildFullSettingsBackup({includeApiKey,includeFonts});
         const stamp=new Date().toISOString().slice(0,10);
         downloadJson(`mimamao-tavern-settings-${stamp}.json`,backup);
-        toast('完整咪嘛馆设置数据已导出');
+        toast('剧情、设置与工坊素材已导出；小手机和兼容独立库需要另行备份');
     }catch(e){toast(`导出失败：${e.message}`)}
 }
 function chooseFullSettingsImport(){const input=qs('full-settings-file-input');input.value='';input.click()}
@@ -2142,7 +2159,7 @@ async function applyFullSettingsBackup(raw,{fromSnapshot=false,templatePolicy='r
 async function importFullSettingsFile(file){
     if(!file)return;
     if(!confirm('导入完整设置会用备份中的剧情/角色卡/世界书/预设/CSS 数据覆盖当前资料库，并恢复外观与 API 配置。继续吗？'))return;
-    try{const raw=JSON.parse(await file.text());const policy=chooseTemplateRestorePolicy(await MimaStandalone.exportLibrary(),raw?.data?.library);if(!policy)return;const result=await applyFullSettingsBackup(raw,{templatePolicy:policy});toast(result?.uiRefreshed?'完整咪嘛馆设置数据已恢复':'资料库已成功恢复，但界面刷新失败；请刷新页面查看，勿重复导入');if(result?.warnings?.length)console.warn('设置恢复附加诊断：',result.warnings)}catch(e){toast(`完整设置导入失败：${e.message}`)}
+    try{const raw=JSON.parse(await file.text());const policy=chooseTemplateRestorePolicy(await MimaStandalone.exportLibrary(),raw?.data?.library);if(!policy)return;const result=await applyFullSettingsBackup(raw,{templatePolicy:policy});toast(result?.uiRefreshed?'剧情与设置已恢复；小手机/兼容库需独立恢复':'资料库已成功恢复，但界面刷新失败；请刷新页面查看，勿重复导入');if(result?.warnings?.length)console.warn('设置恢复附加诊断：',result.warnings)}catch(e){toast(`完整设置导入失败：${e.message}`)}
 }
 async function restoreSavedSettingsSnapshot(){
     try{
@@ -2161,14 +2178,14 @@ async function renderDataTab(box,renderEpoch=++settingsRenderEpoch){
     const cfg=MimaStandalone.getApiConfig();
     box.innerHTML=`<section class="settings-section"><h3>💾 Data Backup（数据备份）</h3><p class="helper">这里备份的不只是剧情，还包括角色卡、世界书、预设、正则包、CSS Preset（CSS 预设）、API（接口）参数、温度/流式设置、字体选择；可选把本地字体文件也一起装进备份。普通“刷新 / 强制刷新”不会删除这些数据，但 Safari 的“清除历史记录与网站数据”或删除网站数据会清掉 IndexedDB（本地数据库）和 localStorage（本地存储），所以真正保险的是导出 JSON（数据文件）到“文件”App。</p>
     <div class="data-backup-card"><div class="row-title">本机设置快照</div><div class="row-sub">${snap?`最近保存：${escapeHtml(snap.savedAt||snap.exportedAt||'已保存')}`:'尚未保存本机快照'}</div><div class="toolbar"><button class="primary-btn" onclick="saveFullSettingsSnapshot()">保存咪嘛馆设置数据</button><button class="ghost-btn" onclick="restoreSavedSettingsSnapshot()">恢复本机快照</button></div></div>
-    <div class="data-backup-card"><div class="row-title">可迁移完整备份</div><div class="row-sub">导出的文件可以在清缓存、换浏览器、换设备或重新部署后再导入。</div><label class="check-row"><input id="backup-fonts" type="checkbox" checked> 把本地字体文件也加入备份（文件可能变大）</label><label class="check-row"><input id="backup-api-key" type="checkbox"> 把 API Key（接口密钥）加入导出/快照 <strong>（敏感）</strong></label><div class="toolbar"><button class="primary-btn" onclick="exportFullSettingsBackup()">⇩ 导出完整设置</button><button class="ghost-btn" onclick="chooseFullSettingsImport()">⇧ 导入完整设置</button></div><div class="row-sub">当前 API（接口）：${cfg.apiBase?escapeHtml(cfg.apiBase):'未配置'} · Model（模型）：${cfg.model?escapeHtml(cfg.model):'未选择'}</div></div>
+    <div class="data-backup-card"><div class="row-title">剧情与设置备份（不含小手机）</div><div class="row-sub"><strong>重要：这不是整馆迁移。</strong>只包含原生剧情、资源、工坊、壁纸及可选字体／接口设置；不包含小手机独立数据库或酒馆兼容库。清除网站数据或换设备前，还必须分别在小手机备份页、酒馆兼容管理页导出各自存档。尚不支持多库一键原子恢复。</div><label class="check-row"><input id="backup-fonts" type="checkbox" checked> 把本地字体文件也加入备份（文件可能变大）</label><label class="check-row"><input id="backup-api-key" type="checkbox"> 把 API Key（接口密钥）加入导出/快照 <strong>（敏感）</strong></label><div class="toolbar"><button class="primary-btn" onclick="exportFullSettingsBackup()">⇩ 导出剧情与设置</button><button class="ghost-btn" onclick="chooseFullSettingsImport()">⇧ 恢复剧情与设置</button></div><div class="row-sub">当前 API（接口）：${cfg.apiBase?escapeHtml(cfg.apiBase):'未配置'} · Model（模型）：${cfg.model?escapeHtml(cfg.model):'未选择'}</div></div>
     <div id="data-backup-status" class="api-status">${snap?'✅ 当前浏览器已有本机快照。':'建议先保存一次本机快照，再导出一份文件备份。'}</div></section>
     <section class="settings-section"><h3>🧹 Cache（缓存）说明</h3><p class="helper"><strong>只想让 GitHub Pages 加载新代码时，不需要先清除网站数据。</strong>本版已经给 CSS / JS 资源加入版本号 <code>?v=1.1.0</code>，部署后浏览器会把它们当成新资源重新拉取。若仍显示旧页面，先关闭该标签页再重新打开，或做一次强制刷新；不要直接使用会删除网站数据的清理方式，除非你已经导出了完整设置备份。</p></section>`;
 }
 
 async function renderAppearanceTab(box,renderEpoch=++settingsRenderEpoch){
     let fontReadError=null,records;
-    try{records=await MimaFontManager.all()}catch(error){fontReadError=error;records=[];console.error('外观字体库读取失败，未更改字体存储或偏好',error)}
+    try{records=await MimaFontManager.listMetadata()}catch(error){fontReadError=error;records=[];console.error('外观字体库读取失败，未更改字体存储或偏好',error)}
     if(!settingsRenderIsCurrent('appearance',renderEpoch,box))return;
     if(!fontReadError)fontRecords=records;
     const ui=MimaFontManager.getSelected('ui'),story=MimaFontManager.getSelected('story'),typo=getStoryTypography();const opts=`<option value="">系统默认字体</option>`+(fontReadError?[]:fontRecords).map(f=>`<option value="${escapeHtml(f.family)}">本地 · ${escapeHtml(f.family)} · ${formatBytes(f.size)}</option>`).join('')+MimaFontManager.urlFonts().map(f=>`<option value="${escapeHtml(f.family)}">链接 · ${escapeHtml(f.name)}</option>`).join('');const themeState=MimaStandalone.getState?.().themeSettings||{theme:'default'},themeCards=(MimaThemeEngine?.getBuiltins?.()||[]).map(t=>`<button class="novel-theme-card ${themeState.theme===t.id?'active':''}" data-theme-choice="${t.id}" onclick="setBuiltInTheme('${t.id}')"><strong>${escapeHtml(t.name)}</strong><span>${escapeHtml(t.description)}</span></button>`).join('');box.innerHTML=`<section class="settings-section"><h3>🌓 Built-in Theme（内置主题）</h3><p class="helper">Default 保留原始外观；深色、电子墨水、暖纸与韩系柔色主题覆盖聊天、设置、小说及助手的常用组件。全局自定义 CSS 仍优先；如果已挂载全局 CSS，实际颜色可能不同。</p><div class="novel-theme-grid">${themeCards}</div></section><section class="settings-section"><h3>📐 界面显示大小</h3><p class="helper">单独控制咪嘛馆的按钮、面板和小手机尺寸，不改变剧情正文字号设置，也不删除你现有的主题 CSS。默认 80%，相当于之前觉得舒服的紧凑尺寸；浏览器缩放建议恢复 100% 使用。</p><label class="form-label" for="mima-ui-density">界面显示比例</label><select id="mima-ui-density" class="field" style="max-width:240px" onchange="changeMimaUiDensity(this.value)"><option value="70">70% · 更紧凑</option><option value="80">80% · 推荐</option><option value="90">90%</option><option value="100">100% · 原始大小</option><option value="110">110% · 较大</option></select></section><section class="settings-section"><h3>🎨 本地字体库</h3><p class="helper">直接导入 TTF / OTF / WOFF / WOFF2（字体文件格式）。文件保存在当前浏览器 IndexedDB，不需要转 URL（链接），也不会上传到服务器。剧情正文字体会作用于普通小说正文；开启 Safe HTML（安全 HTML）后，未自行指定字体的 HTML 正文也会继承它。状态栏若有自己的 CSS 字体设置，仍以状态栏自己的设置为准。</p><div class="toolbar"><button class="primary-btn" onclick="chooseFontImport()">＋ 导入字体文件</button></div><div class="form-grid"><div><label class="form-label">UI（界面）字体</label><select id="font-ui-select" class="field" onchange="changeFont('ui',this.value)">${opts}</select></div><div><label class="form-label">剧情正文字体</label><select id="font-story-select" class="field" onchange="changeFont('story',this.value)">${opts}</select></div></div><div id="font-list" style="margin-top:14px"></div></section>
@@ -2254,11 +2271,13 @@ async function preloadAtelierVisualResources(project){
   .map(f=>new FontFace(f.family,`url("${f.src}") format("${({ttf:"truetype",otf:"opentype",woff:"woff",woff2:"woff2"}[String(f.format||"").toLowerCase()]||"truetype")}")`).load());
  await Promise.all([...images,...fonts]);
 }
+let emergencyCssVisualBypass=false; // tab-local rescue until reloaded; never pretend an IDB write succeeded
+function resumeCssAfterExplicitEnable(){emergencyCssVisualBypass=false;try{sessionStorage.removeItem('mima-atl-safe-disabled')}catch(e){console.warn('[CSS rescue] safe-mode storage unavailable',e)}}
 function applyCustomCss(){
  const generation=++cssPaintEpoch;
  const tag=ensureCustomCssStyle(),globalTag=ensureGlobalCssStyle();
  const setting=MimaStandalone.getState?.().themeSettings||{};
- const safeCssBypass=new URLSearchParams(location.search).get('noCss')==='1';
+ const safeCssBypass=emergencyCssVisualBypass||new URLSearchParams(location.search).get('noCss')==='1';
  const globalPreset=cssPresets.find(x=>x.id===setting.globalCssPresetId&&x.scope==='app');
  const sessionPreset=!safeCssBypass&&currentSessionData?.customCssEnabled!==false?currentCssPreset():null;
  const appPreset=!safeCssBypass&&setting.globalCssEnabled!==false?globalPreset:null;
@@ -2341,20 +2360,36 @@ async function stopAtelierAndRestoreCss(){
   toast(appearance?.status==='APPLIED'?'工坊全局主题已停用；旧 CSS 均保存在下方预设库，可直接重新选择':'工坊全局选择已提交，但页面外观仍在处理；当前画面保留上一成功版本');
  }catch(e){toast('停用工坊失败：'+e.message)}
 }
-async function applyGlobalCssPreset(id){const preset=cssPresets.find(x=>x.id===id&&x.scope==='app');if(!preset)return toast('只能全局应用咪嘛馆全局范围 CSS');try{await selectLegacyCssAppearance(async()=>{const r=await fetchStory('/theme','PATCH',{globalCssPresetId:id,globalCssEnabled:true});if(!r.success)throw Error(r.msg||'全局 CSS 挂载失败')});}catch(e){return toast('切换到普通 CSS 失败：'+e.message)}const visual=await applyCustomCss();renderCssPresetLibrary(qs('css-preset-list'));if(visual?.status==='APPLIED')toast('已应用全局 CSS，之前的工坊工程与主题仍在库中');else if(visual?.status==='STALE')toast('全局 CSS 已保存，页面正在应用更新的主题'); /* FAILED already reports asset failure and preserves the old appearance */}
+async function applyGlobalCssPreset(id){const preset=cssPresets.find(x=>x.id===id&&x.scope==='app');if(!preset)return toast('只能全局应用咪嘛馆全局范围 CSS');try{await selectLegacyCssAppearance(async()=>{const r=await fetchStory('/theme','PATCH',{globalCssPresetId:id,globalCssEnabled:true});if(!r.success)throw Error(r.msg||'全局 CSS 挂载失败')});}catch(e){return toast('切换到普通 CSS 失败：'+e.message)}resumeCssAfterExplicitEnable();const visual=await applyCustomCss();renderCssPresetLibrary(qs('css-preset-list'));if(visual?.status==='APPLIED')toast('已应用全局 CSS，之前的工坊工程与主题仍在库中');else if(visual?.status==='STALE')toast('全局 CSS 已保存，页面正在应用更新的主题'); /* FAILED already reports asset failure and preserves the old appearance */}
 async function unapplyGlobalCssPreset(){const r=await fetchStory('/theme','PATCH',{globalCssPresetId:null,globalCssEnabled:false});if(!r.success)return toast(r.msg||'取消失败');const visual=await applyCustomCss();renderCssPresetLibrary(qs('css-preset-list'));if(visual?.status==='APPLIED')toast('已禁用全局 CSS');else if(visual?.status==='STALE')toast('全局 CSS 已停用，页面正在应用更新的外观')}
 function cssScopeLabel(scope){return scope==='app'?'咪嘛馆全局 Scope（作用域）':scope==='novel'?'Novel Studio（小说工作区）':scope==='assistant'?'Assistant Studio（助手工作区）':scope==='global'?'剧情面板级 Scope（作用域）':'自定义 HTML 内容级 Scope（作用域）'}
 function renderCssPresetLibrary(root){if(!root)return;const active=currentSessionData?.customCssId,theme=MimaStandalone.getState?.().themeSettings,globalId=theme?.globalCssEnabled===false?null:theme?.globalCssPresetId;
  const list=mimaVisibleResources('css',cssPresets);root.innerHTML='';if(!list.length){root.innerHTML='<div class="row-sub">当前筛选下没有 CSS 预设。</div>';return;}
  list.sort((a,b)=>Number(!!b.favorite)-Number(!!a.favorite)||String(a.name).localeCompare(String(b.name),'zh')).forEach(p=>{const global=p.scope==='app',mounted=global?p.id===globalId:p.id===active;const row=document.createElement('div');row.className=`library-card ${mounted?'mounted':''}`;row.innerHTML=`<div class="card-title"><span>${escapeHtml(p.name)}</span>${mounted?`<span class="tag">${global?'全局挂载':'当前 Session'}</span>`:''}</div><div class="card-desc">${escapeHtml(p.category||'未分类')} · ${cssScopeLabel(p.scope)} · ${String(p.css||'').length} 字符</div><div class="card-actions"><button class="${mounted?'primary-btn':'ghost-btn'}" onclick="${global?'applyGlobalCssPreset':'applyCssPreset'}('${p.id}')">${global?'应用到全局':mounted?'重新启用':'应用到聊天'}</button><button class="ghost-btn" onclick="mimaToggleFavorite('css','${p.id}')">${p.favorite?'★ 已收藏':'☆ 收藏'}</button><button class="ghost-btn" onclick="openCssPresetEditor('${p.id}')">编辑</button>${String(p.css||'').length>200000&&mounted?`<button class="danger-btn" onclick="${global?'unapplyGlobalCssPreset':'unapplyCss'}()">停用大型 CSS</button>`:''}<button class="ghost-btn" onclick="duplicateCssPreset('${p.id}')">复制</button><button class="ghost-btn" onclick="exportCssPreset('${p.id}')">导出</button></div>`;root.appendChild(row);});
 }
-function openCssPresetEditor(id=null){const p=id?cssPresets.find(x=>x.id===id):{name:'',css:'',scope:'story'};const giant=String(p?.css||'').length>200000;editorState={type:'css-preset',id,giant,loaded:!giant};qs('editor-title').textContent=id?`编辑 CSS · ${p?.name||''}`:'新建 CSS Preset（CSS 预设）';qs('editor-eyebrow').textContent='CSS PRESET（CSS 预设）';qs('editor-body').innerHTML=`<div class="form-grid"><div class="form-full"><label class="form-label">名称</label><input id="css-pre-name" class="field" value="${escapeHtml(p?.name||'')}"></div><div class="form-full"><label class="form-label">分类</label><input id="css-pre-category" class="field" value="${escapeHtml(p?.category||'未分类')}"></div><div class="form-full"><label class="form-label">Scope（作用域）</label><select id="css-pre-scope" class="field"><option value="story" ${p?.scope==='story'||!p?.scope?'selected':''}>自定义 HTML / 剧情内容（最安全）</option><option value="global" ${p?.scope==='global'?'selected':''}>剧情聊天区域</option><option value="app" ${p?.scope==='app'?'selected':''}>咪嘛馆全局 UI + HTML（全局二改）</option><option value="novel" ${p?.scope==='novel'?'selected':''}>Novel Studio（小说）</option><option value="assistant" ${p?.scope==='assistant'?'selected':''}>Assistant Studio（助手）</option></select><div class="row-sub">“咪嘛馆全局”会按原样应用 CSS，可修改顶栏、设置中心、输入框和剧情 HTML；若样式把 UI 隐藏，请重新打开页面后在外观里点“🚑 临时禁用”；极端情况下可在网址末尾加 <code>?noCss=1</code> 进入 CSS 安全模式。</div></div><div class="form-full">${giant?`<div class="row-sub" style="padding:12px;border:1px solid currentColor">这个 CSS 有 ${String(p.css).length.toLocaleString()} 字符，暂不加载到编辑框以免卡住手机。原始内容已保留。<button type="button" class="ghost-btn" onclick="mimaLoadLargeCssForEdit()">确认后加载巨型 CSS</button></div>`:''}<label class="form-label">CSS（样式）</label><textarea id="css-pre-code" class="field textarea tall css-code-editor" spellcheck="false" placeholder="/* 直接写 CSS，不用 <style> */&#10;system, .status-card { padding: 12px; border-radius: 16px; }">${giant?'':escapeHtml(p?.css||'')}</textarea></div></div>`;setupEditorButtons(id?()=>deleteCssPreset(id):null,saveCssPresetEditor);qs('editor-modal').classList.remove('hidden')}
-function mimaLoadLargeCssForEdit(){if(editorState?.type!=='css-preset'||!editorState.giant)return;const p=cssPresets.find(x=>x.id===editorState.id);if(!p)return toast('原始 CSS 已不存在；未改变任何数据');if(!confirm(`确定加载 ${String(p.css).length.toLocaleString()} 字符 CSS？低内存手机可能卡顿。`))return;qs('css-pre-code').value=p.css;editorState.loaded=true;}
-async function saveCssPresetEditor(){if(editorState?.giant&&!editorState.loaded)return toast('巨型 CSS 尚未加载，不能覆盖原记录。请先确认加载或直接关闭。');const wantedScope=qs('css-pre-scope').value;const body={name:qs('css-pre-name').value.trim()||'未命名 CSS（样式）',category:(qs('css-pre-category').value||'未分类').trim().slice(0,60),scope:['story','global','app','novel','assistant'].includes(wantedScope)?wantedScope:'story',surface:wantedScope==='novel'?'novel':wantedScope==='assistant'?'assistant':wantedScope==='app'?'global':'chat',css:stripEmbeddedStyleTags(qs('css-pre-code').value),atelierReleaseKey:editorState.id?((cssPresets.find(x=>x.id===editorState.id)?.css||'')===stripEmbeddedStyleTags(qs('css-pre-code').value)?(cssPresets.find(x=>x.id===editorState.id)?.atelierReleaseKey||''):''):''};const res=await fetchStory(editorState.id?`/css-presets/${editorState.id}`:'/css-presets',editorState.id?'PATCH':'POST',body);if(!res.success)return toast(res.msg||'保存 CSS 失败');const saved=res.data;closeEditor();await loadAll();applyCustomCss();openSettings('appearance');toast(`CSS Preset（CSS 预设）「${saved.name}」已保存`)}
-async function applyCssPreset(id){if(!cssPresets.some(x=>x.id===id))return;try{await selectLegacyCssAppearance(async()=>{if(!await patchCurrent({customCssId:id,customCssEnabled:true},true))throw Error('剧情 CSS 设置未保存')});}catch(e){return toast('切换到普通 CSS 失败：'+e.message)}applyCustomCss();if(settingsTab==='appearance')renderAppearanceTab(qs('settings-content'));toast('已切换当前剧情 CSS；全局主题保持不变')}
+function openCssPresetEditor(id=null){const p=id?cssPresets.find(x=>x.id===id):{name:'',css:'',scope:'story'};const giant=String(p?.css||'').length>200000;editorState={type:'css-preset',id,giant,loaded:!giant};qs('editor-title').textContent=id?`编辑 CSS · ${p?.name||''}`:'新建 CSS Preset（CSS 预设）';qs('editor-eyebrow').textContent='CSS PRESET（CSS 预设）';qs('editor-body').innerHTML=`<div class="form-grid"><div class="form-full"><label class="form-label">名称</label><input id="css-pre-name" class="field" value="${escapeHtml(p?.name||'')}"></div><div class="form-full"><label class="form-label">分类</label><input id="css-pre-category" class="field" value="${escapeHtml(p?.category||'未分类')}"></div><div class="form-full"><label class="form-label">Scope（作用域）</label><select id="css-pre-scope" class="field"><option value="story" ${p?.scope==='story'||!p?.scope?'selected':''}>自定义 HTML / 剧情内容（最安全）</option><option value="global" ${p?.scope==='global'?'selected':''}>剧情聊天区域</option><option value="app" ${p?.scope==='app'?'selected':''}>咪嘛馆全局 UI + HTML（全局二改）</option><option value="novel" ${p?.scope==='novel'?'selected':''}>Novel Studio（小说）</option><option value="assistant" ${p?.scope==='assistant'?'selected':''}>Assistant Studio（助手）</option></select><div class="row-sub">“咪嘛馆全局”会按原样应用 CSS，可修改顶栏、设置中心、输入框和剧情 HTML；若样式把 UI 隐藏，请重新打开页面后在外观里点“🚑 临时禁用”；极端情况下可在网址末尾加 <code>?noCss=1</code> 进入 CSS 安全模式。</div></div><div class="form-full">${giant?`<div class="row-sub" style="padding:12px;border:1px solid currentColor">这个 CSS 有 ${String(p.css).length.toLocaleString()} 字符，默认不加载正文以保护手机。可以直接修改名称、分类或作用域并保存，CSS 原文保持不变。<button type="button" class="ghost-btn" onclick="mimaLoadLargeCssForEdit()">确认后加载巨型 CSS</button></div>`:''}<label class="form-label">CSS（样式）</label><textarea id="css-pre-code" class="field textarea tall css-code-editor" spellcheck="false" ${giant?'disabled':''} placeholder="/* 直接写 CSS，不用 <style> */&#10;system, .status-card { padding: 12px; border-radius: 16px; }">${giant?'':escapeHtml(p?.css||'')}</textarea></div></div>`;setupEditorButtons(id?()=>deleteCssPreset(id):null,saveCssPresetEditor);qs('editor-modal').classList.remove('hidden')}
+function mimaLoadLargeCssForEdit(){if(editorState?.type!=='css-preset'||!editorState.giant)return;const p=cssPresets.find(x=>x.id===editorState.id);if(!p)return toast('原始 CSS 已不存在；未改变任何数据');if(!confirm(`确定加载 ${String(p.css).length.toLocaleString()} 字符 CSS？低内存手机可能卡顿。`))return;qs('css-pre-code').disabled=false;qs('css-pre-code').value=p.css;editorState.loaded=true;const initial=editorInitialForm?.find(field=>field[0]==='css-pre-code');if(initial)initial[1]=p.css;}
+async function saveCssPresetEditor(){const original=editorState?.id?cssPresets.find(x=>x.id===editorState.id):null;if(editorState?.giant&&!editorState.loaded&&!original)return toast('原始巨型 CSS 不存在，拒绝保存空正文');const wantedScope=qs('css-pre-scope').value;const body={name:qs('css-pre-name').value.trim()||'未命名 CSS（样式）',category:(qs('css-pre-category').value||'未分类').trim().slice(0,60),scope:['story','global','app','novel','assistant'].includes(wantedScope)?wantedScope:'story',surface:wantedScope==='novel'?'novel':wantedScope==='assistant'?'assistant':wantedScope==='app'?'global':'chat',css:editorState?.giant&&!editorState.loaded?original.css:stripEmbeddedStyleTags(qs('css-pre-code').value),atelierReleaseKey:editorState.id?((original?.css||'')===(editorState?.giant&&!editorState.loaded?original.css:stripEmbeddedStyleTags(qs('css-pre-code').value))?(original?.atelierReleaseKey||''):''):''};const res=await fetchStory(editorState.id?`/css-presets/${editorState.id}`:'/css-presets',editorState.id?'PATCH':'POST',body);if(!res.success)return toast(res.msg||'保存 CSS 失败');const saved=res.data;closeEditor();await loadAll();applyCustomCss();openSettings('appearance');toast(`CSS Preset（CSS 预设）「${saved.name}」已保存`)}
+async function applyCssPreset(id){if(!cssPresets.some(x=>x.id===id))return;try{await selectLegacyCssAppearance(async()=>{if(!await patchCurrent({customCssId:id,customCssEnabled:true},true))throw Error('剧情 CSS 设置未保存')});}catch(e){return toast('切换到普通 CSS 失败：'+e.message)}resumeCssAfterExplicitEnable();applyCustomCss();if(settingsTab==='appearance')renderAppearanceTab(qs('settings-content'));toast('已切换当前剧情 CSS；全局主题保持不变')}
 async function unapplyCss(){if(!await patchCurrent({customCssId:null,customCssEnabled:false},true))return;applyCustomCss();if(settingsTab==='appearance')renderAppearanceTab(qs('settings-content'));toast('当前 Session（剧情会话）已取消 CSS（样式）')}
-async function emergencyDisableCss(){window.MimaAtelierCore?.disabled?.();await patchCurrent({customCssEnabled:false},true);ensureCustomCssStyle().textContent='';ensureGlobalCssStyle().textContent='';fetchStory('/theme','PATCH',{globalCssEnabled:false}).then(()=>applyCustomCss());if(settingsTab==='appearance')renderAppearanceTab(qs('settings-content'));toast('🚑 自定义 CSS（样式）已临时禁用')}
-async function reenableCss(){if(!currentSessionData?.customCssId)return toast('当前 Session（剧情会话）没有挂载 CSS（样式）');if(!await patchCurrent({customCssEnabled:true},true))return;applyCustomCss();if(settingsTab==='appearance')renderAppearanceTab(qs('settings-content'))}
+async function emergencyDisableCss(){
+ // Disarm in-flight asynchronous CSS paints BEFORE removing styles. A failed
+ // storage operation must never turn this temporary visual rescue into a lie.
+ emergencyCssVisualBypass=true;++cssPaintEpoch;
+ try{window.MimaAtelierCore?.disabled?.();}catch(e){console.error('[CSS rescue] atelier disable',e)}
+ ensureCustomCssStyle().textContent='';ensureGlobalCssStyle().textContent='';
+ toast('🚑 已在当前页面临时隐藏自定义 CSS，正在保存停用设置…');
+ let sessionSaved=!currentSessionId,globalSaved=false;const failures=[];
+ try{if(currentSessionId){sessionSaved=!!(await patchCurrent({customCssEnabled:false},true));if(!sessionSaved)failures.push('剧情：保存未确认');}}
+ catch(e){failures.push(`剧情：${e.code||''} ${e.message}`);console.error('[CSS rescue] session persistence failed',e);}
+ try{const r=await fetchStory('/theme','PATCH',{globalCssEnabled:false});globalSaved=!!r?.success;if(!globalSaved)failures.push(`全局：${r?.code||''} ${r?.msg||'保存未确认'}`);}
+ catch(e){failures.push(`全局：${e.code||''} ${e.message}`);console.error('[CSS rescue] global persistence failed',e);}
+ try{if(settingsTab==='appearance')renderAppearanceTab(qs('settings-content'));}catch(e){console.error('[CSS rescue] settings refresh failed',e);}
+ if(sessionSaved&&globalSaved)toast('🚑 CSS 已在当前页隐藏，剧情及全局停用均已保存');
+ else toast(`⚠️ 当前页已隐藏 CSS；剧情${sessionSaved?'已保存':'未保存'}，全局${globalSaved?'已保存':'未保存'}。刷新可能恢复未保存部分；可用 ?noCss=1 进入。${failures.join('；')}`);
+ return {visualHidden:true,sessionSaved,globalSaved,failures};
+}
+async function reenableCss(){if(!currentSessionData?.customCssId)return toast('当前 Session（剧情会话）没有挂载 CSS（样式）');if(!await patchCurrent({customCssEnabled:true},true))return;resumeCssAfterExplicitEnable();applyCustomCss();if(settingsTab==='appearance')renderAppearanceTab(qs('settings-content'))}
 async function duplicateCssPreset(id){const p=cssPresets.find(x=>x.id===id);if(!p)return;const res=await fetchStory('/css-presets','POST',{name:`${p.name} · 副本`,css:p.css,scope:p.scope,surface:p.surface,category:p.category,atelierReleaseKey:p.atelierReleaseKey||'',favorite:false});if(res.success){await loadAll();openSettings('appearance');toast('CSS Preset（CSS 预设）已复制')}else toast(res.msg||'复制失败')}
 async function deleteCssPreset(id){if(!confirm('删除这个 CSS Preset（CSS 预设）？挂载它的 Session（剧情会话）会自动取消应用。'))return;const res=await fetchStory(`/css-presets/${id}`,'DELETE');if(!res.success)return toast(res.msg||'删除失败');closeEditor();await loadAll();applyCustomCss();openSettings('appearance')}
 function chooseCssImport(){qs('css-file-input').value='';qs('css-file-input').click()}
@@ -2394,7 +2429,7 @@ async function copyDefaultCss(){try{const css=await loadDefaultCssSource();await
 async function exportDefaultCss(){try{const css=await loadDefaultCssSource();downloadText('mimamao-default-v1.0.9.css',css,'text/css;charset=utf-8');toast('咪嘛馆默认 CSS（样式）已导出')}catch(e){toast(`导出默认 CSS 失败：${e.message}`)}}
 async function forkDefaultCss(){try{const css=await loadDefaultCssSource();openCssPresetEditor();qs('css-pre-name').value='咪嘛馆默认主题 · 二改';qs('css-pre-scope').value='app';qs('css-pre-code').value=css;toast('默认 CSS 已装进编辑器，可直接全局二改')}catch(e){toast(`载入默认 CSS 失败：${e.message}`)}}
 function chooseFontImport(){qs('font-file-input').value='';qs('font-file-input').click()}
-async function importFontFile(file){try{const r=await MimaFontManager.importFile(file);fontRecords=await MimaFontManager.all();if(!MimaFontManager.getSelected('story'))MimaFontManager.setSelected('story',r.family);renderAppearanceTab(qs('settings-content'));toast(`字体 ${r.family} 已导入`) }catch(e){toast(e.message)}}
+async function importFontFile(file){try{const r=await MimaFontManager.importFile(file);fontRecords=await MimaFontManager.listMetadata();if(!MimaFontManager.getSelected('story'))MimaFontManager.setSelected('story',r.family);renderAppearanceTab(qs('settings-content'));toast(`字体 ${r.family} 已导入`) }catch(e){toast(e.message)}}
 function changeFont(kind,family){MimaFontManager.setSelected(kind,family)}
 async function deleteLocalFont(id){if(!confirm('从这个浏览器删除字体？'))return;await MimaFontManager.deleteFont(id);renderAppearanceTab(qs('settings-content'))}
 async function toggleSafeHtml(on){await patchCurrent({renderMode:on?'safe_html':'text'},true);refreshChatBox();renderAppearancePreview()}
@@ -2681,7 +2716,7 @@ async function refreshDiagnosticsView(){
     qs('diag-download-one').onclick=()=>downloadJson(`咪嘛馆_诊断_${String(record.requestId||record.id).replace(/[^\w.-]/g,'_')}.json`,record);
 }
 
-function setupEditorButtons(deleteFn,saveFn){editorInitialForm=editorFormSnapshot();editorInitialDraft=JSON.stringify(editorState?.draft??null);qs('editor-save').textContent='保存';const del=qs('editor-delete');if(deleteFn){del.classList.remove('hidden');del.onclick=deleteFn}else{del.classList.add('hidden');del.onclick=null}qs('editor-save').onclick=saveFn}
+function setupEditorButtons(deleteFn,saveFn){editorInitialForm=editorFormSnapshot();editorInitialDraft=JSON.stringify(editorState?.draft??null);editorDraftStructureChanged=false;qs('editor-save').textContent='保存';const del=qs('editor-delete');if(deleteFn){del.classList.remove('hidden');del.onclick=deleteFn}else{del.classList.add('hidden');del.onclick=null}qs('editor-save').onclick=saveFn}
 function downloadText(name,text,type='text/plain;charset=utf-8'){return window.MimaFileExport.save(name,String(text??''),type)}
 function downloadJson(name,obj){downloadText(name,JSON.stringify(obj,null,2),'application/json;charset=utf-8')}
 function toast(text){let t=document.getElementById('mima-toast');if(!t){t=document.createElement('div');t.id='mima-toast';t.style.cssText='position:fixed;z-index:2000;left:50%;bottom:120px;transform:translateX(-50%);background:rgba(48,51,56,.92);color:white;padding:10px 14px;border-radius:999px;font-size:13px;max-width:85vw;text-align:center;transition:.2s';document.body.appendChild(t)}t.textContent=text;t.style.opacity='1';clearTimeout(t._timer);t._timer=setTimeout(()=>t.style.opacity='0',2200)}
@@ -2973,21 +3008,34 @@ function patchLiveRenderedChildren(oldParent,newParent){
 async function renderLiveStreamText(){
     const st=liveStreamState;
     if(!st?.contentNode||!ownsVisibleGeneration(st.owner))return;
-    const raw=st.displayText||'';
-    const started=performance.now();
-    const ticket=(st.regexTicket||0)+1;st.regexTicket=ticket;let rendered;try{rendered=await MimaStandalone.applyRegexForSessionAsync(st.owner.sessionId,raw,'display');}catch(e){if(liveStreamState===st&&ticket===st.regexTicket)st.contentNode.textContent=`正则未执行（${e.code||'E_REGEX_WORKER_FAILED'}）：${e.message}。本轮原始流仍保留。`;return;}
-    if(liveStreamState!==st||ticket!==st.regexTicket||!ownsVisibleGeneration(st.owner)||st.displayText!==raw)return;
-    const allowHtml=currentSessionData?.renderMode==='safe_html';
-    st.contentNode.className=`msg-content tavern-story-content live-stream-content${allowHtml?' safe-html-content':''}`;
-    // Detached staging preserves the original sanitizer and incomplete-HTML
-    // semantics. Only the changed tail enters the live layout tree.
-    const staged=document.createElement('div');appendRenderedContent(staged,rendered,allowHtml,true);
-    patchLiveRenderedChildren(st.contentNode,staged);
-    const box=qs('story-chat-box');if(box&&st.followTail!==false&&!readingMode)box.scrollTop=box.scrollHeight;
-    st.lastPaintDurationMs=Math.round((performance.now()-started)*100)/100;
-    st.paints=(st.paints||0)+1;
-    if(st.paints===1)persistStoryUiTiming(st.owner,'ui_first_visible',st);
-    updateStoryFollowButton();
+    // SSE can update faster than a safe RegExp Worker can respond. Keep one
+    // active worker per stream, and coalesce intermediate visual snapshots.
+    if(st.regexProcessing){st.regexDirty=true;return;}
+    st.regexProcessing=true;
+    try{
+      do{
+        st.regexDirty=false;
+        if(liveStreamState!==st||!ownsVisibleGeneration(st.owner))break;
+        const raw=st.displayText||'',token=r19RegexRenderToken(),renderMode=currentSessionData?.renderMode,started=performance.now();let rendered;
+        st.regexController=new AbortController();
+        try{rendered=await MimaStandalone.applyRegexForSessionAsync(st.owner.sessionId,raw,'display',null,{signal:st.regexController.signal});}
+        catch(e){
+          if(liveStreamState===st&&ownsVisibleGeneration(st.owner)&&token===r19RegexRenderToken()&&!st.regexDirty&&st.displayText===raw)st.contentNode.textContent=`正则未执行（${e.code||'E_REGEX_WORKER_FAILED'}）：${e.message}。本轮原始流仍保留。`;
+          continue;
+        }
+        if(liveStreamState!==st||!ownsVisibleGeneration(st.owner))break;
+        if(st.displayText!==raw||token!==r19RegexRenderToken()||renderMode!==currentSessionData?.renderMode){st.regexDirty=true;continue;}
+        const allowHtml=currentSessionData?.renderMode==='safe_html';
+        st.contentNode.className=`msg-content tavern-story-content live-stream-content${allowHtml?' safe-html-content':''}`;
+        const staged=document.createElement('div');appendRenderedContent(staged,rendered,allowHtml,true);
+        patchLiveRenderedChildren(st.contentNode,staged);
+        const box=qs('story-chat-box');if(box&&st.followTail!==false&&!readingMode)box.scrollTop=box.scrollHeight;
+        st.lastPaintDurationMs=Math.round((performance.now()-started)*100)/100;
+        st.paints=(st.paints||0)+1;
+        if(st.paints===1)persistStoryUiTiming(st.owner,'ui_first_visible',st);
+        updateStoryFollowButton();
+      }while(st.regexDirty&&liveStreamState===st);
+    }finally{st.regexProcessing=false;}
 }
 function ensureLiveStreamBubble(owner=currentGenerationOwner()){
     if(!ownsVisibleGeneration(owner))return null;
@@ -3022,7 +3070,7 @@ function handleGenerationProgress(payload,owner=currentGenerationOwner()){
     if(payload?.generationId&&Number.isFinite(Number(payload.attempt))){
         owner.generationId=payload.generationId;owner.generationAttempt=Number(payload.attempt);
     }
-    if(payload?.phase==='saved_user'){owner.userSaved=true;clearSubmittedDraft(owner);}
+    if(payload?.phase==='saved_user'){owner.userSaved=true;clearSubmittedDraft(owner);if(!owner.acceptedNotified){owner.acceptedNotified=true;try{owner.onAccepted?.({accepted:true,status:'accepted',sessionId:owner.sessionId,generationId:owner.generationId});}catch(e){console.error('游玩工具发送回执显示失败',e);}}}
     if(payload?.thinkingText!==undefined)owner.thinkingProgress=String(payload.thinkingText||'');
     let blocked=false;
     if(payload?.streamText!==undefined){
@@ -3049,6 +3097,7 @@ function handleGenerationProgress(payload,owner=currentGenerationOwner()){
     }
 }
 function clearLiveStream(){
+    liveStreamState?.regexController?.abort();
     if(liveStreamState?.timer)cancelAnimationFrame(liveStreamState.timer);
     if(liveStreamState?.paints)persistStoryUiTiming(liveStreamState.owner,'ui_last_visible',liveStreamState);
     if(liveStreamState?.node?.isConnected)liveStreamState.node.remove();
@@ -3255,26 +3304,29 @@ async function retryGenerationReconciliation(){
 }
 async function triggerChat(text,actionType='send',generationOptions={}){
     const targetSessionId=currentSessionId;
-    if(!targetSessionId)return toast('请先创建一个剧情。');
-    if(generationOwners.has(targetSessionId))return toast('当前剧情仍在生成，请先停止或等待本轮完成。');
+    const blocked=reason=>{toast(reason);return {accepted:false,status:'blocked',sessionId:targetSessionId,reason};};
+    let receipt={accepted:false,status:'failed',sessionId:targetSessionId,reason:'发送尚未确认，请核对当前剧情状态，勿重复提交。'};
+    if(generationOptions.expectedSessionId&&generationOptions.expectedSessionId!==targetSessionId)return blocked('剧情已切换，未发送到其他剧情');
+    if(!targetSessionId)return blocked('请先创建一个剧情。');
+    if(generationOwners.has(targetSessionId))return blocked('当前剧情仍在生成，请先停止或等待本轮完成。');
     // The viewer is READ-ONLY. Starting a new turn is the explicit action that
     // retires a previous page's orphaned transaction, without an unlock wizard.
     // A verified live owner in another tab is left alone.
     if(currentSessionData?.pendingGeneration?.status==='prepared'){
         const released=await retireOrphanedGenerationForNewTurn(targetSessionId);
-        if(!released||currentSessionId!==targetSessionId)return;
+        if(!released||currentSessionId!==targetSessionId)return blocked('上轮状态尚未结算，或剧情已切换；本次未发送');
     }
     const verification=generationReconcileStates.get(targetSessionId);
-    if(verification?.status==='checking')return toast('正在核对剧情，请勿重复提交。');
-    if(verification?.status==='degraded')return toast('剧情尚未核实，请先点击错误面板的「重新核对剧情」。');
+    if(verification?.status==='checking')return blocked('正在核对剧情，请勿重复提交。');
+    if(verification?.status==='degraded')return blocked('剧情尚未核实，请先点击错误面板的「重新核对剧情」。');
     // Regenerate is a read-modify-write operation, not a UI-cache operation.
     // Canonical view may include a newly saved user after a failed send.
     const actionNavigationEpoch=sessionNavigationEpoch;
     let verifiedSession=null;
     if(actionType==='regenerate'){
         verifiedSession=await reconcileCanonicalGenerationSession(targetSessionId);
-        if(!verifiedSession||currentSessionId!==targetSessionId||sessionNavigationEpoch!==actionNavigationEpoch)return;
-        if(generationOwners.has(targetSessionId))return toast('剧情核对期间已有生成开始，请先等待。');
+        if(!verifiedSession||currentSessionId!==targetSessionId||sessionNavigationEpoch!==actionNavigationEpoch)return blocked('剧情核对未确认，或已切换剧情');
+        if(generationOwners.has(targetSessionId))return blocked('剧情核对期间已有生成开始，请先等待。');
     }
     const directorNote=qs('director-note').value.trim();
     let targetMessageId=null;
@@ -3286,8 +3338,8 @@ async function triggerChat(text,actionType='send',generationOptions={}){
     contextRecoveryReceipt=null;
     let owner;
     try{owner={turnId:++generationSerial,traceId:newGenerationTraceId(),sessionId:targetSessionId,action:actionType,text:String(text||''),
-        controller:new AbortController(),lastProgress:null,streamText:'',userSaved:false,inputCleared:false,uiStartedAt:performance.now()};}
-    catch(e){generationFailures.set(targetSessionId,{...describeApiError(e),action:actionType});showGenerationError(e,actionType);return;}
+        controller:new AbortController(),lastProgress:null,streamText:'',userSaved:false,preserveComposer:generationOptions.preserveComposer===true,inputCleared:false,onAccepted:generationOptions.onAccepted,uiStartedAt:performance.now()};}
+    catch(e){generationFailures.set(targetSessionId,{...describeApiError(e),action:actionType});showGenerationError(e,actionType);return blocked(e.message||'无法开始发送');}
     generationOwners.set(targetSessionId,owner);generationFailures.delete(targetSessionId);toggleUnknownGenerationActions(false);
     try{
         clearLiveStream();
@@ -3297,6 +3349,8 @@ async function triggerChat(text,actionType='send',generationOptions={}){
         const res=await fetchStory(`/sessions/${targetSessionId}/chat`,'POST',
             {text,action:actionType,temperature:getTemp(),directorNote,targetMessageId,regenerationContext:generationOptions.regenerationContext||'original',retryParameters:generationOptions.retryParameters||'original',confirmUnknownTakeover:generationOptions.confirmUnknownTakeover===true,expectedRecordRevision:verifiedSession?.recordRevision??null,expectedSourceFingerprint:verifiedSession?MimaStandalone.memorySourceFingerprint(verifiedSession.messages,verifiedSession.messages.length):null,diagnosticTurnId:String(owner.turnId),diagnosticTraceId:owner.traceId},false,
             payload=>handleGenerationProgress(payload,owner),owner.controller.signal);
+        receipt={accepted:owner.userSaved||res.success===true,status:res.success?'sent':res.aborted?'aborted':'failed',sessionId:targetSessionId,reason:res.success?'回复已保存':res.msg||'用户消息可能已提交，但生成未完成，请查看剧情状态'};
+        if(receipt.accepted&&!owner.acceptedNotified){owner.acceptedNotified=true;try{owner.onAccepted?.(receipt);}catch(e){console.error('游玩工具发送回执显示失败',e);}}
         if(!res.success&&!res.aborted&&generationOwners.get(targetSessionId)===owner){
             generationFailures.set(targetSessionId,{...describeApiError(res),action:actionType});
         }
@@ -3339,6 +3393,7 @@ async function triggerChat(text,actionType='send',generationOptions={}){
         }
         try{await refreshSessionSummaryList();}catch(e){console.error('剧情请求已结束但会话列表刷新失败',{targetSessionId,turnId:owner.turnId,error:e});if(currentSessionId===targetSessionId)toast('剧情状态已保存；会话列表暂时无法刷新');}
     }catch(e){
+        receipt={accepted:owner?.userSaved===true,status:'failed',sessionId:targetSessionId,reason:e.message||'发送未确认'};
         generationReconcileStates.set(targetSessionId,{status:'checking',sessionId:targetSessionId});
         if(generationOwners.get(targetSessionId)===owner)generationOwners.delete(targetSessionId);
         generationFailures.set(targetSessionId,{...describeApiError(e),action:actionType});
@@ -3349,6 +3404,7 @@ async function triggerChat(text,actionType='send',generationOptions={}){
         if(generationOwners.get(targetSessionId)===owner)generationOwners.delete(targetSessionId);
         toggleUIState(false);
     }
+    return receipt;
 }
 function stopGeneration(){
     const owner=currentGenerationOwner();
@@ -3372,6 +3428,102 @@ function autoResizeInput(){const el=qs('story-input');el.style.height='auto';el.
 
 // UI reconciliation never mutates canonical History. Store render snapshots outside session data.
 let r19RenderState={sessionId:null,renderMode:null,roleNames:'',regexToken:'',nodes:new Map()};
+// Revisions are updated at the verified regex-library read boundary, never
+// while reconciling History. An unrelated canonical write cannot invalidate DOM.
+let r19RegexPackSignatures=new Map(),r19RegexSemanticRevision=0;
+function r19AcceptRegexLibrary(packs){
+ const next=new Map();
+ for(const pack of arr(packs)){
+  const rules=arr(pack.rules).filter(r=>r.enabled!==false&&(r.phase||'display')==='display');
+  if(pack.enabled===false||!rules.length)continue;
+  const signature=JSON.stringify([pack.priority??50,rules.map(r=>[r.pattern,r.replacement,r.flags||'g',r.priority??50])]);
+  const old=r19RegexPackSignatures.get(pack.id);next.set(pack.id,{signature,revision:old?.signature===signature?old.revision:++r19RegexSemanticRevision});
+ }
+ r19RegexPackSignatures=next;
+}
+function r19RegexRenderToken(){
+ return JSON.stringify(arr(currentSessionData?.regexPackIds).flatMap(id=>{const p=r19RegexPackSignatures.get(id);return p?[[id,p.revision]]:[];}));
+}
+// A bounded serial pipeline avoids spawning hundreds of native Workers when a
+// large History is opened. Newest replies are painted first. In-flight jobs
+// survive harmless DOM reuse, but cannot write into a different session/rule set.
+let r19DisplayQueueContext='',r19DisplayQueueController=null,r19DisplayQueue=Promise.resolve();
+let r19DisplayPending=[],r19DisplayDrainingController=null;
+let r19DisplaySourceOwner=null,r19DisplaySourceList=null,r19DisplaySourceIndex=new Map();
+function r19DisplaySources(){
+ const list=currentSessionData?.messages||[];
+ if(r19DisplaySourceOwner!==currentSessionData||r19DisplaySourceList!==list||r19DisplaySourceIndex.size!==list.length){
+  r19DisplaySourceOwner=currentSessionData;r19DisplaySourceList=list;
+  r19DisplaySourceIndex=new Map(list.map(m=>[m.id,m]));
+ }
+ return r19DisplaySourceIndex;
+}
+function r19DisplayContext(sessionId,token){
+ const next=String(sessionId||'')+'|'+String(token||'');
+ if(r19DisplayQueueContext!==next){
+  r19DisplayQueueController?.abort();
+  r19DisplayQueueController=new AbortController();
+  r19DisplayQueueContext=next;r19DisplayPending=[];
+  r19DisplaySourceOwner=null;r19DisplaySourceList=null;r19DisplaySourceIndex=new Map();
+  r19DisplayDrainingController=null;r19DisplayQueue=Promise.resolve();
+ }
+ return r19DisplayQueueController;
+}
+function r19DisplayTaskIsCurrent(task,token,messagesById){
+ const entry=r19RenderState.nodes.get(task.messageId);
+ return task.node.isConnected && currentSessionId===task.sessionId &&
+  r19RegexRenderToken()===token && entry?.el===task.node &&
+  String(messagesById.get(task.messageId)?.content??'')===task.source;
+}
+function r19RenderDisplayFailure(task,error){
+ task.node.dataset.mimaDisplayRegex='error';task.content.replaceChildren();
+ const warning=document.createElement('div');warning.className='row-sub';warning.setAttribute('role','status');
+ warning.textContent=`显示正则未完成（${error.code||'E_REGEX_WORKER_FAILED'}）：${error.message}。原文保留在存档中，可用“复制原文”；未把原文当作过滤结果显示。`;
+ const retry=makeToolButton('重试显示正则',()=>refreshChatBox({retryDisplayRegex:true,scrollToBottom:false}));
+ task.content.append(warning,retry);
+}
+function r19RenderDisplayResult(task,transformed){
+ const {content,node,allowHtml,source}=task;
+ if(allowHtml&&currentSessionData?.promptSettings?.outputContract?.requireHtml&&window.MimaHtmlStructure?.inspect){
+  const contract=currentSessionData.promptSettings.outputContract;
+  if(window.MimaHtmlStructure.inspect(source,contract).ok&&!window.MimaHtmlStructure.inspect(transformed,contract).ok)
+   throw Object.assign(new Error('过滤结果不符合当前 HTML 结构要求；请调整显示规则或 HTML 设置'),{code:'E_REGEX_HTML_CONTRACT'});
+ }
+ content.replaceChildren();appendRenderedContent(content,cleanCorruptText(transformed),allowHtml,true);
+ node.dataset.mimaDisplayRegex='ready';
+}
+function r19EnqueueDisplayRegex(tasks,sessionId,token){
+ if(!tasks.length)return;
+ const controller=r19DisplayContext(sessionId,token);
+ // Newly arriving replies take precedence over still-unstarted History work.
+ for(const task of tasks)r19DisplayPending.push(task);
+ if(r19DisplayDrainingController===controller)return;
+ r19DisplayDrainingController=controller;
+ r19DisplayQueue=(async()=>{
+  try{
+   while(!controller.signal.aborted&&r19DisplayPending.length){
+    const before=r19DisplaySources();
+    const batch=[];
+    while(r19DisplayPending.length&&batch.length<24){const task=r19DisplayPending.pop();if(r19DisplayTaskIsCurrent(task,token,before))batch.push(task);}
+    if(!batch.length)continue;
+    try{
+     const results=await MimaStandalone.applyRegexBatchForSessionAsync(sessionId,batch.map(t=>t.source),'display',{signal:controller.signal,budgetMs:8000});
+     if(controller.signal.aborted)return;
+     const current=r19DisplaySources();
+     for(let i=0;i<batch.length;i++)if(r19DisplayTaskIsCurrent(batch[i],token,current)){
+      try{r19RenderDisplayResult(batch[i],results[i]);}catch(e){r19RenderDisplayFailure(batch[i],e);}
+     }
+    }catch(error){
+     if(controller.signal.aborted)return;
+     const current=r19DisplaySources();
+     for(const task of batch)if(r19DisplayTaskIsCurrent(task,token,current))r19RenderDisplayFailure(task,error);
+    }
+    // Yield between bounded batches so a long transcript does not monopolise UI.
+    if(r19DisplayPending.length)await new Promise(resolve=>setTimeout(resolve,0));
+   }
+  }finally{if(r19DisplayDrainingController===controller)r19DisplayDrainingController=null;}
+ })();
+}
 const r19VersionSnapshots=new WeakMap();
 function r19MsgSnapshot(msg){
  const versions=msg.versions||[],revision=Number(currentSessionData?.recordRevision)||0;
@@ -3403,29 +3555,34 @@ function refreshChatBox(options={}){
  const box=qs('story-chat-box'),renderedSessionId=currentSessionId,renderedEpoch=sessionNavigationEpoch,renderedLayoutEpoch=readingLayoutEpoch;
  if(!box)return;
  const messages=currentSessionData?.messages||[];
- if(!messages.length){r19RenderState={sessionId:currentSessionId,renderMode:null,roleNames:'',regexToken:'',nodes:new Map()};box.innerHTML=`<div class="empty-state"><div class="empty-icon">${currentChar()?'🤍':'🍷'}</div><h2>${escapeHtml(currentChar()?.name||'这个宇宙还是空的')}</h2><p>${currentChar()?.firstMessage?'角色卡里有开场白，可以在角色设置中插入。':'写下第一句话，剧情从这里开始。'}</p><button class="ghost-btn" onclick="MimaCompatUI.open()">🎴 或者用酒馆角色卡开始聊天</button></div>`;window.MimaHistoryNavigator?.sync(currentSessionId,messages);return;}
+ if(!messages.length){r19DisplayContext(currentSessionId,r19RegexRenderToken());r19RenderState={sessionId:currentSessionId,renderMode:null,roleNames:'',regexToken:'',nodes:new Map()};for(const child of [...box.children])if(!child.classList.contains('mima-theater-shelf'))child.remove();const empty=document.createElement('div');empty.innerHTML=`<div class="empty-state"><div class="empty-icon">${currentChar()?'🤍':'🍷'}</div><h2>${escapeHtml(currentChar()?.name||'这个宇宙还是空的')}</h2><p>${currentChar()?.firstMessage?'角色卡里有开场白，可以在角色设置中插入。':'写下第一句话，剧情从这里开始。'}</p><button class="ghost-btn" onclick="MimaCompatUI.open()">🎴 或者用酒馆角色卡开始聊天</button></div>`;box.append(...empty.childNodes);window.MimaHistoryNavigator?.sync(currentSessionId,messages);window.MimaPlayTools?.ensure('native',box);return;}
  const start=performance.now(),oldScroll=box.scrollTop,oldBottom=box.scrollHeight-box.clientHeight-oldScroll<80;
  // The viewport boundary is monotone across the direct message siblings.
  // Binary-search bounding boxes instead of measuring every earlier message.
  const capture=window.MimaHistoryNavigator?.captureAnchor?.(box)||r19CaptureReadingAnchor(box);
  const anchorId=capture?.id||null,anchorOffset=capture?.offset||0;
  const roles=[currentUser()?.name||'你',currentChar()?.name||'',!!currentSessionData?.promptSettings?.outputContract?.requireHtml].join('|');
- const regexToken=JSON.stringify([currentSessionData?.regexPackIds||[],regexPacks]);
+ const regexToken=r19RegexRenderToken();
  const contextChange=r19RenderState.sessionId!==currentSessionId||r19RenderState.renderMode!==currentSessionData?.renderMode||r19RenderState.roleNames!==roles||r19RenderState.regexToken!==regexToken;
- const prior=contextChange?new Map():r19RenderState.nodes,next=new Map();let cursor=box.firstChild,created=0,reused=0;
+ const theaterHeader=window.MimaPlayTools?.ensure('native',box);
+ const prior=contextChange?new Map():r19RenderState.nodes,next=new Map();let cursor=theaterHeader?theaterHeader.nextSibling:box.firstChild,created=0,reused=0;
+ const displayTasks=[];r19DisplayContext(currentSessionId,regexToken);
+ // A refresh also invalidates the lookup for any same-array message replacement.
+ r19DisplaySourceOwner=null;
  for(const msg of messages){
    const id=typeof msg.id==='string'&&msg.id?msg.id:null,snapshot=r19MsgSnapshot(msg);
    const existing=id?prior.get(id):null;
    let el;
-   if(existing&&r19Unchanged(existing.snapshot,snapshot)&&existing.el.isConnected){el=existing.el;reused++;}
-   else {el=renderMessageToUI(msg,document.createDocumentFragment());created++;if(contextChange||prior.size===0)el.dataset.mimaHistorical='1';else el.dataset.mimaNew='1';}
+   if(existing&&r19Unchanged(existing.snapshot,snapshot)&&existing.el.isConnected&&!(options.retryDisplayRegex&&existing.el.dataset.mimaDisplayRegex==='error')){el=existing.el;reused++;}
+   else {el=renderMessageToUI(msg,document.createDocumentFragment(),displayTasks);created++;if(contextChange||prior.size===0)el.dataset.mimaHistorical='1';else el.dataset.mimaNew='1';}
    if(el!==cursor)box.insertBefore(el,cursor);else cursor=cursor.nextSibling;
    if(id)next.set(id,{el,snapshot});
  }
  while(cursor){const following=cursor.nextSibling;cursor.remove();cursor=following;}
  r19RenderState={sessionId:currentSessionId,renderMode:currentSessionData?.renderMode,roleNames:roles,regexToken,nodes:next};
+ r19EnqueueDisplayRegex(displayTasks,currentSessionId,regexToken);
  window.__mimaR19RenderStats={count:messages.length,created,reused,durationMs:Math.round((performance.now()-start)*100)/100};
- window.MimaHistoryNavigator?.sync(currentSessionId,messages);
+ if(contextChange||created||prior.size!==messages.length||[...prior.keys()].some((id,i)=>messages[i]?.id!==id))window.MimaHistoryNavigator?.sync(currentSessionId,messages);
  requestAnimationFrame(()=>{
   if(renderedSessionId!==currentSessionId||renderedEpoch!==sessionNavigationEpoch||renderedLayoutEpoch!==readingLayoutEpoch)return;
   if(options.readerAnchorLite&&next.has(options.readerAnchorLite.messageId)){
@@ -3462,22 +3619,34 @@ function mimaThinkingPanel(record,caption='模型 Thinking（上游返回）'){
     if(Number(record.thoughtSnapshotsMerged)>0)note.textContent+=` 已合并 ${record.thoughtSnapshotsMerged} 次疑似累计/重复 Thinking 帧；这不代表删除了剧情正文。`;
     details.appendChild(note);return details;
 }
-function renderMessageToUI(msg,renderTarget=null){const box=renderTarget||qs('story-chat-box');const liveMsg=()=>currentSessionData?.messages?.find(m=>m.id===msg.id)||msg;const role=msg.role||'system';const div=document.createElement('article');div.className=`message ${role}-msg`;div.dataset.msgId=msg.id||'';const header=document.createElement('div');header.className='msg-header';const roleName=role==='user'?(currentUser()?.name||'你'):(role==='assistant'?(currentChar()?.name||(currentSessionData?.mode==='sandalphon'?'圣德芬':'角色')):'系统');header.textContent=`${roleName}${msg.isEdited?' · 已编辑':''}${msg.versions?.length?` · ${msg.versions.length} 个旧版本`:''}`;div.appendChild(header);if(role==='assistant'&&MimaStandalone.getApiConfig()?.showThinking!==false){const r=msg.metadata?.thinking;const panel=mimaThinkingPanel(r);if(panel)div.appendChild(panel);for(const [i,item] of (msg.metadata?.thinkingContinuations||[]).entries()){const extra=mimaThinkingPanel(item,'续写 Thinking '+(i+1));if(extra)div.appendChild(extra);}}const content=document.createElement('div');const allowHtml=role==='assistant'&&currentSessionData?.renderMode==='safe_html';content.className=`msg-content tavern-story-content${allowHtml?' safe-html-content':''}`;const displaySessionId=currentSessionId,displaySource=String(msg.content||'');let displayText=displaySource;
-appendRenderedContent(content,cleanCorruptText(displaySource),allowHtml,role==='assistant');div.appendChild(content);
-if(role==='assistant'&&MimaStandalone.applyRegexForSessionAsync){
- void MimaStandalone.applyRegexForSessionAsync(displaySessionId,displaySource,'display').then(transformed=>{
-   if(!div.isConnected||currentSessionId!==displaySessionId||String(liveMsg()?.content||'')!==displaySource)return;
-   displayText=transformed;content.replaceChildren();appendRenderedContent(content,cleanCorruptText(transformed),allowHtml,true);
-   if(allowHtml&&currentSessionData?.promptSettings?.outputContract?.requireHtml&&window.MimaHtmlStructure?.inspect){
-     const contract=currentSessionData.promptSettings.outputContract;
-     try{if(window.MimaHtmlStructure.inspect(displaySource,contract).ok&&!window.MimaHtmlStructure.inspect(transformed,contract).ok){
-       const warning=document.createElement('div');warning.className='row-sub';warning.setAttribute('role','status');warning.textContent='显示正则破坏了 HTML 结构，现已保留原文。';
-       content.replaceChildren();appendRenderedContent(content,cleanCorruptText(displaySource),allowHtml,true);div.appendChild(warning);
-     }}catch(e){console.warn('HTML 渲染结构检查失败',e);}
-   }
- }).catch(error=>{if(!div.isConnected||currentSessionId!==displaySessionId)return;const warning=document.createElement('div');warning.className='row-sub';warning.setAttribute('role','status');warning.textContent=`正则 ${error.code||'E_REGEX_WORKER_FAILED'}：${error.message}；这里显示保存的原文，原数据未改变。`;div.appendChild(warning);});
+function renderMessageToUI(msg,renderTarget=null,displayTasks=null){const box=renderTarget||qs('story-chat-box');const liveMsg=()=>currentSessionData?.messages?.find(m=>m.id===msg.id)||msg;const role=msg.role||'system';const div=document.createElement('article');div.className=`message ${role}-msg`;div.dataset.msgId=msg.id||'';const header=document.createElement('div');header.className='msg-header';const roleName=role==='user'?(currentUser()?.name||'你'):(role==='assistant'?(currentChar()?.name||(currentSessionData?.mode==='sandalphon'?'圣德芬':'角色')):'系统');header.textContent=`${roleName}${msg.isEdited?' · 已编辑':''}${msg.versions?.length?` · ${msg.versions.length} 个旧版本`:''}`;div.appendChild(header);if(role==='assistant'&&MimaStandalone.getApiConfig()?.showThinking!==false){const r=msg.metadata?.thinking;const panel=mimaThinkingPanel(r);if(panel)div.appendChild(panel);for(const [i,item] of (msg.metadata?.thinkingContinuations||[]).entries()){const extra=mimaThinkingPanel(item,'续写 Thinking '+(i+1));if(extra)div.appendChild(extra);}}const content=document.createElement('div');const allowHtml=role==='assistant'&&currentSessionData?.renderMode==='safe_html';content.className=`msg-content tavern-story-content${allowHtml?' safe-html-content':''}`;const displaySessionId=currentSessionId,displaySource=String(msg.content||'');let displayText=displaySource;
+// Never flash unfiltered text before the asynchronous display filter runs.
+// No active rule: keep immediate rendering, including persona macro expansion.
+const needsDisplay=role==='assistant'&&MimaStandalone.hasActiveRegexForSession?.(displaySessionId,'display');
+if(needsDisplay&&displayTasks){
+ div.dataset.mimaDisplayRegex='pending';content.textContent='正在应用显示正则…';
+ displayTasks.push({node:div,content,sessionId:displaySessionId,messageId:msg.id,source:displaySource,allowHtml});
+}else if(needsDisplay){
+ content.textContent='显示正则需要队列处理；请刷新剧情视图。';
+}else{
+ const immediate=role==='assistant'?MimaStandalone.resolveMacrosForSession(displaySessionId,displaySource):displaySource;
+ appendRenderedContent(content,cleanCorruptText(immediate),allowHtml,role==='assistant');
 }
-if(role==='user'||role==='assistant'){const tools=document.createElement('div');tools.className='msg-tools';tools.append(makeToolButton('编辑',()=>openMessageEditor(liveMsg(),false)),makeToolButton('从这里分支',()=>openMessageEditor(liveMsg(),true)),makeToolButton('删除',()=>deleteStoryMessage(liveMsg()),true));if(role==='assistant'&&currentSessionData?.promptSettings?.outputContract?.requireHtml)tools.append(makeToolButton('HTML检测 / 代码补全',()=>reviewStoryHtmlRepair(liveMsg())));if(role==='assistant'&&currentSessionData?.promptSettings?.outputContract?.requireHtml)tools.append(makeToolButton('AI重排（另收费）',()=>reviewStoryAiHtmlRepair(liveMsg())));if(role==='assistant'&&msg.versions?.length)tools.append(makeToolButton('看旧版本',()=>showVersions(liveMsg())));div.appendChild(tools)}box.appendChild(div);return div}
+div.appendChild(content);
+if(role==='user'||role==='assistant'){const tools=document.createElement('div');tools.className='msg-tools';tools.append(makeToolButton('复制原文',()=>copyStoryMessageText(liveMsg())),makeToolButton('编辑',()=>openMessageEditor(liveMsg(),false)),makeToolButton('从这里分支',()=>openMessageEditor(liveMsg(),true)),makeToolButton('删除',()=>deleteStoryMessage(liveMsg()),true));if(role==='assistant'&&currentSessionData?.promptSettings?.outputContract?.requireHtml)tools.append(makeToolButton('HTML检测 / 代码补全',()=>reviewStoryHtmlRepair(liveMsg())));if(role==='assistant'&&currentSessionData?.promptSettings?.outputContract?.requireHtml)tools.append(makeToolButton('AI重排（另收费）',()=>reviewStoryAiHtmlRepair(liveMsg())));if(role==='assistant'&&msg.versions?.length)tools.append(makeToolButton('看旧版本',()=>showVersions(liveMsg())));div.appendChild(tools)}box.appendChild(div);return div}
+async function copyStoryMessageText(message){
+ if(!message)return toast('原消息已不存在，未复制任何内容');
+ try{
+  // Read the canonical message directly: no range selection across thousands
+  // of rendered paragraphs, and no additional huge textarea is mounted on HTTPS.
+  const original=String(message.content??'');
+  await copyTextPortable(original);
+  toast('已复制完整原文 · '+original.length.toLocaleString()+' 字符');
+ }catch(error){
+  console.warn('[Story copy] Clipboard rejected',error);
+  toast('复制失败：'+(error?.message||'剪贴板不可用')+'；可使用剧情导出保存全文');
+ }
+}
 function makeToolButton(text,fn,danger=false){const b=document.createElement('button');b.className=`tool-mini${danger?' danger':''}`;b.textContent=text;b.onclick=fn;return b}
 function appendHtmlRepairDynamicFields(body,candidate){
     if(!Array.isArray(candidate.missingFields)||!candidate.missingFields.length)return;
@@ -3774,6 +3943,19 @@ function restoreLegacyFont(){
 // Expose inline handlers
 Object.assign(window,{openMimaReleaseNotice,closeMimaReleaseNotice,setMimaReleaseNoticeOptOut,openGenerationTaskViewer,closeGenerationTaskViewer,copyGenerationTaskViewerText,importCurrentSessionAsSettingTemplate,chooseIndependentTemplate,saveIndependentTemplate,copyIndependentTemplate,setIndependentTemplateDefault,deleteIndependentTemplate,setImmersiveReading,saveCurrentSettingTemplate,duplicateSettingTemplate,setDefaultSettingTemplate,deleteSettingTemplate,exportSettingTemplate,importSettingTemplate,refreshSettingTemplateChoices,renderSettingTemplatePreview,manualRollingSummary,mimaFilterLibrary,mimaToggleFavorite,goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,choosePngResourceInspection,playInspectedPngInCompat,savePngSelectedResources,exportPngInspection,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,exportStoryTranscript,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,loadMemoryModels,selectMemoryModel,startFactMemoryEdit,cancelFactMemoryEdit,saveFactMemoryEdit,toggleMergeFactSelection,previewFactMemoryMerge,cancelFactMemoryMerge,confirmFactMemoryMerge,undoFactMemoryMerge,clearCoreMemory,deleteFactMemory,clearAllFactMemories,revokeRollingMemory,restoreRollingMemory,discardMemoryCandidate,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,saveUrlFont,activateUrlFont,removeUrlFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,mimaLoadLargeCssForEdit,stopAtelierAndRestoreCss,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,apiIdentityDraftChanged,syncTemperature,updateStoryTypography,resetStoryTypography,setAppearancePreviewSurface,setBuiltInTheme,dismissGenerationPanel,previewFailedGenerationRaw,recoverFailedGenerationRaw,repairFailedGenerationHtml,retryFailedGeneration,retryGenerationReconciliation,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,regenerateCurrentMsg,continueMsg,autoAdvance,restoreMessageVersion,stopGeneration,abandonUnknownGeneration,toggleGenerationPanelMinimize,restoreGenerationPanel,saveGenerationContextAndPreview,resumeGenerationAfterCapacityPreview});
 
+
+window.MimaPlayTools?.register('native',{
+ capture:()=>currentSessionId?{id:currentSessionId,epoch:nativePlayEpoch}:null,
+ host:()=>qs('story-chat-box'),theaterIds:()=>currentSessionData?.theaterCardIds||[],
+ isBusy:()=>generationOwners.has(currentSessionId),draft:()=>qs('story-input')?.value||'',
+ context:()=>({user:currentUser()?.name||'你',char:currentChar()?.name||'角色'}),
+ expand:body=>MimaCompatQuickReply.expand(String(body),{user:currentUser()?.name||'你',char:currentChar()?.name||'角色',input:qs('story-input')?.value||''}),
+ fill:body=>{qs('story-input').value=body;autoResizeInput();r19ComposerInput();},
+ send:(body,ticket,options={})=>{if(currentSessionId!==ticket.id||nativePlayEpoch!==ticket.epoch)throw Error('剧情已切换，未发送');return triggerChat(body,'send',{preserveComposer:true,expectedSessionId:ticket.id,onAccepted:options.onAccepted});},
+ messages:async ticket=>{const r=await fetchStory(`/sessions/${ticket.id}/canonical-view`);if(!r.success)throw Error(r.msg);return r.data.messages.map(m=>({id:m.id,role:m.role,content:m.content}));},
+ mount:async(ids,ticket)=>{if(currentSessionId!==ticket.id||nativePlayEpoch!==ticket.epoch)throw Error('剧情已切换');const saved=await patchCurrent({theaterCardIds:ids},true);if(!saved)throw Error('挂载未保存，原配置保留');refreshChatBox();},
+ reload:()=>loadAll()
+});
 
 window.MimaTavernBridge={
     getSessionId:()=>currentSessionId,

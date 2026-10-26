@@ -9,13 +9,14 @@
   function keywordMatch(hay,keyword,entry={}){const k=clean(keyword);if(!k)return false;if(entry.useRegex)throw Error('E_WORLDBOOK_ASYNC_REQUIRED: 请使用隔离世界书匹配');const a=entry.caseSensitive?String(hay):String(hay).toLocaleLowerCase(),b=entry.caseSensitive?k:k.toLocaleLowerCase();return a.includes(b);}
   async function selectWorldbook(project,worldbooks,directorNote='',signal=null){
     const engine=root.MimaNovelEngine,chapters=engine.orderedChapters(project),activeIndex=Math.max(0,chapters.findIndex(c=>c.id===project.activeChapterId)),past=chapters.slice(0,activeIndex+1);
-    // Each chapter/synopsis/note is a separate eligible message for scanDepth.
+    // Each chapter and synopsis is an eligible scan-depth turn; the current
+    // director instruction shares the newest turn, so it cannot evict current prose.
     // Preserve all selected sources: only the matching window, never stored prose, changes.
     // Scan windows are ordered oldest -> newest. The previous fifth-batch
     // implementation appended *all summaries after all recent chapter texts*;
     // therefore scanDepth=1 usually saw an old summary instead of the active
     // chapter. Interleave each chapter's fresh summary BEFORE its raw text,
-    // and keep the current director note last (it is this turn's newest input).
+    // and pair this turn's director note with the last source when present.
     // Preserve the same three full chapter texts and eight fresh summaries;
     // this only corrects which message each scan-depth window sees.
     const recentTextIds=new Set(past.slice(-3).map(c=>c.id));
@@ -32,7 +33,11 @@
         if(body.trim())scanMessages.push(body);
       }
     }
-    if(String(directorNote??'').trim())scanMessages.push(String(directorNote));
+    if(String(directorNote??'').trim()){
+      const note=String(directorNote);
+      if(scanMessages.length)scanMessages[scanMessages.length-1]+='\n【本轮导演指令】\n'+note;
+      else scanMessages.push(note);
+    }
     const selection=JSON.parse(JSON.stringify(arr(worldbooks).filter(w=>project.worldbookIds.includes(w.id)&&w.enabled!==false)));
     const signature=JSON.stringify(selection),projectSignature=JSON.stringify(project);
     const rows=selection.flatMap(book=>arr(book.entries).map(entry=>({book,entry})));

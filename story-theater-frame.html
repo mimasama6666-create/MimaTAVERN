@@ -1,0 +1,46 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer">
+<!-- Trusted guard: its frame-src also constrains plugin self-navigation. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; connect-src https:; img-src https: data: blob:; media-src https: data: blob:; font-src https: data: blob:; style-src 'unsafe-inline' https:; frame-src blob:; object-src 'none'; form-action 'none'; base-uri 'none'; worker-src 'none'">
+<style>html,body{margin:0;padding:0;background:transparent}iframe{display:block;width:100%;height:100vh;border:0}</style></head><body><script>
+(()=>{'use strict';let started=false;
+function childRuntime(){'use strict';let started=false,port=null,serial=0;const pending=new Map();
+const error=e=>port?.postMessage({type:'error',message:String(e?.message||e)});
+let measuring=false;function measure(){if(measuring)return;measuring=true;requestAnimationFrame(()=>{measuring=false;const h=Math.ceil(document.body.getBoundingClientRect().height);if(Number.isFinite(h))port?.postMessage({type:'height',height:Math.max(40,h)});});}
+const rpc=(method,args)=>new Promise((resolve,reject)=>{if(!port)return reject(new Error('小剧场尚未连接'));const id=++serial;const timeout=setTimeout(()=>{pending.delete(id);reject(Error('小剧场接口等待超时，请检查当前剧情状态'));},30000);pending.set(id,{resolve,reject,timeout});port.postMessage({type:'rpc',id,method,args});});
+document.addEventListener('securitypolicyviolation',e=>error('权限未授权：已阻止 '+e.violatedDirective+' 访问 '+(e.blockedURI||'外部内容')+'。请检查素材编辑页的联网来源。'));
+window.addEventListener('error',e=>error(e.error||e.message));window.addEventListener('unhandledrejection',e=>error(e.reason));
+window.addEventListener('message',async ev=>{if(started||ev.source!==parent||ev.data?.type!=='mima-theater-init'||ev.ports.length!==1)return;started=true;port=ev.ports[0];
+ port.onmessage=e=>{const packet=e.data;if(packet?.type!=='result')return;const task=pending.get(packet.id);if(!task)return;pending.delete(packet.id);clearTimeout(task.timeout);packet.error?task.reject(new Error(packet.error)):task.resolve(packet.value);};
+ const send=text=>{if(!navigator.userActivation?.isActive)return Promise.reject(new Error('请点击小剧场里的按钮后发送'));return rpc('send',{text:String(text)});};
+ if(ev.data.theme?.color)document.documentElement.style.color=ev.data.theme.color;
+ const sdk=Object.freeze({context:Object.freeze(ev.data.context||{}),getMessages:()=>rpc('messages'),getChatMessages:()=>rpc('messages'),send,fill:text=>rpc('fill',{text:String(text)}),resize:measure});
+ Object.defineProperty(window,'MimaTheater',{value:sdk});
+ try{
+  const root=document.getElementById('mima-stage-root'),source=String(ev.data.content??''),trusted=ev.data.access?.runScripts===true;
+  if(ev.data.kind==='js'&&!trusted){root.textContent='此 JS 插件尚未授权运行。请在素材编辑页确认脚本执行及联网权限。';error(Error('脚本未授权，未执行源码'));measure();return;}
+  if(ev.data.kind==='js'){const script=document.createElement('script');script.textContent=source+'\n//# sourceURL=mima-theater-plugin.js';root.append(script);}
+  else{
+   const doc=new DOMParser().parseFromString(source,'text/html');
+   document.body.style.cssText=doc.body.style.cssText;document.body.className=doc.body.className;
+   for(const style of doc.head.querySelectorAll('style,link[rel=stylesheet]'))document.head.append(style.cloneNode(true));
+   root.innerHTML=doc.body.innerHTML;
+   const scripts=[...doc.head.querySelectorAll('script'),...root.querySelectorAll('script')];
+   for(const old of scripts){if(!trusted){old.remove();error(Error('脚本未授权；当前仅展示静态 HTML'));continue;}if(old.src){error(new Error('外链脚本尚未加载；请把依赖与插件打包成完整 HTML 或 JS'));old.remove();continue;}
+    const script=document.createElement('script');if(old.type)script.type=old.type;script.textContent=old.textContent;if(root.contains(old))old.replaceWith(script);else root.append(script);
+   }
+  }
+  new ResizeObserver(measure).observe(document.body);new MutationObserver(measure).observe(document.body,{childList:true,subtree:true,attributes:true});
+  measure();port.postMessage({type:'ready'});
+ }catch(e){error(e);} });
+}
+document.addEventListener('securitypolicyviolation',e=>parent.postMessage({type:'mima-theater-guard-error',message:'已阻止小剧场页面导航或嵌入外部页面：'+e.violatedDirective},'*'));
+window.addEventListener('message',ev=>{if(started||ev.source!==parent||ev.data?.type!=='mima-theater-init'||ev.ports.length!==1)return;started=true;
+ const origins=[];for(const raw of ev.data.access?.origins||[])try{const u=new URL(raw);if(u.protocol==='https:'&&!u.username&&!u.password&&u.pathname==='/'&&!u.search&&!u.hash)origins.push(u.origin);}catch{}
+ const trusted=ev.data.access?.runScripts===true,nonce=Array.from(crypto.getRandomValues(new Uint8Array(16)),n=>n.toString(16).padStart(2,'0')).join(''),sources=trusted?'https: wss:':origins.join(' '),scripts=trusted?"'unsafe-inline' 'unsafe-eval'":"'nonce-"+nonce+"'",policy="default-src 'none'; script-src "+scripts+"; connect-src "+(sources||"'none'")+"; img-src data: blob: "+sources+"; media-src data: blob: "+sources+"; font-src data: blob: "+sources+"; style-src 'unsafe-inline' "+sources+"; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'; worker-src 'none'";
+ const markup='<meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="'+policy+'"><style>html,body{margin:0;padding:0;background:transparent;color:inherit;font:15px/1.6 system-ui,sans-serif}body,#mima-stage-root{display:flow-root;overflow-wrap:anywhere}*{box-sizing:border-box}img,video{max-width:100%}button{font:inherit;cursor:pointer}</style><div id="mima-stage-root"></div><script nonce="'+nonce+'">('+childRuntime.toString()+')()<\/script>';
+ const frame=document.createElement('iframe');frame.sandbox='allow-scripts';frame.referrerPolicy='no-referrer';frame.title='小剧场内容';const url=URL.createObjectURL(new Blob([markup],{type:'text/html'}));frame.src=url;
+ frame.addEventListener('load',()=>frame.contentWindow.postMessage(ev.data,'*',ev.ports),{once:true});document.body.append(frame);
+ window.addEventListener('pagehide',()=>URL.revokeObjectURL(url),{once:true});
+});
+})();
+</script></body></html>

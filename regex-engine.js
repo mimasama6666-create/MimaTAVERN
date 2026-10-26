@@ -68,7 +68,7 @@
     return { ok:invalid.length===0, pack:normalized, invalid };
   }
 
-  function applicable(packs,phase){return arr(packs).some(p=>p&&p.enabled!==false&&arr(p.rules).some(r=>r&&r.enabled!==false&&r.phase===phase));}
+  function applicable(packs,phase){return arr(packs).some(p=>p&&p.enabled!==false&&arr(p.rules).some(r=>r&&r.enabled!==false&&(r.phase||'display')===phase));}
   // Synchronous evaluation is forbidden for user-supplied expressions: a
   // RegExp has no built-in deadline and can freeze the UI before a timer fires.
   function apply(input,packs=[],phase='display',diagnostics=null) {
@@ -91,7 +91,14 @@
       const abort=()=>{if(cleanup())reject(failure('E_REGEX_ABORTED','正则操作已取消；原文保留'));};
       try{worker=new Worker(new URL('./regex-native-worker.js?native=20261025-r3',document.baseURI),{name:'mima-native-regex'});}
       catch(e){reject(failure('E_REGEX_ISOLATION_UNAVAILABLE','正则隔离启动失败：'+(e?.message||e)));return;}
-      worker.onmessage=event=>{if(!cleanup())return;const packet=event.data;if(packet?.ok)resolve(packet.results);else reject(failure('E_REGEX_WORKER_FAILED',packet?.error||'正则线程执行失败'));};
+      worker.onmessage=event=>{
+        if(!cleanup())return;const packet=event.data;
+        if(!packet?.ok){reject(failure('E_REGEX_WORKER_FAILED',packet?.error||'正则线程执行失败'));return;}
+        if(!Array.isArray(packet.results)||packet.results.length!==list.length||packet.results.some(r=>!r||typeof r.output!=='string'||!Array.isArray(r.diagnostics))){reject(failure('E_REGEX_BATCH_MALFORMED','正则线程返回不完整；未采用部分结果'));return;}
+        const diagnostics=packet.results.flatMap(r=>r.diagnostics);
+        if(diagnostics.length){const e=failure('E_REGEX_RULE_FAILED',diagnostics.map(d=>`${d?.packName||'正则包'} / ${d?.ruleName||'规则'}：${d?.error||'无效诊断'}`).join('；'));e.diagnostics=diagnostics;reject(e);return;}
+        resolve(packet.results);
+      };
       worker.onerror=event=>{if(cleanup())reject(failure('E_REGEX_WORKER_FAILED','正则隔离线程异常：'+(event?.message||'未知错误')));};
       timer=setTimeout(()=>{if(cleanup())reject(failure('E_REGEX_BUDGET',`正则执行超过 ${budgetMs} 毫秒；已终止线程，原文完整保留`));},budgetMs);
       if(options.signal?.aborted){abort();return;}
