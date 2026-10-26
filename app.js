@@ -929,7 +929,7 @@ function setupImmersiveReading(){
 }
 // User-facing release notes: once per distinct production release by default.
 // Avoid touching Store/History or making automatic announcements mandatory.
-const MIMA_RELEASE_NOTES_VERSION='R19-20261027-BATCH8-PLAYTOOLS-REWORK-DEV';
+const MIMA_RELEASE_NOTES_VERSION='R19-20261027-BATCH8-PLAYTOOLS-REWORK2-DEV';
 const MIMA_RELEASE_NOTES_SEEN='mima-release-notes-seen:'+MIMA_RELEASE_NOTES_VERSION;
 const MIMA_RELEASE_NOTES_OPTOUT='mima-release-notes-disable-auto-v1';
 function openMimaReleaseNotice(){
@@ -3070,7 +3070,11 @@ function handleGenerationProgress(payload,owner=currentGenerationOwner()){
     if(payload?.generationId&&Number.isFinite(Number(payload.attempt))){
         owner.generationId=payload.generationId;owner.generationAttempt=Number(payload.attempt);
     }
-    if(payload?.phase==='saved_user'){owner.userSaved=true;clearSubmittedDraft(owner);if(!owner.acceptedNotified){owner.acceptedNotified=true;try{owner.onAccepted?.({accepted:true,status:'accepted',sessionId:owner.sessionId,generationId:owner.generationId});}catch(e){console.error('游玩工具发送回执显示失败',e);}}}
+    if(payload?.phase==='saved_user'){
+        if(payload.sessionId!==owner.sessionId||payload.traceId!==owner.traceId||typeof payload.messageId!=='string'||!payload.messageId||!Number.isSafeInteger(payload.recordRevision)||payload.recordRevision<1){console.warn('忽略未绑定正确剧情/请求的消息保存回执');return;}
+        owner.userSaved=true;owner.userMessageId=payload.messageId;clearSubmittedDraft(owner);
+        if(!owner.acceptedNotified){owner.acceptedNotified=true;try{owner.onAccepted?.({accepted:true,status:'accepted',sessionId:owner.sessionId,messageId:owner.userMessageId,generationId:owner.generationId});}catch(e){console.error('游玩工具发送回执显示失败',e);}}
+    }
     if(payload?.thinkingText!==undefined)owner.thinkingProgress=String(payload.thinkingText||'');
     let blocked=false;
     if(payload?.streamText!==undefined){
@@ -3349,6 +3353,17 @@ async function triggerChat(text,actionType='send',generationOptions={}){
         const res=await fetchStory(`/sessions/${targetSessionId}/chat`,'POST',
             {text,action:actionType,temperature:getTemp(),directorNote,targetMessageId,regenerationContext:generationOptions.regenerationContext||'original',retryParameters:generationOptions.retryParameters||'original',confirmUnknownTakeover:generationOptions.confirmUnknownTakeover===true,expectedRecordRevision:verifiedSession?.recordRevision??null,expectedSourceFingerprint:verifiedSession?MimaStandalone.memorySourceFingerprint(verifiedSession.messages,verifiedSession.messages.length):null,diagnosticTurnId:String(owner.turnId),diagnosticTraceId:owner.traceId},false,
             payload=>handleGenerationProgress(payload,owner),owner.controller.signal);
+        // Validate every successful response before publishing any acceptance,
+        // including background replies. A boolean success is not a durable receipt.
+        if(res.success){
+            if(res.data?.id!==targetSessionId)throw new Error('E_GENERATION_WRONG_SESSION: 回复的会话身份不匹配');
+            if(actionType==='send'&&!owner.userSaved){
+                const canonical=await fetchStory(`/sessions/${targetSessionId}/canonical-view`);
+                const user=canonical.success&&canonical.data?.id===targetSessionId&&arr(canonical.data.messages).find(m=>m.role==='user'&&m.metadata?.submissionTraceId===owner.traceId);
+                if(!user)throw new Error('E_GENERATION_ACCEPTANCE_UNVERIFIED: 本轮用户消息尚未确认写入正确剧情，请核对原记录；没有自动重发。');
+                owner.userSaved=true;owner.userMessageId=user.id;
+            }
+        }
         receipt={accepted:owner.userSaved||res.success===true,status:res.success?'sent':res.aborted?'aborted':'failed',sessionId:targetSessionId,reason:res.success?'回复已保存':res.msg||'用户消息可能已提交，但生成未完成，请查看剧情状态'};
         if(receipt.accepted&&!owner.acceptedNotified){owner.acceptedNotified=true;try{owner.onAccepted?.(receipt);}catch(e){console.error('游玩工具发送回执显示失败',e);}}
         if(!res.success&&!res.aborted&&generationOwners.get(targetSessionId)===owner){
@@ -3371,7 +3386,6 @@ async function triggerChat(text,actionType='send',generationOptions={}){
                 const panel=qs('generation-panel');setTimeout(()=>{if(currentSessionId===targetSessionId&&!currentGenerationOwner())panel?.classList.add('hidden')},900);
                 await reconcileCanonicalGenerationSession(targetSessionId);
             }else if(res.success){
-                if(res.data?.id!==targetSessionId)throw new Error('E_GENERATION_WRONG_SESSION: 回复的会话身份不匹配');
                 clearSubmittedDraft(owner);
                 currentSessionData=res.data;updateGenerationTaskViewerShortcut();
                 refreshChatBox(preservedReaderAnchor?{readerAnchor:preservedReaderAnchor,scrollToBottom:false}:preserveReading?{scrollTop:preservedScrollTop}:{scrollToBottom:true});
@@ -4049,6 +4063,8 @@ async function mimaBoot(){
         stage='load_library_and_session';
         await loadAll();
         mimaStartupReady=true;
+        // Resume only recorded deletions; imported orphan references require the explicit tools action.
+        void window.MimaPlayTools?.recoverUnlinks().then(ok=>{if(ok===false)toast('小剧场挂载清理未完成，可在小剧场页重试；剧情原文保留。');}).catch(e=>{console.error('小剧场清理恢复失败',e);toast('小剧场挂载清理未完成，可在小剧场页重试；剧情原文保留。');});
         document.getElementById('mima-startup-failure')?.remove();
         if(!MimaStandalone.getApiConfig().apiBase)setTimeout(maybeOpenInitialApiSettings,250);
         setTimeout(maybeShowMimaReleaseNotice,350);

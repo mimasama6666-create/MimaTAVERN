@@ -3077,11 +3077,11 @@
     const diagnosticId=journal?.begin?.({sessionId:id,turnId:options.diagnosticTurnId||'',traceId:options.diagnosticTraceId||'',action,
       attemptId:retryPending?.id||''});
     let diagnosticCandidate='';
-    let unsavedUserInput=false,commitStarted=false;
+    let unsavedUserInput=false,commitStarted=false,submittedMessageId=null;
     if(action==='send'&&!retryPending){
       if(!String(userText||'').trim())throw new ApiError('E_STORY_EMPTY_INPUT','还没有输入内容猫！',{hint:'请输入动作、语言或剧情后再发送。'});
       const originalUserText=String(userText||'');const transformedUserText=await applyRegexForSessionAsync(session,originalUserText,'input',null,{signal});
-      const userMsg=makeMessage('user',transformedUserText,session,{source:'manual_send',regexInputApplied:transformedUserText!==originalUserText,inputSemanticMode:inputSemanticMode(session),inputSemanticParserVersion:'1.1.7'});userMsg.rawContent=originalUserText;session.messages.push(userMsg);
+      const userMsg=makeMessage('user',transformedUserText,session,{source:'manual_send',submissionTraceId:String(options.diagnosticTraceId||''),regexInputApplied:transformedUserText!==originalUserText,inputSemanticMode:inputSemanticMode(session),inputSemanticParserVersion:'1.1.7'});userMsg.rawContent=originalUserText;session.messages.push(userMsg);submittedMessageId=userMsg.id;
       unsavedUserInput=true;
     }
     let sourceBeforeReply,target=null,opts,cfg,built=null,requestBody=null,snapshot=null,messages,pending;
@@ -3163,7 +3163,7 @@
     commitStarted=true;
     session=await saveSession({...session,pendingGeneration:pending,lastGeneration:{id:pending.id,attempt:pending.attempt,action:pending.action,status:'prepared',preparedAt:pending.preparedAt}});
     emitProgress(progress,{phase:'generation_prepared',generationId:pending.id,attempt:pending.attempt,percent:38,detail:'本轮请求已持久准备；正在进行恢复账本核对。'});
-    if(unsavedUserInput){unsavedUserInput=false;emitProgress(progress,{phase:'saved_user',generationId:pending.id,attempt:pending.attempt,percent:38,detail:'主人消息与本轮请求已安全写入本地剧情。'});}
+    if(unsavedUserInput){unsavedUserInput=false;emitProgress(progress,{phase:'saved_user',sessionId:id,messageId:submittedMessageId,recordRevision:session.recordRevision,traceId:String(options.diagnosticTraceId||''),generationId:pending.id,attempt:pending.attempt,percent:38,detail:'主人消息与本轮请求已安全写入本地剧情。'});}
     }catch(preparationError){
       // Distinguish local, zero-Provider-call rejection from network/Provider
       // failure and retain it by traceId even if the prompt never existed.
@@ -3179,7 +3179,7 @@
       // Invalid presets/budget/assembly must not discard a submitted player
       // message. A failed CAS is never retried against newer canonical data.
       if(unsavedUserInput&&!commitStarted){
-        try{session=await saveSession(session);emitProgress(progress,{phase:'saved_user',percent:14,detail:'主人消息已保留；本轮请求准备失败，尚未发送。'});}
+        try{session=await saveSession(session);emitProgress(progress,{phase:'saved_user',sessionId:id,messageId:submittedMessageId,recordRevision:session.recordRevision,traceId:String(options.diagnosticTraceId||''),percent:14,detail:'主人消息已保留；本轮请求准备失败，尚未发送。'});}
         catch(storageError){console.error('请求准备失败且玩家消息保存失败；未覆盖新时间线',{sessionId:id,error:storageError});}
       }
       throw preparationError;

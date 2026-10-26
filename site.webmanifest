@@ -1,0 +1,25 @@
+{
+  "name": "咪嘛馆 · MimaTAVERN",
+  "short_name": "咪嘛馆",
+  "description": "咪嘛馆 · 独立版",
+  "lang": "zh-CN",
+  "start_url": "./",
+  "scope": "./",
+  "display": "browser",
+  "background_color": "#fff0f8",
+  "theme_color": "#dfe1e4",
+  "icons": [
+    {
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

@@ -5,7 +5,7 @@
  let frameTemplatePromise=null;
  function frameTemplate(){if(!frameTemplatePromise)frameTemplatePromise=fetch('./story-theater-frame.html?playtools=20261027-2',{credentials:'same-origin'}).then(r=>{if(!r.ok)throw Error('小剧场运行页读取失败：'+r.status);return r.text();}).catch(e=>{frameTemplatePromise=null;throw e;});return frameTemplatePromise;}
  let navigationTail=Promise.resolve(),unlinkTail=Promise.resolve();
- const drafts=new Map();let draftsLoaded=false,draftWrite=Promise.resolve(),draftTimer=null,draftStamp='';
+ const drafts=new Map();let draftsLoaded=false,draftWrite=Promise.resolve(),draftTimer=null,draftRevision=0,persistedDraftRevision=0,pendingDraft=null;
  const uniqueId=()=>Array.from(crypto.getRandomValues(new Uint8Array(16)),n=>n.toString(16).padStart(2,'0')).join('');
  let draftId;try{draftId=sessionStorage.getItem('mima-play-draft-id')||uniqueId();sessionStorage.setItem('mima-play-draft-id',draftId);}catch{draftId=String(Date.now());}
  let library={theaterCards:[],quickCommands:[]},dialog=null,scope='native',tab='commands',editing=null,query='',statusNode=null,bodyNode=null,view=0;
@@ -16,27 +16,66 @@
  const button=(label,fn,parent,cls='ghost-btn')=>node('button',{type:'button',className:cls,text:label,onclick:()=>Promise.resolve().then(fn).catch(showError)},parent);
  const table=()=>tab==='theater'?'theaterCards':'quickCommands';
  const endpoint=t=>t==='theaterCards'?'theater-cards':'quick-commands';
- const dirty=item=>!!item&&JSON.stringify(item.data)!==item.base;
- async function loadDrafts(){if(draftsLoaded)return;const saved=await root.MimaLocalStore.getPlayToolLocal('draft:'+draftId);for(const key of ['theaterCards','quickCommands'])if(saved?.[key]?.data)drafts.set(key,saved[key]);draftsLoaded=true;draftStamp=JSON.stringify(Object.fromEntries(drafts));}
- function persistDrafts(){clearTimeout(draftTimer);const value=Object.fromEntries(drafts),stamp=JSON.stringify(value);const task=draftWrite.then(()=>root.MimaLocalStore.putPlayToolLocal('draft:'+draftId,value));draftWrite=task.catch(()=>{});return task.then(()=>{draftStamp=stamp;});}
- async function retainEdit(){if(editing?.saving)throw Error('素材正在保存，请稍候再切页或关闭。');captureEdit();if(editing){if(dirty(editing))drafts.set(editing.table,editing);else drafts.delete(editing.table);}await persistDrafts();}
- function scheduleDraft(){captureEdit();if(!editing)return;if(dirty(editing))drafts.set(editing.table,editing);else drafts.delete(editing.table);clearTimeout(draftTimer);draftTimer=setTimeout(()=>{void persistDrafts().then(()=>{if(editing&&dialog?.open)statusNode.textContent=dirty(editing)?'未保存；草稿已保留在此浏览器，可切页或关闭后继续。':'';}).catch(showError);},300);}
+ const editFields=['name','category','content','enabled','kind','mode','runScripts','readMessages','origins'];
+ function editSnapshot(d){return {name:d.name||'',category:d.category||'',content:d.content||'',enabled:d.enabled!==false,kind:d.kind,mode:d.mode,runScripts:d.access?.runScripts===true,readMessages:d.access?.readMessages===true,origins:arr(d.access?.origins).join('\n')};}
+ function prepareDraft(item){
+  if(!item.baseFields){let base=item.data;if(typeof item.base==='string')base=JSON.parse(item.base);item.baseFields=editSnapshot(base);}
+  delete item.base;delete item.saving;item.changed={};const now=editSnapshot(item.data);for(const key of editFields)if(now[key]!==item.baseFields[key])item.changed[key]=true;
+  item.editRevision=0;item.draftEditRevision=0;return item;
+ }
+ const dirty=item=>!!item&&Object.keys(item.changed||{}).length>0;
+ function dropDraft(key){if(drafts.delete(key))draftRevision++;}
+ function syncDraft(){if(!editing)return;if(!dirty(editing)){dropDraft(editing.table);return;}if(drafts.get(editing.table)!==editing||editing.draftEditRevision!==editing.editRevision){drafts.set(editing.table,editing);editing.draftEditRevision=editing.editRevision;draftRevision++;}}
+ async function loadDrafts(){if(draftsLoaded)return;const saved=await root.MimaLocalStore.getPlayToolLocal('draft:'+draftId);for(const key of ['theaterCards','quickCommands'])if(saved?.[key]?.data)drafts.set(key,prepareDraft(saved[key]));draftsLoaded=true;}
+ function persistDrafts(){
+  clearTimeout(draftTimer);draftTimer=null;const revision=draftRevision;
+  if(revision===persistedDraftRevision)return Promise.resolve();
+  if(pendingDraft?.revision===revision)return pendingDraft.task;
+  // Only snapshot at a real write boundary; input events never serialize source.
+  const value=structuredClone(Object.fromEntries([...drafts].map(([key,item])=>[key,{table:item.table,id:item.id,data:item.data,baseFields:item.baseFields}])));
+  const write=draftWrite.then(()=>root.MimaLocalStore.putPlayToolLocal('draft:'+draftId,value));draftWrite=write.catch(()=>{});
+  const task=write.then(()=>{persistedDraftRevision=Math.max(persistedDraftRevision,revision);});pendingDraft={revision,task};
+  void task.then(()=>{if(pendingDraft?.task===task)pendingDraft=null;},()=>{if(pendingDraft?.task===task)pendingDraft=null;});return task;
+ }
+ async function retainEdit(){if(editing?.saving)throw Error('素材正在保存，请稍候再切页或关闭。');captureEdit();syncDraft();await persistDrafts();}
+ function scheduleDraft(event){captureEdit(event?.target);if(!editing)return;syncDraft();clearTimeout(draftTimer);draftTimer=setTimeout(()=>{void persistDrafts().then(()=>{if(editing&&dialog?.open)statusNode.textContent=dirty(editing)?'未保存；草稿已保留在此浏览器，可切页或关闭后继续。':'';}).catch(showError);},300);}
  async function closeTools(){await retainEdit();dialog.close();}
  function switchTab(next){const task=navigationTail.then(async()=>{if(next===tab)return;await retainEdit();tab=next;editing=drafts.get(table())||null;query='';paint();});navigationTail=task.catch(()=>{});return task;}
- async function unlinkJobs(){return await root.MimaLocalStore.listPlayToolLocal('unlink-job:');}
+ async function unlinkJobs(){const jobs=await root.MimaLocalStore.listPlayToolLocal('unlink-job:');if(jobs.some(job=>!job||typeof job.operationId!=='string'||typeof job.id!=='string'||!Array.isArray(job.affected)))throw Error('挂载清理记录格式异常，原记录保留；没有清空资料库。');return jobs;}
+ async function recoverUnlinks(discover=false){
+  if(!discover&&!(await unlinkJobs()).some(job=>job.phase!=='complete'))return true;
+  await load();
+  if(discover&&root.MimaCompatStore){
+   const existing=new Set((await unlinkJobs()).filter(j=>j.phase!=='complete').map(j=>j.id));
+   const available=new Set(library.theaterCards.map(x=>x.id));
+   for(const session of await root.MimaCompatStore.all('compat_sessions'))for(const id of arr(session.theaterCardIds))if(!available.has(id)&&!existing.has(id)){
+    const operationId=uniqueId();await root.MimaLocalStore.putPlayToolLocal('unlink-job:'+operationId,{operationId,id,phase:'delete-requested',source:'orphan-recovery',affected:[],createdAt:new Date().toISOString(),error:''});existing.add(id);
+   }
+  }
+  return reconcileUnlinks();
+ }
  function reconcileUnlinks(){const task=unlinkTail.then(async()=>{if(!root.MimaCompatStore)return;const jobs=await unlinkJobs();let failure='';
-  for(const job of jobs){if(job.phase==='complete'||library.theaterCards.some(x=>x.id===job.id))continue;
+  for(const job of jobs){if(job.phase==='complete')continue;
+   library=await route('/play-tools');
+   if(library.theaterCards.some(x=>x.id===job.id)){if(job.phase!=='paused-source-present'){job.phase='paused-source-present';job.error='素材已恢复，旧删除清理暂停，保留恢复后的挂载。';await root.MimaLocalStore.putPlayToolLocal('unlink-job:'+job.operationId,job);}continue;}
    try{job.phase='compat-cleanup';job.error='';await root.MimaLocalStore.putPlayToolLocal('unlink-job:'+job.operationId,job);
     for(const session of await root.MimaCompatStore.all('compat_sessions'))if(arr(session.theaterCardIds).includes(job.id)){
      let step=job.affected.find(x=>x.sessionId===session.id&&x.expectedRevision===session.revision);if(!step){step={sessionId:session.id,expectedRevision:session.revision,originalIds:[...session.theaterCardIds],phase:'prepared'};job.affected.push(step);await root.MimaLocalStore.putPlayToolLocal('unlink-job:'+job.operationId,job);}
      const saved=await root.MimaCompatStore.putCAS('compat_sessions',{...session,theaterCardIds:session.theaterCardIds.filter(x=>x!==job.id)},session.revision);step.phase='committed';step.revision=saved.revision;await root.MimaLocalStore.putPlayToolLocal('unlink-job:'+job.operationId,job);
+    }
+    // A crash can occur after the CAS but before writing its receipt. Verify
+    // the actual reference rather than repeating a completed mutation.
+    for(const step of job.affected)if(step.phase==='prepared'){
+     const current=await root.MimaCompatStore.get('compat_sessions',step.sessionId);
+     if(current&&arr(current.theaterCardIds).includes(job.id))throw Error('兼容挂载仍存在，原操作尚未完成');
+     step.phase=current?'reconciled':'session-absent';if(current)step.revision=current.revision;
     }
     job.phase='complete';job.completedAt=new Date().toISOString();await root.MimaLocalStore.putPlayToolLocal('unlink-job:'+job.operationId,job);
    }catch(e){job.error=e.message;failure='素材删除已提交；兼容挂载清理未完成，可点“重试清理挂载”。'+e.message;await root.MimaLocalStore.putPlayToolLocal('unlink-job:'+job.operationId,job);}
   }
   if(failure){if(statusNode)statusNode.textContent=failure;return false;}return true;
  });unlinkTail=task.catch(()=>{});return task;}
- window.addEventListener('beforeunload',e=>{captureEdit();if(editing&&dirty(editing))drafts.set(editing.table,editing);if(JSON.stringify(Object.fromEntries(drafts))!==draftStamp){void persistDrafts().catch(()=>{});e.preventDefault();e.returnValue='编辑草稿仍未保存';}});
+ window.addEventListener('beforeunload',e=>{captureEdit();syncDraft();if(draftRevision!==persistedDraftRevision){void persistDrafts().catch(()=>{});e.preventDefault();e.returnValue='编辑草稿仍未保存';}});
  function provider(name=scope){return providers.get(name);}
  function capture(name=scope){const p=provider(name),owner=p?.capture();return owner?{...owner,scope:name}:null;}
  function live(ticket){const now=capture(ticket?.scope);return !!ticket&&!!now&&now.id===ticket.id&&now.epoch===ticket.epoch;}
@@ -114,7 +153,7 @@
   if(drafts.has(table())){const note=node('div',{className:'mima-play-note',text:'有未保存的编辑草稿。'},bodyNode);button('继续草稿',()=>{editing=drafts.get(table());paint();},note);button('放弃草稿',discardDraft,note);}
   node('p',{className:'mima-play-note',text:tab==='theater'?'素材保存在共用库，勾选后只挂载到当前剧情的开场白之前。支持普通 HTML 与 JS；酒馆专用接口尚不保证等价。':'点指令即可发送，也可只填入输入框。支持自建指令、JSON 指令集和酒馆 Quick Reply v2 的手动文本按钮。'},bodyNode);
   const tools=node('div',{className:'mima-play-toolbar'},bodyNode);button(tab==='theater'?'＋ 新建小剧场':'＋ 新建指令',()=>edit(null),tools,'primary-btn');
-  if(tab==='theater')button('重试清理挂载',async()=>{await load();const ok=await reconcileUnlinks();for(const p of providers.values())await p.reload?.();if(ok)statusNode.textContent='删除引用清理已完成；原始挂载记录保留在本地清理日志。';},tools);
+  if(tab==='theater')button('重试清理挂载',async()=>{const ok=await recoverUnlinks(true);for(const p of providers.values())await p.reload?.();if(ok)statusNode.textContent='清理已完成；已核对失效引用，原始挂载记录保留在本机。已恢复素材的旧清理任务保持暂停。';},tools);
   button('导入',chooseImport,tools);button('导出全部',exportResources,tools);
   if(tab==='theater'&&!library.theaterCards.length)button('添加示例小剧场',()=>importFiles([new File(['<style>body{padding:18px;background:linear-gradient(120deg,#f3e8dc,#e6d9cb);color:#544232;border-radius:16px}h3{margin:0 0 8px}button{border:1px solid #b49d83;border-radius:12px;background:#fff8;padding:8px 14px;color:inherit}</style><h3>☕ 开场之前，喝杯咖啡</h3><p>这里可以放欢迎卡、角色面板，或你自己的互动小剧场。</p><button id="stage-next">开始下一幕</button><script>document.getElementById("stage-next").onclick=()=>MimaTheater.send("请自然推进下一幕剧情。").catch(e=>document.querySelector("p").textContent=e.message)</script>'],'咖啡小剧场.html',{type:'text/html'})]),tools);
   if(tab==='commands'&&!library.quickCommands.length)button('添加“推进剧情”',async()=>{await route('/quick-commands','POST',{name:'推进剧情',mode:'send',content:'请根据前文、当前场景和人物的行动，自然推进接下来的剧情。'});await changed();paint();},tools);
@@ -133,8 +172,13 @@
   }
   if(tab==='theater')for(const id of ids)if(!records.some(r=>r.id===id)){const row=node('div',{className:'mima-play-row'},list);node('p',{text:'挂载的小剧场素材已不存在：'+id},row);button('取消失效挂载',()=>toggleMount(id,false,ticket),row);}
  }
- async function edit(resource){const existing=drafts.get(table());if(existing&&existing.id!==(resource?.id||null)&&!confirm('此页已有未保存草稿。放弃旧草稿并编辑另一项？')){editing=existing;paint();return;}const data=resource?structuredClone(resource):{name:'',category:'',content:'',enabled:true,...(tab==='theater'?{kind:'html',access:{readMessages:false,origins:[]}}:{mode:'send'})};editing={table:table(),id:resource?.id||null,data,base:JSON.stringify(data)};drafts.delete(table());await persistDrafts();paint();}
- async function discardDraft(){if(!confirm('明确放弃此页未保存的内容？'))return;drafts.delete(table());editing=null;await persistDrafts();paint();statusNode.textContent='已放弃草稿，已保存素材未删除。';}
+ async function edit(resource){const existing=drafts.get(table());if(existing&&existing.id===(resource?.id||null)){editing=existing;paint();return;}if(existing&&existing.id!==(resource?.id||null)&&!confirm('此页已有未保存草稿。放弃旧草稿并编辑另一项？')){editing=existing;paint();return;}const data=resource?structuredClone(resource):{name:'',category:'',content:'',enabled:true,...(tab==='theater'?{kind:'html',access:{readMessages:false,origins:[]}}:{mode:'send'})};editing={table:table(),id:resource?.id||null,data,baseFields:editSnapshot(data),changed:{},editRevision:0};dropDraft(table());await persistDrafts();paint();}
+ async function discardDraft(){if(editing?.saving)throw Error('素材正在保存，请稍候再操作。');if(!confirm('明确放弃此页未保存的内容？'))return;
+  const key=table(),previous=editing,previousDraft=drafts.get(key),revision=draftRevision,controls=[...bodyNode.querySelectorAll('input,textarea,select,button')];for(const el of controls)el.disabled=true;
+  dropDraft(key);editing=null;try{await persistDrafts();paint();statusNode.textContent='已放弃草稿，已保存素材未删除。';}
+  catch(e){if(previousDraft)drafts.set(key,previousDraft);draftRevision=revision;editing=previous;throw e;}
+  finally{for(const el of controls)if(el.isConnected)el.disabled=false;}
+ }
  function field(label,id,value,kind='input',parent=bodyNode){const l=node('label',{text:label},parent),f=node(kind,{id,className:'field'},l);f.value=value??'';return f;}
  function paintEditor(){const form=node('div',{className:'mima-play-editor'},bodyNode),d=editing.data;field('名称','mima-play-name',d.name,'input',form);field('分类（可留空）','mima-play-category',d.category,'input',form);
   const select=field(tab==='theater'?'类型':'点击后的操作','mima-play-mode','','select',form);for(const[value,label]of tab==='theater'?[['html','HTML 卡片'],['js','JS 插件']]:[['send','直接发送'],['fill','仅填入输入框']])node('option',{value,text:label},select);select.value=tab==='theater'?d.kind:d.mode;
@@ -150,12 +194,23 @@
   node('p',{className:'mima-play-note',text:'未保存编辑会自动保留为此浏览器草稿；切页、关闭后可继续。刷新前若草稿仍在写入，会提醒。'},form);
   const actions=node('div',{className:'mima-play-actions'},form);button('保存',saveEdit,actions,'primary-btn');button('返回列表',async()=>{await retainEdit();editing=null;paint();statusNode.textContent='编辑未提交，草稿已保留。';},actions);button('放弃草稿',discardDraft,actions);
  }
- function captureEdit(){if(!editing||!$('mima-play-name'))return;const d=editing.data,isTheater=editing.table==='theaterCards',kind=$('mima-play-mode').value,content=$('mima-play-content').value;
-  if(isTheater){if(d.content!==content||d.kind!==kind){$('mima-play-scripts').checked=false;$('mima-play-read').checked=false;$('mima-play-origins').value='';}d.access={runScripts:$('mima-play-scripts').checked,readMessages:$('mima-play-read').checked,origins:$('mima-play-origins').value.split(/[\n,]+/).map(x=>x.trim()).filter(Boolean)};}
-  Object.assign(d,{name:$('mima-play-name').value,category:$('mima-play-category').value,content,enabled:$('mima-play-enabled').checked,[isTheater?'kind':'mode']:kind});}
+ function captureEdit(target=null){if(!editing||!$('mima-play-name'))return;const d=editing.data,isTheater=editing.table==='theaterCards',full=!target,id=target?.id;let changed=false;
+  const update=(key,value)=>{if(d[key]!==value){d[key]=value;changed=true;}if(value!==editing.baseFields[key])editing.changed[key]=true;else delete editing.changed[key];};
+  const contentChanged=(full||id==='mima-play-content')&&d.content!==$('mima-play-content').value;
+  const kindChanged=(full||id==='mima-play-mode')&&d[isTheater?'kind':'mode']!==$('mima-play-mode').value;
+  if(isTheater&&(contentChanged||kindChanged)){$('mima-play-scripts').checked=false;$('mima-play-read').checked=false;$('mima-play-origins').value='';}
+  for(const [key,field]of [['name','mima-play-name'],['category','mima-play-category'],['content','mima-play-content'],[isTheater?'kind':'mode','mima-play-mode']])if(full||id===field)update(key,$(field).value);
+  if(full||id==='mima-play-enabled')update('enabled',$('mima-play-enabled').checked);
+  if(isTheater&&(full||contentChanged||kindChanged||['mima-play-scripts','mima-play-read','mima-play-origins'].includes(id))){
+   const access={runScripts:$('mima-play-scripts').checked,readMessages:$('mima-play-read').checked,origins:$('mima-play-origins').value.split(/[\n,]+/).map(x=>x.trim()).filter(Boolean)};
+   for(const key of ['runScripts','readMessages','origins']){const value=key==='origins'?access.origins.join('\n'):access[key],previous=key==='origins'?arr(d.access?.origins).join('\n'):d.access?.[key]===true;if(value!==previous)changed=true;if(value!==editing.baseFields[key])editing.changed[key]=true;else delete editing.changed[key];}d.access=access;
+  }
+  if(changed)editing.editRevision++;
+ }
+
  async function saveEdit(){captureEdit();const item=editing;if(!item||item.saving)return;item.saving=true;const controls=[...bodyNode.querySelectorAll('input,textarea,select,button')];for(const el of controls)el.disabled=true;statusNode.textContent='正在保存，编辑区暂时锁定。';let saved;
   try{saved=await route('/'+endpoint(item.table)+(item.id?'/'+item.id:''),item.id?'PATCH':'POST',{...item.data,...(item.table==='theaterCards'?{accessGrant:item.data.access||{}}:{})});
-   item.id=saved.id;item.data=structuredClone(saved);item.base=JSON.stringify(item.data);drafts.delete(item.table);await persistDrafts();await changed();if(editing===item){editing=null;paint();statusNode.textContent='已保存'+(item.table==='theaterCards'?'；请勾选挂载到当前剧情。':'，点击即可使用。');}return saved;
+   item.id=saved.id;item.data=structuredClone(saved);item.baseFields=editSnapshot(item.data);item.changed={};dropDraft(item.table);await persistDrafts();await changed();if(editing===item){editing=null;paint();statusNode.textContent='已保存'+(item.table==='theaterCards'?'；请勾选挂载到当前剧情。':'，点击即可使用。');}return saved;
   }catch(e){if(saved)e.message='素材已保存，但草稿清理或界面刷新未完成；请勿重复新建。'+e.message;throw e;}finally{delete item.saving;for(const el of controls)if(el.isConnected)el.disabled=false;}
  }
  async function remove(resource){if(!confirm('删除“'+resource.name+'”？已发送的剧情原文不受影响。'))return;const t=table();await route('/'+endpoint(t)+'/'+resource.id,'DELETE');await changed();const clean=t==='theaterCards'?await reconcileUnlinks():true;for(const p of providers.values())await p.reload?.();paint();if(clean)statusNode.textContent='已删除，剧情原文保留。';}
@@ -187,5 +242,5 @@
   if(result.theaterCards.length&&live(ticket))try{await updateMount(ticket,ids=>{for(const card of result.theaterCards)ids.add(card.id);});}catch(e){warning='素材已保存，挂载未完成；请在列表重新勾选，勿重复导入。'+e.message;}
   editing=null;if(result.theaterCards.length)tab='theater';paint();statusNode.textContent='已保存导入的 '+result.theaterCards.length+' 个小剧场、'+result.quickCommands.length+' 条指令。'+(warning||result.theaterCards.length&&!live(ticket)?warning||'剧情已变化，素材已保存；请在目标剧情手动挂载。':'');return {...result,mountWarning:warning};
  }
- root.MimaPlayTools=Object.freeze({register:(name,p)=>providers.set(name,p),ensure,open,pause,importFiles,invalidate:()=>{readCurrent();for(const name of providers.keys())refreshShelf(name);}});
+ root.MimaPlayTools=Object.freeze({register:(name,p)=>providers.set(name,p),ensure,open,pause,importFiles,recoverUnlinks,invalidate:()=>{readCurrent();for(const name of providers.keys())refreshShelf(name);}});
 })();

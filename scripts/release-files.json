@@ -105,5 +105,11 @@
   "worldbook-match-worker.js",
   "story-play-tools.js",
   "story-play-tools.css",
-  "story-theater-frame.html"
+  "story-theater-frame.html",
+  "apple-touch-icon.png",
+  "favicon-32x32.png",
+  "favicon.ico",
+  "icon-192.png",
+  "icon-512.png",
+  "site.webmanifest"
 ]
