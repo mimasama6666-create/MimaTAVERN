@@ -1,0 +1,13 @@
+/* Lightweight cosmetic feedback. No layout zoom/viewport transform or input-focus handling. */
+html[data-mima-feedback="on"] .app-shell :is(button,.session-item,[role="button"]),
+html[data-mima-feedback="on"] .session-drawer :is(button,.session-item){touch-action:manipulation}
+.mima-tap-particle,.mima-tap-ring{position:fixed;pointer-events:none!important;user-select:none;-webkit-user-select:none;z-index:2147481800;transform:translate(-50%,-50%);will-change:transform,opacity}
+.mima-tap-particle{font-size:15px;line-height:1;color:#d69dca;text-shadow:0 1px 5px #fff,0 2px 8px #c789aa80;animation:mimaTapParticle var(--tap-life,500ms) cubic-bezier(.16,.5,.35,1) forwards}
+.mima-tap-ring{width:18px;height:18px;border:2px solid #e7b6dbb0;border-radius:50%;box-shadow:0 0 9px #f5cfe8bb;animation:mimaTapRing 510ms ease-out forwards}
+@keyframes mimaTapParticle{0%{transform:translate(-50%,-50%) scale(.55);opacity:0}18%{opacity:1}100%{transform:translate(calc(-50% + var(--dx)),calc(-50% + var(--dy))) scale(.85);opacity:0}}
+@keyframes mimaTapRing{0%{transform:translate(-50%,-50%) scale(.3);opacity:.9}100%{transform:translate(-50%,-50%) scale(4.6);opacity:0}}
+html[data-mima-menu-motion="on"] .app-shell > .mima-feature-menu:not(.hidden){animation:mimaMenuEnter 240ms cubic-bezier(.2,.8,.2,1) both;transform-origin:top center}
+html[data-mima-menu-motion="on"] .modal:not(.hidden) > .modal-panel{animation:mimaPanelEnter 240ms cubic-bezier(.2,.8,.2,1) both}
+@keyframes mimaMenuEnter{from{opacity:0;transform:translateY(-7px) scale(.988)}to{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes mimaPanelEnter{from{opacity:.4;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+@media(prefers-reduced-motion:reduce){.mima-tap-particle,.mima-tap-ring{display:none!important;animation:none!important}html[data-mima-menu-motion="on"] .app-shell > .mima-feature-menu:not(.hidden),html[data-mima-menu-motion="on"] .modal:not(.hidden) > .modal-panel{animation:none!important}}

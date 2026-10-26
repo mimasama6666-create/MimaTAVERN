@@ -187,3 +187,15 @@
 .atl-advanced-group[open]>.atl-fields{margin-top:12px}
 .atl-region-grid .atl-check{min-height:36px}
 @media(max-width:385px){.atl-basic-fields{grid-template-columns:1fr}.atl-step h2{font-size:14px}}
+
+/* Theme-specific motion/sound editor: four reachable mobile tabs and clear audio rows. */
+.atl-interact-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.atl-interact-grid>*{min-width:0}
+.atl-interact-demo{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0;padding:12px;border-radius:14px;background:linear-gradient(130deg,#f7ebf6,#f8f5fc);border:1px solid #e0cce7}
+.atl-interact-demo button{flex:1 1 110px;min-height:46px;border-radius:13px;border:1px solid #c9afcb;background:linear-gradient(170deg,#fff,#eddbed);color:#503c54;font-weight:700;box-shadow:0 3px 0 #ceb6d1}
+.atl-sound-card{padding:11px 12px;border:1px solid #e4d9e8;border-radius:13px;margin:8px 0;background:#faf7fb}
+.atl-sound-card>div:first-child{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:3px;font-size:12px}
+.atl-sound-card small{color:#86748a;font-size:11px}.atl-sound-card .atl-actions{margin-top:8px;gap:5px}
+.atl-sound-card .atl-actions button{min-height:42px;padding:7px 11px}
+.atl-interact-editor input[type=range]{width:100%;accent-color:#98749f}
+@media(max-width:850px){.atl-tabs{display:grid;grid-template-columns:repeat(5,minmax(0,1fr))}.atl-tab-more{width:100%}.atl-tabs button{white-space:nowrap;font-size:10px}.atl-tab-more summary{min-height:44px;font-size:10px}.atl-interact-grid{grid-template-columns:1fr}.atl-interact-demo button{flex:1 1 40%}}

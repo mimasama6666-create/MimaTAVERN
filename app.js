@@ -929,7 +929,7 @@ function setupImmersiveReading(){
 }
 // User-facing release notes: once per distinct production release by default.
 // Avoid touching Store/History or making automatic announcements mandatory.
-const MIMA_RELEASE_NOTES_VERSION='R19-20261027-BATCH8-ATELIER-UX-DEV';
+const MIMA_RELEASE_NOTES_VERSION='R19-20261027-BATCH8-INTERACTIVE-THEMES-DEV';
 const MIMA_RELEASE_NOTES_SEEN='mima-release-notes-seen:'+MIMA_RELEASE_NOTES_VERSION;
 const MIMA_RELEASE_NOTES_OPTOUT='mima-release-notes-disable-auto-v1';
 function openMimaReleaseNotice(){
@@ -2356,6 +2356,8 @@ function applyCustomCss(){
        cssMounted.set(x.tag.id,{signature:x.signature,css:x.css});
      }
      lastCssVisualProblem='';engine?.reaffirm?.();
+     // Bind interaction behavior to the verified visual commit, not the premature settings pointer.
+     window.MimaInteraction?.apply?.(appPreset?.atelierReleaseKey ? (nextGlobal.result?.project?.interactions||engine?.getApplied?.()?.interactions) : null);
      return {status:'APPLIED',canonicalId:appPreset?.id||null};
    }catch(e){pending.forEach(x=>x.result?.discard());
      if(generation!==cssPaintEpoch)return {status:'STALE'};
