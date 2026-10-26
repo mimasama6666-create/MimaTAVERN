@@ -1,5 +1,5 @@
 /* Small native additions; no viewport, focus or keyboard-layout changes. */
-.mima-toolbox-trigger{flex:0 0 55px;width:55px;min-width:55px;height:55px;padding:0;border:1px solid var(--line,#ddd);border-radius:15px;background:var(--panel,rgba(255,255,255,.65));color:var(--text,#34373d);font-size:19px;cursor:pointer;align-self:flex-end}
+.mima-toolbox-trigger{box-sizing:border-box;flex:0 0 39px;width:39px;min-width:39px;max-width:39px;height:39px;min-height:39px;padding:0;border:1px solid var(--line,#ddd);border-radius:12px;background:var(--panel,rgba(255,255,255,.65));color:var(--text,#34373d);font-size:21px;line-height:1;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;align-self:flex-end;box-shadow:0 2px 6px rgba(0,0,0,.06)}
 .mima-theater-shelf{margin:0 0 18px;width:100%;min-width:0}
 .mima-theater-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 8px;font-size:12px;color:var(--muted,#777)}
 .mima-theater-list{display:grid;gap:10px}.mima-theater-card{min-width:0;border:1px solid var(--line,#ddd);border-radius:18px;background:var(--panel,rgba(255,255,255,.5));overflow:hidden}
@@ -13,7 +13,7 @@
 .mima-play-row{padding:13px;margin:9px 0;border:1px solid var(--line,#ddd);border-radius:17px;background:var(--panel,rgba(255,255,255,.5));min-width:0}.mima-play-row h3{font-size:15px;margin:0 0 6px}.mima-play-row p{font-size:12px;color:var(--muted,#777);margin:6px 0;white-space:pre-wrap;overflow-wrap:anywhere}
 .mima-play-actions button{min-height:36px}.mima-play-editor{display:grid;gap:10px}.mima-play-editor label{display:grid;gap:5px;font-size:13px}.mima-play-editor textarea{min-height:200px;width:100%;resize:vertical;font-family:ui-monospace,monospace;white-space:pre}
 .mima-play-editor .mima-play-check{display:flex;align-items:center;gap:8px}.mima-play-note{font-size:12px;line-height:1.7;color:var(--muted,#777);overflow-wrap:anywhere}.mima-play-status{padding:0 14px 12px;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere}.mima-play-status:empty{display:none}
-@media(max-width:600px){.mima-play-dialog{width:96vw;max-width:96vw;max-height:88dvh;border-radius:20px}.mima-play-editor textarea{min-height:170px}.mima-play-row{padding:11px}}
+@media(max-width:600px){.mima-toolbox-trigger{flex-basis:36px;width:36px;min-width:36px;max-width:36px;height:36px;min-height:36px;font-size:19px;border-radius:11px}.mima-play-dialog{width:96vw;max-width:96vw;max-height:88dvh;border-radius:20px}.mima-play-editor textarea{min-height:170px}.mima-play-row{padding:11px}}
 
 .composer-row #story-input{min-width:0}.composer-row #send-btn{flex-shrink:0}
 

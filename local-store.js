@@ -679,6 +679,35 @@
       tx.onabort=()=>{db.close();reject(issue||tx.error||new Error('E_MEMORY_STAGE_LIST_READ_FAILED'));};
     });
   }
+  // Failed provider replies are evidence, never approved memory. Retain their
+  // visible text in a separate durable archive with attempt identity and cause.
+  async function putMemoryRejectedDraft(job,stage,rawText,meta={}){
+    const text=String(rawText??'');if(!text)return null;
+    const key=`memory_rejected_v1:${job.sessionId}:${job.kind}:${job.id}:${job.attemptId}:${stage}`;
+    return memoryJobTransaction(job.sessionId,job.kind,(old,kv)=>{
+      if(old?.id!==job.id||old?.attemptId!==job.attemptId||old.status!=='running')throw new Error('E_MEMORY_JOB_FENCED');
+      const record={version:1,status:'REJECTED',sessionId:job.sessionId,kind:job.kind,
+        jobId:job.id,attemptId:job.attemptId,stage,sourceHash:job.sourceHash,
+        sourceCount:job.sourceCount,sourceRange:meta.sourceRange||null,
+        finishReason:String(meta.finishReason||'unknown'),reason:String(meta.reason||'invalid'),
+        text,truncatedForStorage:false,
+        chars:text.length,createdAt:new Date().toISOString()};
+      kv.put(record,key);return record;
+    });
+  }
+  async function listMemoryRejectedDrafts(sessionId,kind){
+    if(typeof sessionId!=='string'||!['core','facts','rolling'].includes(kind))throw Error('E_MEMORY_REJECTED_SCOPE');
+    const prefix=`memory_rejected_v1:${sessionId}:${kind}:`;
+    const db=await openDb();return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readonly'),cursor=tx.objectStore(STORE).openCursor(IDBKeyRange.bound(prefix,prefix+'\uffff')),out=[];let issue;
+      cursor.onerror=()=>{issue=cursor.error;tx.abort();};
+      cursor.onsuccess=()=>{const entry=cursor.result;if(!entry)return;
+        if(typeof entry.key==='string'&&entry.key.startsWith(prefix)&&entry.value?.status==='REJECTED')out.push(entry.value);
+        entry.continue();};
+      tx.oncomplete=()=>{db.close();resolve(out.sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt))));};
+      tx.onabort=()=>{db.close();reject(issue||tx.error||new Error('E_MEMORY_REJECTED_READ'));};
+    });
+  }
   async function inspectLegacyMemoryStages(sessionId,kind){
     if(!['core','facts','rolling'].includes(kind)||typeof sessionId!=='string')throw new Error('E_MEMORY_LEGACY_SCOPE_INVALID');
     const db=await openDb();return new Promise((resolve,reject)=>{
@@ -1250,5 +1279,5 @@
     if(text.length!==receipt.persistedChars)throw new Error('E_GENERATION_FRAGMENT_INCOMPLETE');
     return {receipt,text,complete:true};
   }
-  window.MimaLocalStore={listPlayToolLocal,getPlayToolLocal:key=>get('play_tools_v1:'+key),putPlayToolLocal:(key,value)=>set('play_tools_v1:'+key,value),generationReceipt,generationAppendFragment,generationRead,getRollingPreflight,putRollingPreflight,clearRollingPreflight,commitHtmlRepair,putHtmlRepairCandidate,getHtmlRepairCandidate,setHtmlRepairCandidateState,listMemoryStages,inspectLegacyMemoryStages,memoryReferenceContract,putFactRangeCandidate,listFactRangeCandidates,commitVerifiedFactRanges,getMergeStage,putMergeStage,getMergeDraft,createMergeDraft,updateMergeDraft,commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,clearSettingsSnapshot,getMemoryJob,getMemoryStage,putMemoryStage,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
+  window.MimaLocalStore={listPlayToolLocal,getPlayToolLocal:key=>get('play_tools_v1:'+key),putPlayToolLocal:(key,value)=>set('play_tools_v1:'+key,value),generationReceipt,generationAppendFragment,generationRead,getRollingPreflight,putRollingPreflight,clearRollingPreflight,commitHtmlRepair,putHtmlRepairCandidate,getHtmlRepairCandidate,setHtmlRepairCandidateState,listMemoryStages,inspectLegacyMemoryStages,putMemoryRejectedDraft,listMemoryRejectedDrafts,memoryReferenceContract,putFactRangeCandidate,listFactRangeCandidates,commitVerifiedFactRanges,getMergeStage,putMergeStage,getMergeDraft,createMergeDraft,updateMergeDraft,commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,clearSettingsSnapshot,getMemoryJob,getMemoryStage,putMemoryStage,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
 })();

@@ -4,6 +4,7 @@
 const root=window, DB='mima-theme-atelier-v1', STORE='records', VERSION=1;
 const TARGETS={
   shell:{label:'整体背景',real:'body',preview:'.atl-scene'},
+  drawer:{label:'剧情列表侧栏背景',real:'.session-drawer',preview:'.atl-demo-session-list'},
   topbar:{label:'顶部导航',real:'.app-shell > header.topbar',preview:'.atl-demo-top'},
   composer:{label:'底部输入区',real:'.app-shell > footer.composer-shell',preview:'.atl-demo-composer'},
   button:{label:'主要按钮',real:'.app-shell .primary-btn,.app-shell .send-btn',preview:'.atl-demo-primary,.atl-demo-send'},
@@ -54,7 +55,7 @@ function normalizeTextPolicy(raw,legacyTypography=false){
 }
 const defaultRegions=()=>Object.fromEntries(REGION_KEYS.map(k=>[k,k!=='status'&&k!=='safeHtmlHost']));
 function normalizedReadingBoard(value){const r=value&&typeof value==='object'?value:{};return {
- enabled:r.enabled===true,html:r.html!==false,regular:r.regular===true,statusFrame:r.statusFrame===true,
+ enabled:r.enabled===true,html:r.html!==false,regular:r.regular!==false,statusFrame:r.statusFrame===true,
  tone:r.tone==='dark'?'dark':'light',opacity:clamp(r.opacity??86,40,100),blur:clamp(r.blur??12,0,30),
  padding:clamp(r.padding??16,0,40),radius:clamp(r.radius??18,0,48)
 };}
@@ -112,7 +113,7 @@ function atlasEffect(s){
  }
 }
 function styleRules(s0,pattern=[],key='',options={}){const s={...DEFAULT,...s0},bg=rgba(s.fill,s.alpha),bd=rgba(s.borderColor,s.borderAlpha);
-  const structural=['topbar','composer','panel','status','safeHtmlHost'].includes(key),prose=key==='message',shapeSafe=['button','secondary'].includes(key);
+  const structural=['topbar','composer','drawer','panel','status','safeHtmlHost'].includes(key),prose=key==='message',shapeSafe=['button','secondary'].includes(key);
   let images=patternLayers(pattern,'image'),sizes=patternLayers(pattern,'size'),positions=patternLayers(pattern,'position');const effect=atlasEffect(s);if(effect){const layerCount=countCssLayers(effect.image);images.push(effect.image);sizes.push(effect.size);positions.push(Array.from({length:layerCount},()=> '0 0').join(','));}
   let gradientImage='';if(s.gradient!=='none'){const to=rgba(s.gradientTo,s.alpha);const gradient=s.gradient==='radial'?`radial-gradient(circle at 28% 20%,${to},${bg})`:s.gradient==='conic'?`conic-gradient(from ${clamp(s.angle,0,360)}deg,${bg},${to},${bg})`:`linear-gradient(${clamp(s.angle,0,360)}deg,${to},${bg})`;gradientImage=gradient;}
   if(s.image){
@@ -158,6 +159,7 @@ function baseTheme(id='liquid-frost'){
  if(kind==='brutal')Object.assign(base,{blur:0,shadow:9,border:3,alpha:100,radius:2});
  const elements={};Object.keys(TARGETS).forEach(k=>{elements[k]={...base}});
  elements.shell={...base,alpha:100,blur:0,border:0,radius:0,shadow:0,gradient:'linear',gradientTo:'#ffffff'};
+ elements.drawer={...base,alpha:72,blur:12,border:0,radius:0,shadow:0,gradient:'none'};
  elements.button={...base,fill:accent,ink:'#ffffff',alpha:100,gradient:kind==='flat'||kind==='minimal'?'none':'linear',gradientTo:bg};
  elements.secondary={...base,fill:'#ffffff',alpha:55};
  elements.field={...base,fill:'#ffffff',alpha:78,blur:3};
@@ -297,14 +299,19 @@ function compile(project,mode='live',options={}){
  }
  // Explicitly opt-in readability surface on the outer authored message host only.
  const board=normalizedReadingBoard(project.readingBoard);
- if(board.enabled && mode!=='preview'){
+ if(board.enabled){
   const light=board.tone==='light',bg=rgba(light?'#fbfaf8':'#202127',board.opacity);
   const edge=light?'rgba(64,65,73,.15)':'rgba(255,255,255,.2)';
   const content=[];
-  if(board.html)content.push(`${scope} .app-shell #story-chat-box article.message > .msg-content.tavern-story-content.safe-html-content`);
-  if(board.regular)content.push(`${scope} .app-shell #story-chat-box article.message > .msg-content:not(.safe-html-content)`);
+  if(mode==='preview'){
+   if(board.html)content.push(`${scope} .atl-demo-message.atl-demo-safe-host`);
+   if(board.regular)content.push(`${scope} .atl-demo-message:not(.atl-demo-safe-host)`);
+  }else{
+   if(board.html)content.push(`${scope} .app-shell #story-chat-box article.message > .msg-content.tavern-story-content.safe-html-content`);
+   if(board.regular)content.push(`${scope} .app-shell #story-chat-box article.message > .msg-content:not(.safe-html-content)`);
+  }
   if(content.length)result+=`${content.join(',')}{box-sizing:border-box;max-width:100%;min-width:0;overflow-wrap:anywhere;background-color:${bg};border:1px solid ${edge};border-radius:${board.radius}px;padding:${board.padding}px;backdrop-filter:blur(${board.blur}px);-webkit-backdrop-filter:blur(${board.blur}px);box-shadow:0 6px 22px rgba(0,0,0,.10)}\n`;
-  if(board.statusFrame&&board.html)result+=`${scope} .app-shell #story-chat-box .tavern-story-content.safe-html-content > :is(details,system){border-radius:${Math.max(6,board.radius-4)}px;outline:1px solid ${edge};outline-offset:3px;}\n`;
+  if(board.statusFrame&&board.html&&mode!=='preview')result+=`${scope} .app-shell #story-chat-box .tavern-story-content.safe-html-content > :is(details,system){border-radius:${Math.max(6,board.radius-4)}px;outline:1px solid ${edge};outline-offset:3px;}\n`;
  }
  result+=`@keyframes mima-atl-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}\n@keyframes mima-atl-glow{from{filter:brightness(.95)}to{filter:brightness(1.15)}}\n@media(prefers-reduced-motion:reduce){${scope} *{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}\n`;
  // Extra CSS is an explicit advanced user-authored layer; it does not need to be parseable back into visual parameters.

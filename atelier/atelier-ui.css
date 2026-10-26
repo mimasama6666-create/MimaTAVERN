@@ -163,3 +163,27 @@
  .atl-toolbar-primary .atl-heading b{font-size:11px}
  .atl-toolbar-primary .atl-apply{min-width:89px;min-height:42px}
 }
+
+/* R19 mobile UX: progressive disclosure without removing any authoring feature. */
+.atl-step h2{font-size:15px;margin-bottom:5px;color:#43364a}
+.atl-step .atl-hint{font-size:12px;line-height:1.55}
+.atl-basic-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 12px;margin-top:10px}
+.atl-basic-fields .atl-field{min-width:0;margin:0}
+.atl-quick-tools{margin-top:13px;gap:7px}
+.atl-quick-tools button{min-height:40px;border-radius:11px}
+.atl-quick-tools button:first-child{flex:1 1 100%;border-color:#b5a1c7;background:#f0e8f6;font-weight:700}
+.atl-live-cta{width:100%;min-height:44px;border:1px solid #9a74ae;border-radius:11px;background:#eee3f4;color:#563861;font-weight:700}
+.atl-optional{padding:0!important;overflow:hidden}
+.atl-optional>summary{display:flex;flex-direction:column;gap:3px;position:relative;padding:13px 36px 12px 13px;margin:0!important;min-height:48px;cursor:pointer;font-size:13px!important}
+.atl-optional>summary:after{content:'⌄';position:absolute;right:15px;top:17px;font-size:18px;color:#80698f}
+.atl-optional[open]>summary:after{content:'⌃'}
+.atl-optional>summary span{font-size:11px;color:#736a79;font-weight:400}
+.atl-optional[open]{padding-bottom:14px!important}
+.atl-optional[open]>:not(summary){margin-left:13px;margin-right:13px}
+.atl-optional .atl-board-options{border-top:1px solid #ede6ee;margin-top:12px;padding-top:10px}
+.atl-optional .atl-hint{font-size:11.5px;line-height:1.65}
+.atl-advanced-group{border:1px solid #eee8f0;border-radius:10px;padding:10px;margin:8px 0;background:#faf9fc}
+.atl-advanced-group>summary{font-weight:700;cursor:pointer;margin:0;font-size:12px}
+.atl-advanced-group[open]>.atl-fields{margin-top:12px}
+.atl-region-grid .atl-check{min-height:36px}
+@media(max-width:385px){.atl-basic-fields{grid-template-columns:1fr}.atl-step h2{font-size:14px}}

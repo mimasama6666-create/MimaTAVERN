@@ -138,8 +138,8 @@
  }
  async function toggleMount(id,on,ticket){await updateMount(ticket,ids=>on?ids.add(id):ids.delete(id));paint();}
  function setup(){if(dialog)return;dialog=node('dialog',{id:'mima-play-tools',className:'mima-play-dialog','aria-labelledby':'mima-play-title'},document.body);
-  const head=node('div',{className:'mima-play-head'},dialog);node('h2',{id:'mima-play-title',text:'🧰 百宝箱'},head);button('关闭',closeTools,head,'icon-btn');
-  const tabs=node('nav',{className:'mima-play-tabs','aria-label':'游玩工具'},dialog);for(const[t,label]of[['commands','🧰 百宝箱'],['theater','🎭 小剧场']])button(label,()=>switchTab(t),tabs).dataset.playTab=t;
+  const head=node('div',{className:'mima-play-head'},dialog);node('h2',{id:'mima-play-title',text:'🪎 百宝箱'},head);button('关闭',closeTools,head,'icon-btn');
+  const tabs=node('nav',{className:'mima-play-tabs','aria-label':'游玩工具'},dialog);for(const[t,label]of[['commands','🪎 百宝箱'],['theater','🎭 小剧场']])button(label,()=>switchTab(t),tabs).dataset.playTab=t;
   bodyNode=node('div',{className:'mima-play-body'},dialog);statusNode=node('div',{className:'mima-play-status',role:'status'},dialog);
   dialog.addEventListener('input',scheduleDraft);dialog.addEventListener('change',scheduleDraft);
   dialog.addEventListener('cancel',e=>{e.preventDefault();void closeTools().catch(showError);});dialog.addEventListener('close',()=>{void retainEdit().catch(showError);++view;});
@@ -148,7 +148,7 @@
   setup();try{await loadDrafts();if(editing)await retainEdit();scope=name;tab=pane;editing=drafts.get(table())||null;query='';statusNode.textContent='';if(!dialog.open)dialog.showModal();const epoch=++view;
    await load();await reconcileUnlinks();if(epoch===view&&dialog.open)paint();}catch(e){showError(e);}
  }
- function paint(){if(!dialog)return;$('mima-play-title').textContent=tab==='theater'?'🎭 小剧场':'🧰 百宝箱';for(const b of dialog.querySelectorAll('[data-play-tab]'))b.setAttribute('aria-selected',String(b.dataset.playTab===tab));
+ function paint(){if(!dialog)return;$('mima-play-title').textContent=tab==='theater'?'🎭 小剧场':'🪎 百宝箱';for(const b of dialog.querySelectorAll('[data-play-tab]'))b.setAttribute('aria-selected',String(b.dataset.playTab===tab));
   bodyNode.replaceChildren();if(editing){paintEditor();return;}
   if(drafts.has(table())){const note=node('div',{className:'mima-play-note',text:'有未保存的编辑草稿。'},bodyNode);button('继续草稿',()=>{editing=drafts.get(table());paint();},note);button('放弃草稿',discardDraft,note);}
   node('p',{className:'mima-play-note',text:tab==='theater'?'素材保存在共用库，勾选后只挂载到当前剧情的开场白之前。支持普通 HTML 与 JS；酒馆专用接口尚不保证等价。':'点指令即可发送，也可只填入输入框。支持自建指令、JSON 指令集和酒馆 Quick Reply v2 的手动文本按钮。'},bodyNode);

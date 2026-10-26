@@ -929,7 +929,7 @@ function setupImmersiveReading(){
 }
 // User-facing release notes: once per distinct production release by default.
 // Avoid touching Store/History or making automatic announcements mandatory.
-const MIMA_RELEASE_NOTES_VERSION='R19-20261027-BATCH8-PLAYTOOLS-REWORK2-DEV';
+const MIMA_RELEASE_NOTES_VERSION='R19-20261027-BATCH8-ATELIER-UX-DEV';
 const MIMA_RELEASE_NOTES_SEEN='mima-release-notes-seen:'+MIMA_RELEASE_NOTES_VERSION;
 const MIMA_RELEASE_NOTES_OPTOUT='mima-release-notes-disable-auto-v1';
 function openMimaReleaseNotice(){
@@ -1431,7 +1431,7 @@ function renderMemoryTab(box){
     <section class="settings-section"><h3>💎 核心记忆</h3><p class="helper">不是流水账。它会从第一轮开始提炼真正影响长期剧情的东西，尤其优先保存关系转变、承诺/约定、重要选择及后果、持续状态变化和未解决事项。也可以直接用已经生成的事实记忆再压缩一次。</p><div class="form-grid"><div><label class="form-label">总结来源</label><select id="core-memory-source" class="field"><option value="context" ${core.source!=='facts'?'selected':''}>从第一轮剧情原文开始总结</option><option value="facts" ${core.source==='facts'?'selected':''}>根据事实记忆总结核心记忆</option></select></div><div><label class="form-label">目标字数</label><input id="core-memory-target" class="field" type="number" min="100" max="12000" step="100" value="${memoryFormDraftNumber('core-memory-target',Number(core.targetChars||1000))}"><div class="memory-quick-targets"><button class="tool-mini" onclick="setCoreMemoryTarget(500)">500</button><button class="tool-mini" onclick="setCoreMemoryTarget(1000)">1000</button><button class="tool-mini" onclick="setCoreMemoryTarget(2000)">2000</button></div></div><div class="form-full"><label class="form-label">核心记忆正文 · ${escapeHtml(memorySourceLabel(core.source))} · ${escapeHtml(memoryDateLabel(core.updatedAt))}</label><textarea id="core-memory-content" class="field textarea tall" placeholder="生成后会显示在这里，也可以手工修订。">${escapeHtml(core.content||'')}</textarea></div></div><div class="toolbar"><button class="primary-btn memory-action" onclick="generateCoreMemory()" ${memoryGenerating?'disabled':''}>✨ 生成 / 重做核心记忆</button><button class="ghost-btn" onclick="saveCoreMemoryEdit()" >保存手工修改</button>${core.content?'<button class="danger-btn" onclick="clearCoreMemory()" '+(memoryGenerating?'disabled':'')+'>清空核心记忆</button>':''}</div></section>
 
     <section class="settings-section"><h3>🕰️ 旧剧情自动整理（可撤销）</h3><p id="rolling-auto-status" class="helper">正在核对后台状态…</p><p class="helper">${currentSessionData?.promptSettings?.autoRollingEnabled===true?'自动生成已授权；失败后暂停自动收费':'自动生成当前关闭；已有摘要仍可独立选择注入'}。最近保留 ${Number(currentSessionData?.promptSettings?.recentMessageLimit||34)} 条，整理间隔 ${Number(currentSessionData?.promptSettings?.summaryTriggerMessages||28)} 条；首次大约 ${Math.max(18,Number(currentSessionData?.promptSettings?.recentMessageLimit||34)-4)+Number(currentSessionData?.promptSettings?.summaryTriggerMessages||28)} 条消息才触发。完整原始剧情不删除。</p><div class="toolbar"><button type="button" class="ghost-btn" onclick="manualRollingSummary()">查看请求计划并手动整理/恢复</button></div><p class="helper">只影响模型收到的旧剧情摘要，不会删除原始 History。错误摘要可撤销并从第一条重新总结；撤销前的版本暂存供恢复。正在运行的总结任务不能抢占。</p><div class="row-sub">已总结至消息索引 ${Number(currentSessionData?.lastSummarizedIndex||0)}；旧摘要备份 ${Array.isArray(currentSessionData?.rollingArchive)?currentSessionData.rollingArchive.length:0} 份</div><details><summary>查看当前滚动摘要</summary><pre class="memory-review-source">${escapeHtml(currentSessionData?.rollingSummary||currentSessionData?.summary||'(尚未生成)')}</pre></details><div class="toolbar"><button type="button" class="danger-btn" onclick="revokeRollingMemory()" ${memoryGenerating?'disabled':''}>撤销错误滚动摘要（保留原文）</button>${currentSessionData?.rollingArchive?.length?`<button type="button" class="ghost-btn" onclick="restoreRollingMemory()" ${memoryGenerating?'disabled':''}>恢复上一份摘要</button>`:''}</div></section>
-    <section class="settings-section"><h3>🧾 事实记忆</h3><p class="helper">把剧情按轮次忠实整理为详细的小段记忆。事件、具体行为、重要对话和关系变化尽量保留；不强制字面审判。已有内容可随时编辑、删除、手动合并。</p><div class="form-grid"><div><label class="form-label">每 X 轮总结一段</label><input id="fact-memory-chunk" class="field" type="number" min="1" max="200" value="${memoryFormDraftNumber('fact-memory-chunk',mem.settings.factChunkRounds)}"></div><div><label class="form-label">每段目标字数</label><input id="fact-memory-target" class="field" type="number" min="80" max="12000" step="20" value="${memoryFormDraftNumber('fact-memory-target',mem.settings.factTargetChars)}"></div><div><label class="form-label">总结范围</label><select id="fact-memory-scope" class="field" onchange="syncFactMemoryScope()"><option value="recent" ${memoryFormDraftValue('fact-memory-scope',mem.settings.factScope)==='recent'?'selected':''}>只总结最近 X 轮</option><option value="all" ${memoryFormDraftValue('fact-memory-scope',mem.settings.factScope)==='all'?'selected':''}>从头到尾全部总结</option></select></div><div id="fact-memory-recent-wrap"><label class="form-label">最近多少轮</label><input id="fact-memory-recent" class="field" type="number" min="1" max="100000" value="${memoryFormDraftNumber('fact-memory-recent',mem.settings.factRecentRounds)}"></div><div class="form-full" id="fact-memory-replace-wrap"><label class="check-row"><input id="fact-memory-replace" type="checkbox" ${memoryFormDraftChecked('fact-memory-replace',false)?'checked':''}> 从头到尾完成后，用新事实记忆整体顶掉旧事实记忆</label><div class="row-sub">只在“从头到尾”模式生效。生成过程中如果 API 失败，旧记忆不会被提前删除。</div></div></div><div class="toolbar"><button class="primary-btn memory-action" onclick="generateFactMemories()" ${memoryGenerating?'disabled':''}>🧠 开始事实总结</button>${facts.length?'<button class="danger-btn" onclick="clearAllFactMemories()" '+(memoryGenerating?'disabled':'')+'>清空全部事实记忆</button>':''}</div><div class="memory-card"><h4>🧩 AI 二次合并事实记忆</h4><p class="helper">勾选下方需要合并的事实记忆（可一次合并 100 条以上），生成候选后手动检查或修改；确认前旧记忆完全不变。</p><label class="form-label">合并后目标字数（软目标，保留细节优先）</label><input class="field" type="number" id="memory-merge-target" min="100" max="250000" value="6000"><div class="toolbar"><button type="button" class="primary-btn" onclick="previewFactMemoryMerge()" ${memoryGenerating||facts.length<2?'disabled':''}>AI 合并已选记忆（仅预览）</button><button type="button" class="ghost-btn" onclick="toggleMergeFactSelection(true)">全选</button><button type="button" class="ghost-btn" onclick="toggleMergeFactSelection(false)">取消全选</button>${facts.length?'<button type="button" class="ghost-btn" onclick="undoFactMemoryMerge()">撤销上一次合并</button>':''}</div></div>${preview}<div class="memory-list">${factCards}</div></section>`;
+    <section class="settings-section"><h3>🧾 事实记忆</h3><p class="helper">将选定范围内的剧情一次送入模型，完整归类人物、事件、对话和关系变化；分组跨度影响事实分类和整份目标容量，不等于 API 请求次数。超过模型窗口才规划多阶段请求，并在收费前显示请求次数。原文 History 保持不变。</p><div class="form-grid"><div><label class="form-label">每 X 轮归为一组（不拆请求）</label><input id="fact-memory-chunk" class="field" type="number" min="1" max="200" value="${memoryFormDraftNumber('fact-memory-chunk',mem.settings.factChunkRounds)}"></div><div><label class="form-label">每组参考字数（整份随组数递增）</label><input id="fact-memory-target" class="field" type="number" min="80" max="12000" step="20" value="${memoryFormDraftNumber('fact-memory-target',mem.settings.factTargetChars)}"></div><div><label class="form-label">总结范围</label><select id="fact-memory-scope" class="field" onchange="syncFactMemoryScope()"><option value="recent" ${memoryFormDraftValue('fact-memory-scope',mem.settings.factScope)==='recent'?'selected':''}>只总结最近 X 轮</option><option value="all" ${memoryFormDraftValue('fact-memory-scope',mem.settings.factScope)==='all'?'selected':''}>从头到尾全部总结</option></select></div><div id="fact-memory-recent-wrap"><label class="form-label">最近多少轮</label><input id="fact-memory-recent" class="field" type="number" min="1" max="100000" value="${memoryFormDraftNumber('fact-memory-recent',mem.settings.factRecentRounds)}"></div><div class="form-full" id="fact-memory-replace-wrap"><label class="check-row"><input id="fact-memory-replace" type="checkbox" ${memoryFormDraftChecked('fact-memory-replace',false)?'checked':''}> 从头到尾完成后，用新事实记忆整体顶掉旧事实记忆</label><div class="row-sub">只在“从头到尾”模式生效。生成过程中如果 API 失败，旧记忆不会被提前删除。</div></div></div><div class="toolbar"><button class="primary-btn memory-action" onclick="generateFactMemories()" ${memoryGenerating?'disabled':''}>🧠 开始事实总结</button>${facts.length?'<button class="danger-btn" onclick="clearAllFactMemories()" '+(memoryGenerating?'disabled':'')+'>清空全部事实记忆</button>':''}</div><div class="memory-card"><h4>🧩 AI 二次合并事实记忆</h4><p class="helper">勾选下方需要合并的事实记忆（可一次合并 100 条以上），生成候选后手动检查或修改；确认前旧记忆完全不变。</p><label class="form-label">合并后目标字数（软目标，保留细节优先）</label><input class="field" type="number" id="memory-merge-target" min="100" max="250000" value="6000"><div class="toolbar"><button type="button" class="primary-btn" onclick="previewFactMemoryMerge()" ${memoryGenerating||facts.length<2?'disabled':''}>AI 合并已选记忆（仅预览）</button><button type="button" class="ghost-btn" onclick="toggleMergeFactSelection(true)">全选</button><button type="button" class="ghost-btn" onclick="toggleMergeFactSelection(false)">取消全选</button>${facts.length?'<button type="button" class="ghost-btn" onclick="undoFactMemoryMerge()">撤销上一次合并</button>':''}</div></div>${preview}<div class="memory-list">${factCards}</div></section>`;
     box.dataset.memoryFormSessionId=currentSessionId||'';
     syncFactMemoryScope();
     paintMemoryProgress();
@@ -1650,6 +1650,29 @@ async function refreshDurableMemoryJobs(){
         host.appendChild(section);
       }
     }catch(e){const n=document.createElement('p');n.className='helper';n.textContent='耐久记忆候选读取失败，未当作空数据：'+e.message;host.appendChild(n);}
+    // Raw rejected/truncated output archive. These drafts are never silently
+    // promoted into canonical facts, but the owner can inspect/export them.
+    try{
+      const rejected=[];
+      for(const kind of ['core','facts'])for(const item of await MimaLocalStore.listMemoryRejectedDrafts(sessionId,kind))rejected.push(item);
+      if(currentSessionId!==sessionId||settingsTab!=='memory')return;
+      if(rejected.length){
+        const section=document.createElement('section');section.className='entry-card';
+        const heading=document.createElement('h4');heading.textContent=`未通过验收的生成原文（${rejected.length} 条）`;section.appendChild(heading);
+        const notice=document.createElement('p');notice.className='helper';notice.textContent='这些文字已由 API 返回，但可能被截断、拦截或格式不完整。没有自动加入正式记忆；可以查看、复制或导出后自行核对。';section.appendChild(notice);
+        for(const draft of rejected){
+          const item=document.createElement('details'),title=document.createElement('summary');
+          title.textContent=`${draft.kind==='facts'?'事实':'核心'} · ${draft.createdAt||''} · ${draft.chars||draft.text.length} 字 · ${draft.reason||'未通过检查'}${draft.truncatedForStorage?' · 保存长度受限':''}`;
+          item.appendChild(title);
+          const body=document.createElement('textarea');body.readOnly=true;body.className='field textarea tall';body.style.userSelect='text';body.value=draft.text;item.appendChild(body);
+          const buttons=document.createElement('div');buttons.className='toolbar';
+          const copy=document.createElement('button');copy.type='button';copy.className='tool-mini';copy.textContent='复制生成原文';copy.onclick=()=>navigator.clipboard?.writeText(draft.text).then(()=>toast('已复制生成原文')).catch(()=>toast('复制失败，可长按文本选择'));buttons.append(copy);
+          const exportButton=document.createElement('button');exportButton.type='button';exportButton.className='tool-mini';exportButton.textContent='导出生成原文 TXT';exportButton.onclick=()=>{const blob=new Blob([draft.text],{type:'text/plain;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`mima-memory-rejected-${draft.kind}-${draft.attemptId}.txt`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};buttons.append(exportButton);
+          item.append(buttons);section.appendChild(item);
+        }
+        host.appendChild(section);
+      }
+    }catch(e){const msg=document.createElement('p');msg.className='helper';msg.textContent='失败生成原文读取失败（不能视作无记录）：'+e.message;host.appendChild(msg);}
     // Independent durable candidates; only exact complete ranges can be
     // approved, and all+replace keeps its original all-or-nothing contract.
     try{
@@ -1743,8 +1766,8 @@ async function saveMemorySettings(){
     if(limit===null)return null;
     const temperature=validatedSettingNumber('memory-temp','记忆总结温度',0.1,2,false);
     if(temperature===null)return null;
-    const factChunkRounds=validatedSettingNumber('fact-memory-chunk','每段事实记忆轮数',1,200);
-    const factTargetChars=validatedSettingNumber('fact-memory-target','每段事实记忆目标字数',80,12000);
+    const factChunkRounds=validatedSettingNumber('fact-memory-chunk','事实记忆分类跨度',1,200);
+    const factTargetChars=validatedSettingNumber('fact-memory-target','事实记忆每组参考字数',80,12000);
     const factRecentRounds=validatedSettingNumber('fact-memory-recent','事实记忆最近轮数',1,100000);
     if(factChunkRounds===null||factTargetChars===null||factRecentRounds===null)return null;
     const requested={injectCore:!!qs('memory-inject-core')?.checked,injectFacts:!!qs('memory-inject-facts')?.checked,factInjectionLimit:limit,summaryTemperature:temperature,memoryModel:qs('memory-model')?.value.trim()||'',factChunkRounds,factTargetChars,factScope:qs('fact-memory-scope')?.value==='all'?'all':'recent',factRecentRounds,memoryStreamMode:qs('memory-stream-mode')?.value||'inherit',
@@ -1790,7 +1813,7 @@ async function runMemorySummary(kind,sessionId,options){
         const plan=planned.data;
         const first=plan.stages.slice(0,12).map(x=>x.stage).join(', ');
         const warning=plan.unknownCapacityWarning?'模型实际窗口未声明；无法保证这一次完整输入被网关接受。\n':'';
-        const split=plan.requiresSplit?'已按来源及窗口规划多阶段，每次会重复选中的参考信息。\n':'';
+        const split=plan.requiresSplit?'所选全文超过已配置模型窗口；已规划必要的分段与合并，每次会重复选中的参考信息。\n':'';
         const approved=confirm(`记忆任务付费前计划（不保证实际费用）\n${warning}${split}预计 API 请求：${plan.requestCount} 次\n输入估算：${plan.estimatedTotalInputTokens} tokens\n输出最大预算估算：${plan.estimatedOutputTokens} tokens\n每次重复参考约：${plan.referenceTokensPerRequest} tokens\n阶段：${first}${plan.requestCount>12?' …':''}\n\n确认才会开始请求；取消不花费本轮 API。`);
         if(!approved){toast('已取消记忆生成，未请求模型。');return;}
         options={...options,approvedPlanDigest:plan.digest};
@@ -1839,8 +1862,8 @@ async function generateFactMemories(){
     if(!await saveMemorySettings())return;
     // Save chosen generation settings before the model call. Provider rejection
     // must not silently revert the owner's configuration to the old defaults.
-    const values={factChunkRounds:validatedSettingNumber('fact-memory-chunk','每段事实记忆轮数',1,200),
-        factTargetChars:validatedSettingNumber('fact-memory-target','每段事实记忆目标字数',80,12000),
+    const values={factChunkRounds:validatedSettingNumber('fact-memory-chunk','事实记忆分类跨度',1,200),
+        factTargetChars:validatedSettingNumber('fact-memory-target','事实记忆每组参考字数',80,12000),
         factRecentRounds:validatedSettingNumber('fact-memory-recent','事实记忆最近轮数',1,100000)};
     if(Object.values(values).some(v=>v===null))return;
     const savedSettings=await fetchStory(`/sessions/${sessionId}/memory`,'PATCH',{settings:{...values,factScope:scope,summaryTemperature:temperature,memoryModel:model}});

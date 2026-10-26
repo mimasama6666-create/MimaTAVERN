@@ -2216,14 +2216,14 @@
     }else if(kind==='facts'){
       const data=storyRoundData(session),total=data.rounds.length;
       if(!total)throw new ApiError('E_MEMORY_NO_ROUNDS','当前剧情没有可总结的轮次。');
-      const chunkRounds=clampInt(opts.chunkRounds,1,200,10),recentRounds=clampInt(opts.recentRounds,1,100000,total),first=opts.scope==='all'?1:Math.max(1,total-recentRounds+1);
-      for(let a=first;a<=total;a+=chunkRounds){
-        const b=Math.min(total,a+chunkRounds-1),tag=`fact_range_${a}_${b}`;
-        const source=formatRoundRange(data,a,b,{includeOpening:a===1,session}),chunks=memorySourceParts(source,refs,cfg,'facts');
-        const leaves=chunks.map((_,i)=>tag+'_part_'+i);
-        registerLeaves(chunks,leaves,[a,b]);
-        facts[tag]={source,chunks,mergeGraph:memoryMergeGraph(tag,leaves,referenceTokens,budget,cfg,results,[a,b])};
-      }
+      // factChunkRounds controls the narrative grouping INSIDE one summary,
+      // never the number of paid requests. Read the selected timeline whole.
+      const recentRounds=clampInt(opts.recentRounds,1,100000,total),a=opts.scope==='all'?1:Math.max(1,total-recentRounds+1),b=total;
+      const tag=`fact_range_${a}_${b}`,source=formatRoundRange(data,a,b,{includeOpening:a===1,session});
+      const chunks=memorySourceParts(source,refs,cfg,'facts');
+      const leaves=chunks.map((_,i)=>tag+'_part_'+i);
+      registerLeaves(chunks,leaves,[a,b]);
+      facts[tag]={source,chunks,mergeGraph:memoryMergeGraph(tag,leaves,referenceTokens,budget,cfg,results,[a,b])};
     }
     // Stable topological stages include EVERY paid merge before approval.
     else if(kind==='rolling'){
@@ -2288,11 +2288,17 @@
   // Bind each fact part to the exact model-visible characters and their
   // canonical message offsets. A >28k-character utterance can straddle parts;
   // validating both parts against the entire round falsely expands authority.
-  function factOutputPlan(messages,requested){
-    // Desired size is a soft goal. The model may exceed it to retain details.
-    return {requestedChars:requested,advisedChars:requested,sourceMessageCount:arr(messages).length};
+  function factOutputPlan(messages,requested,roundCount=1,groupRounds=10){
+    // Previously each X-round group had its OWN output target. One-call mode
+    // must preserve the combined detail budget instead of shrinking N groups
+    // into one group's character allowance.
+    const groups=Math.max(1,Math.ceil(roundCount/Math.max(1,groupRounds)));
+    const advisedChars=requested*groups;
+    if(advisedChars>250000)throw new ApiError('E_MEMORY_FACT_TARGET_TOO_LARGE',
+      '选中范围的事实记忆目标字数超出单条记忆保存上限；尚未请求模型。请缩小轮数范围或每组字数。');
+    return {requestedChars:requested,advisedChars,groupRounds,groups,sourceMessageCount:arr(messages).length};
   }
-  async function summarizeFactText(sourceText,targetChars,temp,signal,progress,label='事实记忆',job=null,rangeTag='fact',rangeScope=null,rangeMessages=[],sourceSession=null){
+  async function summarizeFactText(sourceText,targetChars,temp,signal,progress,label='事实记忆',job=null,rangeTag='fact',rangeScope=null,rangeMessages=[],sourceSession=null,groupRounds=10){
     const chunks=(job?.workPlan?.facts?.[rangeTag]?.chunks||memorySourceParts(sourceText,job?.referenceMessages||[])).map(x=>x.text),partials=[];
     // A long message can be split at 28k characters. These identities bind
     // each stage to its actual model-visible slice, not the whole range.
@@ -2301,7 +2307,7 @@
       emitProgress(progress,{phase:'memory_fact',percent:12+Math.round(((i+.25)/chunks.length)*62),detail:`${label} · 正在总结 ${i+1}/${chunks.length}`});
       const prompt=[
         {role:'system',content:'你是“咪嘛馆”的事实记忆整理器。只记录输入剧情中明确发生过的事实，不补充、不猜测、不续写，不把推测写成事实。'+MEMORY_TIME_CONTRACT},
-        {role:'user',content:`【剧情原文】\n${chunks[i]}\n\n请将上面的剧情整理成高密度“事实记忆”。逐一保留每件独立的已发生事件及其人物、物品、地点、否定、时间关系；同一行为发生两次不能合并成一次。不能杜撰新事件。按情节连续叙述，无须机械标序号。建议容量最多约 ${targetChars} 字，但事件完整性高于字数：不能为了压缩而丢掉任何一件事；材料少时更短即可。`}
+        {role:'user',content:`【剧情原文】\n${chunks[i]}\n\n请将上面的剧情整理成高密度“事实记忆”。逐一保留每件独立的已发生事件及其人物、物品、地点、否定、时间关系；同一行为发生两次不能合并成一次。不能杜撰新事件。按时间顺序整理，可以每 ${groupRounds} 轮设一个分类段落，但不得割裂因果；这是一份覆盖所选全部剧情的事实档案，不是让你分别处理各段。建议容量最多约 ${targetChars} 字，但事件完整性高于字数：不能为了压缩而丢掉任何一件事；材料少时更短即可。`}
       ];
       const stage=rangeTag+'_part_'+i;
       if(job){(job.stageScopes||(job.stageScopes={}))[stage]=partScopes[i]||rangeScope||{sourceStartIndex:0,sourceEndExclusive:job.sourceCount};}
@@ -2399,6 +2405,19 @@
           ...(proposed.core?.chunks?{sourceParts:proposed.core.chunks.map(x=>({startOffset:x.startOffset,endExclusive:x.endExclusive}))}:{})
         });
       }
+      if(kind==='facts'){
+        const timeline=storyRoundData(original),first=opts.scope==='all'?1:Math.max(1,timeline.rounds.length-clampInt(opts.recentRounds,1,100000,timeline.rounds.length)+1);
+        const source=Object.values(proposed.facts||{})[0]?.source||'';
+        await store.checkpointMemoryJob(job,'source_audit',{
+          sourceMode:'selected_story_timeline_single_logical_summary',canonicalHistoryCount:original.messages.length,
+          timelineRoundCount:timeline.rounds.length,selectedStartRound:first,selectedEndRound:timeline.rounds.length,
+          sourceTextChars:source.length,sourceTextEstimatedTokens:estimateTokens(source),
+          sourceProjection:original.promptSettings?.historyHtmlMode==='raw'?'raw_html':'semantic_html_projection',
+          referenceRecords:referenceRecords.length,referenceMessageChars:referenceMessages.reduce((n,x)=>n+x.content.length,0),
+          stageCount:proposed.summary?.requestCount||0,fullEligibleTimelineIncluded:first===1,
+          sourceParts:Object.values(proposed.facts||{})[0]?.chunks.map(x=>({startOffset:x.startOffset,endExclusive:x.endExclusive}))||[]
+        });
+      }
       if(typeof store.heartbeatMemoryJob==='function'&&typeof setInterval==='function'){
         heartbeat=setInterval(()=>store.heartbeatMemoryJob(job).catch(e=>{
           job.leaseError=new ApiError('E_MEMORY_HEARTBEAT_FAILED','记忆任务租约无法续期，已停止当前生成：'+(e?.message||'unknown'));
@@ -2433,8 +2452,9 @@
     const original=String(candidate??'').trim();
     const fence=original.match(/^```(?:json|text|txt|md|markdown)?[ \t]*\r?\n([\s\S]*?)\r?\n?```[ \t]*$/i);
     let memory=(fence?fence[1]:original).trim();
-    const reject=(reason)=>{throw new ApiError('E_MEMORY_OUTPUT_INVALID','模型没有返回可保存的完整记忆正文；旧记忆保持不变。',
-      {details:JSON.stringify({stage,reason,finishReason,chars:memory.length})});};
+    const reject=(reason)=>{const error=new ApiError('E_MEMORY_OUTPUT_INVALID','记忆正文未通过自动入库检查；生成原文会保存在失败草稿里，旧记忆保持不变。',
+      {details:JSON.stringify({stage,reason,finishReason,chars:original.length})});
+      error.validationReason=reason;error.candidateForReview=original;throw error;};
     if(['length','max_tokens','content_filter','safety','prohibited_content'].includes(String(finishReason).toLowerCase()))reject('provider_truncated_or_filtered');
     if(!memory||/^(?:\.{3,}|[.…]{2,}|null|undefined|n\/?a|todo|placeholder)$/i.test(memory))reject('empty_or_placeholder');
     if(/^```/.test(memory))reject('unfinished_fenced_block');
@@ -2523,12 +2543,13 @@
     }
     if(job&&window.MimaMemoryPriority?.whenIdle){await checkpoint(job,stage+'_queued');await window.MimaMemoryPriority.whenIdle(signal);}
     await checkpoint(job,stage+'_request');const started=Date.now(),meta={};
+    let lastVisibleDraft='';
     try{
       const prompt=actualPrompt;
       const memoryCfg=job?.effectiveMemoryConfig||memoryEffectiveConfig(getApiConfig(),job?.options?.model||'');
       if(job){const declared=promptBudget(memoryCfg);const estimated=prompt.reduce((n,m)=>n+estimateTokens(m.content)+8,0);
         if(declared.verified&&estimated>declared.usable)throw new ApiError('E_MEMORY_REFERENCE_BUDGET','记忆请求包含的参考资料超过已配置模型窗口；不会静默裁剪。',{details:JSON.stringify({stage,estimated,usable:declared.usable})});}
-      const modelProgress=ev=>{if(job?.progress){emitProgress(job.progress,{...ev,jobId:job.id,attemptId:job.attemptId,stageKey:stage,sourceRange:stageScope||null});}};
+      const modelProgress=ev=>{if(typeof ev?.streamText==='string')lastVisibleDraft=ev.streamText;if(job?.progress){emitProgress(job.progress,{...ev,jobId:job.id,attemptId:job.attemptId,stageKey:stage,sourceRange:stageScope||null});}};
       const value=await callModelWithConfig(prompt,memoryCfg,temp,signal,{streamOverride:job?.options?.memoryStreamMode==='on'?true:job?.options?.memoryStreamMode==='off'?false:undefined,resultMeta:meta,onProgress:modelProgress,memoryContext:job?{jobId:job.id,attemptId:job.attemptId,stage}:null});
       // Recheck the canonical prefix *before* validating the response against
       // sourceRecords captured prior to the network await. Otherwise a source
@@ -2553,15 +2574,20 @@
       return checked.memory;
     }
     catch(e){
-      if(e.candidateForReview){
-        const from=stageScope?.sourceStartIndex??0,to=stageScope?.sourceEndExclusive??job?.sourceCount??0;
-        const part=(activeSession?.messages||[]).slice(from,to);
-        await checkpoint(job,stage+'_needs_review',{
-        trust:'unverified',sourceHash:job?.sourceHash||'',sourceCount:job?.sourceCount||0,
-        sourceStartIndex:from,sourceEndExclusive:to,startRound:stageScope?.startRound??null,endRound:stageScope?.endRound??null,sourceCoverageHash:memorySourceFingerprint(part,part.length),
-        messageIds:part.map(x=>x.id),sourceParts:stageScope?.sourceParts||[],
-        candidate:e.candidateForReview.slice(0,25000),reason:e.validationReason||'fact_unverified',
-        formatStatus:'valid',quoteStatus:'unverified',factStatus:'pending_human_review'});}
+      // A refused, truncated or format-invalid response is NOT a valid memory.
+      // Persist its exact visible body separately, before settling the failed job.
+      const rawDraft=String(e.candidateForReview||(lastVisibleDraft.length>String(e.partialDraft||'').length?lastVisibleDraft:e.partialDraft)||'');
+      if(rawDraft&&job){
+        try{
+          await window.MimaLocalStore.putMemoryRejectedDraft(job,stage,rawDraft,{
+            reason:e.validationReason||e.code||e.name||'E_MEMORY_INVALID',finishReason:meta.finishReason||'unknown',
+            sourceRange:stageScope||null,sourceHash:job.sourceHash||''});
+          await checkpoint(job,stage+'_rejected_draft_saved',{chars:rawDraft.length,reason:e.validationReason||e.code||'invalid',finishReason:meta.finishReason||'unknown'});
+        }catch(saveError){
+          e.rejectedDraftSaveError=String(saveError?.message||saveError);
+          e.details=[String(e.details||''),'Rejected draft was not saved: '+e.rejectedDraftSaveError].filter(Boolean).join('\n');
+        }
+      }
       try{await checkpoint(job,stage+'_error',{errorCode:e.code||e.name||'E_UNKNOWN',httpStatus:e.status||0,errorMessage:String(e.message||'').slice(0,2200),hint:String(e.hint||'').slice(0,800),details:String(e.details||'').slice(0,5000),elapsedMs:Date.now()-started});}catch(journalError){e.details=[String(e.details||''),`memoryJournalError: ${journalError.code||journalError.message||String(journalError)}`].filter(Boolean).join('\n');}throw e;
     }
   }
@@ -2575,7 +2601,9 @@
     const chunkRounds=clampInt(opts.chunkRounds,1,200,10),scope=opts.scope==='all'?'all':'recent';
     const recentRounds=clampInt(opts.recentRounds,1,100000,total),targetChars=clampInt(opts.targetChars,80,12000,1800),temp=clampTemp(opts.temperature??0.35);
     const start=scope==='all'?1:Math.max(1,total-recentRounds+1),ranges=[];
-    for(let a=start;a<=total;a+=chunkRounds)ranges.push([a,Math.min(total,a+chunkRounds-1)]);
+    // The selected timeline is one logical summary; split ONLY if the actual
+    // configured model context cannot fit it, after the paid plan is approved.
+    ranges.push([start,total]);
     const generated=[];
     for(let i=0;i<ranges.length;i++){
       const [a,b]=ranges[i],source=formatRoundRange(data,a,b,{includeOpening:a===1,session});
@@ -2602,9 +2630,9 @@
       const rangeScope={sourceStartIndex:Math.min(...positions),sourceEndExclusive:Math.max(...positions)+1,startRound:a,endRound:b,
         messageIds:rangeMessages.map(m=>m.id)};
       const rangeTag=`fact_range_${a}_${b}`;
-      const outputPlan=factOutputPlan(rangeMessages,targetChars);
+      const outputPlan=factOutputPlan(rangeMessages,targetChars,b-a+1,chunkRounds);
       await checkpoint(job,'fact_range_output_plan',{startRound:a,endRound:b,...outputPlan});
-      const content=await summarizeFactText(source,outputPlan.advisedChars,temp,signal,report,`第 ${a}–${b} 轮`,job,rangeTag,rangeScope,rangeMessages,session);
+      const content=await summarizeFactText(source,outputPlan.advisedChars,temp,signal,report,`第 ${a}–${b} 轮`,job,rangeTag,rangeScope,rangeMessages,session,chunkRounds);
       const checkedFact=normalizeFactMemory({startRound:a,endRound:b,content,createdAt:nowIso(),updatedAt:nowIso(),source:'manual_fact_summary',targetChars,temperature:temp,sourceMessageCount:data.rounds.filter(r=>r.index>=a&&r.index<=b).reduce((n,r)=>n+r.messages.length,0),sourceCount:session.messages.length,sourceFingerprint:memorySourceFingerprint(session.messages,session.messages.length),sourceMessageIds:rangeMessages.map(m=>m.id),sourceHash:memorySourceFingerprint(rangeMessages,rangeMessages.length),verification:verifiedMemoryMetadata(job,rangeTag+((job?.workPlan?.facts?.[rangeTag]?.chunks.length||1)>1?'_merge':'_part_0'))});
       if(job){
         if(!window.MimaLocalStore?.putFactRangeCandidate)throw new ApiError('E_MEMORY_FACT_RANGE_STORE_UNAVAILABLE','事实分段存储不可用，不宣告成功');
