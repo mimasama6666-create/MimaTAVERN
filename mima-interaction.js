@@ -3,20 +3,62 @@
  'use strict';
  const FALLBACK={enabled:true,animation:'jelly',duration:340,particles:'sparkles',particleCount:5,transitions:true,soundEnabled:true,volume:24,sounds:{normal:'',send:'',menu:''}};
  const NOTES={normal:[587.33,783.99],send:[659.25,987.77],menu:[523.25,659.25]};
- let settings={...FALLBACK,sounds:{...FALLBACK.sounds}},signature='',ctx=null,sourceUrls=new Map();
+ const PREF_KEY='mima-r19-ui-feedback-prefs-v1';
+ const PREF_DEFAULTS=Object.freeze({motionEnabled:true,soundEnabled:true,particleEnabled:true,transitionsEnabled:true,animation:'theme',volume:100});
+ const PREF_FIELDS=Object.keys(PREF_DEFAULTS);
+ function normalizePreferences(raw){
+  const p=raw&&typeof raw==='object'&&!Array.isArray(raw)?raw:{};
+  return {motionEnabled:p.motionEnabled!==false,soundEnabled:p.soundEnabled!==false,
+    particleEnabled:p.particleEnabled!==false,transitionsEnabled:p.transitionsEnabled!==false,
+    animation:['theme','jelly','press','glow','ripple','none'].includes(p.animation)?p.animation:'theme',
+    volume:Math.max(0,Math.min(100,Number.isFinite(Number(p.volume))?Math.round(Number(p.volume)):100))};
+ }
+ function readPreferences(){try{return normalizePreferences(JSON.parse(localStorage.getItem(PREF_KEY)||'null'));}
+  catch(error){console.warn('[Interaction] personal preference read failed; previous data left unchanged',error);return normalizePreferences();}}
+ let preferences=readPreferences(),themeSettings=null;
+ let settings={...FALLBACK,sounds:{...FALLBACK.sounds}},signature='',soundSignature='',ctx=null,sourceUrls=new Map();
  const live=new Set();let lastFeedback=0;
  const clamp=(n,a,b)=>Math.max(a,Math.min(b,Number.isFinite(Number(n))?Number(n):a));
  function normalize(v){const c=window.MimaAtelierCore;return c?.normalizeInteractions?c.normalizeInteractions(v):{...FALLBACK,sounds:{...FALLBACK.sounds}};}
  function disposeSounds(){for(const url of sourceUrls.values())URL.revokeObjectURL(url);sourceUrls.clear();}
- function apply(raw){
-  let next;try{next=normalize(raw)}catch(error){console.error('[Interaction] invalid published theme; built-in feedback retained',error);next=normalize();}
-  // Keep the decoded asset URL lease when CSS is repainted without changing interaction settings.
-  const nextSig=JSON.stringify(next);if(nextSig===signature)return settings;
-  signature=nextSig;settings=next;disposeSounds();
+ function refreshEffective(){
+  const base=themeSettings||normalize();
+  // Personal accessibility switches are an overlay, never a theme/CSS publication.
+  // Theme's original enabled=false still disables its own sounds and effects.
+  const next={...base,sounds:{...base.sounds},
+    enabled:base.enabled&&preferences.motionEnabled,
+    soundEnabled:base.enabled&&base.soundEnabled&&preferences.soundEnabled,
+    volume:Math.round(base.volume*preferences.volume/100),
+    animation:preferences.animation==='theme'?base.animation:preferences.animation,
+    particles:preferences.particleEnabled?base.particles:'none',
+    transitions:base.transitions&&preferences.transitionsEnabled};
+  const nextSig=JSON.stringify(next);if(nextSig===signature)return {...settings,sounds:{...settings.sounds}};
+  if(settings.soundEnabled&&!next.soundEnabled){
+   for(const playing of live){try{playing.pause();playing.currentTime=0;}catch(error){console.warn('[Interaction] stop audio failed',error);}}
+   live.clear();
+   try{ctx?.suspend?.()?.catch?.(()=>{});}catch(error){console.warn('[Interaction] mute audio context failed',error);}
+  }
+  const newSoundSignature=JSON.stringify(next.sounds);
+  if(newSoundSignature!==soundSignature){disposeSounds();soundSignature=newSoundSignature;}
+  signature=nextSig;settings=next;
   document.documentElement.dataset.mimaFeedback=next.enabled?'on':'off';
   document.documentElement.dataset.mimaMenuMotion=next.enabled&&next.transitions?'on':'off';
-  return {...next};
+  return {...next,sounds:{...next.sounds}};
  }
+ function apply(raw){
+  try{themeSettings=normalize(raw)}catch(error){console.error('[Interaction] invalid published theme; built-in feedback retained',error);themeSettings=normalize();}
+  return refreshEffective();
+ }
+ function setPreference(key,value){
+  if(!PREF_FIELDS.includes(key))throw Error('未知的外观交互选项');
+  const next=normalizePreferences({...preferences,[key]:value});
+  // Commit to storage before claiming success in the running UI.
+  localStorage.setItem(PREF_KEY,JSON.stringify(next));
+  preferences=next;
+  refreshEffective();
+  return {...preferences};
+ }
+ function reloadPreferences(){preferences=readPreferences();refreshEffective();return {...preferences};}
  const reduced=()=>typeof matchMedia==='function'&&matchMedia('(prefers-reduced-motion: reduce)').matches;
  function closestButton(event){
   const path=event.composedPath?.()||[event.target];
@@ -70,7 +112,7 @@
    }
   }catch(error){console.warn('[Interaction] built-in sound unavailable',error);}
  }
- function sound(conf,kind){if(!conf.enabled||!conf.soundEnabled||!conf.volume)return;
+ function sound(conf,kind){if(!conf.soundEnabled||!conf.volume)return;
   const volume=clamp(conf.volume,0,100)/100;
   const asset=conf.sounds?.[kind];
   if(asset){try{playFile(asset,volume)}catch(error){console.warn('[Interaction] imported audio is unreadable',error);}return;}
@@ -103,19 +145,19 @@
   el.addEventListener('animationend',()=>el.remove(),{once:true});setTimeout(()=>el.remove(),750);
  }
  function feedback(button,conf,kind,x,y,withSound=true){
-  if(!conf.enabled)return;
   if(!button?.getBoundingClientRect)return;
   const r=button.getBoundingClientRect();x=Number.isFinite(x)&&x>0?x:r.left+r.width/2;y=Number.isFinite(y)&&y>0?y:r.top+r.height/2;
   bounce(button,conf);particles(conf,x,y);ripple(conf,x,y);if(withSound)sound(conf,kind);
  }
- function onClick(event){const button=closestButton(event);if(!button||!settings.enabled)return;
+ function onClick(event){const button=closestButton(event);if(!button)return;
   // A burst only follows a real activation; do not play on pointerdown or synthetic startup events.
   if(!event.isTrusted)return;
   const now=performance.now();if(now-lastFeedback<55)return;lastFeedback=now;
   feedback(button,settings,kindFor(button),event.clientX,event.clientY);
  }
- function demo(raw,kind,button){const conf=normalize(raw);if(!button)return;feedback(button,conf,['normal','send','menu'].includes(kind)?kind:'normal');}
+ function demo(raw,kind,button){const conf=normalize(raw);if(!button)return;feedback(button,{...conf,soundEnabled:conf.enabled&&conf.soundEnabled},['normal','send','menu'].includes(kind)?kind:'normal');}
  document.addEventListener('click',onClick,true);
  apply(null); // default theme needs no stored project to feel interactive.
- window.MimaInteraction={apply,demo,get:()=>({...settings,sounds:{...settings.sounds}}),_normalize:normalize};
+ window.addEventListener('storage',event=>{if(event.key===PREF_KEY)reloadPreferences();});
+ window.MimaInteraction={apply,demo,get:()=>({...settings,sounds:{...settings.sounds}}),getPreferences:()=>({...preferences}),setPreference,reloadPreferences,_normalize:normalize,preferenceKey:PREF_KEY};
 })();

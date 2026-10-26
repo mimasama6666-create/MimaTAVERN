@@ -929,7 +929,7 @@ function setupImmersiveReading(){
 }
 // User-facing release notes: once per distinct production release by default.
 // Avoid touching Store/History or making automatic announcements mandatory.
-const MIMA_RELEASE_NOTES_VERSION='R19-20261027-BATCH8-INTERACTIVE-THEMES-DEV';
+const MIMA_RELEASE_NOTES_VERSION='R19-20261027-BATCH8-STREAM-HTML-READING-FIX-DEV';
 const MIMA_RELEASE_NOTES_SEEN='mima-release-notes-seen:'+MIMA_RELEASE_NOTES_VERSION;
 const MIMA_RELEASE_NOTES_OPTOUT='mima-release-notes-disable-auto-v1';
 function openMimaReleaseNotice(){
@@ -2053,7 +2053,7 @@ async function importWholeLibrary(file){
 
 const FULL_SETTINGS_FORMAT = 'mimamao-tavern-full-settings';
 const FULL_SETTINGS_VERSION = 4;
-const FULL_SETTINGS_KEYS = ['mimamao_tavern_url_fonts_v1', MIMA_UI_DENSITY_KEY, TEMP_KEY, LEGACY_FONT_URL_KEY, LEGACY_FONT_FAMILY_KEY, STORY_TYPO_KEY, 'mimamao_tavern_ui_font', 'mimamao_tavern_story_font', 'MIMAMAO_TAVERN_ASSISTANT_STUDIO_V1'];
+const FULL_SETTINGS_KEYS = ['mima-r19-ui-feedback-prefs-v1', 'mimamao_tavern_url_fonts_v1', MIMA_UI_DENSITY_KEY, TEMP_KEY, LEGACY_FONT_URL_KEY, LEGACY_FONT_FAMILY_KEY, STORY_TYPO_KEY, 'mimamao_tavern_ui_font', 'mimamao_tavern_story_font', 'MIMAMAO_TAVERN_ASSISTANT_STUDIO_V1'];
 
 function collectPortableLocalPrefs(){
     const out={};
@@ -2158,7 +2158,7 @@ async function applyFullSettingsBackup(raw,{fromSnapshot=false,templatePolicy='r
         MimaStandalone.saveApiConfig(previousApi);
         for(const key of FULL_SETTINGS_KEYS){if(Object.prototype.hasOwnProperty.call(previousPrefs,key))localStorage.setItem(key,previousPrefs[key]);else localStorage.removeItem(key)}
         MimaFontManager.setSelected('ui',selected.ui||'');MimaFontManager.setSelected('story',selected.story||'');
-        applyStoryTypography();applyMimaUiDensity();restoreLegacyFont();window.MimaAssistantStudio?.reloadState?.();
+        applyStoryTypography();applyMimaUiDensity();restoreLegacyFont();window.MimaInteraction?.reloadPreferences?.();window.MimaAssistantStudio?.reloadState?.();
         const partialInfo='主资料库尚未提交，工坊素材新增 '+(atelierReceipt?.imported||0)+' 项（原记录保留），可重新导入继续；';
         console.error('[Backup] staged assets recovery receipt',{canonicalCommitted:false,atelierImported:atelierReceipt?.imported||0,atelierAlreadyPresent:atelierPlan?.alreadyPresent||0},e);
         if(rollbackError){const partial=new Error('E_FULL_RESTORE_PARTIAL: '+partialInfo+'字体回滚失败，请保留网站数据：'+rollbackError.message);partial.cause=e;throw partial;}
@@ -2167,7 +2167,7 @@ async function applyFullSettingsBackup(raw,{fromSnapshot=false,templatePolicy='r
     // Canonical is already durable. Appearance and UI refresh cannot retroactively
     // turn this into a failed import (which would tempt a second destructive restore).
     try{
-        applyStoryTypography();applyMimaUiDensity();restoreLegacyFont();
+        applyStoryTypography();applyMimaUiDensity();restoreLegacyFont();window.MimaInteraction?.reloadPreferences?.();
         currentSessionId=null;currentSessionData=null;
         await loadAll();
         window.MimaAssistantStudio?.reloadState?.();
@@ -2206,12 +2206,44 @@ async function renderDataTab(box,renderEpoch=++settingsRenderEpoch){
     <section class="settings-section"><h3>🧹 Cache（缓存）说明</h3><p class="helper"><strong>只想让 GitHub Pages 加载新代码时，不需要先清除网站数据。</strong>本版已经给 CSS / JS 资源加入版本号 <code>?v=1.1.0</code>，部署后浏览器会把它们当成新资源重新拉取。若仍显示旧页面，先关闭该标签页再重新打开，或做一次强制刷新；不要直接使用会删除网站数据的清理方式，除非你已经导出了完整设置备份。</p></section>`;
 }
 
+function appearanceFeedbackHtml(){
+ const p=window.MimaInteraction?.getPreferences?.()||{motionEnabled:true,soundEnabled:true,particleEnabled:true,transitionsEnabled:true,animation:'theme',volume:100};
+ const checked=x=>x?'checked':'';
+ const anims=[['theme','跟随当前主题'],['jelly','果冻回弹'],['press','柔软下陷'],['glow','魔法光晕'],['ripple','水波扩散'],['none','不播放按钮动画']];
+ return `<section class="settings-section mima-feedback-settings"><h3>✨ 动画与点击音效</h3>
+ <p class="helper">直接调整本机的操作手感，<strong>改完立即生效、自动保存</strong>，无需进入工坊或重新应用主题。不会修改当前 CSS、主题素材和剧情。</p>
+ <div class="mima-feedback-setting-row"><div><strong>🔊 点击音效</strong><small>关闭后只静音，按钮动画照常运行</small></div><label class="mima-feedback-switch"><input type="checkbox" ${checked(p.soundEnabled)} aria-label="开启点击音效" onchange="setMimaFeedbackPreference('soundEnabled',this.checked,this)"><span>${p.soundEnabled?'开启':'关闭'}</span></label></div>
+ <div class="mima-feedback-slider"><label for="mima-feedback-volume">音效音量 <output id="mima-feedback-volume-value">${p.volume}%</output></label><input id="mima-feedback-volume" type="range" min="0" max="100" step="5" value="${p.volume}" oninput="document.getElementById('mima-feedback-volume-value').textContent=this.value+'%'" onchange="setMimaFeedbackPreference('volume',Number(this.value),this)"><small>相对当前主题音量调节；100% 为主题原始音量，不会额外放大。</small></div>
+ <div class="mima-feedback-setting-row"><div><strong>✨ 按钮动画</strong><small>关闭后停止按压动画、粒子和弹窗过渡；音效仍可播放</small></div><label class="mima-feedback-switch"><input type="checkbox" ${checked(p.motionEnabled)} aria-label="开启按钮动画" onchange="setMimaFeedbackPreference('motionEnabled',this.checked,this)"><span>${p.motionEnabled?'开启':'关闭'}</span></label></div>
+ <details class="mima-feedback-advanced"><summary>调整动画样式与装饰</summary><div class="mima-feedback-advanced-inner">
+ <label for="mima-feedback-animation" class="form-label">点击动画</label><select class="field" id="mima-feedback-animation" onchange="setMimaFeedbackPreference('animation',this.value,this)">${anims.map(([value,label])=>`<option value="${value}" ${p.animation===value?'selected':''}>${label}</option>`).join('')}</select>
+ <label class="check-row"><input type="checkbox" ${checked(p.particleEnabled)} onchange="setMimaFeedbackPreference('particleEnabled',this.checked,this)"> 显示星星、花瓣等点击粒子（形状由主题决定）</label>
+ <label class="check-row"><input type="checkbox" ${checked(p.transitionsEnabled)} onchange="setMimaFeedbackPreference('transitionsEnabled',this.checked,this)"> 菜单和弹窗淡入过渡</label>
+ <p class="helper">想换具体粒子形状、上传按钮声音或制作主题专属反馈，可以继续使用主题工坊的「交互音效」页面。</p>
+ <button class="ghost-btn" type="button" onclick="MimaThemeAtelier.open()">🎨 打开主题工坊</button>
+ </div></details></section>`;
+}
+function setMimaFeedbackPreference(key,value,control){
+ try{
+  if(!window.MimaInteraction?.setPreference)throw Error('交互引擎尚未加载，请刷新页面');
+  window.MimaInteraction.setPreference(key,value);
+  if(control?.type==='checkbox'){
+   const label=control.closest('.mima-feedback-switch')?.querySelector('span');if(label)label.textContent=control.checked?'开启':'关闭';
+  }
+ }catch(error){
+  console.error('[Appearance] preference not saved',error);
+  const old=window.MimaInteraction?.getPreferences?.()?.[key];
+  if(control){if(control.type==='checkbox')control.checked=!!old;else control.value=String(old??'');}
+  const output=qs('mima-feedback-volume-value');if(output&&key==='volume')output.textContent=String(old??100)+'%';
+  toast('交互设置未保存：'+(error?.message||String(error)));
+ }
+}
 async function renderAppearanceTab(box,renderEpoch=++settingsRenderEpoch){
     let fontReadError=null,records;
     try{records=await MimaFontManager.listMetadata()}catch(error){fontReadError=error;records=[];console.error('外观字体库读取失败，未更改字体存储或偏好',error)}
     if(!settingsRenderIsCurrent('appearance',renderEpoch,box))return;
     if(!fontReadError)fontRecords=records;
-    const ui=MimaFontManager.getSelected('ui'),story=MimaFontManager.getSelected('story'),typo=getStoryTypography();const opts=`<option value="">系统默认字体</option>`+(fontReadError?[]:fontRecords).map(f=>`<option value="${escapeHtml(f.family)}">本地 · ${escapeHtml(f.family)} · ${formatBytes(f.size)}</option>`).join('')+MimaFontManager.urlFonts().map(f=>`<option value="${escapeHtml(f.family)}">链接 · ${escapeHtml(f.name)}</option>`).join('');const themeState=MimaStandalone.getState?.().themeSettings||{theme:'default'},themeCards=(MimaThemeEngine?.getBuiltins?.()||[]).map(t=>`<button class="novel-theme-card ${themeState.theme===t.id?'active':''}" data-theme-choice="${t.id}" onclick="setBuiltInTheme('${t.id}')"><strong>${escapeHtml(t.name)}</strong><span>${escapeHtml(t.description)}</span></button>`).join('');box.innerHTML=`<section class="settings-section"><h3>🌓 Built-in Theme（内置主题）</h3><p class="helper">Default 保留原始外观；深色、电子墨水、暖纸与韩系柔色主题覆盖聊天、设置、小说及助手的常用组件。全局自定义 CSS 仍优先；如果已挂载全局 CSS，实际颜色可能不同。</p><div class="novel-theme-grid">${themeCards}</div></section><section class="settings-section"><h3>📐 界面显示大小</h3><p class="helper">单独控制咪嘛馆的按钮、面板和小手机尺寸，不改变剧情正文字号设置，也不删除你现有的主题 CSS。默认 80%，相当于之前觉得舒服的紧凑尺寸；浏览器缩放建议恢复 100% 使用。</p><label class="form-label" for="mima-ui-density">界面显示比例</label><select id="mima-ui-density" class="field" style="max-width:240px" onchange="changeMimaUiDensity(this.value)"><option value="70">70% · 更紧凑</option><option value="80">80% · 推荐</option><option value="90">90%</option><option value="100">100% · 原始大小</option><option value="110">110% · 较大</option></select></section><section class="settings-section"><h3>🎨 本地字体库</h3><p class="helper">直接导入 TTF / OTF / WOFF / WOFF2（字体文件格式）。文件保存在当前浏览器 IndexedDB，不需要转 URL（链接），也不会上传到服务器。剧情正文字体会作用于普通小说正文；开启 Safe HTML（安全 HTML）后，未自行指定字体的 HTML 正文也会继承它。状态栏若有自己的 CSS 字体设置，仍以状态栏自己的设置为准。</p><div class="toolbar"><button class="primary-btn" onclick="chooseFontImport()">＋ 导入字体文件</button></div><div class="form-grid"><div><label class="form-label">UI（界面）字体</label><select id="font-ui-select" class="field" onchange="changeFont('ui',this.value)">${opts}</select></div><div><label class="form-label">剧情正文字体</label><select id="font-story-select" class="field" onchange="changeFont('story',this.value)">${opts}</select></div></div><div id="font-list" style="margin-top:14px"></div></section>
+    const ui=MimaFontManager.getSelected('ui'),story=MimaFontManager.getSelected('story'),typo=getStoryTypography();const opts=`<option value="">系统默认字体</option>`+(fontReadError?[]:fontRecords).map(f=>`<option value="${escapeHtml(f.family)}">本地 · ${escapeHtml(f.family)} · ${formatBytes(f.size)}</option>`).join('')+MimaFontManager.urlFonts().map(f=>`<option value="${escapeHtml(f.family)}">链接 · ${escapeHtml(f.name)}</option>`).join('');const themeState=MimaStandalone.getState?.().themeSettings||{theme:'default'},themeCards=(MimaThemeEngine?.getBuiltins?.()||[]).map(t=>`<button class="novel-theme-card ${themeState.theme===t.id?'active':''}" data-theme-choice="${t.id}" onclick="setBuiltInTheme('${t.id}')"><strong>${escapeHtml(t.name)}</strong><span>${escapeHtml(t.description)}</span></button>`).join('');box.innerHTML=`${appearanceFeedbackHtml()}<section class="settings-section"><h3>🌓 Built-in Theme（内置主题）</h3><p class="helper">Default 保留原始外观；深色、电子墨水、暖纸与韩系柔色主题覆盖聊天、设置、小说及助手的常用组件。全局自定义 CSS 仍优先；如果已挂载全局 CSS，实际颜色可能不同。</p><div class="novel-theme-grid">${themeCards}</div></section><section class="settings-section"><h3>📐 界面显示大小</h3><p class="helper">单独控制咪嘛馆的按钮、面板和小手机尺寸，不改变剧情正文字号设置，也不删除你现有的主题 CSS。默认 80%，相当于之前觉得舒服的紧凑尺寸；浏览器缩放建议恢复 100% 使用。</p><label class="form-label" for="mima-ui-density">界面显示比例</label><select id="mima-ui-density" class="field" style="max-width:240px" onchange="changeMimaUiDensity(this.value)"><option value="70">70% · 更紧凑</option><option value="80">80% · 推荐</option><option value="90">90%</option><option value="100">100% · 原始大小</option><option value="110">110% · 较大</option></select></section><section class="settings-section"><h3>🎨 本地字体库</h3><p class="helper">直接导入 TTF / OTF / WOFF / WOFF2（字体文件格式）。文件保存在当前浏览器 IndexedDB，不需要转 URL（链接），也不会上传到服务器。剧情正文字体会作用于普通小说正文；开启 Safe HTML（安全 HTML）后，未自行指定字体的 HTML 正文也会继承它。状态栏若有自己的 CSS 字体设置，仍以状态栏自己的设置为准。</p><div class="toolbar"><button class="primary-btn" onclick="chooseFontImport()">＋ 导入字体文件</button></div><div class="form-grid"><div><label class="form-label">UI（界面）字体</label><select id="font-ui-select" class="field" onchange="changeFont('ui',this.value)">${opts}</select></div><div><label class="form-label">剧情正文字体</label><select id="font-story-select" class="field" onchange="changeFont('story',this.value)">${opts}</select></div></div><div id="font-list" style="margin-top:14px"></div></section>
 <section class="settings-section"><h3>📖 Novel Typography（小说正文排版）</h3><p class="helper">进入本页会自动打开上方实时预览。字号、正文字体、行高与字间距也会作为 Safe HTML 的基础继承值；段间距与首行缩进仍只作用于咪嘛馆识别出的普通小说段落，不会强行挤压 &lt;system&gt; / &lt;details&gt; / 表格等状态栏结构。</p>
 <div class="typography-grid">
 ${typographyControlHtml('字号','fontSize',12,26,.5,typo.fontSize,'px')}
@@ -2991,7 +3023,7 @@ function beginGenerationProgress(action){hideFailedStreamControls();qs('generati
 function isStoryNearBottom(box,threshold=96){return !box||((box.scrollHeight-box.scrollTop-box.clientHeight)<=threshold)}
 function updateStoryFollowButton(){const b=qs('story-follow-stream');if(!b)return;b.classList.toggle('hidden',!liveStreamState||liveStreamState.followTail!==false)}
 function resumeStoryStreamFollow(){if(!liveStreamState)return;liveStreamState.followTail=true;const box=qs('story-chat-box');if(box)box.scrollTop=box.scrollHeight;updateStoryFollowButton()}
-function bindStoryStreamScroll(){const box=qs('story-chat-box');if(!box||box.dataset.streamFollowBound==='1')return;box.dataset.streamFollowBound='1';box.addEventListener('scroll',()=>{if(!liveStreamState)return;liveStreamState.followTail=isStoryNearBottom(box);updateStoryFollowButton()},{passive:true})}
+function bindStoryStreamScroll(){r19BindStreamReadingIntent();const box=qs('story-chat-box');if(!box||box.dataset.streamFollowBound==='1')return;box.dataset.streamFollowBound='1';box.addEventListener('scroll',()=>{if(!liveStreamState)return;liveStreamState.followTail=isStoryNearBottom(box);updateStoryFollowButton()},{passive:true})}
 function newGenerationTraceId(){
     // Durable cross-tab identity. UI clock/counter is not a trace identity.
     const uuid=globalThis.crypto?.randomUUID?.();
@@ -3020,7 +3052,15 @@ function patchLiveRenderedChildren(oldParent,newParent){
   if(!old){oldParent.appendChild(next);continue;}
   if(old.isEqualNode(next))continue;
   if(old.nodeType===1&&next.nodeType===1&&old.tagName===next.tagName&&
-     old.namespaceURI===next.namespaceURI&&sameAttributes(old,next)){
+     old.namespaceURI===next.namespaceURI&&(sameAttributes(old,next)||old.tagName==='DETAILS')){
+    if(old.tagName==='DETAILS'){
+      // Keep the reader's expanded state while applying ONLY sanitized attrs
+      // from the latest snapshot; never retain stale unsanitized markup.
+      const expanded=old.open;
+      for(const a of [...old.attributes])if(a.name!=='open'&&!next.hasAttribute(a.name))old.removeAttribute(a.name);
+      for(const a of [...next.attributes])if(a.name!=='open'&&old.getAttribute(a.name)!==a.value)old.setAttribute(a.name,a.value);
+      old.open=expanded;
+    }
     patchLiveRenderedChildren(old,next);
   }else if(old.nodeType===3&&next.nodeType===3){
     if(old.textContent!==next.textContent)old.textContent=next.textContent;
@@ -3062,6 +3102,45 @@ async function renderLiveStreamText(){
       }while(st.regexDirty&&liveStreamState===st);
     }finally{st.regexProcessing=false;}
 }
+// Preserve user-operated HTML panels between streamed snapshots and the final
+// canonical renderer. This touches only presentation state, never Story/History.
+function r19CaptureStreamView(st,box){
+ if(!st?.contentNode?.isConnected||!box)return null;
+ const rect=box.getBoundingClientRect(),contentRect=st.contentNode.getBoundingClientRect();
+ const inLive=contentRect.bottom>rect.top&&contentRect.top<rect.bottom;
+ return {sessionId:currentSessionId,navEpoch:sessionNavigationEpoch,layoutEpoch:readingLayoutEpoch,
+  followTail:!readingMode&&st.followTail!==false,
+  inLive,contentOffset:inLive?rect.top-contentRect.top:0,
+  previousAnchor:!inLive?r19CaptureReadingAnchor(box):null,
+  scrollTop:box.scrollTop,
+  detailsOpen:Array.from(st.contentNode.querySelectorAll('details')).map(d=>d.open),
+  userEpoch:r19StoryUserInteractionEpoch};
+}
+let r19StoryUserInteractionEpoch=0;
+function r19BindStreamReadingIntent(){
+ const box=qs('story-chat-box');if(!box||box.dataset.streamReadingIntentBound==='1')return;
+ box.dataset.streamReadingIntentBound='1';
+ for(const name of ['touchstart','wheel','pointerdown','keydown'])box.addEventListener(name,()=>{r19StoryUserInteractionEpoch++;},{passive:name!=='keydown',capture:true});
+}
+function r19FinishStreamViewport(box,view,finalContent){
+ if(!box||!view||!finalContent?.isConnected||currentSessionId!==view.sessionId||
+    sessionNavigationEpoch!==view.navEpoch||readingLayoutEpoch!==view.layoutEpoch||
+    r19StoryUserInteractionEpoch!==view.userEpoch)return;
+ // Expanded Safe HTML remains expanded when the stream node is replaced.
+ finalContent.querySelectorAll('details').forEach((d,i)=>{
+  if(i<view.detailsOpen.length)d.open=view.detailsOpen[i];
+ });
+ if(view.followTail){box.scrollTop=box.scrollHeight;return;}
+ if(view.inLive){
+  // Offset relative to the SAME generated body, not a stale document scrollTop.
+  const rect=box.getBoundingClientRect();
+  box.scrollTop+=finalContent.getBoundingClientRect().top-rect.top+view.contentOffset;
+ }else if(view.previousAnchor?.id){
+  const target=r19ReaderMessage(box,view.previousAnchor.id);
+  if(target)box.scrollTop+=target.getBoundingClientRect().top-box.getBoundingClientRect().top-view.previousAnchor.offset;
+  else box.scrollTop=view.scrollTop;
+ }else box.scrollTop=view.scrollTop;
+}
 function ensureLiveStreamBubble(owner=currentGenerationOwner()){
     if(!ownsVisibleGeneration(owner))return null;
     if(liveStreamState?.owner===owner&&liveStreamState.node?.isConnected)return liveStreamState;
@@ -3069,6 +3148,13 @@ function ensureLiveStreamBubble(owner=currentGenerationOwner()){
     const div=document.createElement('article');div.className='message assistant-msg live-stream-message';
     const header=document.createElement('div');header.className='msg-header';header.textContent=`${currentChar()?.name||'角色'} · 流式生成中`;
     const content=document.createElement('div');content.className='msg-content tavern-story-content live-stream-content';
+    // Opening a live HTML disclosure is a reading action, not consent to
+    // jump to the newest token. Resume following only on an explicit action.
+    content.addEventListener('click',event=>{
+      if(event.target.closest?.('summary')&&liveStreamState?.owner===owner){
+        liveStreamState.followTail=false;updateStoryFollowButton();
+      }
+    },true);
     div.append(header,content);box.appendChild(div);
     liveStreamState={owner,node:div,contentNode:content,targetText:'',displayText:'',timer:null,followTail:isStoryNearBottom(box),lastPaintAt:0,paints:0};
     updateStoryFollowButton();return liveStreamState;
@@ -3396,8 +3482,9 @@ async function triggerChat(text,actionType='send',generationOptions={}){
         }
         const visible=ownsVisibleGeneration(owner);
         const storyBox=visible?qs('story-chat-box'):null;
+        const finalStreamView=visible&&liveStreamState?.owner===owner&&storyBox?r19CaptureStreamView(liveStreamState,storyBox):null;
         const preserveReading=visible&&(readingMode||(liveStreamState?.owner===owner&&liveStreamState.followTail===false));
-        const preservedReaderAnchor=readingMode&&storyBox?r19CaptureImmersiveAnchor(storyBox):null;
+        const preservedReaderAnchor=!finalStreamView&&readingMode&&storyBox?r19CaptureImmersiveAnchor(storyBox):null;
         const preservedScrollTop=preserveReading&&storyBox?storyBox.scrollTop:null;
         // A failed send may have already committed a new user. Keep quick actions
         // locked until the durable transcript is reconciled, not until UI cleanup.
@@ -3413,14 +3500,14 @@ async function triggerChat(text,actionType='send',generationOptions={}){
             }else if(res.success){
                 clearSubmittedDraft(owner);
                 currentSessionData=res.data;updateGenerationTaskViewerShortcut();
-                refreshChatBox(preservedReaderAnchor?{readerAnchor:preservedReaderAnchor,scrollToBottom:false}:preserveReading?{scrollTop:preservedScrollTop}:{scrollToBottom:true});
+                refreshChatBox(finalStreamView?{finalStreamView,scrollToBottom:false}:preservedReaderAnchor?{readerAnchor:preservedReaderAnchor,scrollToBottom:false}:preserveReading?{scrollTop:preservedScrollTop,scrollToBottom:false}:{scrollToBottom:true});
                 requestAnimationFrame(()=>{if(currentSessionId===targetSessionId)persistStoryUiTiming(owner,'ui_final_stable');});
                 refreshHeader();finishGenerationProgress();
             }else{
                 showGenerationError(res,actionType);toast(`生成失败 · ${res.code||'E_UNKNOWN'}`);
                 await reconcileCanonicalGenerationSession(targetSessionId);
             }
-            if(preserveReading&&!preservedReaderAnchor&&storyBox&&preservedScrollTop!==null)
+            if(preserveReading&&!finalStreamView&&!preservedReaderAnchor&&storyBox&&preservedScrollTop!==null)
                 requestAnimationFrame(()=>{if(currentSessionId===targetSessionId)storyBox.scrollTop=preservedScrollTop});
         }else if(res.success){
             clearSubmittedDraft(owner);
@@ -3520,6 +3607,7 @@ function r19RenderDisplayFailure(task,error){
  warning.textContent=`显示正则未完成（${error.code||'E_REGEX_WORKER_FAILED'}）：${error.message}。原文保留在存档中，可用“复制原文”；未把原文当作过滤结果显示。`;
  const retry=makeToolButton('重试显示正则',()=>refreshChatBox({retryDisplayRegex:true,scrollToBottom:false}));
  task.content.append(warning,retry);
+ task.onSettled?.();
 }
 function r19RenderDisplayResult(task,transformed){
  const {content,node,allowHtml,source}=task;
@@ -3530,6 +3618,7 @@ function r19RenderDisplayResult(task,transformed){
  }
  content.replaceChildren();appendRenderedContent(content,cleanCorruptText(transformed),allowHtml,true);
  node.dataset.mimaDisplayRegex='ready';
+ task.onSettled?.();
 }
 function r19EnqueueDisplayRegex(tasks,sessionId,token){
  if(!tasks.length)return;
@@ -3619,12 +3708,27 @@ function refreshChatBox(options={}){
  }
  while(cursor){const following=cursor.nextSibling;cursor.remove();cursor=following;}
  r19RenderState={sessionId:currentSessionId,renderMode:currentSessionData?.renderMode,roleNames:roles,regexToken,nodes:next};
+ const finalView=options.finalStreamView;
+ const finalAssistant=finalView?[...messages].reverse().find(m=>m.role==='assistant'):null;
+ const finalNode=finalAssistant?next.get(finalAssistant.id)?.el:null;
+ const finalContent=finalNode?.querySelector('.msg-content');
+ const pendingFinal=finalNode&&displayTasks.find(task=>task.node===finalNode);
+ if(finalView&&finalContent){
+  const settle=()=>requestAnimationFrame(()=>r19FinishStreamViewport(box,finalView,finalContent));
+  if(pendingFinal)pendingFinal.onSettled=settle;
+  else options.finalStreamReady=settle;
+ }
  r19EnqueueDisplayRegex(displayTasks,currentSessionId,regexToken);
  window.__mimaR19RenderStats={count:messages.length,created,reused,durationMs:Math.round((performance.now()-start)*100)/100};
  if(contextChange||created||prior.size!==messages.length||[...prior.keys()].some((id,i)=>messages[i]?.id!==id))window.MimaHistoryNavigator?.sync(currentSessionId,messages);
  requestAnimationFrame(()=>{
   if(renderedSessionId!==currentSessionId||renderedEpoch!==sessionNavigationEpoch||renderedLayoutEpoch!==readingLayoutEpoch)return;
-  if(options.readerAnchorLite&&next.has(options.readerAnchorLite.messageId)){
+  if(options.finalStreamView){
+    // If display regex is pending, its own completion owns final restoration.
+    // This avoids scrolling to a tiny placeholder before HTML expands.
+    if(options.finalStreamReady)options.finalStreamReady();
+  }
+  else if(options.readerAnchorLite&&next.has(options.readerAnchorLite.messageId)){
     const node=next.get(options.readerAnchorLite.messageId).el;
     box.scrollTop+=node.getBoundingClientRect().top-box.getBoundingClientRect().top-options.readerAnchorLite.offset;
   }
@@ -3980,7 +4084,7 @@ function restoreLegacyFont(){
 }
 
 // Expose inline handlers
-Object.assign(window,{openMimaReleaseNotice,closeMimaReleaseNotice,setMimaReleaseNoticeOptOut,openGenerationTaskViewer,closeGenerationTaskViewer,copyGenerationTaskViewerText,importCurrentSessionAsSettingTemplate,chooseIndependentTemplate,saveIndependentTemplate,copyIndependentTemplate,setIndependentTemplateDefault,deleteIndependentTemplate,setImmersiveReading,saveCurrentSettingTemplate,duplicateSettingTemplate,setDefaultSettingTemplate,deleteSettingTemplate,exportSettingTemplate,importSettingTemplate,refreshSettingTemplateChoices,renderSettingTemplatePreview,manualRollingSummary,mimaFilterLibrary,mimaToggleFavorite,goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,choosePngResourceInspection,playInspectedPngInCompat,savePngSelectedResources,exportPngInspection,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,exportStoryTranscript,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,loadMemoryModels,selectMemoryModel,startFactMemoryEdit,cancelFactMemoryEdit,saveFactMemoryEdit,toggleMergeFactSelection,previewFactMemoryMerge,cancelFactMemoryMerge,confirmFactMemoryMerge,undoFactMemoryMerge,clearCoreMemory,deleteFactMemory,clearAllFactMemories,revokeRollingMemory,restoreRollingMemory,discardMemoryCandidate,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,saveUrlFont,activateUrlFont,removeUrlFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,mimaLoadLargeCssForEdit,stopAtelierAndRestoreCss,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,apiIdentityDraftChanged,syncTemperature,updateStoryTypography,resetStoryTypography,setAppearancePreviewSurface,setBuiltInTheme,dismissGenerationPanel,previewFailedGenerationRaw,recoverFailedGenerationRaw,repairFailedGenerationHtml,retryFailedGeneration,retryGenerationReconciliation,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,regenerateCurrentMsg,continueMsg,autoAdvance,restoreMessageVersion,stopGeneration,abandonUnknownGeneration,toggleGenerationPanelMinimize,restoreGenerationPanel,saveGenerationContextAndPreview,resumeGenerationAfterCapacityPreview});
+Object.assign(window,{setMimaFeedbackPreference,openMimaReleaseNotice,closeMimaReleaseNotice,setMimaReleaseNoticeOptOut,openGenerationTaskViewer,closeGenerationTaskViewer,copyGenerationTaskViewerText,importCurrentSessionAsSettingTemplate,chooseIndependentTemplate,saveIndependentTemplate,copyIndependentTemplate,setIndependentTemplateDefault,deleteIndependentTemplate,setImmersiveReading,saveCurrentSettingTemplate,duplicateSettingTemplate,setDefaultSettingTemplate,deleteSettingTemplate,exportSettingTemplate,importSettingTemplate,refreshSettingTemplateChoices,renderSettingTemplatePreview,manualRollingSummary,mimaFilterLibrary,mimaToggleFavorite,goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,choosePngResourceInspection,playInspectedPngInCompat,savePngSelectedResources,exportPngInspection,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,exportStoryTranscript,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,loadMemoryModels,selectMemoryModel,startFactMemoryEdit,cancelFactMemoryEdit,saveFactMemoryEdit,toggleMergeFactSelection,previewFactMemoryMerge,cancelFactMemoryMerge,confirmFactMemoryMerge,undoFactMemoryMerge,clearCoreMemory,deleteFactMemory,clearAllFactMemories,revokeRollingMemory,restoreRollingMemory,discardMemoryCandidate,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,saveUrlFont,activateUrlFont,removeUrlFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,mimaLoadLargeCssForEdit,stopAtelierAndRestoreCss,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,apiIdentityDraftChanged,syncTemperature,updateStoryTypography,resetStoryTypography,setAppearancePreviewSurface,setBuiltInTheme,dismissGenerationPanel,previewFailedGenerationRaw,recoverFailedGenerationRaw,repairFailedGenerationHtml,retryFailedGeneration,retryGenerationReconciliation,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,regenerateCurrentMsg,continueMsg,autoAdvance,restoreMessageVersion,stopGeneration,abandonUnknownGeneration,toggleGenerationPanelMinimize,restoreGenerationPanel,saveGenerationContextAndPreview,resumeGenerationAfterCapacityPreview});
 
 
 window.MimaPlayTools?.register('native',{
