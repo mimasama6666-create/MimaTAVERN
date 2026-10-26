@@ -29,3 +29,15 @@ html[data-mima-menu-motion="on"] .modal:not(.hidden) > .modal-panel{animation:mi
 .mima-feedback-advanced-inner select{max-width:100%;min-height:42px}
 .mima-feedback-advanced-inner .check-row{line-height:1.5;min-height:40px}
 @media(max-width:390px){.mima-feedback-setting-row{padding:10px;gap:8px}.mima-feedback-switch{gap:4px}.mima-feedback-switch input{inline-size:20px;block-size:20px}}
+
+/* Personal sound importer in ordinary Appearance settings; keep phone controls legible. */
+.mima-feedback-audio-head{display:grid;gap:5px;margin:3px 0 0}
+.mima-feedback-audio-head strong{font-size:1rem}
+.mima-feedback-audio-head small{font-size:.82rem;line-height:1.5;opacity:.8}
+#mima-personal-sound-rows{display:grid;gap:9px}
+.mima-personal-sound-row{border:1px solid var(--border-color,var(--line,#ddd));border-radius:14px;padding:12px;display:grid;gap:9px;min-width:0;background:rgba(128,128,128,.045)}
+.mima-personal-sound-name{display:grid;gap:4px;min-width:0}
+.mima-personal-sound-name small{overflow-wrap:anywhere;font-size:.78rem;opacity:.78;line-height:1.45}
+.mima-personal-sound-actions{display:flex;gap:7px;flex-wrap:wrap}
+.mima-personal-sound-actions button{flex:1 1 auto;min-height:42px;min-width:70px;padding:7px 10px;border-radius:11px;font-size:.83rem;white-space:normal}
+.mima-personal-sound-actions button:disabled{opacity:.5;cursor:wait}

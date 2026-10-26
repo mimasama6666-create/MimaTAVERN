@@ -4,6 +4,67 @@
  const FALLBACK={enabled:true,animation:'jelly',duration:340,particles:'sparkles',particleCount:5,transitions:true,soundEnabled:true,volume:24,sounds:{normal:'',send:'',menu:''}};
  const NOTES={normal:[587.33,783.99],send:[659.25,987.77],menu:[523.25,659.25]};
  const PREF_KEY='mima-r19-ui-feedback-prefs-v1';
+ const AUDIO_DB='mima-personal-click-sounds-v1',AUDIO_STORE='sounds',KINDS=['normal','send','menu'];
+ const MIME={mp3:'audio/mpeg',wav:'audio/wav',m4a:'audio/mp4',aac:'audio/aac'};
+ const MAX_AUDIO=4*1024*1024;
+ const audioRecords={};let personalAudioRevision=0;
+ function checkRecord(record){
+  if(!record||!KINDS.includes(record.kind)||typeof record.data!=='string'||typeof record.name!=='string')throw Error('个人音效记录格式无效');
+  const m=/^data:(audio\/(?:mpeg|wav|mp4|aac));base64,([a-zA-Z0-9+/]+={0,2})$/.exec(record.data);
+  if(!m||record.data.length>MAX_AUDIO*4/3+200||!record.data.endsWith('=' )&&record.data.length<25)throw Error('个人音效必须是受支持的音频文件（最大 4MB）');
+  const bytes=Math.floor(m[2].length*3/4)-(m[2].endsWith('==')?2:m[2].endsWith('=')?1:0);
+  if(bytes<=0||bytes>MAX_AUDIO||String(record.name).length>160)throw Error('个人音效大小或文件名无效');
+  return {kind:record.kind,name:record.name.replace(/[<>\u0000-\u001f]/g,'').slice(0,120),data:record.data,bytes};
+ }
+ function openAudioDb(){return new Promise((resolve,reject)=>{
+  const request=indexedDB.open(AUDIO_DB,1);
+  request.onupgradeneeded=()=>{if(!request.result.objectStoreNames.contains(AUDIO_STORE))request.result.createObjectStore(AUDIO_STORE,{keyPath:'kind'});};
+  request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error||Error('音效数据库打开失败'));
+  request.onblocked=()=>reject(Error('音效数据库被其他标签页占用，请关闭旧页面后重试'));
+ });}
+ async function getAllAudio(){const db=await openAudioDb();try{return await new Promise((resolve,reject)=>{
+  const tx=db.transaction(AUDIO_STORE,'readonly'),req=tx.objectStore(AUDIO_STORE).getAll();
+  req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);tx.onabort=()=>reject(tx.error||Error('音效读取中断'));
+ });}finally{db.close();}}
+ async function saveAudioRecords(records,replace=false){
+  const validated=records.map(checkRecord);
+  if(new Set(validated.map(x=>x.kind)).size!==validated.length)throw Error('备份包含重复的音效分类');
+  const db=await openAudioDb();try{await new Promise((resolve,reject)=>{
+   const tx=db.transaction(AUDIO_STORE,'readwrite'),os=tx.objectStore(AUDIO_STORE);
+   if(replace)os.clear();
+   for(const record of validated)os.put(record);
+   tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error||Error('音效写入失败'));tx.onabort=()=>reject(tx.error||Error('音效写入中断'));
+  });}finally{db.close();}
+  if(replace)for(const k of KINDS)delete audioRecords[k];
+  for(const record of validated)audioRecords[record.kind]=record;
+  personalAudioRevision++;refreshEffective();return true;
+ }
+ async function setSound(kind,file){
+  if(!KINDS.includes(kind))throw Error('未知音效分类');
+  const ext=String(file?.name||'').split('.').pop().toLowerCase(),mime=MIME[ext];
+  if(!mime||!file?.size||file.size>MAX_AUDIO)throw Error('请选择不超过 4 MB 的 MP3/WAV/M4A/AAC 音频');
+  if(!new Audio().canPlayType(mime))throw Error('浏览器不支持该音频格式，请改用 MP3 或 WAV');
+  const data=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result));reader.onerror=()=>reject(reader.error||Error('音频读取失败'));reader.readAsDataURL(file);});
+  const parsed=/^data:[^;,]+;base64,([\s\S]+)$/i.exec(data);
+  if(!parsed)throw Error('音频文件无法读取');
+  return saveAudioRecords([{kind,name:file.name.slice(0,120),data:`data:${mime};base64,${parsed[1]}`}]);
+ }
+ async function clearSound(kind){
+  if(!KINDS.includes(kind))throw Error('未知音效分类');
+  const db=await openAudioDb();try{await new Promise((resolve,reject)=>{
+   const tx=db.transaction(AUDIO_STORE,'readwrite');tx.objectStore(AUDIO_STORE).delete(kind);
+   tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error||Error('音效删除失败'));tx.onabort=()=>reject(tx.error||Error('音效删除中断'));
+  });}finally{db.close();}
+  delete audioRecords[kind];personalAudioRevision++;refreshEffective();return true;
+ }
+ function getSoundInfo(){return Object.fromEntries(KINDS.map(k=>[k,audioRecords[k]?{name:audioRecords[k].name,bytes:audioRecords[k].bytes,custom:true}:{name:'',bytes:0,custom:false}]));}
+ async function exportSounds(){return (await getAllAudio()).map(checkRecord);}
+ function validateSounds(raw){if(!Array.isArray(raw)||raw.length>KINDS.length)throw Error('个人音效备份结构无效');const records=raw.map(checkRecord);if(new Set(records.map(x=>x.kind)).size!==records.length)throw Error('个人音效备份分类重复');return records;}
+ async function importSounds(raw){return saveAudioRecords(validateSounds(raw),true);}
+ async function reloadSounds(){const revision=personalAudioRevision,records=(await getAllAudio()).map(checkRecord);if(revision!==personalAudioRevision)return getSoundInfo();
+  for(const kind of KINDS)delete audioRecords[kind];for(const record of records)audioRecords[record.kind]=record;
+  personalAudioRevision++;refreshEffective();return getSoundInfo();}
+
  const PREF_DEFAULTS=Object.freeze({motionEnabled:true,soundEnabled:true,particleEnabled:true,transitionsEnabled:true,animation:'theme',volume:100});
  const PREF_FIELDS=Object.keys(PREF_DEFAULTS);
  function normalizePreferences(raw){
@@ -25,7 +86,7 @@
   const base=themeSettings||normalize();
   // Personal accessibility switches are an overlay, never a theme/CSS publication.
   // Theme's original enabled=false still disables its own sounds and effects.
-  const next={...base,sounds:{...base.sounds},
+  const next={...base,sounds:{...base.sounds,...Object.fromEntries(Object.entries(audioRecords).map(([k,v])=>[k,v.data]))},
     enabled:base.enabled&&preferences.motionEnabled,
     soundEnabled:base.enabled&&base.soundEnabled&&preferences.soundEnabled,
     volume:Math.round(base.volume*preferences.volume/100),
@@ -155,9 +216,12 @@
   const now=performance.now();if(now-lastFeedback<55)return;lastFeedback=now;
   feedback(button,settings,kindFor(button),event.clientX,event.clientY);
  }
+ function demoCurrent(kind,button){if(button)feedback(button,settings,KINDS.includes(kind)?kind:'normal');}
  function demo(raw,kind,button){const conf=normalize(raw);if(!button)return;feedback(button,{...conf,soundEnabled:conf.enabled&&conf.soundEnabled},['normal','send','menu'].includes(kind)?kind:'normal');}
  document.addEventListener('click',onClick,true);
  apply(null); // default theme needs no stored project to feel interactive.
+ const ready=reloadSounds().catch(error=>{console.warn('[Interaction] personal audio assets unavailable; records preserved',error);throw error;});
+ ready.catch(()=>{}); // Deliberately keep the failure accessible to Settings; no unhandled rejection.
  window.addEventListener('storage',event=>{if(event.key===PREF_KEY)reloadPreferences();});
- window.MimaInteraction={apply,demo,get:()=>({...settings,sounds:{...settings.sounds}}),getPreferences:()=>({...preferences}),setPreference,reloadPreferences,_normalize:normalize,preferenceKey:PREF_KEY};
+ window.MimaInteraction={apply,demo,demoCurrent,setSound,clearSound,getSoundInfo,exportSounds,validateSounds,importSounds,reloadSounds,ready,get:()=>({...settings,sounds:{...settings.sounds}}),getPreferences:()=>({...preferences}),setPreference,reloadPreferences,_normalize:normalize,preferenceKey:PREF_KEY};
 })();

@@ -929,7 +929,7 @@ function setupImmersiveReading(){
 }
 // User-facing release notes: once per distinct production release by default.
 // Avoid touching Store/History or making automatic announcements mandatory.
-const MIMA_RELEASE_NOTES_VERSION='R19-20261027-BATCH8-STREAM-HTML-READING-FIX-DEV';
+const MIMA_RELEASE_NOTES_VERSION='R19-20261027-BATCH8-STREAM-AUDIO-RESTORE-R1-DEV';
 const MIMA_RELEASE_NOTES_SEEN='mima-release-notes-seen:'+MIMA_RELEASE_NOTES_VERSION;
 const MIMA_RELEASE_NOTES_OPTOUT='mima-release-notes-disable-auto-v1';
 function openMimaReleaseNotice(){
@@ -2052,7 +2052,7 @@ async function importWholeLibrary(file){
 
 
 const FULL_SETTINGS_FORMAT = 'mimamao-tavern-full-settings';
-const FULL_SETTINGS_VERSION = 4;
+const FULL_SETTINGS_VERSION = 4; // Personal audio records are an optional, backward-compatible sidecar.
 const FULL_SETTINGS_KEYS = ['mima-r19-ui-feedback-prefs-v1', 'mimamao_tavern_url_fonts_v1', MIMA_UI_DENSITY_KEY, TEMP_KEY, LEGACY_FONT_URL_KEY, LEGACY_FONT_FAMILY_KEY, STORY_TYPO_KEY, 'mimamao_tavern_ui_font', 'mimamao_tavern_story_font', 'MIMAMAO_TAVERN_ASSISTANT_STUDIO_V1'];
 
 function collectPortableLocalPrefs(){
@@ -2077,12 +2077,13 @@ async function buildFullSettingsBackup({includeApiKey=false,includeFonts=true}={
     const fonts=includeFonts&&MimaFontManager.exportPortable?await MimaFontManager.exportPortable():[];
     const atelier=await MimaAtelierCore.exportRecords();
     const wallpapers=await MimaChatWallpaper.exportRecords();
+    const personalSounds=await MimaInteraction.exportSounds();
     return {
         format:FULL_SETTINGS_FORMAT,
         version:FULL_SETTINGS_VERSION,
         exportedAt:new Date().toISOString(),
         warning:includeApiKey?'此文件包含 API Key（接口密钥），请勿公开分享。':'此文件未包含 API Key（接口密钥）。',
-        data:{library,atelier,wallpapers,api,localPrefs:collectPortableLocalPrefs(),fonts,selectedFonts:{ui:MimaFontManager.getSelected('ui'),story:MimaFontManager.getSelected('story')}}
+        data:{library,atelier,wallpapers,personalSounds,api,localPrefs:collectPortableLocalPrefs(),fonts,selectedFonts:{ui:MimaFontManager.getSelected('ui'),story:MimaFontManager.getSelected('story')}}
     };
 }
 async function saveFullSettingsSnapshot(){
@@ -2115,6 +2116,7 @@ async function applyFullSettingsBackup(raw,{fromSnapshot=false,templatePolicy='r
     MimaStandalone.validateLibrary(src.library);
     if(src.localPrefs!==undefined&&(!src.localPrefs||typeof src.localPrefs!=='object'||Array.isArray(src.localPrefs)))throw new Error('localPrefs 结构无效');
     if(src.fonts!==undefined&&!Array.isArray(src.fonts))throw new Error('fonts 结构无效');
+    if(src.personalSounds!==undefined)MimaInteraction.validateSounds(src.personalSounds);
     const atelierPlan=src.atelier?await MimaAtelierCore.previewRecordImport(src.atelier):null;
     if(src.wallpapers)await MimaChatWallpaper.previewRecordImport(src.wallpapers);
     // Validate canonical template preservation/merge against the CURRENT DB,
@@ -2147,6 +2149,8 @@ async function applyFullSettingsBackup(raw,{fromSnapshot=false,templatePolicy='r
         const restored=await MimaStandalone.importLibrary(src.library,{templatePolicy}); // last; atomic compare-and-swap
         canonicalCommitted=true; // commit boundary: later UI work must never undo or misreport canonical
         restoreWarnings=Array.isArray(restored?.importWarnings)?restored.importWarnings:[];
+        // Canonical commit is authoritative; personal sounds are a separate, atomic IDB sidecar.
+        if(src.personalSounds!==undefined){try{await MimaInteraction.importSounds(src.personalSounds);}catch(soundError){restoreWarnings.push('个人点击音效未恢复（现有音效保持）：'+soundError.message);}}
     }catch(e){
         if(canonicalCommitted){
             // A post-commit error is NOT a failed DB restore. Keep canonical + font receipt.
@@ -2179,10 +2183,26 @@ async function applyFullSettingsBackup(raw,{fromSnapshot=false,templatePolicy='r
     }
     return {canonicalCommitted:true,uiRefreshed:true,warnings:restoreWarnings};
 }
+// UI receipt is separate from the canonical library transaction: a sidecar
+// failure must be visible, but must never falsely undo an already committed story.
+let lastFullSettingsRestoreReceipt=null;
+function showFullSettingsRestoreReceipt(result,{fromSnapshot=false}={}){
+ const warnings=Array.isArray(result?.warnings)?result.warnings.map(String):[];
+ lastFullSettingsRestoreReceipt={uiRefreshed:!!result?.uiRefreshed,warnings,fromSnapshot};
+ const summary=!result?.uiRefreshed
+   ?'主资料库已恢复，但页面刷新失败；请刷新页面检查，勿重复导入'
+   :warnings.length?'主资料库已恢复，但部分设置未恢复；请查看数据备份中的恢复结果'
+   :fromSnapshot?'本机设置快照已完整恢复':'剧情与设置已恢复；小手机/兼容库需独立恢复';
+ toast(summary);
+ if(warnings.length)console.warn('设置恢复存在部分失败：',warnings);
+ // Keep the result visible after the short toast disappears. A fresh render
+ // also works when the async Data tab was still loading during the import.
+ if(!isSettingsOpen()||settingsTab!=='data')openSettings('data');else renderSettings();
+}
 async function importFullSettingsFile(file){
     if(!file)return;
     if(!confirm('导入完整设置会用备份中的剧情/角色卡/世界书/预设/CSS 数据覆盖当前资料库，并恢复外观与 API 配置。继续吗？'))return;
-    try{const raw=JSON.parse(await file.text());const policy=chooseTemplateRestorePolicy(await MimaStandalone.exportLibrary(),raw?.data?.library);if(!policy)return;const result=await applyFullSettingsBackup(raw,{templatePolicy:policy});toast(result?.uiRefreshed?'剧情与设置已恢复；小手机/兼容库需独立恢复':'资料库已成功恢复，但界面刷新失败；请刷新页面查看，勿重复导入');if(result?.warnings?.length)console.warn('设置恢复附加诊断：',result.warnings)}catch(e){toast(`完整设置导入失败：${e.message}`)}
+    try{const raw=JSON.parse(await file.text());const policy=chooseTemplateRestorePolicy(await MimaStandalone.exportLibrary(),raw?.data?.library);if(!policy)return;const result=await applyFullSettingsBackup(raw,{templatePolicy:policy});showFullSettingsRestoreReceipt(result);}catch(e){toast(`完整设置导入失败：${e.message}`)}
 }
 async function restoreSavedSettingsSnapshot(){
     try{
@@ -2191,21 +2211,50 @@ async function restoreSavedSettingsSnapshot(){
         if(!confirm(`恢复本机设置快照？\n保存时间：${snap.savedAt||snap.exportedAt||'未知'}\n\n这会覆盖当前剧情资料库。`))return;
         const policy=chooseTemplateRestorePolicy(await MimaStandalone.exportLibrary(),snap?.data?.library);if(!policy)return;
         const result=await applyFullSettingsBackup(snap,{fromSnapshot:true,templatePolicy:policy});
-        if(result?.uiRefreshed){openSettings('data');toast('本机设置快照已恢复')}else toast('快照数据已经成功保存，但界面刷新失败；请刷新页面，勿重复恢复');
-        if(result?.warnings?.length)console.warn('快照恢复附加诊断：',result.warnings);
+        showFullSettingsRestoreReceipt(result,{fromSnapshot:true});
     }catch(e){toast(`恢复快照失败：${e.message}`)}
 }
 async function renderDataTab(box,renderEpoch=++settingsRenderEpoch){
     let snap=null;try{snap=await MimaLocalStore.loadSettingsSnapshot()}catch(_){ }
     if(!settingsRenderIsCurrent('data',renderEpoch,box))return;
     const cfg=MimaStandalone.getApiConfig();
+    const receipt=lastFullSettingsRestoreReceipt;
+    const backupRestoreResult=receipt?`<div class="data-backup-card" role="${receipt.warnings.length||!receipt.uiRefreshed?'alert':'status'}" style="white-space:pre-wrap"><strong>${receipt.warnings.length||!receipt.uiRefreshed?'⚠️ 本次恢复：部分完成':'✅ 本次恢复：完成'}</strong><div class="row-sub">${!receipt.uiRefreshed?'主资料库已提交，但页面刷新失败；请检查后手动刷新，不要重复导入。':receipt.warnings.length?'主资料库已经恢复，但下列设置未能全部恢复：':'主资料库和本次设置均已恢复。'}</div>${receipt.warnings.map(item=>`<div class="row-sub">• ${escapeHtml(String(item).slice(0,650))}</div>`).join('')}</div>`:'';
     box.innerHTML=`<section class="settings-section"><h3>💾 Data Backup（数据备份）</h3><p class="helper">这里备份的不只是剧情，还包括角色卡、世界书、预设、正则包、CSS Preset（CSS 预设）、API（接口）参数、温度/流式设置、字体选择；可选把本地字体文件也一起装进备份。普通“刷新 / 强制刷新”不会删除这些数据，但 Safari 的“清除历史记录与网站数据”或删除网站数据会清掉 IndexedDB（本地数据库）和 localStorage（本地存储），所以真正保险的是导出 JSON（数据文件）到“文件”App。</p>
     <div class="data-backup-card"><div class="row-title">本机设置快照</div><div class="row-sub">${snap?`最近保存：${escapeHtml(snap.savedAt||snap.exportedAt||'已保存')}`:'尚未保存本机快照'}</div><div class="toolbar"><button class="primary-btn" onclick="saveFullSettingsSnapshot()">保存咪嘛馆设置数据</button><button class="ghost-btn" onclick="restoreSavedSettingsSnapshot()">恢复本机快照</button></div></div>
     <div class="data-backup-card"><div class="row-title">剧情与设置备份（不含小手机）</div><div class="row-sub"><strong>重要：这不是整馆迁移。</strong>只包含原生剧情、资源、工坊、壁纸及可选字体／接口设置；不包含小手机独立数据库或酒馆兼容库。清除网站数据或换设备前，还必须分别在小手机备份页、酒馆兼容管理页导出各自存档。尚不支持多库一键原子恢复。</div><label class="check-row"><input id="backup-fonts" type="checkbox" checked> 把本地字体文件也加入备份（文件可能变大）</label><label class="check-row"><input id="backup-api-key" type="checkbox"> 把 API Key（接口密钥）加入导出/快照 <strong>（敏感）</strong></label><div class="toolbar"><button class="primary-btn" onclick="exportFullSettingsBackup()">⇩ 导出剧情与设置</button><button class="ghost-btn" onclick="chooseFullSettingsImport()">⇧ 恢复剧情与设置</button></div><div class="row-sub">当前 API（接口）：${cfg.apiBase?escapeHtml(cfg.apiBase):'未配置'} · Model（模型）：${cfg.model?escapeHtml(cfg.model):'未选择'}</div></div>
-    <div id="data-backup-status" class="api-status">${snap?'✅ 当前浏览器已有本机快照。':'建议先保存一次本机快照，再导出一份文件备份。'}</div></section>
+    <div id="data-backup-status" class="api-status">${snap?'✅ 当前浏览器已有本机快照。':'建议先保存一次本机快照，再导出一份文件备份。'}</div>${backupRestoreResult}</section>
     <section class="settings-section"><h3>🧹 Cache（缓存）说明</h3><p class="helper"><strong>只想让 GitHub Pages 加载新代码时，不需要先清除网站数据。</strong>本版已经给 CSS / JS 资源加入版本号 <code>?v=1.1.0</code>，部署后浏览器会把它们当成新资源重新拉取。若仍显示旧页面，先关闭该标签页再重新打开，或做一次强制刷新；不要直接使用会删除网站数据的清理方式，除非你已经导出了完整设置备份。</p></section>`;
 }
 
+function appearancePersonalSoundRows(){
+ const names={normal:'普通按钮',send:'发送 / 继续 / 推进',menu:'菜单 / 设置'};
+ const info=window.MimaInteraction?.getSoundInfo?.()||{};
+ return Object.entries(names).map(([kind,label])=>{
+  const rec=info[kind]||{custom:false};
+  return `<div class="mima-personal-sound-row"><div class="mima-personal-sound-name"><strong>${label}</strong><small>${rec.custom?'已导入 · '+escapeHtml(rec.name):'当前使用主题自带声音（未单独覆盖）'}</small></div><div class="mima-personal-sound-actions"><button type="button" class="ghost-btn" onclick="chooseMimaFeedbackSound('${kind}')">导入</button><button type="button" class="ghost-btn" data-mima-no-interaction="" onclick="previewMimaFeedbackSound('${kind}',this)">试听</button>${rec.custom?`<button type="button" class="ghost-btn" onclick="resetMimaFeedbackSound('${kind}',this)">恢复主题声音</button>`:''}</div></div>`;
+ }).join('');
+}
+function updateAppearanceSoundRows(){const box=qs('mima-personal-sound-rows');if(box)box.innerHTML=appearancePersonalSoundRows();}
+let mimaPersonalSoundTarget='normal';
+function chooseMimaFeedbackSound(kind){
+ if(!['normal','send','menu'].includes(kind))return;
+ const input=qs('mima-feedback-sound-file');if(!input){toast('音效导入入口未加载，请刷新页面');return;}
+ mimaPersonalSoundTarget=kind;input.value='';input.click();
+}
+async function importMimaFeedbackSound(file){if(!file)return;const kind=mimaPersonalSoundTarget;
+ try{await MimaInteraction.setSound(kind,file);updateAppearanceSoundRows();toast('自定义音效已保存，可立即试听');}
+ catch(error){console.error('[Appearance] personal sound import rejected',error);toast('音效未保存：'+error.message);}
+}
+function previewMimaFeedbackSound(kind,button){
+ if(!MimaInteraction.getPreferences().soundEnabled){toast('点击音效已关闭，请先打开音效开关再试听');return;}
+ MimaInteraction.demoCurrent(kind,button);
+}
+async function resetMimaFeedbackSound(kind,button){
+ if(button)button.disabled=true;
+ try{await MimaInteraction.clearSound(kind);updateAppearanceSoundRows();toast('已恢复该类别的主题声音');}
+ catch(error){if(button)button.disabled=false;toast('恢复主题声音失败：'+error.message);}
+}
 function appearanceFeedbackHtml(){
  const p=window.MimaInteraction?.getPreferences?.()||{motionEnabled:true,soundEnabled:true,particleEnabled:true,transitionsEnabled:true,animation:'theme',volume:100};
  const checked=x=>x?'checked':'';
@@ -2215,11 +2264,13 @@ function appearanceFeedbackHtml(){
  <div class="mima-feedback-setting-row"><div><strong>🔊 点击音效</strong><small>关闭后只静音，按钮动画照常运行</small></div><label class="mima-feedback-switch"><input type="checkbox" ${checked(p.soundEnabled)} aria-label="开启点击音效" onchange="setMimaFeedbackPreference('soundEnabled',this.checked,this)"><span>${p.soundEnabled?'开启':'关闭'}</span></label></div>
  <div class="mima-feedback-slider"><label for="mima-feedback-volume">音效音量 <output id="mima-feedback-volume-value">${p.volume}%</output></label><input id="mima-feedback-volume" type="range" min="0" max="100" step="5" value="${p.volume}" oninput="document.getElementById('mima-feedback-volume-value').textContent=this.value+'%'" onchange="setMimaFeedbackPreference('volume',Number(this.value),this)"><small>相对当前主题音量调节；100% 为主题原始音量，不会额外放大。</small></div>
  <div class="mima-feedback-setting-row"><div><strong>✨ 按钮动画</strong><small>关闭后停止按压动画、粒子和弹窗过渡；音效仍可播放</small></div><label class="mima-feedback-switch"><input type="checkbox" ${checked(p.motionEnabled)} aria-label="开启按钮动画" onchange="setMimaFeedbackPreference('motionEnabled',this.checked,this)"><span>${p.motionEnabled?'开启':'关闭'}</span></label></div>
+ <div class="mima-feedback-audio-head"><strong>🎶 自定义点击音效</strong><small>导入后立即使用，只影响这台设备；不修改主题工坊的音频，也不会替换当前 CSS。单个最多 4MB。</small></div>
+ <div id="mima-personal-sound-rows">${appearancePersonalSoundRows()}</div>
  <details class="mima-feedback-advanced"><summary>调整动画样式与装饰</summary><div class="mima-feedback-advanced-inner">
  <label for="mima-feedback-animation" class="form-label">点击动画</label><select class="field" id="mima-feedback-animation" onchange="setMimaFeedbackPreference('animation',this.value,this)">${anims.map(([value,label])=>`<option value="${value}" ${p.animation===value?'selected':''}>${label}</option>`).join('')}</select>
  <label class="check-row"><input type="checkbox" ${checked(p.particleEnabled)} onchange="setMimaFeedbackPreference('particleEnabled',this.checked,this)"> 显示星星、花瓣等点击粒子（形状由主题决定）</label>
  <label class="check-row"><input type="checkbox" ${checked(p.transitionsEnabled)} onchange="setMimaFeedbackPreference('transitionsEnabled',this.checked,this)"> 菜单和弹窗淡入过渡</label>
- <p class="helper">想换具体粒子形状、上传按钮声音或制作主题专属反馈，可以继续使用主题工坊的「交互音效」页面。</p>
+ <p class="helper">更复杂的粒子形状、每套主题独立的动画与声音，可以在主题工坊的「交互音效」页面编辑。</p>
  <button class="ghost-btn" type="button" onclick="MimaThemeAtelier.open()">🎨 打开主题工坊</button>
  </div></details></section>`;
 }
@@ -2242,6 +2293,7 @@ async function renderAppearanceTab(box,renderEpoch=++settingsRenderEpoch){
     let fontReadError=null,records;
     try{records=await MimaFontManager.listMetadata()}catch(error){fontReadError=error;records=[];console.error('外观字体库读取失败，未更改字体存储或偏好',error)}
     if(!settingsRenderIsCurrent('appearance',renderEpoch,box))return;
+    window.MimaInteraction?.ready?.then(updateAppearanceSoundRows).catch(error=>console.warn('[Appearance] 个人音效读取失败，原始数据未修改',error));
     if(!fontReadError)fontRecords=records;
     const ui=MimaFontManager.getSelected('ui'),story=MimaFontManager.getSelected('story'),typo=getStoryTypography();const opts=`<option value="">系统默认字体</option>`+(fontReadError?[]:fontRecords).map(f=>`<option value="${escapeHtml(f.family)}">本地 · ${escapeHtml(f.family)} · ${formatBytes(f.size)}</option>`).join('')+MimaFontManager.urlFonts().map(f=>`<option value="${escapeHtml(f.family)}">链接 · ${escapeHtml(f.name)}</option>`).join('');const themeState=MimaStandalone.getState?.().themeSettings||{theme:'default'},themeCards=(MimaThemeEngine?.getBuiltins?.()||[]).map(t=>`<button class="novel-theme-card ${themeState.theme===t.id?'active':''}" data-theme-choice="${t.id}" onclick="setBuiltInTheme('${t.id}')"><strong>${escapeHtml(t.name)}</strong><span>${escapeHtml(t.description)}</span></button>`).join('');box.innerHTML=`${appearanceFeedbackHtml()}<section class="settings-section"><h3>🌓 Built-in Theme（内置主题）</h3><p class="helper">Default 保留原始外观；深色、电子墨水、暖纸与韩系柔色主题覆盖聊天、设置、小说及助手的常用组件。全局自定义 CSS 仍优先；如果已挂载全局 CSS，实际颜色可能不同。</p><div class="novel-theme-grid">${themeCards}</div></section><section class="settings-section"><h3>📐 界面显示大小</h3><p class="helper">单独控制咪嘛馆的按钮、面板和小手机尺寸，不改变剧情正文字号设置，也不删除你现有的主题 CSS。默认 80%，相当于之前觉得舒服的紧凑尺寸；浏览器缩放建议恢复 100% 使用。</p><label class="form-label" for="mima-ui-density">界面显示比例</label><select id="mima-ui-density" class="field" style="max-width:240px" onchange="changeMimaUiDensity(this.value)"><option value="70">70% · 更紧凑</option><option value="80">80% · 推荐</option><option value="90">90%</option><option value="100">100% · 原始大小</option><option value="110">110% · 较大</option></select></section><section class="settings-section"><h3>🎨 本地字体库</h3><p class="helper">直接导入 TTF / OTF / WOFF / WOFF2（字体文件格式）。文件保存在当前浏览器 IndexedDB，不需要转 URL（链接），也不会上传到服务器。剧情正文字体会作用于普通小说正文；开启 Safe HTML（安全 HTML）后，未自行指定字体的 HTML 正文也会继承它。状态栏若有自己的 CSS 字体设置，仍以状态栏自己的设置为准。</p><div class="toolbar"><button class="primary-btn" onclick="chooseFontImport()">＋ 导入字体文件</button></div><div class="form-grid"><div><label class="form-label">UI（界面）字体</label><select id="font-ui-select" class="field" onchange="changeFont('ui',this.value)">${opts}</select></div><div><label class="form-label">剧情正文字体</label><select id="font-story-select" class="field" onchange="changeFont('story',this.value)">${opts}</select></div></div><div id="font-list" style="margin-top:14px"></div></section>
 <section class="settings-section"><h3>📖 Novel Typography（小说正文排版）</h3><p class="helper">进入本页会自动打开上方实时预览。字号、正文字体、行高与字间距也会作为 Safe HTML 的基础继承值；段间距与首行缩进仍只作用于咪嘛馆识别出的普通小说段落，不会强行挤压 &lt;system&gt; / &lt;details&gt; / 表格等状态栏结构。</p>
@@ -3022,8 +3074,32 @@ function setGenerationRetryVisible(visible){for(const id of ['generation-retry',
 function beginGenerationProgress(action){hideFailedStreamControls();qs('generation-recovery-draft')?.classList.add('hidden');qs('generation-copy-failed-stream')?.classList.add('hidden');deferredGenerationProgress=null;currentGenerationAction=action;lastGenerationFailure=null;contextRecoveryReceipt=null;setGenerationRetryVisible(false);setGenerationPanelMinimized(false);qs('generation-capacity-recovery')?.classList.add('hidden');qs('generation-resume-unanswered')?.classList.add('hidden');const panel=qs('generation-panel');panel?.classList.remove('hidden','error','done');setGenerationProgress({percent:4,label:`🤍 ${generationActionLabel(action)}`,detail:'正在准备本轮剧情…'})}
 function isStoryNearBottom(box,threshold=96){return !box||((box.scrollHeight-box.scrollTop-box.clientHeight)<=threshold)}
 function updateStoryFollowButton(){const b=qs('story-follow-stream');if(!b)return;b.classList.toggle('hidden',!liveStreamState||liveStreamState.followTail!==false)}
-function resumeStoryStreamFollow(){if(!liveStreamState)return;liveStreamState.followTail=true;const box=qs('story-chat-box');if(box)box.scrollTop=box.scrollHeight;updateStoryFollowButton()}
-function bindStoryStreamScroll(){r19BindStreamReadingIntent();const box=qs('story-chat-box');if(!box||box.dataset.streamFollowBound==='1')return;box.dataset.streamFollowBound='1';box.addEventListener('scroll',()=>{if(!liveStreamState)return;liveStreamState.followTail=isStoryNearBottom(box);updateStoryFollowButton()},{passive:true})}
+function resumeStoryStreamFollow(){
+ if(!liveStreamState)return;
+ liveStreamState.followSuspended=false;
+ liveStreamState.followTail=true;
+ const box=qs('story-chat-box');if(box)box.scrollTop=box.scrollHeight;
+ updateStoryFollowButton();
+}
+function bindStoryStreamScroll(){
+ r19BindStreamReadingIntent();
+ const box=qs('story-chat-box');if(!box||box.dataset.streamFollowBound==='1')return;
+ box.dataset.streamFollowBound='1';
+ box.addEventListener('scroll',()=>{
+  const st=liveStreamState;if(!st)return;
+  // An expanded HTML panel or a deliberate history scroll is sticky until the
+  // reader explicitly taps "跟随输出". Neither scroll anchoring nor app-initiated
+  // scrollTop writes are permission to resume following.
+  if(st.followSuspended){updateStoryFollowButton();return;}
+  const nearBottom=isStoryNearBottom(box);
+  if(!nearBottom&&performance.now()-r19LastStreamReaderGestureAt<3500){
+   st.followSuspended=true;st.followTail=false;
+  }else if(nearBottom){st.followTail=true;}
+  // A layout-only scroll away from the end is not a new reading gesture;
+  // retain the previous follow intent instead of spuriously pausing/resuming.
+  updateStoryFollowButton();
+ },{passive:true});
+}
 function newGenerationTraceId(){
     // Durable cross-tab identity. UI clock/counter is not a trace identity.
     const uuid=globalThis.crypto?.randomUUID?.();
@@ -3117,10 +3193,17 @@ function r19CaptureStreamView(st,box){
   userEpoch:r19StoryUserInteractionEpoch};
 }
 let r19StoryUserInteractionEpoch=0;
+let r19LastStreamReaderGestureAt=-Infinity;
 function r19BindStreamReadingIntent(){
  const box=qs('story-chat-box');if(!box||box.dataset.streamReadingIntentBound==='1')return;
  box.dataset.streamReadingIntentBound='1';
- for(const name of ['touchstart','wheel','pointerdown','keydown'])box.addEventListener(name,()=>{r19StoryUserInteractionEpoch++;},{passive:name!=='keydown',capture:true});
+ for(const name of ['touchstart','wheel','pointerdown','keydown'])box.addEventListener(name,event=>{
+  r19StoryUserInteractionEpoch++;
+  // Only scrolling-related keyboard input counts as reading intent. All
+  // interactions still invalidate stale final-scroll callbacks as before.
+  if(name!=='keydown'||['ArrowUp','ArrowDown','PageUp','PageDown','Home','End',' '].includes(event.key))
+   r19LastStreamReaderGestureAt=performance.now();
+ },{passive:name!=='keydown',capture:true});
 }
 function r19FinishStreamViewport(box,view,finalContent){
  if(!box||!view||!finalContent?.isConnected||currentSessionId!==view.sessionId||
@@ -3152,11 +3235,11 @@ function ensureLiveStreamBubble(owner=currentGenerationOwner()){
     // jump to the newest token. Resume following only on an explicit action.
     content.addEventListener('click',event=>{
       if(event.target.closest?.('summary')&&liveStreamState?.owner===owner){
-        liveStreamState.followTail=false;updateStoryFollowButton();
+        liveStreamState.followSuspended=true;liveStreamState.followTail=false;updateStoryFollowButton();
       }
     },true);
     div.append(header,content);box.appendChild(div);
-    liveStreamState={owner,node:div,contentNode:content,targetText:'',displayText:'',timer:null,followTail:isStoryNearBottom(box),lastPaintAt:0,paints:0};
+    liveStreamState={owner,node:div,contentNode:content,targetText:'',displayText:'',timer:null,followTail:isStoryNearBottom(box),followSuspended:false,lastPaintAt:0,paints:0};
     updateStoryFollowButton();return liveStreamState;
 }
 function pumpLiveStream(){
@@ -4084,7 +4167,7 @@ function restoreLegacyFont(){
 }
 
 // Expose inline handlers
-Object.assign(window,{setMimaFeedbackPreference,openMimaReleaseNotice,closeMimaReleaseNotice,setMimaReleaseNoticeOptOut,openGenerationTaskViewer,closeGenerationTaskViewer,copyGenerationTaskViewerText,importCurrentSessionAsSettingTemplate,chooseIndependentTemplate,saveIndependentTemplate,copyIndependentTemplate,setIndependentTemplateDefault,deleteIndependentTemplate,setImmersiveReading,saveCurrentSettingTemplate,duplicateSettingTemplate,setDefaultSettingTemplate,deleteSettingTemplate,exportSettingTemplate,importSettingTemplate,refreshSettingTemplateChoices,renderSettingTemplatePreview,manualRollingSummary,mimaFilterLibrary,mimaToggleFavorite,goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,choosePngResourceInspection,playInspectedPngInCompat,savePngSelectedResources,exportPngInspection,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,exportStoryTranscript,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,loadMemoryModels,selectMemoryModel,startFactMemoryEdit,cancelFactMemoryEdit,saveFactMemoryEdit,toggleMergeFactSelection,previewFactMemoryMerge,cancelFactMemoryMerge,confirmFactMemoryMerge,undoFactMemoryMerge,clearCoreMemory,deleteFactMemory,clearAllFactMemories,revokeRollingMemory,restoreRollingMemory,discardMemoryCandidate,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,saveUrlFont,activateUrlFont,removeUrlFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,mimaLoadLargeCssForEdit,stopAtelierAndRestoreCss,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,apiIdentityDraftChanged,syncTemperature,updateStoryTypography,resetStoryTypography,setAppearancePreviewSurface,setBuiltInTheme,dismissGenerationPanel,previewFailedGenerationRaw,recoverFailedGenerationRaw,repairFailedGenerationHtml,retryFailedGeneration,retryGenerationReconciliation,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,regenerateCurrentMsg,continueMsg,autoAdvance,restoreMessageVersion,stopGeneration,abandonUnknownGeneration,toggleGenerationPanelMinimize,restoreGenerationPanel,saveGenerationContextAndPreview,resumeGenerationAfterCapacityPreview});
+Object.assign(window,{setMimaFeedbackPreference,chooseMimaFeedbackSound,previewMimaFeedbackSound,resetMimaFeedbackSound,openMimaReleaseNotice,closeMimaReleaseNotice,setMimaReleaseNoticeOptOut,openGenerationTaskViewer,closeGenerationTaskViewer,copyGenerationTaskViewerText,importCurrentSessionAsSettingTemplate,chooseIndependentTemplate,saveIndependentTemplate,copyIndependentTemplate,setIndependentTemplateDefault,deleteIndependentTemplate,setImmersiveReading,saveCurrentSettingTemplate,duplicateSettingTemplate,setDefaultSettingTemplate,deleteSettingTemplate,exportSettingTemplate,importSettingTemplate,refreshSettingTemplateChoices,renderSettingTemplatePreview,manualRollingSummary,mimaFilterLibrary,mimaToggleFavorite,goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,choosePngResourceInspection,playInspectedPngInCompat,savePngSelectedResources,exportPngInspection,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,exportStoryTranscript,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,loadMemoryModels,selectMemoryModel,startFactMemoryEdit,cancelFactMemoryEdit,saveFactMemoryEdit,toggleMergeFactSelection,previewFactMemoryMerge,cancelFactMemoryMerge,confirmFactMemoryMerge,undoFactMemoryMerge,clearCoreMemory,deleteFactMemory,clearAllFactMemories,revokeRollingMemory,restoreRollingMemory,discardMemoryCandidate,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,saveUrlFont,activateUrlFont,removeUrlFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,mimaLoadLargeCssForEdit,stopAtelierAndRestoreCss,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,apiIdentityDraftChanged,syncTemperature,updateStoryTypography,resetStoryTypography,setAppearancePreviewSurface,setBuiltInTheme,dismissGenerationPanel,previewFailedGenerationRaw,recoverFailedGenerationRaw,repairFailedGenerationHtml,retryFailedGeneration,retryGenerationReconciliation,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,regenerateCurrentMsg,continueMsg,autoAdvance,restoreMessageVersion,stopGeneration,abandonUnknownGeneration,toggleGenerationPanelMinimize,restoreGenerationPanel,saveGenerationContextAndPreview,resumeGenerationAfterCapacityPreview});
 
 
 window.MimaPlayTools?.register('native',{
@@ -4187,6 +4270,7 @@ async function mimaBoot(){
     qs('api-config-file-input').addEventListener('change',e=>importApiConfigFile(e.target.files?.[0]));
     qs('library-file-input').addEventListener('change',e=>importWholeLibrary(e.target.files?.[0]));
     qs('full-settings-file-input').addEventListener('change',e=>importFullSettingsFile(e.target.files?.[0]));
+    qs('mima-feedback-sound-file').addEventListener('change',e=>importMimaFeedbackSound(e.target.files?.[0]));
             mimaStartupBound=true;
         }
         stage='load_library_and_session';
