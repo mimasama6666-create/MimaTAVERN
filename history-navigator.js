@@ -25,8 +25,9 @@ function toggle(state){setup();expanded=state;host.classList.toggle('expanded',s
 // Snapshot only fields affecting canonical search and its DOM projection.
 // Comparing values, not array identity, handles same-session rehydration.
 let messageRevision=[];
-function revisionOf(m){return [m?.id||'',m?.role||'',m?.content||'',!!m?.isEdited,
- JSON.stringify(m?.versions||[])];}
+// Search projects only the currently visible text. Archived versions are read
+// by their own action, so their full bodies do not belong in this revision.
+function revisionOf(m){return [m?.id||'',m?.role||'',m?.content||'',!!m?.isEdited];}
 function unchangedRevision(next){return next.length===messageRevision.length&&next.every((r,i)=>
  r.every((part,k)=>part===messageRevision[i][k]));}
 function sync(id,list){
@@ -87,18 +88,29 @@ function currentAnchor(view=box){
  }
  return candidate?{id:candidate.dataset.msgId,offset:candidate.getBoundingClientRect().top-viewport.top,scrollTop:view.scrollTop}:{id:null,offset:0,scrollTop:view.scrollTop};
 }
+// Geometry is in visual pixels; scrollTop is in unscaled layout pixels.
+// Respect the existing UI density and custom scale without changing viewport.
+function scrollByVisual(view,delta){
+ if(!view||!Number.isFinite(delta))return;
+ const rect=view.getBoundingClientRect(),css=getComputedStyle(view);
+ let logical=parseFloat(css.height);
+ if(css.boxSizing!=='border-box')for(const key of ['paddingTop','paddingBottom','borderTopWidth','borderBottomWidth'])logical+=parseFloat(css[key])||0;
+ if(!(logical>0))logical=view.offsetHeight;
+ const scale=logical>0&&rect.height>0?rect.height/logical:1;
+ view.scrollTop+=delta/scale;
+}
 function jumpId(id){const idx=messages.findIndex(m=>m.id===id);if(idx<0)return report('这条消息已被修改或删除，未调整原有历史。');
  if(!origin)origin={session,anchor:currentAnchor()};
  const node=findMessageNode(id);
  if(!node)return report('目标尚未显示；不会误跳到其他剧情。');
- box.scrollTop+=node.getBoundingClientRect().top-box.getBoundingClientRect().top-14;
+ scrollByVisual(box,node.getBoundingClientRect().top-box.getBoundingClientRect().top-14);
  node.classList.remove('mima-history-highlight');void node.offsetWidth;node.classList.add('mima-history-highlight');
  const role=messages[idx].role==='user'?'玩家':messages[idx].role==='assistant'?'角色':'系统';report(`已定位第 ${idx+1} 条 · ${role}`);refreshProgress();}
 function jumpNumber(kind,n){if(!Number.isSafeInteger(n)||n<1)return report('请输入正整数。');if(kind==='message'){const msg=messages[n-1];if(!msg)return report('消息序号超出当前历史范围。');return jumpId(msg.id);}
  let count=0;const msg=messages.find(m=>{if(m.role==='user')count++;return m.role==='user'&&count===n;});if(!msg)return report('当前剧情没有这一轮玩家发言。');jumpId(msg.id);}
 function returnToOrigin(){if(!origin)return report('尚无需要返回的位置。');if(origin.session!==session){origin=null;return report('会话已经切换，已取消旧定位。');}
  const ref=origin.anchor;origin=null;window.CSS?.highlights?.delete('mima-history-match');const node=findMessageNode(ref?.id);
- if(node)box.scrollTop+=node.getBoundingClientRect().top-box.getBoundingClientRect().top-ref.offset;else box.scrollTop=ref?.scrollTop||0;
+ if(node)scrollByVisual(box,node.getBoundingClientRect().top-box.getBoundingClientRect().top-ref.offset);else box.scrollTop=ref?.scrollTop||0;
  report('已返回跳转前的阅读位置。');refreshProgress();}
 function jumpLast(){if(!messages.length)return;const last=messages[messages.length-1];if(!last.id)return;return jumpId(last.id);}
 function plain(value){return String(value||'').replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi,' ').replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi,' ').replace(/<[^>]*>/g,' ').replace(/&(?:nbsp|amp|lt|gt|quot);/g,' ');}
@@ -133,7 +145,7 @@ function focusMatch(id,term){
  const start=spans.find(item=>item.end>pos),end=spans.find(item=>item.end>=pos+term.length);if(!start||!end)return;
  const range=document.createRange();range.setStart(start.node,pos-start.start);range.setEnd(end.node,pos+term.length-end.start);
  const r=range.getBoundingClientRect();if(!r.height)return;
- box.scrollTop+=r.top-box.getBoundingClientRect().top-Math.min(120,box.clientHeight*.3);
+ const boxRect=box.getBoundingClientRect();scrollByVisual(box,r.top-boxRect.top-Math.min(120,boxRect.height*.3));
  if(typeof Highlight!=='undefined'&&window.CSS?.highlights)CSS.highlights.set('mima-history-match',new Highlight(range));
 }
 function search(){
@@ -165,6 +177,6 @@ function showSearchPage(page){
  results.scrollTop=0;
 }
 function report(message){if(host)$('.mima-history-info').textContent=message;}
-window.MimaHistoryNavigator={sync,refreshProgress,jumpId,jumpNumber,search,returnToOrigin,captureAnchor:currentAnchor};
+window.MimaHistoryNavigator={sync,refreshProgress,jumpId,jumpNumber,search,returnToOrigin,captureAnchor:currentAnchor,scrollByVisual};
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',setup,{once:true});else setup();
 })();

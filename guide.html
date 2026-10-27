@@ -15,7 +15,7 @@
 <a class="goal-card" href="#appearance"><span class="goal-emoji">🎨</span><span><strong>美化界面</strong><small>换主题、字体和音效</small></span><span class="goal-arrow">›</span></a>
 <a class="goal-card" href="#toolbox"><span class="goal-emoji">🪎</span><span><strong>快捷发指令</strong><small>推进剧情不用重打</small></span><span class="goal-arrow">›</span></a>
 <a class="goal-card" href="#phone"><span class="goal-emoji">📱</span><span><strong>玩虚拟手机</strong><small>私聊、群聊和动态</small></span><span class="goal-arrow">›</span></a>
-<a class="goal-card" href="#backup"><span class="goal-emoji">💾</span><span><strong>备份不丢档</strong><small>三套存档分开备份</small></span><span class="goal-arrow">›</span></a></div>
+<a class="goal-card" href="#backup"><span class="goal-emoji">💾</span><span><strong>备份不丢档</strong><small>整馆归档与旧格式备份</small></span><span class="goal-arrow">›</span></a></div>
 <div class="map-demo"><strong>先认清主页顶部三个按钮（入口示意，不是真实截图）</strong><div class="fake-topbar" aria-label="顶部按钮示意"><span>☰ 剧情</span><span>🤍 当前剧情</span><span>功能</span><span>设置</span></div><small>【剧情】切故事　【功能】开小说/手机/工坊　【设置】调 API、人设、记忆和备份</small></div>
 </section><div class="chapters-label" id="tutorials">照着操作就好 <span id="search-count" aria-live="polite"></span></div><div id="empty-search" class="empty-search" hidden>没有找到对应教程。可以试试搜索「角色」「备份」「API」「主题」，或者清空搜索。</div>
 <article id="start" class="guide-topic" data-group="入门" tabindex="-1">
@@ -160,7 +160,8 @@
  </article>
 <article id="backup" class="guide-topic" data-group="必读" tabindex="-1">
   <div class="topic-kicker">必读 <span aria-hidden="true">/</span> 4 步操作</div>
-  <div class="topic-heading"><span class="topic-emoji" aria-hidden="true">💾</span><div><h2>如何备份？先看这章！</h2><p>最容易踩坑：原生、酒馆、小手机不是同一个数据库</p></div></div>
+  <div class="topic-heading"><span class="topic-emoji" aria-hidden="true">💾</span><div><h2>如何备份？先看这章！</h2><p>推荐整馆归档；旧 JSON 入口按各自范围保留</p></div></div>
+  <div class="result-lines"><p><strong>推荐：一份整馆归档</strong>在「设置 → 数据备份」选择「导出整馆归档」，保存 <code>.mimatavern</code> 文件。包含原生剧情、酒馆兼容库、小手机和媒体原件，以及工坊、字体、壁纸、个人音效和工具草稿。导出时先暂停编辑与生成。</p><p><strong>换设备恢复</strong>选择「预检整馆归档」，查看冲突后点「继续已预检恢复」。只新增缺失记录，同一条资料内容不同会停止并说明；已有界面偏好优先。各库分阶段提交，中断后可在本页继续；看到全部完成再刷新页面。原有 JSON 备份仍按下面方式使用。</p></div>
   <ol class="steps"><li class="step"><span class="step-num">01</span><div class="step-body"><strong>备份原生剧情</strong><p>「设置 → 💾 Data（数据）」→「导出剧情与设置」，把文件保存到手机“文件”里。</p><button type="button" class="jump-action" data-go="data">立即打开 <span aria-hidden="true">↗</span></button></div></li>
 <li class="step"><span class="step-num">02</span><div class="step-body"><strong>备份酒馆兼容剧情</strong><p>进「🎴 玩酒馆角色卡」的备份/恢复区；可选兼容单库或双库备份。</p><button type="button" class="jump-action" data-go="compat">立即打开 <span aria-hidden="true">↗</span></button></div></li>
 <li class="step"><span class="step-num">03</span><div class="step-body"><strong>备份小手机</strong><p>进入小手机“我的”相关备份入口，单独导出手机数据。</p><button type="button" class="jump-action" data-go="phone">立即打开 <span aria-hidden="true">↗</span></button></div></li>

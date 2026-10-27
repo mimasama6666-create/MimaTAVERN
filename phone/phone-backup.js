@@ -41,5 +41,33 @@
      for(const name of store().stores)for(const row of hydrated[name])await t.add(name,row);
    });return {restored:true,counts:Object.fromEntries(Object.entries(tables).map(([k,v])=>[k,v.length]))};
  }
- window.MimaPhoneBackup=Object.freeze({build,exportToFile,importFile});
+ // Unified migration uses raw Blobs and the same relationship/media validator.
+ async function snapshot(){return store().transaction(store().stores,'readonly',async tx=>Object.fromEntries(await Promise.all(store().stores.map(async n=>[n,await tx.all(n)]))));}
+ const rowText=row=>JSON.stringify(row,(_k,v)=>v instanceof Blob?{blobSize:v.size,blobType:v.type}:v);
+ function inspectMerge(current,tables,{credentialsOmitted=false}={}){
+   validateRecords(current);validateRecords(tables);const additions={},counts={};
+   const compareText=(name,row)=>rowText(credentialsOmitted&&name==='prefs'&&row.key==='main'&&row.phoneApi&&typeof row.phoneApi==='object'?{...row,phoneApi:{...row.phoneApi,apiKey:'',extraHeaders:''}}:row);
+   for(const name of store().stores){
+     if(!Array.isArray(tables?.[name])||!Array.isArray(current?.[name]))throw Error('手机迁移缺少表：'+name);
+     const key=name==='meta'||name==='prefs'?'key':'id',known=new Map(current[name].map(r=>[r[key],r]));additions[name]=[];
+     for(const row of tables[name]){const old=known.get(row[key]);if(old!==undefined){if(compareText(name,old)!==compareText(name,row))throw Error('手机记录冲突，拒绝覆盖：'+name+'/'+row[key]);}else additions[name].push(row);}
+     counts[name]=additions[name].length;
+   }
+   validateRecords(Object.fromEntries(store().stores.map(n=>[n,[...current[n],...additions[n]]])));return {additions,counts};
+ }
+ async function verifyMedia(tables){
+   for(const a of tables.media||[]){if(!(a.blob instanceof Blob)||a.blob.size!==a.size||(a.blob.type||'application/octet-stream')!==a.mime)throw Error('手机媒体原件结构异常：'+a.id);
+     const digest=[...new Uint8Array(await crypto.subtle.digest('SHA-256',await a.blob.arrayBuffer()))].map(x=>x.toString(16).padStart(2,'0')).join('');
+     if(digest!==a.hash)throw Error('手机媒体原件哈希不符：'+a.id);}
+ }
+ async function previewArchive(tables,options={}){for(const n of store().stores)if(!Array.isArray(tables?.[n]))throw Error('手机迁移缺少表：'+n);const current=await snapshot();await verifyMedia(tables);await verifyMedia(current);return {willAdd:inspectMerge(current,tables,options).counts,credentialsPreserved:options.credentialsOmitted===true};}
+ async function restoreArchive(tables,options={}){
+   await previewArchive(tables,options);
+   return store().transaction(store().stores,'readwrite',async tx=>{
+     const current=Object.fromEntries(await Promise.all(store().stores.map(async n=>[n,await tx.all(n)])));
+     const plan=inspectMerge(current,tables,options);for(const n of store().stores)for(const row of plan.additions[n])await tx.add(n,row);
+     return {restored:true,added:plan.counts};
+   });
+ }
+ window.MimaPhoneBackup=Object.freeze({build,exportToFile,importFile,snapshot,previewArchive,restoreArchive});
 })();

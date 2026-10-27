@@ -26,7 +26,7 @@
 <!-- v1.3.1 Novel Studio Root Fix marker: release=1.3.1&auditfix=1.3.2 -->
 <!-- v1.1.9 regression compatibility marker only: ./app.js?p0request=20261014-r12.3.2&v=1.1.2&release=1.1.9 -->
     <link rel="stylesheet" href="./ux-r6.css?v=r6-20261012&seventh=20261012&navfix=20261027-2">
-    <link rel="stylesheet" href="./compat-native-ui.css?v=20261014-visual-unification-1&r13=20261015-1&r14=20261015-1&authorhost=20261015-r15-1&advanced=20261015-r16">
+    <link rel="stylesheet" href="./compat-native-ui.css?v=20261027-rework2-draft-retry&r13=20261015-1&r14=20261015-1&authorhost=20261015-r15-1&advanced=20261015-r16">
 <link rel="stylesheet" href="./phone/phone-shell.css?v=20261024-phone-navigation-1">
 <link rel="stylesheet" href="./story-play-tools.css?playtools=20261027-3&factmemo=20261027-1">
 </head>
@@ -157,7 +157,7 @@ function openMimaLicenseDialog() {
 <!-- 玩家帮助中心：独立页面按需装载，不触碰剧情、存档和页面缩放 -->
 <dialog id="mima-guide-dialog" aria-label="咪嘛馆玩家使用手册">
   <header class="mima-guide-head"><strong>📖 咪嘛馆 · 一看就会的使用手册</strong><div><a href="./guide.html" target="_blank" rel="noopener noreferrer" title="在新标签打开使用手册">独立打开 ↗</a><form method="dialog"><button type="submit" aria-label="关闭使用手册">关闭 ✕</button></form></div></header>
-  <iframe id="mima-guide-frame" title="咪嘛馆新手使用教程" data-src="./guide.html?v=20261027-r19-1" referrerpolicy="same-origin"></iframe>
+  <iframe id="mima-guide-frame" title="咪嘛馆新手使用教程" data-src="./guide.html?v=20261027-audit3" referrerpolicy="same-origin"></iframe>
 </dialog>
 <style>
 #mima-guide-dialog{box-sizing:border-box;position:fixed;inset:0;margin:auto;padding:0;z-index:2147483500;width:min(1060px,calc(100vw - 18px));max-width:calc(100vw - 18px);height:min(94dvh,940px);max-height:94dvh;border:1px solid #d9bec9;border-radius:20px;box-shadow:0 24px 76px #0006;overflow:hidden;background:#f9f7f6;color:#493844;font:14px system-ui,-apple-system,sans-serif;zoom:1}
@@ -203,8 +203,9 @@ window.addEventListener('message',function(ev){
 <!-- 版本更新公告：不接入剧情数据，用户可永久关闭自动提醒 -->
 <div id="mima-release-note-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mima-release-note-title">
   <div class="modal-panel compact-panel mima-release-note-panel">
-    <div class="modal-head"><div><div class="eyebrow">开发版更新公告</div><h2 id="mima-release-note-title">咪嘛馆 · 全新交互使用手册与帮助中心（开发测试）</h2></div><button class="icon-btn" onclick="closeMimaReleaseNotice()" aria-label="关闭更新公告">✕</button></div>
+    <div class="modal-head"><div><div class="eyebrow">开发版更新公告</div><h2 id="mima-release-note-title">咪嘛馆 · 世界书、兼容草稿与主题工坊修复（开发测试）</h2></div><button class="icon-btn" onclick="closeMimaReleaseNotice()" aria-label="关闭更新公告">✕</button></div>
     <div class="mima-release-note-content">
+      <h3>本轮独立验收后的精准返工</h3><p><strong>2026-10-27 R2：</strong>修复酒馆草稿并发读取可能覆盖新编辑，以及消息实际已发送却因草稿清理失败被误报为发送失败。出现清理问题时提示“消息已保存”并提供重试清理入口；新输入不会被清空。主题工坊统一 ZIP 导入与导出条目预算，98 张及更多独立素材能完整导回，越界会在导出前说明。<strong>仍是开发测试版：</strong>跨页面主题完整共用、V3/CHARX 资源自动绑定、复杂酒馆插件兼容和真实 iPhone Safari 验收尚未完成。</p><h3>前轮审计返工</h3><p><strong>2026-10-27 兼容与工坊修复：</strong>世界书按原卡扫描深度、大小写和递归规则执行；没有声明的插入位置采用可见默认槽位。酒馆独立剧情草稿按故事保存并支持刷新恢复，成功发送后不再把旧草稿填回来；提供恢复原卡规则入口。主题工坊修复旧主题迁移回执、自身导出 ZIP 无法重新导入和当前草稿被倒载旧版本的问题。</p><p><strong>仍未完成：</strong>酒馆与原生剧情主题未实现完整共享；部分 V3/CHARX 素材只有保留/预览、尚不能自动绑定；复杂 STscript/MVU 仍是有限兼容；iPhone Safari 与真实 Provider 长时流程尚待真机验收。当前仍是开发测试版。</p><ul><li>数据备份页增加包含原生、酒馆兼容、小手机与原始媒体、工坊、壁纸、字体和工具草稿的整馆归档；预检冲突后逐库新增，进度持久保存，中断可继续，不会把多库操作误报为原子事务</li><li>本地字体逐条读取并交给浏览器按需加载，不再在启动时主动解码整个字体库；系统与正文字体独立设置、主题引用及字体原件均保留</li><li>长历史 Prompt 正则按完整消息分批隔离执行，保序且不切断单条正文；每批复用规则编译，失败不会采纳部分过滤结果</li><li>历史视图与搜索导航不再为未显示的旧版本正文反复创建大段 JSON；完整原文、旧版本、编辑、分支、复制和定位均保留</li><li>已并入后续第八批的事实记忆、紧凑百宝箱、工坊、流式阅读、独立音效和内置使用手册；第八批 viewport 与键盘布局保持原样</li></ul><p>仍是开发测试版。真实 iPhone Safari、完整酒馆高级插件等价及超长历史的完整离屏虚拟化尚未验收完成；没有用删历史、停用特效或限制素材数量代替修复。</p>
       <h3>本轮：内置一看就会的玩家帮助中心</h3><ul><li>功能菜单、设置页、剧情侧栏和酒馆兼容工具都可打开「📖 使用手册」；独立阅读，不调用模型，不修改存档</li><li>提供 14 篇零基础图文步骤、目标快捷入口、站内搜索、常见问题及术语解释；部分教程可直接跳转对应功能</li><li>手册使用独立页面与顶层弹窗，手机端独立滚动，不复写主应用样式、输入框、缩放或剧情状态</li><li>本轮仍为开发测试版；真实 iPhone Safari、复杂主题以及整馆端到端交互需继续验证</li></ul>
       <h3>本轮：流式阅读、试听与备份恢复反馈</h3><ul><li>流式 HTML 展开或手动翻阅历史后暂停自动追尾；只有明确点「跟随输出」才恢复，不会被普通滚动事件取消</li><li>普通外观设置中试听音效只播放所选声音一次；普通按钮原有音效与动画仍保留</li><li>完整备份或本机快照恢复时，如果主资料库成功但个人音效失败，会显示「部分完成」并在数据备份页留下具体原因；不会误导重复覆盖资料库</li><li>已做隔离 Chromium 真实点击、流式滚动及音效恢复写入失败注入测试；仍需真实 iPhone Safari 与跨设备恢复实测</li></ul><h3>此前：修复手机顶栏与个人音效导入</h3><ul><li>修复上一版误写坏的 ux-r6.css 样式加载标签，恢复顶部导航圆角与手机端隐藏桌面按钮；不需要清理剧情或重置主题</li><li>普通设置 → 外观 → 动画与点击音效：三类操作可分别导入 MP3/WAV/M4A/AAC，试听、恢复当前主题声音；写入完成后才确认保存</li><li>个人音效单独存放在浏览器 IndexedDB，切换主题仍优先使用个人音效，不修改工坊发布快照及 CSS；完整设置备份增加音效素材，旧备份仍支持</li><li>本轮针对性检查已通过；真实 iPhone Safari、真实安装跨版本缓存及整个网站运行未实测，仍为开发测试版</li></ul>
 
@@ -344,7 +345,7 @@ window.addEventListener('message',function(ev){
   <section id="compat-chat-panel"><div class="compat-play-header"><div class="compat-play-identity"><small class="compat-play-label">正在游玩 · 兼容剧情</small><h3 id="compat-role-heading">和角色聊天</h3></div></div><div id="compat-current">咪嘛馆兼容引擎 · 未进入剧情</div><div id="compat-conversation" hidden>
    <div id="compat-story-status" role="status"></div><div id="compat-status-display" aria-label="当前剧情手动启用的动态状态栏"></div>
    <details id="compat-mvu-panel"><summary>剧情状态与变量（MVU，部分兼容）</summary><div id="compat-mvu-live-status" role="status" aria-live="polite"></div><details><summary>查看完整原始变量（只读）</summary><pre id="compat-mvu-state">当前角色卡没有可验证的 MVU 状态。</pre></details><details><summary>MVU 状态栏模板（手动、只读）</summary><p>仅 {{mvu:/变量路径}} 会读取当前已提交 MVU 状态，例如 {{mvu:/stat_data/好感度}}。卡片原有宏和 JavaScript 不会执行；来源世界书中禁用的状态栏不会自动启用。</p><div id="compat-mvu-template-output"></div><label for="compat-mvu-template-custom">自定义 HTML 状态栏（当前网页临时预览，不保存或提交）</label><textarea id="compat-mvu-template-custom" placeholder="&lt;div&gt;当前好感度：{{mvu:/stat_data/好感度}}&lt;/div&gt;" maxlength="100000"></textarea><div class="compat-actions"><button id="compat-mvu-template-custom-run" type="button">手动预览当前模板</button><button id="compat-mvu-template-clear" type="button">关闭模板预览</button></div></details></details><div id="compat-messages" class="chat-box tavern-story-scope" aria-live="polite"></div><div id="compat-composer" class="composer-shell glass-bar"><div id="compat-quick-replies" class="compat-quick-replies" aria-label="当前故事快捷回复" hidden></div><textarea id="compat-input" placeholder="写下你的动作、语言或剧情……" aria-label="兼容剧情输入框"></textarea></div>
-   <div class="compat-actions"><label for="compat-wi-budget">当前兼容剧情的世界书预算（字符，不等于模型窗口）</label><input id="compat-wi-budget" type="number" min="1000" max="1000000" step="1" value="16000" style="width:9em"><label for="compat-wi-depth">世界书关键词扫描最近多少条消息（0 = 不扫描普通关键词）</label><input id="compat-wi-depth" type="number" min="0" max="1000" step="1" value="100" style="width:5.5em"><label for="compat-wi-recursive"><input id="compat-wi-recursive" type="checkbox" checked> 允许世界书递归匹配</label><label for="compat-wi-recursion-steps">最多扫描层数</label><input id="compat-wi-recursion-steps" type="number" min="1" max="12" step="1" value="6" style="width:4em"><label for="compat-wi-local-advanced"><input id="compat-wi-local-advanced" type="checkbox"> 启用本地可重放概率/分组（与官方算法不完全等价）</label><label for="compat-preset-history-slot"><input id="compat-preset-history-slot" type="checkbox"> 试运行酒馆预设排序及常见动态插槽（角色、世界书、聊天历史；非官方完全等价）</label><label for="compat-persona-description">玩家 Persona 描述（兼容预设 PersonaDescription 插槽；按剧情独立保存）</label><textarea id="compat-persona-description" maxlength="12000" rows="2" placeholder="可选，留空则不注入"></textarea><label>作者注记（可选）<textarea id="compat-author-note" rows="2" placeholder="填写后才启用世界书 A.N. 顶部 / 底部条目"></textarea></label><label>注记深度<input id="compat-author-note-depth" type="number" min="0" max="100" value="0"></label><button type="button" id="compat-wi-save">保存世界书规则</button></div>
+   <div class="compat-actions"><label for="compat-wi-budget">当前兼容剧情的世界书预算（字符，不等于模型窗口）</label><input id="compat-wi-budget" type="number" min="1000" max="1000000" step="1" value="16000" style="width:9em"><label for="compat-wi-depth">世界书关键词扫描最近多少条消息（0 = 不扫描普通关键词）</label><input id="compat-wi-depth" type="number" min="0" max="1000" step="1" value="100" style="width:5.5em"><label for="compat-wi-recursive"><input id="compat-wi-recursive" type="checkbox" checked> 允许世界书递归匹配</label><label for="compat-wi-recursion-steps">最多扫描层数</label><input id="compat-wi-recursion-steps" type="number" min="1" max="12" step="1" value="6" style="width:4em"><label for="compat-wi-local-advanced"><input id="compat-wi-local-advanced" type="checkbox"> 启用本地可重放概率/分组（与官方算法不完全等价）</label><label for="compat-preset-history-slot"><input id="compat-preset-history-slot" type="checkbox"> 试运行酒馆预设排序及常见动态插槽（角色、世界书、聊天历史；非官方完全等价）</label><label for="compat-persona-description">玩家 Persona 描述（兼容预设 PersonaDescription 插槽；按剧情独立保存）</label><textarea id="compat-persona-description" maxlength="12000" rows="2" placeholder="可选，留空则不注入"></textarea><label>作者注记（可选）<textarea id="compat-author-note" rows="2" placeholder="填写后才启用世界书 A.N. 顶部 / 底部条目"></textarea></label><label>注记深度<input id="compat-author-note-depth" type="number" min="0" max="100" value="0"></label><small id="compat-wi-source" class="compat-help">扫描与递归默认遵循原卡；手动调整后才覆盖。</small><button type="button" id="compat-wi-reset">恢复原卡扫描规则</button><button type="button" id="compat-wi-save">保存世界书规则</button></div>
    <div class="compat-actions"><label class="compat-gap-choice" hidden><input id="compat-accept-gaps" type="checkbox"> 只在专家严格对照模式中确认差异</label><label class="compat-mode-label"><input id="compat-complete-html" type="checkbox">要求每次回复的 HTML 标签完整闭合（保存后生效）</label><label class="compat-mode-label"><input type="radio" name="compat-mode" value="basic" checked>基础聊天</label><label class="compat-mode-label"><input type="radio" name="compat-mode" value="strict">严格检查高级规则</label><button id="compat-send">发送消息</button><button id="compat-continue">续写最近的角色回复</button><button id="compat-preview">查看本轮发送内容</button></div>
    <div id="compat-gap"></div><details><summary>真实 Provider 消息 / 触发追踪</summary><pre id="compat-prompt"></pre></details>
    <details id="compat-stscript-panel"><summary>高级 · STscript 手动脚本实验台（安全子集）</summary>
@@ -370,9 +371,9 @@ window.addEventListener('message',function(ev){
 
 <script src="./worldbook-match.js?v=20261025-r4"></script>
 <script src="./memory-worldbook-refs.js?v=20261020-r50"></script>
-<script src="./local-store.js?batch4=worldbook-20261025&v=20261023-r19-recovery-ledger&r7=20261021-contract&startup=20261023-readonly-guard&audit2=20261025-r2&playtools=20261027-3&factmemo=20261027-1&atelierux=20261027-r19&interaction=20261027-r19-prefs-1"></script>
+<script src="./local-store.js?batch4=worldbook-20261025&v=20261023-r19-recovery-ledger&r7=20261021-contract&startup=20261023-readonly-guard&audit2=20261025-r2&playtools=20261027-3&factmemo=20261027-1&atelierux=20261027-r19&interaction=20261027-r19-prefs-1&auditJoint=20261027-3"></script>
 <script src="./theme-engine.js?v=1.4.0"></script>
-<script src="./regex-engine.js?batch8=stable-regex-legacy-20261026&v=20261025-native-worker-r3&ctxsave=20261013-2&nativeui=20261013-1&priority0=r11.2&batch8rework4=20261026"></script>
+<script src="./regex-engine.js?batch8=stable-regex-legacy-20261026&v=20261025-native-worker-r3&ctxsave=20261013-2&nativeui=20261013-1&priority0=r11.2&batch8rework4=20261026&auditJoint=20261027-3"></script>
 <script src="./persona-macro-resolver.js?v=1.1.6"></script>
 <script src="./user-input-semantic-parser.js?p0request=20261014-r12.3.2&v=1.1.7"></script>
 <script src="./novel-memory.js?v=1.3.1&auditfix=1.3.2&rework=1.3.3&reworkfix=1.3.4"></script>
@@ -380,18 +381,18 @@ window.addEventListener('message',function(ev){
 <script src="./novel-prompt-assembler.js?batch6=novel-order-and-empty-restore-20261025&batch5=restore-novel-20261025&batch4=worldbook-20261025&p0request=20261014-r12.3.2&v=1.3.1&auditfix=1.3.2&rework=1.3.3&ctxsave=20261013-2&priority0=r11.2&oct25rework=novel-assist-3&auditfix=20261025-p1-7&batch8rootfix=20261026-1"></script>
 <link rel="stylesheet" href="./history-navigator.css?v=20261022-r19-rework4">
 <script src="./history-search.js?v=r11-20261012-2"></script>
-<script src="./history-navigator.js?v=20261022-r19-p0-p5-recovery"></script>
+<script src="./history-navigator.js?v=20261022-r19-p0-p5-recovery&auditJoint=20261027-3"></script>
 <script src="./diagnostic-journal.js?p0request=20261014-r12.3.2&v=20261014-r8&manualrecovery=20261015-r14-2&authorhost=20261015-r15-1&advanced=20261015-r16&g1timing=20261021-r412&thirdfix=20261021-r3&r18=20261022-preflight&r19rework=20261023-p0p1-2"></script>
 <script src="./history-html-projection.js?v=20261019-r43&r19p6=20261022-final"></script>
 <script src="./story-transcript-export.js?v=20261019-r44"></script>
 <script src="./mima-file-export.js?v=20261022-r19-p0-p5-recovery"></script>
 <script src="./html-structure-contract.js?v=20261021-r412&template-ux=20261022-r16-capacity-recovery&r19p6=20261022-final&r19rework=20261023-p0p1-2&r19manualturn=20261023-r5"></script>
 <script src="./standalone-core.js?batch8=publisher-tx-legacy-20261026&batch7=canonical-atomic-20261026&batch6=novel-order-and-empty-restore-20261025&batch5=restore-novel-20261025&batch4=worldbook-20261025&v=20261025-native-worker-r3&base=20261022-r17-source-audit&template-ux=20261022-r16-capacity-recovery&provider-diagnostic=20261022-r18&unverified-window=20261022-r19&r7=20261021-contract&r9=20261021-reader-default-postcommit&r13gen=20261022-r15&r19manual=20261022-1&settingssheet=20261023-1&r19p6=20261022-final&r19recovery=20261023-p012&r19rework=20261023-p0p1-2&r19manualturn=20261023-r5&streamsave=20261025&postheader=20261025-r1&streammode=20261025-thinkingfix-r3&recovery=20261025-p0-1&taskviewer=20261025-r2&promptclean=20261025-r1&oct25rework=novel-assist-3&reworkfix=20261025-p1-4&navguard=20261025-r19-p1-6&auditfix=20261025-p1-7&audit2=20261025-r2&batch8rootfix=20261026-1&regex-display-batch-fix-20261026&playtools=20261027-3&factmemo=20261027-1&atelierux=20261027-r19&interaction=20261027-r19-prefs-1"></script>
-<script src="./font-manager.js?v=1.1.0&fontsplit=20261013-1&txguard=20261013-2&r9=20261021-reader-default-postcommit&r13gen=20261022-r15&urlfontlibrary=20261025-r3&perf-font-meta=20261026-b8-1&batch8rootfix=20261026-1&batch8rework2=20261026"></script>
+<script src="./font-manager.js?v=1.1.0&fontsplit=20261013-1&txguard=20261013-2&r9=20261021-reader-default-postcommit&r13gen=20261022-r15&urlfontlibrary=20261025-r3&perf-font-meta=20261026-b8-1&batch8rootfix=20261026-1&batch8rework2=20261026&auditJoint=20261027-3"></script>
 <script src="./png-card-import.js?v=1.4.0&r11=20261012-2"></script>
 <script src="./png-resource-inspector.js?v=1.4.0"></script>
-<script src="./story-play-tools.js?playtools=20261027-3&factmemo=20261027-1&atelierux=20261027-r19&interaction=20261027-r19-prefs-1"></script>
-<script src="./app.js?batch8=publisher-tx-legacy-20261026&batch7=canonical-atomic-20261026&batch6=novel-order-and-empty-restore-20261025&batch4=worldbook-20261025&v=20261025-native-worker-r3&streamsave=20261025&streammode=20261025-thinkingfix-r3&recovery=20261025-p0-1&followup=20261025-r3&taskviewer=20261025-r2&promptclean=20261025-r1&oct25rework=novel-assist-3&reworkfix=20261025-p1-4&navguard=20261025-r19-p1-6&auditfix=20261025-p1-7&audit2=20261025-r2&perf-longtext=20261026-b8-1&batch8rootfix=20261026-1&batch8rework2=20261026&regex-display-batch-fix-20261026&batch8rework4=20261026&playtools=20261027-3&factmemo=20261027-1&atelierux=20261027-r19&interaction=20261027-r19-prefs-1&streamreading=20261027-1&personalSound=20261027-2&triplefix=20261027-1&guide=20261027-1"></script>
+<script src="./story-play-tools.js?playtools=20261027-3&factmemo=20261027-1&atelierux=20261027-r19&interaction=20261027-r19-prefs-1&auditJoint=20261027-3"></script>
+<script src="./app.js?batch8=publisher-tx-legacy-20261026&batch7=canonical-atomic-20261026&batch6=novel-order-and-empty-restore-20261025&batch4=worldbook-20261025&v=20261025-native-worker-r3&streamsave=20261025&streammode=20261025-thinkingfix-r3&recovery=20261025-p0-1&followup=20261025-r3&taskviewer=20261025-r2&promptclean=20261025-r1&oct25rework=novel-assist-3&reworkfix=20261025-p1-4&navguard=20261025-r19-p1-6&auditfix=20261025-p1-7&audit2=20261025-r2&perf-longtext=20261026-b8-1&batch8rootfix=20261026-1&batch8rework2=20261026&regex-display-batch-fix-20261026&batch8rework4=20261026&playtools=20261027-3&factmemo=20261027-1&atelierux=20261027-r19&interaction=20261027-r19-prefs-1&streamreading=20261027-1&personalSound=20261027-2&triplefix=20261027-1&guide=20261027-1&auditJoint=20261027-3&draftfix=20261027r2"></script>
 <div id="mima-phone-root" hidden aria-label="咪嘛馆小手机独立模式"></div>
 <script src="./sha256-browser.js?v=r11-20261012-2"></script>
 <script src="./compat-author-contract.js?v=r16-20261015-1"></script>
@@ -407,9 +408,9 @@ window.addEventListener('message',function(ev){
 <script src="./compat-mvu.js?v=r6-mvu-continuation-20261013&r13=20261015-1"></script>
 <script src="./compat-safe-html.js?v=20261014-inline-2&r13=20261015-1&r14=20261015-1"></script>
 <script src="./compat-mvu-template.js?v=r10-readonly-mvu-template-20261014"></script>
-<script src="./compat-worldinfo-isolation.js?v=redesign-20261014-1&r13=20261015-1"></script>
+<script src="./compat-worldinfo-isolation.js?v=20261027-f2"></script>
 <script src="./compat-live-sync.js?v=r9-cross-tab-20261014"></script>
-<script src="./compat-runtime.js?batch3=20261025&p0request=20261014-r12.3.2&v=r9-cross-tab-20261014&r13=20261015-1&r14=20261015-1&manualrecovery=20261015-r14-2&authorhost=20261015-r15-1&advanced=20261015-r16-1&replylayout=20261016-r16.2&r7=20261021-contract&r9=20261021-reader-default-postcommit&r13gen=20261022-r15&auditfix=20261025-p1-7&audit2=20261025-r2&playtools=20261027-3"></script>
+<script src="./compat-runtime.js?batch3=20261025&p0request=20261014-r12.3.2&v=r9-cross-tab-20261014&r13=20261015-1&r14=20261015-1&manualrecovery=20261015-r14-2&authorhost=20261015-r15-1&advanced=20261015-r16-1&replylayout=20261016-r16.2&r7=20261021-contract&r9=20261021-reader-default-postcommit&r13gen=20261022-r15&auditfix=20261025-p1-7&audit2=20261025-r2&playtools=20261027-3&compatfix=20261027f1"></script>
 <script src="./compat-stscript.js?v=20261015-r16"></script>
 <script src="./compat-quick-reply.js?v=r16-1-20261015-1"></script>
 <script src="./compat-plugins.js?v=r12-visual-sandbox-20261014"></script>
@@ -417,7 +418,7 @@ window.addEventListener('message',function(ev){
 <script src="./vendor/marked-17.0.5.umd.js?v=r14-20261015-1"></script>
 <script src="./compat-markdown.js?v=r14-20261015-1&storymd=20261018_r1&libraryui=20261019_r4_wallpaper"></script>
 <script src="./compat-regex-ui.js?v=r14-20261015-1&manualrecovery=20261015-r14-2"></script>
-<script src="./compat-ui.js?batch5=restore-novel-20261025&batch4=dualbackup-20261025&p0request=20261014-r12.3.2&v=20261014-visual-unification-1&r13=20261015-1&r14=20261015-1&manualrecovery=20261015-r14-2&authorhost=20261015-r15-1&advanced=20261015-r16-1&r7=20261021-contract&r9=20261021-reader-default-postcommit&r13gen=20261022-r15&auditfix=20261025-p1-7&audit2=20261025-r2&batch8rootfix=20261026-1&playtools=20261027-3&factmemo=20261027-1&atelierux=20261027-r19&interaction=20261027-r19-prefs-1"></script>
+<script src="./compat-ui.js?batch5=restore-novel-20261025&batch4=dualbackup-20261025&p0request=20261014-r12.3.2&v=20261014-visual-unification-1&r13=20261015-1&r14=20261015-1&manualrecovery=20261015-r14-2&authorhost=20261015-r15-1&advanced=20261015-r16-1&r7=20261021-contract&r9=20261021-reader-default-postcommit&r13gen=20261022-r15&auditfix=20261025-p1-7&audit2=20261025-r2&batch8rootfix=20261026-1&playtools=20261027-3&factmemo=20261027-1&atelierux=20261027-r19&interaction=20261027-r19-prefs-1&auditJoint=20261027-3&draftfix=20261027r2"></script>
 <script src="./assistant-studio.js?batch3=20261025&v=1.1.2&hotfix=1.1.3&release=1.3.1&auditfix=1.3.2&artifactpriority0=r11.2&oct25rework=novel-assist-3&reworkfix=20261025-p1-4&navguard=20261025-r19-p1-6&auditfix=20261025-p1-7"></script>
 <script src="./novel-studio.js?v=1.3.1&auditfix=1.3.2&release=1.3.1&auditfix=1.3.2&rework=1.3.3&reworkfix=1.3.4&themefix=1.4.0&memoryfix=1.3.9&pnginspect=1.4.0&oct25rework=novel-assist-3&reworkfix=20261025-p1-4&navguard=20261025-r19-p1-6&audit2=20261025-r2&batch8rework2=20261026&batch8rework4=20261026"></script>
 <script src="./ux-r6.js?v=r6-20261012"></script>
@@ -425,18 +426,19 @@ window.addEventListener('message',function(ev){
 <script src="./ui-layout.js?v=20261025-keyboard-viewport-origin-2&promptclean=20261025-r1"></script>
 <link rel="stylesheet" href="./chat-wallpaper.css?v=20261021-r12-gpu">
 <script src="./chat-wallpaper.js?v=20261023-bfcache-exact&auditfix=20261025-p1-7"></script>
-<script src="./atelier/atelier-core.js?v=20261027-interaction&ux=20261027-ux-container&auditfix=20261025-p1-7"></script>
-<script src="./mima-interaction.js?v=20261027-r19-personal-audio-2"></script>
+<script src="./atelier/atelier-core.js?v=20261027-interaction&ux=20261027-ux-container&auditfix=20261025-p1-7&compatfix=20261027f1"></script>
+<script src="./mima-interaction.js?v=20261027-r19-personal-audio-2&auditJoint=20261027-3"></script>
 <script src="./atelier/atlas-catalog.js?v=20261018-atlas-r1"></script>
 <script src="./atelier/atlas-adapter.js?v=20261019-atlas-r3"></script>
-<script src="./atelier/atelier-ui.js?v=20261027-interaction&ux=20261027-ux-container&oct25rework=novel-assist-3&audit2=20261025-r2&perf-preview=20261026-b8-1&batch8rootfix=20261026-1&batch8rework2=20261026"></script>
+<script src="./atelier/atelier-ui.js?v=20261027-interaction&ux=20261027-ux-container&oct25rework=novel-assist-3&audit2=20261025-r2&perf-preview=20261026-b8-1&batch8rootfix=20261026-1&batch8rework2=20261026&draftfix=20261027r2"></script>
 
 <script src="./phone/phone-store.js?v=20261023-r19-phone1"></script>
 <script src="./phone/phone-resources.js?batch3=20261025&v=20261024-r19-rework-b2&audit2=20261025-r2"></script>
 <script src="./phone/phone-domain.js?v=20261024-r19-rework-b2&audit2=20261025-r2"></script>
 <script src="./phone/phone-media.js?v=20261023-r19-phone1"></script>
 <script src="./phone/phone-model.js?v=20261024-r19-rework-b2&audit2=20261025-r2"></script>
-<script src="./phone/phone-backup.js?v=20261023-r19-phone1&auditfix=20261025-p1-7"></script>
+<script src="./phone/phone-backup.js?v=20261023-r19-phone1&auditfix=20261025-p1-7&auditJoint=20261027-3"></script>
 <script src="./phone/phone-shell.js?v=20261024-phone-navigation-1&auditfix=20261025-p1-7&audit2=20261025-r2"></script>
+<script src="./tavern-backup.js?v=20261027-whole-migration-1&auditJoint=20261027-3"></script>
 </body>
 </html>

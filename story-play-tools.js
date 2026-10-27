@@ -242,5 +242,13 @@
   if(result.theaterCards.length&&live(ticket))try{await updateMount(ticket,ids=>{for(const card of result.theaterCards)ids.add(card.id);});}catch(e){warning='素材已保存，挂载未完成；请在列表重新勾选，勿重复导入。'+e.message;}
   editing=null;if(result.theaterCards.length)tab='theater';paint();statusNode.textContent='已保存导入的 '+result.theaterCards.length+' 个小剧场、'+result.quickCommands.length+' 条指令。'+(warning||result.theaterCards.length&&!live(ticket)?warning||'剧情已变化，素材已保存；请在目标剧情手动挂载。':'');return {...result,mountWarning:warning};
  }
- root.MimaPlayTools=Object.freeze({register:(name,p)=>providers.set(name,p),ensure,open,pause,importFiles,recoverUnlinks,invalidate:()=>{readCurrent();for(const name of providers.keys())refreshShelf(name);}});
+ async function restoreMigrationDraft(record){
+  if(!record||typeof record!=='object'||Array.isArray(record))throw Error('备份草稿结构无效');
+  await retainEdit();await loadDrafts();const incoming=[];
+  for(const key of ['theaterCards','quickCommands'])if(record[key]!==undefined){const item=structuredClone(record[key]);if(!item?.data||item.table!==key||typeof item.data.content!=='string')throw Error('备份草稿内容无效：'+key);const old=drafts.get(key);if(old&&JSON.stringify(old.data)!==JSON.stringify(item.data))throw Error('当前标签已有不同的未保存草稿；请先保存或明确放弃，再打开备份草稿');incoming.push([key,prepareDraft(item)]);}
+  if(!incoming.length)throw Error('这份记录没有可编辑的草稿');
+  for(const[key,item]of incoming)drafts.set(key,item);draftRevision++;await persistDrafts();
+  tab=incoming[0][0]==='theaterCards'?'theater':'commands';await open(scope,tab);editing=drafts.get(table());paint();if(statusNode)statusNode.textContent='已打开迁入草稿；尚未提交到正式素材。';
+ }
+ root.MimaPlayTools=Object.freeze({flushDrafts:retainEdit,restoreMigrationDraft,register:(name,p)=>providers.set(name,p),ensure,open,pause,importFiles,recoverUnlinks,invalidate:()=>{readCurrent();for(const name of providers.keys())refreshShelf(name);}});
 })();

@@ -10,7 +10,7 @@ function recoveryMetadata(message,receipt){
    manualRecovery:{...approval,contentFingerprint:root.MimaStandalone.manualReplyFingerprint(message)}};
 }
 const flags=['excludeRecursion','preventRecursion','delayUntilRecursion','sticky','cooldown','delay','group','groupOverride','groupWeight','useProbability','scanDepth'];
-function wiPosition(e){const ext=e.extensions||{};if(Number.isInteger(ext.position))return ext.position;if(Number.isInteger(e.position))return e.position;return e.position==='before_char'?0:e.position==='after_char'?1:null;}
+function wiPosition(e){const ext=e.extensions||{};if(Number.isInteger(ext.position))return ext.position;if(Number.isInteger(e.position))return e.position;if(e.position==='before_char')return 0;if(e.position==='after_char')return 1;return ext.position===undefined&&e.position===undefined?1:null;}
 function unsupportedWI(e,settings={}){const ext=e.extensions||{},gaps=[];
   const position=wiPosition(e);
   if(![0,1,2,3,4,5,6].includes(position))gaps.push('position '+String(e.position)+' requires official ST comparison');
@@ -54,7 +54,7 @@ function worldInfo(entries,history,settings={}){
    delayUntilRecursion:ext.delay_until_recursion===true||e.delayUntilRecursion===true};}
  function matches(e,text){
    const primary=words(e.key??e.keys),secondary=words(e.keysecondary??e.secondary_keys);
-   const opt={caseSensitive:e.extensions?.case_sensitive??e.caseSensitive??settings.caseSensitive??false,matchWholeWords:e.extensions?.match_whole_words??e.matchWholeWords??settings.matchWholeWords??false};
+   const opt={caseSensitive:e.extensions?.case_sensitive??e.case_sensitive??e.caseSensitive??e.__mimaBookConfig?.caseSensitive??settings.caseSensitive??false,matchWholeWords:e.extensions?.match_whole_words??e.match_whole_words??e.matchWholeWords??settings.matchWholeWords??false};
    const regexKey=e.use_regex===true||e.useRegex===true;
    const hitKey=k=>{
      if(regexKey){
@@ -91,11 +91,11 @@ function worldInfo(entries,history,settings={}){
      if(e.disable===true||e.enabled===false){if(level===0){excluded.add(idx);skipped.push({entryId:id,reason:'disabled'});}continue;}
      const gaps=unsupportedWI(e,settings);if(gaps.length){if(level===0){excluded.add(idx);skipped.push({entryId:id,reason:'E_RESOURCE_SEMANTIC_GAP',gaps});}continue;}
      const flags=entryFlags(e);if(level===0&&flags.delayUntilRecursion)continue;
-     if(level>0&&flags.excludeRecursion)continue;
+     if(level>0&&(flags.excludeRecursion||(settings.recursiveScan!==true&&e.__mimaBookConfig?.recursiveScanning===false)))continue;
      const wait=Number(e.extensions?.delay??e.delay??0);
      if(!Number.isSafeInteger(wait)||wait<0){if(level===0){excluded.add(idx);skipped.push({entryId:id,reason:'E_RESOURCE_SEMANTIC_GAP',gaps:['invalid activation delay']});}continue;}
      if(history.length<wait){if(level===0){excluded.add(idx);skipped.push({entryId:id,reason:'delay',messagesRequired:wait});}continue;}
-     const perDepth=Number(e.extensions?.scan_depth??e.scan_depth??e.scanDepth??scanDepth);
+     const perDepth=Number(e.extensions?.scan_depth??e.scan_depth??e.scanDepth??settings.scanDepth??e.__mimaBookConfig?.scanDepth??scanDepth);
      if(!Number.isSafeInteger(perDepth)||perDepth<0){if(level===0){excluded.add(idx);skipped.push({entryId:id,reason:'E_RESOURCE_SEMANTIC_GAP',gaps:['invalid World Info scan depth']});}continue;}
      const text=level===0?scanBuffer(history,perDepth):newTexts.join('\n');
      let hit=false;try{hit=level===0&&e.constant===true||matches(e,text);}catch(ex){excluded.add(idx);skipped.push({entryId:id,reason:ex.code||'E_WORLDINFO_EVAL',gaps:[ex.message]});continue;}
@@ -158,7 +158,7 @@ function macro(str,ctx){let unsupported=[];const value=String(str??'')
  .replace(/\{\{\s*([^{}]+?)\s*\}\}/g,(original,k)=>{const id=k.trim().toLowerCase();if(id==='char')return ctx.char||'角色';if(id==='user')return ctx.user||'玩家';unsupported.push(id);return original;})
  .replace(/<(char|bot|user|player)>/gi,(_,tag)=>/^(char|bot)$/i.test(tag)?ctx.char||'角色':ctx.user||'玩家');
  return{value,unsupported};}
-function entriesFromResources(resources){const entries=[];for(const r of resources)if(r.kind==='world_info'){const data=r.raw?.entries,items=Array.isArray(data)?data.map((e,i)=>[i,e]):data&&typeof data==='object'?Object.entries(data):[];for(const [key,e] of items)entries.push(e&&typeof e==='object'?{...e,__mimaSourcePath:r.path+'.entries['+String(key)+']',__mimaSourceId:r.sourceId,__mimaResourceId:r.id}:e);}return entries;}
+function entriesFromResources(resources){const entries=[];for(const r of resources)if(r.kind==='world_info'){const book=r.raw||{},data=book.entries,items=Array.isArray(data)?data.map((e,i)=>[i,e]):data&&typeof data==='object'?Object.entries(data):[];const config={scanDepth:book.scan_depth??book.scanDepth,recursiveScanning:book.recursive_scanning??book.recursiveScanning,caseSensitive:book.case_sensitive??book.caseSensitive};for(const [key,e] of items)entries.push(e&&typeof e==='object'?{...e,__mimaBookConfig:config,__mimaSourcePath:r.path+'.entries['+String(key)+']',__mimaSourceId:r.sourceId,__mimaResourceId:r.id}:e);}return entries;}
 function readRegex(resources,session={}){
  const all=[],settings=session.regexSettings||{},overrides=settings.overrides||{};
  const ordered=resources.filter(r=>r.kind==='regex').map((resource,index)=>({resource,index})).sort((a,b)=>Number(a.resource.sourceId===session.sourceId)-Number(b.resource.sourceId===session.sourceId)||a.index-b.index);
@@ -271,7 +271,7 @@ function mountedPresetInstructions(session,resources){
  }
  return {instructions,gaps};
 }
-function worldInfoSettings(session,name,u,userText){return {budgetChars:session.worldInfoBudget??16000,scanDepth:session.worldInfoScanDepth??100,recursiveScan:session.worldInfoRecursiveScan!==false,maxRecursionSteps:session.worldInfoMaxRecursionSteps??6,localAdvancedRules:session.worldInfoLocalAdvancedRules===true,seed:session.id+'|'+((session.turnIndex??0)-(session.pendingTurnId?1:0))+'|'+userText,includeNames:session.worldInfoIncludeNames!==false,userName:u,charName:name};}
+function worldInfoSettings(session,name,u,userText){return {budgetChars:session.worldInfoBudget??16000,scanDepth:session.worldInfoScanDepth,recursiveScan:session.worldInfoRecursiveScan,maxRecursionSteps:session.worldInfoMaxRecursionSteps??6,localAdvancedRules:session.worldInfoLocalAdvancedRules===true,seed:session.id+'|'+((session.turnIndex??0)-(session.pendingTurnId?1:0))+'|'+userText,includeNames:session.worldInfoIncludeNames!==false,userName:u,charName:name};}
 function createEnvelope(session,resources,messages,userText,{skipRegex=false,worldInfoOverride=null,assistantContinuation=false}={}){
  const selected=resources.find(r=>r.kind==='character'),card=selected?.raw;
  if(!card)throw error('E_RESOURCE_SEMANTIC_GAP','本来源没有已选定角色');

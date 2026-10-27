@@ -593,7 +593,7 @@ async function actions(a){if(a?.startsWith('demo-')){const kind=a.slice(5);windo
  if(a==='inspect')return inspect();if(a==='export-diagnostics')return download('mima-appearance-diagnostics.json',JSON.stringify(await C.appearanceDiagnostics(),null,2),'application/json');
  if(a==='snapshot'){const key=`history:${project.id}:${Date.now()}`;await queueDraft();await C._historySave(key,project);return note('历史版本已保存');}
  if(a==='restore-history'){const p=await C._historyLatest(project.id);if(!p)return note('暂时没有历史快照',true);push();project=C.normalized(p);changed();render();return note('已从最近历史快照恢复到草稿，尚未正式应用');}
- if(a.startsWith('load:')){const saved=await C.get('project:'+a.slice(5));if(!saved)throw new Error('主题不存在，可能已被其他窗口移除');await switchToTheme(saved);return note('已载入自动草稿，旧编辑已保护');}
+ if(a.startsWith('load:')){const targetId=a.slice(5);if(targetId===project?.id){await persistBeforeSwitch();return note('当前正在编辑的就是这份自动草稿，最新修改已保存，无需重新载入');}await persistBeforeSwitch();const saved=await C.get('project:'+targetId);if(!saved)throw new Error('主题不存在，可能已被其他窗口移除');await switchToTheme(saved);return note('已载入自动草稿，旧编辑已保护');}
  if(a.startsWith('manual:')){const saved=await C.get(a);if(!saved)throw new Error('手动版本已不存在');const fork=await C.forkDraft({...saved,id:uid(),draftVersion:0,linkedCssId:''});await switchToTheme(fork);return note('手动版本已作为新的独立草稿打开，原版本不变');}
  if(a==='fork-conflict'){const copy=await C.forkDraft(snapshot(project));await switchToTheme(copy);return note('发生版本冲突的作品已另存为独立草稿');}
 
@@ -625,22 +625,31 @@ function inspect(){const issues=[];if(project.stickers.length>12)issues.push('�
 function onPointerDown(e){const el=e.target.closest('[data-sticker-drag]');if(!el)return;const s=project.stickers.find(x=>x.id===el.dataset.stickerDrag);if(!s)return;const area=previewStickerAnchor(s,$('atl-preview'));if(!area)return;const r=area.getBoundingClientRect(),pr=$('atl-preview').querySelector('.atl-scene').getBoundingClientRect();drag={id:s.id,startX:e.clientX,startY:e.clientY,x:s.x,y:s.y,w:r.width,h:r.height,baseLeft:r.left-pr.left,baseTop:r.top-pr.top};push();el.setPointerCapture(e.pointerId);e.preventDefault()}
 function onPointerMove(e){if(!drag)return;const s=project.stickers.find(x=>x.id===drag.id);if(!s)return;s.x=C.clamp(drag.x+(e.clientX-drag.startX)/Math.max(1,drag.w)*100,-150,250);s.y=C.clamp(drag.y+(e.clientY-drag.startY)/Math.max(1,drag.h)*100,-150,250);const el=$('atl-preview-stickers')?.querySelector(`[data-sticker-drag="${s.id}"]`);if(el){el.style.left=`${drag.w*s.x/100}px`;el.style.top=`${drag.h*s.y/100}px`;}scheduleDraft();}
 function onPointerUp(){if(!drag)return;drag=null;changed();if(tab==='stickers')render()}
-async function onImport(e){const file=e.target.files?.[0];if(!file)return;try{let p;if(file.size>24*1024*1024)throw Error('工程文件超过 24MB，请先压缩素材再导入');const bytes=await file.arrayBuffer();if(file.name.toLowerCase().endsWith('.zip')){const entries=await unzipProjectZip(new Uint8Array(bytes));const data=entries['theme.atelier.json'];if(!data)throw new Error('ZIP 不包含可编辑的 theme.atelier.json');p=JSON.parse(new TextDecoder().decode(data));}else if(file.name.toLowerCase().endsWith('.css')){p=C.baseTheme();p.name=file.name.replace(/\.css$/i,'')+' · CSS 导入';p.extraCss=new TextDecoder().decode(bytes);}else p=JSON.parse(new TextDecoder().decode(bytes));p=C.normalized(p);p.id=uid();p.draftVersion=0;p.linkedCssId='';await switchToTheme(p);tab='design';render();note('导入成功，已建立独立草稿；尚未挂载');}catch(err){note('导入失败：'+err.message,true)}}
+async function onImport(e){const file=e.target.files?.[0];if(!file)return;try{let p;if(file.size>(file.name.toLowerCase().endsWith('.zip')?64:24)*1024*1024)throw Error('工程文件超出安全上限（ZIP 64MB / 单文件 24MB），原草稿未修改');const bytes=await file.arrayBuffer();if(file.name.toLowerCase().endsWith('.zip')){const entries=await unzipProjectZip(new Uint8Array(bytes));const data=entries['theme.atelier.json'];if(!data)throw new Error('ZIP 不包含可编辑的 theme.atelier.json');p=restorePackedProject(JSON.parse(new TextDecoder().decode(data)),entries);}else if(file.name.toLowerCase().endsWith('.css')){p=C.baseTheme();p.name=file.name.replace(/\.css$/i,'')+' · CSS 导入';p.extraCss=new TextDecoder().decode(bytes);}else p=JSON.parse(new TextDecoder().decode(bytes));p=C.normalized(p);p.id=uid();p.draftVersion=0;p.linkedCssId='';await switchToTheme(p);tab='design';render();note('导入成功，已建立独立草稿；尚未挂载');}catch(err){note('导入失败：'+err.message,true)}}
 function crc(bytes){let x=~0;for(const b of bytes){x^=b;for(let i=0;i<8;i++)x=(x>>>1)^((x&1)?0xedb88320:0);}return (~x)>>>0;}
-function zipStored(files){const enc=new TextEncoder(),parts=[],central=[];let offset=0;const le=(view,pos,v,len)=>{if(len===2)view.setUint16(pos,v,true);else view.setUint32(pos,v,true)};
- for(const [name,value] of Object.entries(files)){const n=enc.encode(name),data=value instanceof Uint8Array?value:enc.encode(value),check=crc(data),a=new Uint8Array(30+n.length+data.length),dv=new DataView(a.buffer);le(dv,0,0x04034b50,4);le(dv,4,20,2);le(dv,6,0x0800,2);le(dv,8,0,2);le(dv,14,check,4);le(dv,18,data.length,4);le(dv,22,data.length,4);le(dv,26,n.length,2);a.set(n,30);a.set(data,30+n.length);parts.push(a);
+const ATL_ZIP_LIMITS=Object.freeze({archive:64*1024*1024,entries:512,assets:509,expanded:120*1024*1024,media:16*1024*1024});
+function zipStored(files){
+ const list=Object.entries(files);
+ if(list.length>ATL_ZIP_LIMITS.entries)throw Error('工程 ZIP 文件数量超过安全上限 '+ATL_ZIP_LIMITS.entries+' 项，未生成不兼容的包');
+ // ZIP is stored (no compression); calculate the real final size before
+ // allocating local/central buffers. Refuse an impossible roundtrip up front.
+ const enc=new TextEncoder();let estimated=22,unpacked=0;
+ for(const [name,value]of list){const size=value instanceof Uint8Array?value.byteLength:enc.encode(value).byteLength;estimated+=76+enc.encode(name).length*2+size;unpacked+=size;
+  if(estimated>ATL_ZIP_LIMITS.archive||unpacked>ATL_ZIP_LIMITS.expanded)throw Error('主题媒体总量超过完整 ZIP 的 64MB 导入/导出预算，原素材没有更改');}
+ const parts=[],central=[];let offset=0;const le=(view,pos,v,len)=>{if(len===2)view.setUint16(pos,v,true);else view.setUint32(pos,v,true)};
+ for(const [name,value] of list){const n=enc.encode(name),data=value instanceof Uint8Array?value:enc.encode(value),check=crc(data),a=new Uint8Array(30+n.length+data.length),dv=new DataView(a.buffer);le(dv,0,0x04034b50,4);le(dv,4,20,2);le(dv,6,0x0800,2);le(dv,8,0,2);le(dv,14,check,4);le(dv,18,data.length,4);le(dv,22,data.length,4);le(dv,26,n.length,2);a.set(n,30);a.set(data,30+n.length);parts.push(a);
  const b=new Uint8Array(46+n.length),c=new DataView(b.buffer);le(c,0,0x02014b50,4);le(c,4,20,2);le(c,6,20,2);le(c,8,0x0800,2);le(c,16,check,4);le(c,20,data.length,4);le(c,24,data.length,4);le(c,28,n.length,2);le(c,42,offset,4);b.set(n,46);central.push(b);offset+=a.length;}
  const size=central.reduce((n,x)=>n+x.length,0),end=new Uint8Array(22),e=new DataView(end.buffer);le(e,0,0x06054b50,4);le(e,8,central.length,2);le(e,10,central.length,2);le(e,12,size,4);le(e,16,offset,4);return new Blob([...parts,...central,end],{type:'application/zip'});}
 async function unzipProjectZip(bytes){
  // Read the central directory, not the local header: ZIP writers may use data descriptors.
  // Check CRC, bounds and all entry names before touching the existing draft.
- if(bytes.byteLength>24*1024*1024)throw Error('ZIP 文件超过 24MB');
+ if(bytes.byteLength>ATL_ZIP_LIMITS.archive)throw Error('ZIP 文件超过 64MB 安全预算');
  const v=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength),u16=i=>v.getUint16(i,true),u32=i=>v.getUint32(i,true);
  let eocd=-1;for(let i=bytes.length-22;i>=Math.max(0,bytes.length-65557);i--)if(u32(i)===0x06054b50&&i+22+u16(i+20)===bytes.length){eocd=i;break;}
  if(eocd<0)throw Error('不是完整的标准 ZIP（找不到中央目录）');
  if(u16(eocd+4)!==0||u16(eocd+6)!==0||u16(eocd+8)!==u16(eocd+10))throw Error('不支持多磁盘 ZIP');
  const count=u16(eocd+10),start=u32(eocd+16),centralSize=u32(eocd+12);
- if(count>100||start+centralSize>eocd||count===0)throw Error('ZIP 文件数量或中央目录无效');
+ if(count>ATL_ZIP_LIMITS.entries||start+centralSize>eocd||count===0)throw Error('ZIP 文件数量或中央目录无效');
  if(count===65535||start===0xffffffff)throw Error('暂不支持 ZIP64 工程');
  const names=new Set(),records=[],decoder=new TextDecoder('utf-8',{fatal:true});let pos=start,total=0;
  for(let i=0;i<count;i++){
@@ -653,7 +662,7 @@ async function unzipProjectZip(bytes){
   const name=decoder.decode(bytes.subarray(pos+46,pos+46+n));
   if(!name||name.includes('\\')||name.startsWith('/')||name.split('/').some(x=>x==='..'||x==='.')||/^[a-zA-Z]:/.test(name))throw Error('ZIP 包含非法路径');
   if(names.has(name))throw Error('ZIP 包含重复文件名：'+name);names.add(name);
-  total+=length;if(length>64*1024*1024||total>120*1024*1024)throw Error('ZIP 解压后内容过大');
+  total+=length;if(length>ATL_ZIP_LIMITS.archive||total>ATL_ZIP_LIMITS.expanded)throw Error('ZIP 解压后内容过大');
   if(offset+30>start||u32(offset)!==0x04034b50)throw Error('ZIP 本地文件头损坏');
   const localNameLen=u16(offset+26),localExtraLen=u16(offset+28),dataOffset=offset+30+localNameLen+localExtraLen;
   if(dataOffset+size>start)throw Error('ZIP 压缩数据越界');
@@ -677,6 +686,55 @@ async function unzipProjectZip(bytes){
  }
  return out;
 }
-function exportZip(){const pack=C.portableBundle(project);const files={'theme.atelier.json':JSON.stringify(project,null,2),'theme.css':pack.css,'README.txt':'MIMA Theme Atelier portable ZIP. theme.css references assets/ (keep relative paths together). The editable full-fidelity project is theme.atelier.json; import it through Atelier. Dynamic stickers still require the Atelier DOM. Commercial distribution must respect asset copyrights.',...pack.files};download(`${nameFile(project.name)}.atelier.zip`,zipStored(files),'application/zip')}
+// ZIP v2: media is written once as binary, never again as base64 in the editor JSON.
+// The original editable structure is restored before normalization on import.
+const ATL_MEDIA_TOKEN='mima-atl-asset://';
+const ATL_DATA_URI=/data:([a-z\d.+-]+\/[a-z\d.+-]+)(?:;[a-z\d=+.-]+)*;base64,[A-Za-z\d+/]+={0,2}/gi;
+function packEditableProject(source,pack){
+ const paths=new Map(pack.assetSources||[]),mimeByPath=new Map(),files={...pack.files};
+ let counter=Object.keys(files).length;
+ function decode(uri){const raw=atob(uri.slice(uri.indexOf(',')+1));const out=new Uint8Array(raw.length);for(let i=0;i<raw.length;i++)out[i]=raw.charCodeAt(i);return out;}
+ function transform(value){
+  if(typeof value==='string')return value.replace(ATL_DATA_URI,(uri,mime)=>{
+   let path=paths.get(uri);if(!path){path='assets/editor_'+(++counter)+'.bin';files[path]=decode(uri);paths.set(uri,path);}
+   mimeByPath.set(path,mime.toLowerCase());return ATL_MEDIA_TOKEN+path;
+  });
+  if(Array.isArray(value))return value.map(transform);
+  if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,transform(v)]));
+  return value;
+ }
+ const json=transform(source);json.__mimaZipAssets=Object.fromEntries([...mimeByPath].map(([path,mime])=>[path,mime]));
+ return {json,files};
+}
+function restorePackedProject(p,entries){
+ if(!p||typeof p!=='object'||Array.isArray(p)||!Object.prototype.hasOwnProperty.call(p,'__mimaZipAssets'))return p; // v1 ZIP remains compatible
+ const registry=p.__mimaZipAssets;
+ if(!registry||typeof registry!=='object'||Array.isArray(registry)||Object.keys(registry).length>ATL_ZIP_LIMITS.assets)throw Error('ZIP 素材映射无效');
+ const encoded=new Map();
+ for(const [path,mime] of Object.entries(registry)){
+  if(!/^assets\/[a-zA-Z0-9_.-]+$/.test(path)||!/^[a-z\d.+-]+\/[a-z\d.+-]+$/i.test(mime))throw Error('ZIP 素材引用不安全：'+path);
+  const bytes=entries[path];if(!(bytes instanceof Uint8Array)||bytes.length>ATL_ZIP_LIMITS.media)throw Error('ZIP 素材缺失或过大：'+path);
+  let binary='';for(let i=0;i<bytes.length;i+=0x8000)binary+=String.fromCharCode(...bytes.subarray(i,i+0x8000));
+  encoded.set(ATL_MEDIA_TOKEN+path,`data:${mime};base64,${btoa(binary)}`);
+ }
+ const tokens=new RegExp('mima-atl-asset:\\/\\/assets\\/[A-Za-z0-9_.-]+','g');let restored=0;
+ function hydrate(value){
+  if(typeof value==='string')return value.replace(tokens,key=>{if(!encoded.has(key))throw Error('ZIP 素材引用未找到：'+key);restored++;return encoded.get(key);});
+  if(Array.isArray(value))return value.map(hydrate);
+  if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).filter(([k])=>k!=='__mimaZipAssets').map(([k,v])=>[k,hydrate(v)]));
+  return value;
+ }
+ if(!restored&&Object.keys(registry).length===0)return hydrate(p);
+ return hydrate(p);
+}
+function exportZip(){
+ const pack=C.portableBundle(project),packed=packEditableProject(project,pack);
+ const files={'theme.atelier.json':JSON.stringify(packed.json,null,2),'theme.css':pack.css,'README.txt':'MIMA Theme Atelier portable ZIP v2. Import theme.atelier.json together with assets/ using the ZIP in Theme Atelier. Standalone CSS references assets/ and may not include dynamic stickers. Original media quality and editable settings are preserved.',...packed.files};
+ const fileCount=Object.keys(files).length;
+ if(fileCount>ATL_ZIP_LIMITS.entries)throw Error(`完整工程包含 ${fileCount} 个文件，超过 ${ATL_ZIP_LIMITS.entries} 项安全预算，未导出无法导回的 ZIP。`);
+ const zip=zipStored(files);
+ if(zip.size>ATL_ZIP_LIMITS.archive)throw Error(`完整 ZIP 大小 ${(zip.size/1048576).toFixed(1)}MB，超过 64MB 安全预算；原图片和字体均未降质。请分主题整理素材后再导出。`);
+ download(`${nameFile(project.name)}.atelier.zip`,zip,'application/zip');note(`已导出完整工程 ${(zip.size/1048576).toFixed(1)}MB，包含原图、字体、贴纸，可直接重新导入。`);
+}
 window.MimaThemeAtelier={open:()=>open().catch(err=>{console.error('[Theme Atelier] could not open without verified data',err);alert('主题工坊无法安全打开：'+err.message+'\n原有主题与咪嘛馆存档未被重置。');}),close:()=>close().catch(err=>{console.error('[Atelier] close prevented by unsaved changes',err);note('草稿未保存，暂不关闭：'+err.message,true)}),isOpen:()=>opened};
 })();

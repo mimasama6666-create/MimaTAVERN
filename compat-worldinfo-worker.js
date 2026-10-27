@@ -3,7 +3,7 @@
 (function(){
  const isNode=typeof process!=='undefined'&&!!process.versions?.node;
  const parent=isNode?require('node:worker_threads').parentPort:null;
- const runtime=isNode?require('./compat-runtime.js'):(importScripts('./compat-runtime.js?r13=20261015-1'),self.MimaCompatRuntime);
+ const runtime=isNode?require('./compat-runtime.js'):(importScripts('./compat-runtime.js?compatfix=20261027f2'),self.MimaCompatRuntime);
  function processPacket(packet){
   try{
    if(!packet||!Array.isArray(packet.entries)||!Array.isArray(packet.history)||!packet.settings)throw Error('世界书消息结构无效');

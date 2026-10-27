@@ -77,10 +77,27 @@
     }
     return text(input);
   }
-  function applyBatchAsync(entries,packs=[],options={}){
+  async function applyBatchAsync(entries,packs=[],options={}){
     const list=arr(entries).map(e=>({input:text(e.input),phase:e.phase||'display'}));
     if(!list.length)return Promise.resolve([]);
     if(!list.some(e=>applicable(packs,e.phase)))return Promise.resolve(list.map(e=>({output:e.input,diagnostics:[]})));
+    // Bound each isolated job instead of giving the entire canonical History
+    // one deadline. Keep each message intact: anchors, captures and multiline
+    // rules must never see artificial text slices. Failure returns no prefix.
+    const results=[];
+    for(let offset=0;offset<list.length;){
+      if(options.signal?.aborted)throw Object.assign(new Error('正则操作已取消；原文保留'),{code:'E_REGEX_ABORTED'});
+      const batch=[];let chars=0;
+      while(offset<list.length&&batch.length<24){
+        const item=list[offset];
+        if(batch.length&&chars+item.input.length>262144)break;
+        batch.push(item);chars+=item.input.length;offset++;
+      }
+      results.push(...await runIsolatedBatch(batch,packs,options));
+    }
+    return results;
+  }
+  function runIsolatedBatch(list,packs,options){
     if(typeof Worker!=='function')return Promise.reject(Object.assign(new Error('此环境没有可终止的正则 Worker，原文保留'),{code:'E_REGEX_ISOLATION_UNAVAILABLE'}));
     if(window.location?.protocol==='file:')return Promise.reject(Object.assign(new Error('file:// 不允许加载隔离 Worker，请使用 HTTPS 打开咪嘛馆；原文保留'),{code:'E_REGEX_WORKER_ORIGIN'}));
     const budgetMs=Math.max(100,Math.min(8000,Number(options.budgetMs)||Math.min(5000,900+list.length*12)));
@@ -89,7 +106,7 @@
       const failure=(code,message)=>Object.assign(new Error(message),{code});
       const cleanup=()=>{if(finished)return false;finished=true;clearTimeout(timer);options.signal?.removeEventListener?.('abort',abort);worker?.terminate();return true;};
       const abort=()=>{if(cleanup())reject(failure('E_REGEX_ABORTED','正则操作已取消；原文保留'));};
-      try{worker=new Worker(new URL('./regex-native-worker.js?native=20261025-r3',document.baseURI),{name:'mima-native-regex'});}
+      try{worker=new Worker(new URL('./regex-native-worker.js?native=20261027-audit3',document.baseURI),{name:'mima-native-regex'});}
       catch(e){reject(failure('E_REGEX_ISOLATION_UNAVAILABLE','正则隔离启动失败：'+(e?.message||e)));return;}
       worker.onmessage=event=>{
         if(!cleanup())return;const packet=event.data;

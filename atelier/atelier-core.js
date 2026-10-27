@@ -1051,14 +1051,14 @@ async function migrateLegacyTheme(){
   if(!existing)await putMany([[releaseKey,project]]);
   const css=compile(project,'standalone',{assetMode:'omit'});
   const receipt=await window.MimaStandalone.handle('/atelier/publish','POST',{preset:{id:stableId,name:project.name+' · 旧工坊迁移',css,scope:'app',surface:'global',category:'主题工坊',atelierReleaseKey:releaseKey}});
-  if(!receipt?.success||receipt.data?.id!==stableId)throw Error(receipt?.msg||'旧主题迁移提交未通过核验');
+  if(!receipt?.success||receipt.data?.preset?.id!==stableId||receipt.data.preset.atelierReleaseKey!==releaseKey||receipt.data.preset.css!==css)throw Error(receipt?.msg||'旧主题迁移提交未通过核验');
   return {status:'MIGRATED',id:stableId};
  })();
  try{return await legacyMigrationPromise;}finally{legacyMigrationPromise=null;}
 }
 function portableBundle(project){const files={},seen=new Map();let n=0;
  const css=compile(normalized(project),'portable',{assetUrl(src,kind,font){if(!src?.startsWith('data:'))return src;let p=seen.get(src);if(!p){const ext=kind==='font'?(font?.format||'woff2'):/^data:image\/([^;]+)/.exec(src)?.[1]||'png';p=`assets/asset_${++n}.${String(ext).replace(/[^a-z0-9]/gi,'')}`;const raw=atob(src.slice(src.indexOf(',')+1));const bytes=new Uint8Array(raw.length);for(let i=0;i<raw.length;i++)bytes[i]=raw.charCodeAt(i);files[p]=bytes;seen.set(src,p);}return p;}});
- return {css,files};}
+ return {css,files,assetSources:[...seen.entries()]};}
 // Blob URLs are document-scoped. BFCache pagehide keeps this document and CSS alive.
 // Never revoke its live resources on pagehide; normal owner changes still reclaim stale URLs,
 // and the browser reclaims all object URLs when the document is actually destroyed.

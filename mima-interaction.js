@@ -23,8 +23,8 @@
   request.onblocked=()=>reject(Error('音效数据库被其他标签页占用，请关闭旧页面后重试'));
  });}
  async function getAllAudio(){const db=await openAudioDb();try{return await new Promise((resolve,reject)=>{
-  const tx=db.transaction(AUDIO_STORE,'readonly'),req=tx.objectStore(AUDIO_STORE).getAll();
-  req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);tx.onabort=()=>reject(tx.error||Error('音效读取中断'));
+  const tx=db.transaction(AUDIO_STORE,'readonly'),req=tx.objectStore(AUDIO_STORE).getAll();let rows,issue;
+  req.onsuccess=()=>{rows=req.result};req.onerror=()=>{issue=req.error;tx.abort()};tx.oncomplete=()=>resolve(rows);tx.onabort=()=>reject(issue||tx.error||Error('音效读取中断'));
  });}finally{db.close();}}
  async function saveAudioRecords(records,replace=false){
   const validated=records.map(checkRecord);
@@ -61,6 +61,22 @@
  async function exportSounds(){return (await getAllAudio()).map(checkRecord);}
  function validateSounds(raw){if(!Array.isArray(raw)||raw.length>KINDS.length)throw Error('个人音效备份结构无效');const records=raw.map(checkRecord);if(new Set(records.map(x=>x.kind)).size!==records.length)throw Error('个人音效备份分类重复');return records;}
  async function importSounds(raw){return saveAudioRecords(validateSounds(raw),true);}
+ // Whole-tavern restore is add-only. Recheck under the write lock; the
+ // original importSounds() replacement behavior stays available to old backups.
+ function soundMergePlan(current,incoming){
+  const before=validateSounds(current),next=validateSounds(incoming),known=new Map(before.map(x=>[x.kind,x])),added=[];
+  for(const row of next){const old=known.get(row.kind);if(old&&JSON.stringify(old)!==JSON.stringify(row))throw Error('个人音效分类已有不同原件，拒绝覆盖：'+row.kind);if(!old)added.push(row);}
+  return added;
+ }
+ async function previewSoundMerge(raw){const added=soundMergePlan(await getAllAudio(),raw);return {toAdd:added.map(x=>x.kind)};}
+ async function mergeSounds(raw){
+  const incoming=validateSounds(raw),db=await openAudioDb();let result;
+  try{result=await new Promise((resolve,reject)=>{const tx=db.transaction(AUDIO_STORE,'readwrite'),os=tx.objectStore(AUDIO_STORE),q=os.getAll();let issue,added=[];
+   q.onsuccess=()=>{try{added=soundMergePlan(q.result,incoming);for(const row of added)os.add(row)}catch(e){issue=e;tx.abort()}};
+   q.onerror=()=>{issue=q.error;tx.abort()};tx.oncomplete=()=>resolve({added:added.map(x=>x.kind)});tx.onabort=()=>reject(issue||tx.error||Error('个人音效安全合并已中止'));
+  });}finally{db.close();}
+  try{await reloadSounds()}catch(e){result.warnings=['音效原件已提交，播放缓存重载失败：'+e.message]};return result;
+ }
  async function reloadSounds(){const revision=personalAudioRevision,records=(await getAllAudio()).map(checkRecord);if(revision!==personalAudioRevision)return getSoundInfo();
   for(const kind of KINDS)delete audioRecords[kind];for(const record of records)audioRecords[record.kind]=record;
   personalAudioRevision++;refreshEffective();return getSoundInfo();}
@@ -223,5 +239,5 @@
  const ready=reloadSounds().catch(error=>{console.warn('[Interaction] personal audio assets unavailable; records preserved',error);throw error;});
  ready.catch(()=>{}); // Deliberately keep the failure accessible to Settings; no unhandled rejection.
  window.addEventListener('storage',event=>{if(event.key===PREF_KEY)reloadPreferences();});
- window.MimaInteraction={apply,demo,demoCurrent,setSound,clearSound,getSoundInfo,exportSounds,validateSounds,importSounds,reloadSounds,ready,get:()=>({...settings,sounds:{...settings.sounds}}),getPreferences:()=>({...preferences}),setPreference,reloadPreferences,_normalize:normalize,preferenceKey:PREF_KEY};
+ window.MimaInteraction={apply,demo,demoCurrent,setSound,clearSound,getSoundInfo,exportSounds,validateSounds,importSounds,previewSoundMerge,mergeSounds,reloadSounds,ready,get:()=>({...settings,sounds:{...settings.sounds}}),getPreferences:()=>({...preferences}),setPreference,reloadPreferences,_normalize:normalize,preferenceKey:PREF_KEY};
 })();

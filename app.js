@@ -852,7 +852,7 @@ function r19RestoreImmersiveAnchor(box,anchor){
                 }
             }
             const c=offset===null?null:r19ReaderCharRect(node,offset,range);
-            if(c){box.scrollTop+=c.top-rect.top-anchor.textViewportY;return true;}
+            if(c){MimaHistoryNavigator.scrollByVisual(box,c.top-rect.top-anchor.textViewportY);return true;}
         }
     }
     // The renderer can wrap the same prose in new Safe HTML nodes. Resolve by
@@ -863,10 +863,10 @@ function r19RestoreImmersiveAnchor(box,anchor){
             const at=node.textContent.indexOf(anchor.textWitness);
             if(at<0)continue;
             const range=document.createRange(),c=r19ReaderCharRect(node,at+(anchor.textWitnessLead||0),range);
-            if(c){box.scrollTop+=c.top-rect.top-anchor.textViewportY;return true;}
+            if(c){MimaHistoryNavigator.scrollByVisual(box,c.top-rect.top-anchor.textViewportY);return true;}
         }
     }
-    if(article){box.scrollTop+=article.getBoundingClientRect().top-rect.top-anchor.messageOffset;return true;}
+    if(article){MimaHistoryNavigator.scrollByVisual(box,article.getBoundingClientRect().top-rect.top-anchor.messageOffset);return true;}
     // No matching canonical message (e.g. deleted while transitioning).
     // Never read a stale previous-session offset as if it were a new message.
     if(!anchor.messageId){box.scrollTop=anchor.scrollTop;return true;}
@@ -929,7 +929,7 @@ function setupImmersiveReading(){
 }
 // User-facing release notes: once per distinct production release by default.
 // Avoid touching Store/History or making automatic announcements mandatory.
-const MIMA_RELEASE_NOTES_VERSION='R19-20261027-BATCH8-GUIDE-R1-DEV';
+const MIMA_RELEASE_NOTES_VERSION='R19-20261027-BATCH8-COMPAT-ATELIER-FIX2-DEV';
 const MIMA_RELEASE_NOTES_SEEN='mima-release-notes-seen:'+MIMA_RELEASE_NOTES_VERSION;
 const MIMA_RELEASE_NOTES_OPTOUT='mima-release-notes-disable-auto-v1';
 function openMimaReleaseNotice(){
@@ -2221,10 +2221,11 @@ async function renderDataTab(box,renderEpoch=++settingsRenderEpoch){
     const receipt=lastFullSettingsRestoreReceipt;
     const backupRestoreResult=receipt?`<div class="data-backup-card" role="${receipt.warnings.length||!receipt.uiRefreshed?'alert':'status'}" style="white-space:pre-wrap"><strong>${receipt.warnings.length||!receipt.uiRefreshed?'⚠️ 本次恢复：部分完成':'✅ 本次恢复：完成'}</strong><div class="row-sub">${!receipt.uiRefreshed?'主资料库已提交，但页面刷新失败；请检查后手动刷新，不要重复导入。':receipt.warnings.length?'主资料库已经恢复，但下列设置未能全部恢复：':'主资料库和本次设置均已恢复。'}</div>${receipt.warnings.map(item=>`<div class="row-sub">• ${escapeHtml(String(item).slice(0,650))}</div>`).join('')}</div>`:'';
     box.innerHTML=`<section class="settings-section"><h3>💾 Data Backup（数据备份）</h3><p class="helper">这里备份的不只是剧情，还包括角色卡、世界书、预设、正则包、CSS Preset（CSS 预设）、API（接口）参数、温度/流式设置、字体选择；可选把本地字体文件也一起装进备份。普通“刷新 / 强制刷新”不会删除这些数据，但 Safari 的“清除历史记录与网站数据”或删除网站数据会清掉 IndexedDB（本地数据库）和 localStorage（本地存储），所以真正保险的是导出 JSON（数据文件）到“文件”App。</p>
-    <div class="data-backup-card"><div class="row-title">本机设置快照</div><div class="row-sub">${snap?`最近保存：${escapeHtml(snap.savedAt||snap.exportedAt||'已保存')}`:'尚未保存本机快照'}</div><div class="toolbar"><button class="primary-btn" onclick="saveFullSettingsSnapshot()">保存咪嘛馆设置数据</button><button class="ghost-btn" onclick="restoreSavedSettingsSnapshot()">恢复本机快照</button></div></div>
+    ${window.MimaTavernBackup?.markup?.()||''}<div class="data-backup-card"><div class="row-title">本机设置快照</div><div class="row-sub">${snap?`最近保存：${escapeHtml(snap.savedAt||snap.exportedAt||'已保存')}`:'尚未保存本机快照'}</div><div class="toolbar"><button class="primary-btn" onclick="saveFullSettingsSnapshot()">保存咪嘛馆设置数据</button><button class="ghost-btn" onclick="restoreSavedSettingsSnapshot()">恢复本机快照</button></div></div>
     <div class="data-backup-card"><div class="row-title">剧情与设置备份（不含小手机）</div><div class="row-sub"><strong>重要：这不是整馆迁移。</strong>只包含原生剧情、资源、工坊、壁纸及可选字体／接口设置；不包含小手机独立数据库或酒馆兼容库。清除网站数据或换设备前，还必须分别在小手机备份页、酒馆兼容管理页导出各自存档。尚不支持多库一键原子恢复。</div><label class="check-row"><input id="backup-fonts" type="checkbox" checked> 把本地字体文件也加入备份（文件可能变大）</label><label class="check-row"><input id="backup-api-key" type="checkbox"> 把 API Key（接口密钥）加入导出/快照 <strong>（敏感）</strong></label><div class="toolbar"><button class="primary-btn" onclick="exportFullSettingsBackup()">⇩ 导出剧情与设置</button><button class="ghost-btn" onclick="chooseFullSettingsImport()">⇧ 恢复剧情与设置</button></div><div class="row-sub">当前 API（接口）：${cfg.apiBase?escapeHtml(cfg.apiBase):'未配置'} · Model（模型）：${cfg.model?escapeHtml(cfg.model):'未选择'}</div></div>
     <div id="data-backup-status" class="api-status">${snap?'✅ 当前浏览器已有本机快照。':'建议先保存一次本机快照，再导出一份文件备份。'}</div>${backupRestoreResult}</section>
     <section class="settings-section"><h3>🧹 Cache（缓存）说明</h3><p class="helper"><strong>只想让 GitHub Pages 加载新代码时，不需要先清除网站数据。</strong>本版已经给 CSS / JS 资源加入版本号 <code>?v=1.1.0</code>，部署后浏览器会把它们当成新资源重新拉取。若仍显示旧页面，先关闭该标签页再重新打开，或做一次强制刷新；不要直接使用会删除网站数据的清理方式，除非你已经导出了完整设置备份。</p></section>`;
+    if(window.MimaTavernBackup)void MimaTavernBackup.mount().catch(error=>console.error('迁移收据读取失败',error));
 }
 
 function appearancePersonalSoundRows(){
@@ -3217,10 +3218,10 @@ function r19FinishStreamViewport(box,view,finalContent){
  if(view.inLive){
   // Offset relative to the SAME generated body, not a stale document scrollTop.
   const rect=box.getBoundingClientRect();
-  box.scrollTop+=finalContent.getBoundingClientRect().top-rect.top+view.contentOffset;
+  MimaHistoryNavigator.scrollByVisual(box,finalContent.getBoundingClientRect().top-rect.top+view.contentOffset);
  }else if(view.previousAnchor?.id){
   const target=r19ReaderMessage(box,view.previousAnchor.id);
-  if(target)box.scrollTop+=target.getBoundingClientRect().top-box.getBoundingClientRect().top-view.previousAnchor.offset;
+  if(target)MimaHistoryNavigator.scrollByVisual(box,target.getBoundingClientRect().top-box.getBoundingClientRect().top-view.previousAnchor.offset);
   else box.scrollTop=view.scrollTop;
  }else box.scrollTop=view.scrollTop;
 }
@@ -3735,14 +3736,11 @@ function r19EnqueueDisplayRegex(tasks,sessionId,token){
   }finally{if(r19DisplayDrainingController===controller)r19DisplayDrainingController=null;}
  })();
 }
-const r19VersionSnapshots=new WeakMap();
 function r19MsgSnapshot(msg){
- const versions=msg.versions||[],revision=Number(currentSessionData?.recordRevision)||0;
- const prior=r19VersionSnapshots.get(msg);
- const cached=prior&&prior.revision===revision&&prior.versions===versions?prior.value:null;
- const serialized=cached??(versions.length?JSON.stringify(versions):'[]');
- if(!cached)r19VersionSnapshots.set(msg,{revision,versions,value:serialized});
- return {role:msg.role||'system',content:msg.content||'',edited:!!msg.isEdited,versions:serialized};
+ // The transcript shows only the number of archived versions. Version actions
+ // read the current canonical message on click; serializing their full bodies
+ // here duplicated long replies on every unrelated session revision.
+ return {role:msg.role||'system',content:msg.content||'',edited:!!msg.isEdited,versions:arr(msg.versions).length};
 }
 function r19Unchanged(a,b){return a&&a.role===b.role&&a.content===b.content&&a.edited===b.edited&&a.versions===b.versions;}
 function r19CaptureReadingAnchor(box){
@@ -3813,12 +3811,12 @@ function refreshChatBox(options={}){
   }
   else if(options.readerAnchorLite&&next.has(options.readerAnchorLite.messageId)){
     const node=next.get(options.readerAnchorLite.messageId).el;
-    box.scrollTop+=node.getBoundingClientRect().top-box.getBoundingClientRect().top-options.readerAnchorLite.offset;
+    MimaHistoryNavigator.scrollByVisual(box,node.getBoundingClientRect().top-box.getBoundingClientRect().top-options.readerAnchorLite.offset);
   }
   else if(options.readerAnchor&&r19RestoreImmersiveAnchor(box,options.readerAnchor)){}
   else if(Number.isFinite(Number(options.scrollTop)))box.scrollTop=Number(options.scrollTop);
   else if(options.scrollToBottom!==false&&!readingMode&&(contextChange||oldBottom))box.scrollTop=box.scrollHeight;
-  else if(anchorId){const replacement=next.get(anchorId)?.el;if(replacement)box.scrollTop+=replacement.getBoundingClientRect().top-box.getBoundingClientRect().top-anchorOffset;else box.scrollTop=oldScroll;}
+  else if(anchorId){const replacement=next.get(anchorId)?.el;if(replacement)MimaHistoryNavigator.scrollByVisual(box,replacement.getBoundingClientRect().top-box.getBoundingClientRect().top-anchorOffset);else box.scrollTop=oldScroll;}
   else box.scrollTop=oldScroll;
   if(!oldBottom&&options.scrollToBottom===false)window.MimaHistoryNavigator?.refreshProgress();
  });

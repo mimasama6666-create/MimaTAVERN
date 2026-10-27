@@ -83,6 +83,19 @@
     return new Promise((resolve,reject)=>{const tx=db.transaction(STORE,'readonly'),req=tx.objectStore(STORE).getAll(IDBKeyRange.bound(start,start+'\uffff'));let result,issue;
       req.onsuccess=()=>result=req.result;req.onerror=()=>{issue=req.error;tx.abort();};tx.oncomplete=()=>{db.close();resolve(result);};tx.onabort=()=>{db.close();reject(issue||tx.error||Error('清理日志读取失败'));};});
   }
+  // Tool drafts are independent kv records; enumerate keys as well as values.
+  async function exportPlayToolRecords(){
+    const db=await openDb();return new Promise((resolve,reject)=>{const tx=db.transaction(STORE,'readonly'),os=tx.objectStore(STORE),range=IDBKeyRange.bound('play_tools_v1:','play_tools_v1:\uffff'),k=os.getAllKeys(range),v=os.getAll(range);let issue;
+      k.onerror=()=>{issue=k.error;tx.abort()};v.onerror=()=>{issue=v.error;tx.abort()};
+      tx.oncomplete=()=>{db.close();if(k.result.length!==v.result.length)return reject(Error('工具草稿快照不完整'));resolve(k.result.map((key,i)=>[key,v.result[i]]))};tx.onabort=()=>{db.close();reject(issue||tx.error||Error('工具草稿读取中断'))};});
+  }
+  async function importPlayToolRecords(rows,{dryRun=false}={}){
+    if(!Array.isArray(rows))throw Error('工具本地记录格式错误');const seen=new Set();
+    for(const row of rows){if(!Array.isArray(row)||row.length!==2||typeof row[0]!=='string'||!row[0].startsWith('play_tools_v1:')||seen.has(row[0]))throw Error('工具记录键无效或重复');seen.add(row[0]);}
+    const db=await openDb();return new Promise((resolve,reject)=>{const tx=db.transaction(STORE,dryRun?'readonly':'readwrite'),os=tx.objectStore(STORE),range=IDBKeyRange.bound('play_tools_v1:','play_tools_v1:\uffff'),k=os.getAllKeys(range),v=os.getAll(range);let issue,count=0,ready=0;
+      const go=()=>{if(++ready!==2)return;try{const current=new Map(k.result.map((key,i)=>[key,v.result[i]]));for(const [key,value] of rows){const old=current.get(key);if(old!==undefined&&JSON.stringify(old)!==JSON.stringify(value))throw Error('工具草稿或清理日志冲突，拒绝覆盖：'+key);if(old===undefined){count++;if(!dryRun)os.add(value,key);}}}catch(e){issue=e;tx.abort()}};
+      k.onsuccess=go;v.onsuccess=go;k.onerror=()=>{issue=k.error;tx.abort()};v.onerror=()=>{issue=v.error;tx.abort()};tx.oncomplete=()=>{db.close();resolve({added:count,dryRun})};tx.onabort=()=>{db.close();reject(issue||tx.error||Error('工具记录导入中断'))};});
+  }
   // Serialize compare-and-swap inside a single IndexedDB readwrite transaction.
   // Never treat a failed read as an empty library, and never silently overwrite a newer tab.
   async function commitState(candidate, expectedRevision, {signal=null}={}) {
@@ -1279,5 +1292,5 @@
     if(text.length!==receipt.persistedChars)throw new Error('E_GENERATION_FRAGMENT_INCOMPLETE');
     return {receipt,text,complete:true};
   }
-  window.MimaLocalStore={listPlayToolLocal,getPlayToolLocal:key=>get('play_tools_v1:'+key),putPlayToolLocal:(key,value)=>set('play_tools_v1:'+key,value),generationReceipt,generationAppendFragment,generationRead,getRollingPreflight,putRollingPreflight,clearRollingPreflight,commitHtmlRepair,putHtmlRepairCandidate,getHtmlRepairCandidate,setHtmlRepairCandidateState,listMemoryStages,inspectLegacyMemoryStages,putMemoryRejectedDraft,listMemoryRejectedDrafts,memoryReferenceContract,putFactRangeCandidate,listFactRangeCandidates,commitVerifiedFactRanges,getMergeStage,putMergeStage,getMergeDraft,createMergeDraft,updateMergeDraft,commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,clearSettingsSnapshot,getMemoryJob,getMemoryStage,putMemoryStage,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
+  window.MimaLocalStore={exportPlayToolRecords,importPlayToolRecords,listPlayToolLocal,getPlayToolLocal:key=>get('play_tools_v1:'+key),putPlayToolLocal:(key,value)=>set('play_tools_v1:'+key,value),generationReceipt,generationAppendFragment,generationRead,getRollingPreflight,putRollingPreflight,clearRollingPreflight,commitHtmlRepair,putHtmlRepairCandidate,getHtmlRepairCandidate,setHtmlRepairCandidateState,listMemoryStages,inspectLegacyMemoryStages,putMemoryRejectedDraft,listMemoryRejectedDrafts,memoryReferenceContract,putFactRangeCandidate,listFactRangeCandidates,commitVerifiedFactRanges,getMergeStage,putMergeStage,getMergeDraft,createMergeDraft,updateMergeDraft,commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,clearSettingsSnapshot,getMemoryJob,getMemoryStage,putMemoryStage,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
 })();

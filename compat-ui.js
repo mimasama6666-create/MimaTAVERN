@@ -6,7 +6,94 @@
 let unsubscribeLiveSync=null;
 const remoteDeliveries=new Set();
 let compatTheaterIds=[],compatPlayContext={user:'玩家',char:'角色'};
-const storyDrafts=new Map();let regexUI=null,readerCoverUrl='',readerCoverSource='',sheetPane='effects';
+// Isolated, revision-checked composer drafts live in the compat DB sidecars.
+// They are not messages and never enter a model prompt. Old stories remain untouched.
+const storyDrafts=new Map(),draftRecords=new Map(),draftTimers=new Map(),draftQueues=new Map(),draftReads=new Map(),pendingDraftSettlements=new Map();let draftLoadSerial=0,draftInputSerial=0;
+function draftKey(id){return 'composer_draft_'+id;}
+function draftStatus(text,isError=false){const node=$('compat-draft-status');if(node){node.textContent=text;node.dataset.error=isError?'1':'0';}}
+async function readStoryDraft(id){
+ if(draftRecords.has(id))return draftRecords.get(id);
+ // One canonical read per story. A delayed earlier navigation must not overwrite
+ // a newer cache or a draft typed while another navigation completed.
+ if(draftReads.has(id))return draftReads.get(id);
+ const pending=(async()=>{
+  const row=await s().get('sidecar_links',draftKey(id));
+  if(row&&(row.id!==draftKey(id)||row.sessionId!==id||row.kind!=='compat_composer_draft_v1'||typeof row.text!=='string'||!Number.isSafeInteger(row.revision)))throw Error('剧情草稿存储记录损坏，未使用空白内容覆盖');
+  if(draftRecords.has(id))return draftRecords.get(id);
+  const state={text:row?.text||'',revision:row?.revision||0,edit:0,savedEdit:0};
+  if(storyDrafts.has(id)&&storyDrafts.get(id)!==state.text){state.text=storyDrafts.get(id);state.edit++;}
+  draftRecords.set(id,state);storyDrafts.set(id,state.text);
+  if(state.edit)saveStoryDraft(id).catch(e=>draftStatus('草稿保存失败：'+e.message,true));
+  return state;
+ })();
+ draftReads.set(id,pending);
+ try{return await pending;}finally{if(draftReads.get(id)===pending)draftReads.delete(id);}
+}
+function stashStoryDraft(id,text){if(!id)return;
+ const state=draftRecords.get(id);if(!state){storyDrafts.set(id,text);return;}
+ if(state.text===text)return;state.text=text;state.edit++;storyDrafts.set(id,text);draftStatus('草稿保存中…');
+ clearTimeout(draftTimers.get(id));draftTimers.set(id,setTimeout(()=>{saveStoryDraft(id).catch(e=>draftStatus('草稿保存失败：'+e.message,true));},450));
+}
+function saveStoryDraft(id){
+ const previous=draftQueues.get(id)||Promise.resolve();
+ const task=previous.catch(()=>{}).then(async()=>{
+  const state=draftRecords.get(id);if(!state||state.edit===state.savedEdit)return;
+  const text=state.text,edit=state.edit,revision=state.revision;
+  const saved=await s().putCAS('sidecar_links',{id:draftKey(id),sessionId:id,kind:'compat_composer_draft_v1',text,updatedAt:new Date().toISOString()},revision||null);
+  state.revision=saved.revision;state.savedEdit=edit;
+  if(state.edit===edit){if(activeId===id)draftStatus('草稿已保存');}
+  else { // A new edit won while storage was busy: don't mark it saved.
+   clearTimeout(draftTimers.get(id));draftTimers.set(id,setTimeout(()=>saveStoryDraft(id).catch(e=>draftStatus('草稿保存失败：'+e.message,true)),80));
+  }
+ });draftQueues.set(id,task);return task;
+}
+async function flushStoryDraft(id){if(!id)return;clearTimeout(draftTimers.get(id));const state=draftRecords.get(id);if(!state)return;await saveStoryDraft(id);}
+async function settleSentDraft(id,sent,editAtSend){
+ // Serialize behind any older draft write; do not mutate the local draft until
+ // the canonical CAS for clearing the *sent* text has actually committed.
+ const previous=draftQueues.get(id)||Promise.resolve();
+ const task=previous.catch(()=>{}).then(async()=>{
+  const state=draftRecords.get(id);
+  if(!state||state.edit!==editAtSend||state.text!==sent)return {status:'preserved_new_edit'};
+  clearTimeout(draftTimers.get(id));
+  const saved=await s().putCAS('sidecar_links',{id:draftKey(id),sessionId:id,kind:'compat_composer_draft_v1',text:'',updatedAt:new Date().toISOString()},state.revision||null);
+  state.revision=saved.revision;
+  if(state.edit===editAtSend&&state.text===sent){
+   state.text='';state.edit++;state.savedEdit=state.edit;storyDrafts.set(id,'');
+   if(activeId===id&&$('compat-input').value===sent)$('compat-input').value='';
+   return {status:'cleared'};
+  }
+  // The user continued typing during the storage write: the new draft wins.
+  state.savedEdit=editAtSend;
+  clearTimeout(draftTimers.get(id));draftTimers.set(id,setTimeout(()=>saveStoryDraft(id).catch(e=>draftStatus('草稿保存失败：'+e.message,true)),80));
+  return {status:'preserved_new_edit'};
+ });
+ draftQueues.set(id,task);return task;
+}
+function showDraftSettlementStatus(id){
+ const action=$('compat-draft-cleanup-retry'),pending=pendingDraftSettlements.get(id);
+ if(action){action.hidden=!pending;action.disabled=!pending;}
+ if(pending&&activeId===id)draftStatus('消息已经保存，但旧草稿尚未清理。请勿重复发送，点击「重试清理」。',true);
+}
+async function retrySentDraftCleanup(){
+ const id=activeId,pending=pendingDraftSettlements.get(id);if(!id||!pending)return;
+ const button=$('compat-draft-cleanup-retry');if(button)button.disabled=true;
+ try{
+  const local=draftRecords.get(id);
+  if(local?.edit===pending.editAtSend&&local.text===pending.text){
+   const stored=await s().get('sidecar_links',draftKey(id));
+   if(stored&&(stored.sessionId!==id||stored.kind!=='compat_composer_draft_v1'||typeof stored.text!=='string'||!Number.isSafeInteger(stored.revision)))throw Error('存档状态异常，拒绝覆盖');
+   if(stored&&stored.text!==pending.text&&stored.text!=='')throw Error('其他窗口保存了不同的新草稿，不能清理；请先核对故事内容');
+   if(stored?.text===pending.text&&stored.revision!==local.revision)local.revision=stored.revision;
+   if(stored?.text===''){local.text='';local.edit++;local.savedEdit=local.edit;local.revision=stored.revision;storyDrafts.set(id,'');if(activeId===id&&$('compat-input').value===pending.text)$('compat-input').value='';}
+  }
+  const result=await settleSentDraft(id,pending.text,pending.editAtSend);
+  pendingDraftSettlements.delete(id);
+  if(activeId===id){draftStatus(result.status==='cleared'||!$('compat-input').value?'已清理发送成功的旧草稿':'新编辑内容已保留，无需清理旧草稿');showDraftSettlementStatus(id);}
+ }catch(e){if(activeId===id)draftStatus('消息已保存，草稿清理仍未完成：'+e.message,true);}
+ finally{if(button&&pendingDraftSettlements.has(id))button.disabled=false;}
+}
+let regexUI=null,readerCoverUrl='',readerCoverSource='',sheetPane='effects';
 async function onExternalSettlement(hint){
  if(!opened||!activeId||activeId!==hint.sessionId)return;
  const owner=activeId,generation=sessionGeneration;
@@ -221,7 +308,7 @@ async function refreshSessionList(){const generation=sessionGeneration,ses=await
 const shortcuts=$('compat-continue-list');if(shortcuts){clear(shortcuts);if(ses.length){el('span',{className:'compat-eyebrow',text:'继续上次的故事'},shortcuts);for(const item of ses.slice().sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))).slice(0,4)){const row=el('div',{className:'compat-library-row'},shortcuts);el('span',{className:'compat-story-monogram',text:(item.title||'故').slice(0,1)},row);el('strong',{text:item.title||'未命名剧情'},row);el('button',{text:'继续故事',onclick:()=>loadSession(item.id)},row);}}}
 const libraryList=$('compat-library-sessions');if(libraryList){clear(libraryList);$('compat-library-all').hidden=ses.length<=4;for(const item of ses){const row=el('div',{className:'compat-library-row'},libraryList);el('span',{text:item.title||'未命名剧情'},row);el('button',{text:'继续故事',onclick:()=>loadSession(item.id)},row);}}
 for(const item of ses){const row=el('div',{className:'compat-line'},box);el('span',{text:item.title+(item.parentSessionId?' · 剧情分支':' · 独立剧情')+(item.pendingTurnId?' · 存在未结算回合':'')},row);el('button',{text:'进入',onclick:()=>loadSession(item.id)},row);if(item.id===activeId){await showTurnControls(item.id,box);if(generation!==sessionGeneration)return;}}}
-async function loadSessionData(id){$('compat-lab').classList.add('in-chat');const generation=++sessionGeneration;if(activeId!==id){const drawer=$('compat-game-drawer');if(drawer){drawer.open=false;$('compat-manage-toggle')?.setAttribute('aria-expanded','false');}selectedMvuTemplate=null;const preview=$('compat-mvu-template-output');if(preview)preview.replaceChildren();root.MimaCompatPlugins?.unmountAll();root.MimaAuthorHost?.unmountAll('已离开当前故事；已提交变量保留');if($('compat-stscript-input'))$('compat-stscript-input').value='';if($('compat-stscript-result'))$('compat-stscript-result').textContent='已切换剧情：请手动填写并检查本剧情的脚本。';}activeId=id;refreshSendAvailability();const ses=await r().getSession(id);if(generation!==sessionGeneration)return;$('compat-wi-budget').value=String(ses.worldInfoBudget??16000);$('compat-wi-depth').value=String(ses.worldInfoScanDepth??100);$('compat-wi-recursive').checked=ses.worldInfoRecursiveScan!==false;$('compat-wi-recursion-steps').value=String(ses.worldInfoMaxRecursionSteps??6);$('compat-wi-local-advanced').checked=ses.worldInfoLocalAdvancedRules===true;$('compat-preset-history-slot').checked=ses.experimentalChatHistorySlot===true;$('compat-complete-html').checked=ses.outputContract?.completeHtml===true;$('compat-author-note').value=ses.authorNote?.content||'';$('compat-author-note-depth').value=ses.authorNote?.depth??0;$('compat-persona-description').value=String(ses.personaDescription||'');$('compat-current').textContent=`咪嘛馆兼容引擎 · ${ses.title}`;$('compat-conversation').hidden=false;await refreshSessionList();if(generation!==sessionGeneration)return;await refreshSourceList();if(generation!==sessionGeneration)return;await refreshMessages();if(generation!==sessionGeneration)return;await refreshMountStatus(id,generation);if(generation!==sessionGeneration)return;await refreshExtensionUI();if(generation!==sessionGeneration)return;await inspectPreview();root.MimaCompatPlugins?.publish?.(id,'session.mounted',{sessionId:id},'session.mounted:'+id+':'+generation)?.catch(e=>messageFor(id,generation,'插件会话事件失败：'+e.message,'error'));}
+async function loadSessionData(id){$('compat-lab').classList.add('in-chat');const generation=++sessionGeneration;if(activeId!==id){const drawer=$('compat-game-drawer');if(drawer){drawer.open=false;$('compat-manage-toggle')?.setAttribute('aria-expanded','false');}selectedMvuTemplate=null;const preview=$('compat-mvu-template-output');if(preview)preview.replaceChildren();root.MimaCompatPlugins?.unmountAll();root.MimaAuthorHost?.unmountAll('已离开当前故事；已提交变量保留');if($('compat-stscript-input'))$('compat-stscript-input').value='';if($('compat-stscript-result'))$('compat-stscript-result').textContent='已切换剧情：请手动填写并检查本剧情的脚本。';}activeId=id;refreshSendAvailability();const ses=await r().getSession(id);if(generation!==sessionGeneration)return;$('compat-wi-budget').value=String(ses.worldInfoBudget??16000);$('compat-wi-depth').value=String(ses.worldInfoScanDepth??100);$('compat-wi-depth').dataset.mimaOverride=ses.worldInfoScanDepth===undefined?'0':'1';$('compat-wi-recursive').checked=ses.worldInfoRecursiveScan!==false;$('compat-wi-recursive').dataset.mimaOverride=ses.worldInfoRecursiveScan===undefined?'0':'1';$('compat-wi-source').textContent=ses.worldInfoScanDepth===undefined&&ses.worldInfoRecursiveScan===undefined?'扫描与递归优先遵循每本原卡的设置。':'当前有玩家自定义扫描/递归设置；可点“恢复原卡规则”。';$('compat-wi-recursion-steps').value=String(ses.worldInfoMaxRecursionSteps??6);$('compat-wi-local-advanced').checked=ses.worldInfoLocalAdvancedRules===true;$('compat-preset-history-slot').checked=ses.experimentalChatHistorySlot===true;$('compat-complete-html').checked=ses.outputContract?.completeHtml===true;$('compat-author-note').value=ses.authorNote?.content||'';$('compat-author-note-depth').value=ses.authorNote?.depth??0;$('compat-persona-description').value=String(ses.personaDescription||'');$('compat-current').textContent=`咪嘛馆兼容引擎 · ${ses.title}`;$('compat-conversation').hidden=false;await refreshSessionList();if(generation!==sessionGeneration)return;await refreshSourceList();if(generation!==sessionGeneration)return;await refreshMessages();if(generation!==sessionGeneration)return;await refreshMountStatus(id,generation);if(generation!==sessionGeneration)return;await refreshExtensionUI();if(generation!==sessionGeneration)return;await inspectPreview();root.MimaCompatPlugins?.publish?.(id,'session.mounted',{sessionId:id},'session.mounted:'+id+':'+generation)?.catch(e=>messageFor(id,generation,'插件会话事件失败：'+e.message,'error'));}
 // The optional MVU template belongs in the story flow, after the current
 // assistant reply, not in a separate status card above the chat.
 function paintMvuTemplate(sessionId,verified,target,css,theme,renderTicket){
@@ -400,7 +487,7 @@ async function refreshMessages(){if(!activeId)return;
  const info=$('compat-story-status');if(info){clear(info);if(regexErrors.length||frameStyles.failures.length){el('span',{text:regexErrors.length?regexErrors.length+' 条显示规则需要处理，原始正文保留。':'部分卡片 CSS 未能加载。'},info);el('button',{type:'button',text:'查看原因',onclick:()=>{openSheet('archive');$('compat-diagnostics-panel').open=true;}},info);}}
  if($('compat-lab').classList.contains('in-chat'))$('compat-head-subtitle').textContent='独立剧情 · '+items.filter(x=>x.status==='committed').length+' 条消息';
  if(wasFollowing)box.scrollTop=box.scrollHeight;
- else if(anchor?.isConnected)box.scrollTop+=anchor.getBoundingClientRect().top-box.getBoundingClientRect().top-anchorOffset;
+ else if(anchor?.isConnected)root.MimaHistoryNavigator.scrollByVisual(box,anchor.getBoundingClientRect().top-box.getBoundingClientRect().top-anchorOffset);
  syncLatestButton();
 }
 function syncLatestButton(){const box=$('compat-messages'),button=$('compat-follow-latest');if(button)button.hidden=!box||box.scrollHeight-box.scrollTop-box.clientHeight<96;}
@@ -434,7 +521,7 @@ async function forkEditTurn(sessionId,turnId,action){
   if(activeId!==sessionId||sessionGeneration!==viewGeneration)return; // persisted fork belongs to A even if B is now open
   await loadSession(child.sessionId);
   if(action==='delete'){messageFor(child.sessionId,sessionGeneration,'已在新分支删除所选回合及后续内容；旧剧情没有删改。');return;}
-  $('compat-input').value=nextText;
+  $('compat-input').value=nextText;draftInputSerial++;stashStoryDraft(activeId,nextText);
   messageFor(child.sessionId,sessionGeneration,'已打开新分支并填入'+(action==='regenerate'?'原玩家消息':'修改后的消息')+'。本次使用当前挂载和 API 设置，原轮请求未冻结。点击发送后重新生成；旧分支保留。');
  }catch(e){messageFor(sessionId,viewGeneration,`${e.code||'E_BRANCH_EDIT'}: ${e.message}`,'error');}
  finally{forking=false;}
@@ -515,12 +602,24 @@ el('button',{text:'撤销并卸载',onclick:async()=>{try{await root.MimaCompatP
 }
 if(root.MimaCompatQuickReply)await root.MimaCompatQuickReply.render(ses,assets,$('compat-quick-replies'),target,{
  live:()=>opened&&$('compat-lab').classList.contains('in-chat')&&activeId===owner&&sessionGeneration===generation,
- isBusy:()=>busySessions.has(owner),getDraft:()=>$('compat-input').value,onFill:text=>{$('compat-input').value=text;$('compat-input').focus();},onSend:send,
+ isBusy:()=>busySessions.has(owner),getDraft:()=>$('compat-input').value,onFill:text=>{$('compat-input').value=text;draftInputSerial++;stashStoryDraft(activeId,text);$('compat-input').focus();},onSend:send,
  getContext:async()=>{const session=await r().getSession(owner),card=await s().get('resource_ir',session.characterResourceId);return {char:card?.raw?.nickname||card?.raw?.name||'角色',user:session.userName||'玩家'};},
  onRun:async source=>{$('compat-stscript-input').value=source;$('compat-stscript-panel').open=true;openSheet('settings');await manualSTscript(false);},onMessage:(text,kind)=>messageFor(owner,generation,text,kind)
 });
 if(root.MimaAuthorUI)await root.MimaAuthorUI.render(ses,assets,target,{live:()=>opened&&$('compat-lab')?.classList.contains('in-chat')&&activeId===owner&&sessionGeneration===generation,onMessage:(text,kind)=>messageFor(owner,generation,text,kind)});
 else el('p',{text:'作者交互组件未加载；旧脚本模式仍保留。'},target);
+}
+async function resetWorldInfoOverrides(){
+ if(!activeId)return;const owner=activeId,generation=sessionGeneration;
+ try{const current=await r().getSession(owner);if(activeId!==owner||generation!==sessionGeneration)return;
+ const {worldInfoScanDepth:oldDepth,worldInfoRecursiveScan:oldRecursive,...rest}=current;
+ await s().putCAS('compat_sessions',rest,current.revision);
+ if(activeId!==owner||generation!==sessionGeneration)return;
+ $('compat-wi-depth').value='100';$('compat-wi-recursive').checked=true;
+ $('compat-wi-depth').dataset.mimaOverride='0';$('compat-wi-recursive').dataset.mimaOverride='0';
+ $('compat-wi-source').textContent='扫描与递归优先遵循每本原卡的设置。';
+ await inspectPreview();message('已恢复原卡世界书扫描与递归规则；原件、历史和其它配置都没有更改。');
+ }catch(e){message('恢复原卡规则失败：'+e.message,'error');}
 }
 async function saveWorldInfoScanDepth(){
  if(!activeId)return;
@@ -535,10 +634,10 @@ async function saveWorldInfoScanDepth(){
  try{
   const session=await r().getSession(sessionId);
   if(activeId!==sessionId)return;
-  const saved=await s().putCAS('compat_sessions',{...session,worldInfoBudget:budget,worldInfoScanDepth:depth,worldInfoRecursiveScan:recursive,worldInfoMaxRecursionSteps:steps,worldInfoLocalAdvancedRules:localAdvanced,experimentalChatHistorySlot:experimentalSlot,personaDescription,outputContract:{...(session.outputContract||{}),completeHtml:$('compat-complete-html').checked},authorNote:{content:$('compat-author-note').value,depth:Number($('compat-author-note-depth').value),role:'system'}},session.revision);
+  const saved=await s().putCAS('compat_sessions',{...session,worldInfoBudget:budget,...($('compat-wi-depth').dataset.mimaOverride==='1'?{worldInfoScanDepth:depth}:{}),...($('compat-wi-recursive').dataset.mimaOverride==='1'?{worldInfoRecursiveScan:recursive}:{}),worldInfoMaxRecursionSteps:steps,worldInfoLocalAdvancedRules:localAdvanced,experimentalChatHistorySlot:experimentalSlot,personaDescription,outputContract:{...(session.outputContract||{}),completeHtml:$('compat-complete-html').checked},authorNote:{content:$('compat-author-note').value,depth:Number($('compat-author-note-depth').value),role:'system'}},session.revision);
   const verified=await r().getSession(sessionId);
   if(saved?.worldInfoBudget!==budget||verified.worldInfoBudget!==budget||verified.revision!==saved.revision)throw Object.assign(new Error('预算持久化结果与提交值不一致，当前值不能标记为保存成功'),{code:'E_STORE_UNVERIFIED'});
-  if(activeId===sessionId){await inspectPreview();message('已保存世界书预算 '+budget+' 字符、扫描范围 '+depth+' 条、递归 '+(recursive?'开启':'关闭')+'、上限 '+steps+' 层；本地近似概率/分组 '+(localAdvanced?'开启':'关闭')+'，预设动态插槽 '+(experimentalSlot?'开启':'关闭')+'。其它剧情和原始卡片未修改。');}
+  if(activeId===sessionId){await inspectPreview();message('已保存世界书预算 '+budget+' 字符、扫描范围 '+(verified.worldInfoScanDepth===undefined?'跟随原卡':depth+' 条')+'、递归 '+(verified.worldInfoRecursiveScan===undefined?'跟随原卡':recursive?'开启':'关闭')+'、上限 '+steps+' 层；本地近似概率/分组 '+(localAdvanced?'开启':'关闭')+'，预设动态插槽 '+(experimentalSlot?'开启':'关闭')+'。其它剧情和原始卡片未修改。');}
  }catch(e){message(`${e.code||'E_STORE_UNVERIFIED'}: 世界书设置保存失败，原值未被假装提交：${e.message}`,'error');}
  finally{button.disabled=false;}
 }
@@ -548,7 +647,8 @@ async function send(explicitText=null,options={}){
  const blocked=reason=>({accepted:false,status:'blocked',reason});let accepted=null;
  if(!activeId)return blocked('请先进入一个兼容剧情');
  const sessionId=activeId;if(options.expectedId&&options.expectedId!==sessionId)return blocked('故事已切换，未发送到其他剧情');const input=typeof explicitText==='string'?explicitText:$('compat-input').value;if(!input.trim())return blocked('发送内容不能为空');
- if(!beginSessionAction(sessionId))return blocked('当前故事有操作正在执行，请等待');const generation=sessionGeneration;
+ const unclean=pendingDraftSettlements.get(sessionId);if(unclean&&unclean.text===input){messageFor(sessionId,sessionGeneration,'这条消息上一轮已经保存。请先点「重试清理已发送草稿」，不要再次发送同一条。','error');return blocked('上一轮相同消息已提交，旧草稿尚未清理');}
+ if(!beginSessionAction(sessionId))return blocked('当前故事有操作正在执行，请等待');const generation=sessionGeneration;const sentDraftVersion=draftRecords.get(sessionId)?.edit;
  try{
    // Preflight is read-only and happens before posting the player's message.
    // Known incompatible effects are disclosed, never silently counted as ran.
@@ -563,7 +663,7 @@ async function send(explicitText=null,options={}){
    if(strict&&gaps.length){messageFor(sessionId,generation,'严格模式已在发送前阻止：请展开本轮发送内容检查缺口，或明确选择基础聊天。','error');return blocked('严格模式阻止了本次发送，请查看兼容缺口');}
    if(!strict){
      const signature=JSON.stringify(gaps);
-     if(approvedBasicPreflights.get(sessionId)!==signature){
+     if(gaps.length&&approvedBasicPreflights.get(sessionId)!==signature){
        const detail=gaps.slice(0,4).map(x=>x.reason||x.slot||x.entryId||'高级规则缺口').join('；');
        const notice=`这张角色卡将以“基础聊天”方式发送。\n高级脚本、动态状态栏及部分世界书/正则规则未保证按原版酒馆运行。${gaps.length?`\n检测到 ${gaps.length} 项差异：${detail}${gaps.length>4?' 等':''}`:''}\n是否确认使用基础聊天？取消不会发送消息或扣费。`;
        if(!root.confirm(notice)){messageFor(sessionId,generation,'已取消发送，输入仍然保留。');return blocked('已取消基础聊天预检确认；没有发送');}
@@ -571,10 +671,29 @@ async function send(explicitText=null,options={}){
      }
    }
    const response=await r().send(sessionId,input,{basicRoleplay:!strict,strictCompat:strict,acceptGaps:false,onDiagnostic:actualRequestView(sessionId,generation),onAccepted:value=>{accepted=value;options.onAccepted?.(value);}});
-   if(activeId===sessionId&&sessionGeneration===generation){if(!options.preserveDraft&&$('compat-input').value===input)$('compat-input').value='';await refreshMessages();const trigger=response.envelope?.worldInfo;
-     $('compat-gap').textContent=trigger?`本轮实际加入 ${trigger.inserted.length} 条世界设定；${trigger.skipped.length} 条未触发或未适配。高级效果差异 ${response.envelope.gaps.length} 项，不会自动执行不可信脚本。`:'回复已保存。';
+   // A returned committed response is authoritative. Failure to clean a UI draft
+   // or refresh a panel must NEVER recast an already committed turn as failed.
+   let draftCleanup={status:'not_applicable'};
+   try{draftCleanup=await settleSentDraft(sessionId,input,sentDraftVersion);pendingDraftSettlements.delete(sessionId);}
+   catch(cleanupError){
+    draftCleanup={status:'failed',reason:cleanupError.message};
+    pendingDraftSettlements.set(sessionId,{text:input,editAtSend:sentDraftVersion,turnId:response.turnId||accepted?.turnId});
+    messageFor(sessionId,generation,'消息已保存，草稿清理未完成：'+cleanupError.message+'。请勿重新发送本轮内容，使用「重试清理」修复。','error');
    }
-   messageFor(sessionId,generation,'角色已回复，剧情记录已保存到当前浏览器。');return {...accepted,accepted:true,status:'sent',sessionId};
+   if(activeId===sessionId&&sessionGeneration===generation)showDraftSettlementStatus(sessionId);
+   let refreshWarning='';
+   try{if(activeId===sessionId&&sessionGeneration===generation){await refreshMessages();const trigger=response.envelope?.worldInfo;
+     const gapBox=$('compat-gap');clear(gapBox);
+     if(trigger){
+      const affected=trigger.skipped.filter(x=>!['no matching key','disabled'].includes(x.reason));
+      el('span',{text:`本轮真正加入 ${trigger.inserted.length} 条世界设定；${trigger.skipped.length} 条未触发或跳过。高级效果差异 ${response.envelope.gaps.length} 项。`},gapBox);
+      if(affected.length){const details=el('details',{},gapBox);el('summary',{text:`查看 ${affected.length} 条未加入的世界设定及原因`},details);
+       for(const item of affected.slice(0,100))el('p',{className:'compat-help',text:`${item.entryId}：${item.reason==='budget'?'超过当前世界书预算':item.reason==='E_RESOURCE_SEMANTIC_GAP'?'本地尚未兼容此条规则':item.reason==='delay'?'消息数量未达到触发要求':item.reason} ${Array.isArray(item.gaps)?item.gaps.join('；'):''}`},details);
+      }
+     }else el('span',{text:'回复已保存。'},gapBox);
+   }}catch(e){refreshWarning=e.message;messageFor(sessionId,generation,'本轮已保存，但页面刷新失败：'+e.message,'error');}
+   if(draftCleanup.status!=='failed'&&!refreshWarning)messageFor(sessionId,generation,'角色已回复，剧情记录已保存到当前浏览器。');
+   return {...accepted,accepted:true,status:'sent',sessionId,turnId:response.turnId||accepted?.turnId,draftCleanup,...(refreshWarning?{refreshWarning}:{})};
  }catch(e){messageFor(sessionId,generation,`${e.code||'E_TURN'}: ${e.message}${e.settlementError?'; settlement: '+e.settlementError:''}`,'error');if(activeId===sessionId&&sessionGeneration===generation)await refreshMessages();return {accepted:!!accepted,status:'failed',sessionId,reason:e.message,...(accepted?{turnId:accepted.turnId}:{})};}
  finally{endSessionAction(sessionId);try{await refreshSessionList();}catch(e){messageFor(sessionId,generation,'发送结算后列表刷新失败：'+e.message,'error');}}
 }
@@ -681,7 +800,7 @@ async function restoreCompat(apply=false){
 
 async function nativeAudio(file){try{if(player){player.pause();player.remove();player=null;}for(const uri of assetUrls)URL.revokeObjectURL(uri);assetUrls=[];const uri=URL.createObjectURL(file);assetUrls.push(uri);player=el('audio',{controls:'',preload:'none'},$('compat-media'));player.src=uri;await player.play();message('已由用户手势启动当前剧情的本地音频。');}catch(e){message('媒体播放需要用户手势或此格式不受浏览器支持：'+e.message,'error');}}
 function stopMedia(){if(player){player.pause();player.remove();player=null;}for(const uri of assetUrls)URL.revokeObjectURL(uri);assetUrls=[];}
-function close(){root.MimaPlayTools?.pause('compat');closeSheet();if(activeId)storyDrafts.set(activeId,$('compat-input').value);if(unsubscribeLiveSync){unsubscribeLiveSync();unsubscribeLiveSync=null;}++sessionGeneration;opened=false;clearMvuTemplate();if(cardPreviewUrl){URL.revokeObjectURL(cardPreviewUrl);cardPreviewUrl='';}$('compat-lab').classList.add('hidden');$('compat-lab').classList.remove('in-chat');stopMedia();root.MimaCompatPlugins?.unmountAll();root.MimaAuthorHost?.unmountAll('已离开当前故事；已提交变量保留');}
+function close(){root.MimaPlayTools?.pause('compat');closeSheet();if(activeId){stashStoryDraft(activeId,$('compat-input').value);flushStoryDraft(activeId).catch(e=>draftStatus('离开时草稿保存失败：'+e.message,true));}if(unsubscribeLiveSync){unsubscribeLiveSync();unsubscribeLiveSync=null;}++sessionGeneration;opened=false;clearMvuTemplate();if(cardPreviewUrl){URL.revokeObjectURL(cardPreviewUrl);cardPreviewUrl='';}$('compat-lab').classList.add('hidden');$('compat-lab').classList.remove('in-chat');stopMedia();root.MimaCompatPlugins?.unmountAll();root.MimaAuthorHost?.unmountAll('已离开当前故事；已提交变量保留');}
 async function refreshCompatSettingTemplates(){
  const select=$('compat-setting-template');if(!select)return;
  // Distinguish an explicit "no template" choice from the initial blank placeholder.
@@ -715,12 +834,15 @@ function closeSheet(){const sheet=$('compat-sheet');if(sheet?.open)sheet.close()
 function selectPane(pane){sheetPane=['character','effects','settings','archive'].includes(pane)?pane:'effects';for(const button of document.querySelectorAll('[data-compat-pane]')){const selected=button.dataset.compatPane===sheetPane;button.setAttribute('aria-selected',String(selected));button.tabIndex=selected?0:-1;}for(const section of document.querySelectorAll('.compat-sheet-pane'))section.hidden=section.id!=='compat-pane-'+sheetPane;}
 function openSheet(pane='effects'){if(!activeId)return;selectPane(pane);const sheet=$('compat-sheet');if(!sheet.open)sheet.showModal();$('compat-game-drawer').open=true;$('compat-manage-toggle').setAttribute('aria-expanded','true');}
 function toggleManage(){if($('compat-sheet')?.open)closeSheet();else openSheet('effects');}
-function showLibrary(){root.MimaPlayTools?.pause('compat');root.MimaAuthorHost?.unmountAll('已返回故事库；已提交变量保留');if(activeId)storyDrafts.set(activeId,$('compat-input').value);closeSheet();$('compat-lab').classList.remove('in-chat');$('compat-head-title').textContent='酒馆游玩版';$('compat-head-subtitle').textContent='打开一个故事，慢慢读下去。';$('compat-head-avatar').replaceChildren(document.createTextNode('馆'));const notice=$('compat-notice');if(notice)$('compat-import-panel').append(notice);}
+function showLibrary(){root.MimaPlayTools?.pause('compat');root.MimaAuthorHost?.unmountAll('已返回故事库；已提交变量保留');if(activeId){stashStoryDraft(activeId,$('compat-input').value);flushStoryDraft(activeId).catch(e=>draftStatus('草稿保存失败：'+e.message,true));}closeSheet();$('compat-lab').classList.remove('in-chat');$('compat-head-title').textContent='酒馆游玩版';$('compat-head-subtitle').textContent='打开一个故事，慢慢读下去。';$('compat-head-avatar').replaceChildren(document.createTextNode('馆'));const notice=$('compat-notice');if(notice)$('compat-import-panel').append(notice);}
 async function loadSession(id){
- if(activeId)storyDrafts.set(activeId,$('compat-input').value);closeSheet();
- // Restore the target draft before making the reader interactive. A delayed
- // source/preview load must never overwrite text entered in the meantime.
- $('compat-input').value=storyDrafts.get(id)||'';
+ const ticket=++draftLoadSerial,oldId=activeId,inputRevision=draftInputSerial;
+ if(oldId){stashStoryDraft(oldId,$('compat-input').value);try{await flushStoryDraft(oldId);}catch(e){message('离开前草稿保存失败，当前输入仍在页面内：'+e.message,'error');return;}}
+ if(ticket!==draftLoadSerial||inputRevision!==draftInputSerial)return;
+ closeSheet();let draft;
+ try{draft=await readStoryDraft(id);}catch(e){message('无法确认原故事草稿，拒绝用空白覆盖输入：'+e.message,'error');return;}
+ if(ticket!==draftLoadSerial||inputRevision!==draftInputSerial)return;
+ $('compat-input').value=draft.text;draftStatus(draft.text?'已恢复上次未发送的草稿':'草稿已同步');showDraftSettlementStatus(id);
  const loading=loadSessionData(id),generation=sessionGeneration;await loading;if(activeId!==id||sessionGeneration!==generation)return;
  const session=await r().getSession(id);if(activeId!==id||sessionGeneration!==generation)return;
  if(session.turnIndex===0){followLatest=false;$('compat-messages').scrollTop=0;syncLatestButton();}
@@ -824,8 +946,9 @@ function bootstrap(){
   if(!opened||!sessionId||activeId!==sessionId)return;
   Promise.resolve().then(async()=>{await refreshMessages();if(activeId!==sessionId||sessionGeneration!==generation)return;await refreshSessionList();}).catch(e=>messageFor(sessionId,generation,'回复已恢复，界面刷新失败：'+e.message,'error'));
  });
+ if($('compat-composer')&&!$('compat-draft-status')){$('compat-composer').after(el('small',{id:'compat-draft-status',className:'compat-help',text:'未发送内容会自动保存到本剧情'}));const retry=el('button',{id:'compat-draft-cleanup-retry',type:'button',text:'重试清理已发送草稿',onclick:retrySentDraftCleanup});retry.hidden=true;$('compat-draft-status').after(retry);}
  if($('compat-send')&&!$('mima-compat-toolbox-open')){const toolbox=el('button',{id:'mima-compat-toolbox-open',type:'button',className:'mima-toolbox-trigger',text:'🪎','aria-label':'打开百宝箱',onclick:()=>root.MimaPlayTools.open('compat','commands')});$('compat-send').before(toolbox);}
- const actions={'compat-open':open,'compat-close':close,'compat-scan':doImport,'compat-save':commit,'compat-create':create,'compat-send':send,'compat-continue':continueReply,'compat-preview':inspectPreview,'compat-wi-save':saveWorldInfoScanDepth,'compat-export':exportCompat,'compat-export-both':exportBoth,'compat-restore-check':()=>restoreCompat(false),'compat-restore-apply':()=>restoreCompat(true),'compat-stscript-check':()=>manualSTscript(true),'compat-stscript-run':()=>manualSTscript(false),'compat-mvu-template-clear':clearMvuTemplate,'compat-mvu-template-custom-run':()=>selectMvuTemplate('当前剧情临时自定义模板',$('compat-mvu-template-custom').value)};for(const [id,fn]of Object.entries(actions))$(id)?.addEventListener('click',fn);$('compat-restore-file')?.addEventListener('change',()=>{inspectedBackup=null;});$('compat-file')?.addEventListener('change',doImport);$('compat-card-choice')?.addEventListener('change',refreshGreetingChoice);$('compat-input')?.addEventListener('input',()=>{});$('compat-manage-toggle')?.addEventListener('click',toggleManage);$('compat-audio')?.addEventListener('change',ev=>{const f=ev.target.files[0];if(f)nativeAudio(f);});$('compat-quick-status').textContent='选择 PNG、JSON 或 CHARX，即可查看人物并开始聊天。';}
+ const actions={'compat-open':open,'compat-close':close,'compat-scan':doImport,'compat-save':commit,'compat-create':create,'compat-send':send,'compat-continue':continueReply,'compat-preview':inspectPreview,'compat-wi-save':saveWorldInfoScanDepth,'compat-wi-reset':resetWorldInfoOverrides,'compat-export':exportCompat,'compat-export-both':exportBoth,'compat-restore-check':()=>restoreCompat(false),'compat-restore-apply':()=>restoreCompat(true),'compat-stscript-check':()=>manualSTscript(true),'compat-stscript-run':()=>manualSTscript(false),'compat-mvu-template-clear':clearMvuTemplate,'compat-mvu-template-custom-run':()=>selectMvuTemplate('当前剧情临时自定义模板',$('compat-mvu-template-custom').value)};for(const [id,fn]of Object.entries(actions))$(id)?.addEventListener('click',fn);$('compat-restore-file')?.addEventListener('change',()=>{inspectedBackup=null;});$('compat-file')?.addEventListener('change',doImport);for(const id of ['compat-wi-depth','compat-wi-recursive'])$(id)?.addEventListener(id==='compat-wi-depth'?'input':'change',()=>{$(id).dataset.mimaOverride='1';$('compat-wi-source').textContent='将以你设置的规则覆盖对应原卡扫描/递归值；其他未更改规则仍遵循原卡。';});$('compat-card-choice')?.addEventListener('change',refreshGreetingChoice);$('compat-input')?.addEventListener('input',()=>{draftInputSerial++;if(activeId)stashStoryDraft(activeId,$('compat-input').value);});document.addEventListener('visibilitychange',()=>{if(document.hidden&&activeId)flushStoryDraft(activeId).catch(e=>draftStatus('草稿保存失败：'+e.message,true));});window.addEventListener('pagehide',()=>{if(activeId)flushStoryDraft(activeId).catch(()=>{});});$('compat-manage-toggle')?.addEventListener('click',toggleManage);$('compat-audio')?.addEventListener('change',ev=>{const f=ev.target.files[0];if(f)nativeAudio(f);});$('compat-quick-status').textContent='选择 PNG、JSON 或 CHARX，即可查看人物并开始聊天。';}
 root.MimaPlayTools?.register('compat',{
  capture:()=>opened&&activeId&&$('compat-lab')?.classList.contains('in-chat')?{id:activeId,epoch:sessionGeneration}:null,
  reload:()=>activeId?refreshMessages():Promise.resolve(),
@@ -834,7 +957,7 @@ root.MimaPlayTools?.register('compat',{
  isBusy:()=>busySessions.has(activeId),draft:()=>$('compat-input')?.value||'',
  context:()=>({user:compatPlayContext.user,char:compatPlayContext.char}),
  expand:body=>root.MimaCompatQuickReply.expand(String(body),{...compatPlayContext,input:$('compat-input')?.value||''}),
- fill:body=>{$('compat-input').value=body;storyDrafts.set(activeId,body);},
+ fill:body=>{$('compat-input').value=body;draftInputSerial++;stashStoryDraft(activeId,body);},
  send:(body,ticket,options={})=>{if(activeId!==ticket.id||sessionGeneration!==ticket.epoch)throw Error('故事已切换');return send(body,{preserveDraft:true,expectedId:ticket.id,onAccepted:options.onAccepted});},
  messages:ticket=>r().sessionMessages(ticket.id).then(items=>items.filter(m=>m.status==='committed').map(m=>({id:m.id,role:m.role,content:m.canonicalContent}))),
  mount:async(ids,ticket)=>{const session=await r().getSession(ticket.id);if(activeId!==ticket.id||sessionGeneration!==ticket.epoch)throw Error('故事已切换');await s().putCAS('compat_sessions',{...session,theaterCardIds:ids},session.revision);compatTheaterIds=ids;await refreshMessages();}

@@ -114,5 +114,6 @@
   "vendor/marked-17.0.5.umd.js",
   "vendor/marked-LICENSE.md",
   "worldbook-match-worker.js",
-  "worldbook-match.js"
+  "worldbook-match.js",
+  "tavern-backup.js"
 ]

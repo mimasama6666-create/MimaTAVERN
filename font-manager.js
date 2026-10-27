@@ -4,18 +4,34 @@ window.MimaFontManager = (() => {
     const STORE = 'fonts';
     const UI_KEY = 'mimamao_tavern_ui_font';
     const STORY_KEY = 'mimamao_tavern_story_font';
+    // Entries own a lazy URL-source FontFace, never the original ArrayBuffer.
+    // Browser CSS matching loads only families actually used on the page.
     const loaded = new Map();
     // The font picker only needs metadata. Keep the initial verified font list's
     // metadata in memory instead of cloning every multi-MB ArrayBuffer on each visit.
     let metadataCache = null;
+    let metadataRead = null, registryRead = null, fontRevision = 0, initialized = false;
     // Invalidate the cached picker listing when another open tab commits fonts.
     const fontChanges = typeof BroadcastChannel==='function' ? new BroadcastChannel('mima-tavern-font-metadata-v1') : null;
-    if(fontChanges)fontChanges.onmessage = event => { if(event.data==='changed')metadataCache=null; };
-    const notifyFontChange = () => { metadataCache=null;try{fontChanges?.postMessage('changed');}catch(_){} };
+    if(fontChanges)fontChanges.onmessage = event => {
+        if(event.data!=='changed')return;
+        metadataCache=null;fontRevision++;
+        // Other tabs can replace the binary under an existing ID. Reconcile
+        // only after a verified read, keeping the last working view on error.
+        if(initialized)init(true).catch(e=>console.warn('字体库同步失败，原字体保留',e));
+    };
+    const notifyFontChange = () => { metadataCache=null;fontRevision++;try{fontChanges?.postMessage('changed');}catch(_){} };
     const metadataOf = ({id,name,family,format,size,createdAt}) => ({id,name,family,format,size,createdAt});
     const rememberMetadata = records => { metadataCache = records.map(metadataOf); };
     async function listMetadata() {
-        if (metadataCache === null) rememberMetadata(await all());
+        while(metadataCache===null){
+            if(!metadataRead){
+                const revision=fontRevision;
+                metadataRead=readMetadata().then(records=>{if(revision===fontRevision)rememberMetadata(records);})
+                    .finally(()=>{metadataRead=null;});
+            }
+            await metadataRead;
+        }
         return metadataCache.map(record => ({...record}));
     }
     const URL_LIBRARY_KEY = 'mimamao_tavern_url_fonts_v1';
@@ -31,6 +47,31 @@ window.MimaFontManager = (() => {
             req.onerror = () => reject(req.error);
         });
     }
+    // IDB has no field projection: cursor values still clone one binary at a
+    // time, but we drop each value before advancing instead of getAll() keeping
+    // every multi-MB buffer alive together. init also stages lazy URL sources.
+    async function readMetadata(staged=null) {
+        const db=await openDb();
+        return new Promise((resolve,reject)=>{
+            const records=[];let ended=false,issue,settled=false,tx;
+            const finish=error=>{if(settled)return;settled=true;db.close();error?reject(error):resolve(records);};
+            try{
+                tx=db.transaction(STORE,'readonly');const request=tx.objectStore(STORE).openCursor();
+                request.onsuccess=()=>{
+                    const cursor=request.result;
+                    if(!cursor){ended=true;return;}
+                    const record=cursor.value;records.push(metadataOf(record));
+                    if(staged)try{const entry=makeFont(record);if(entry)staged.set(record.id,entry);}
+                    catch(e){console.warn('字体注册失败，文件仍保留',record.name,e);}
+                    cursor.continue();
+                };
+                request.onerror=()=>{issue=request.error;};
+                tx.oncomplete=()=>finish(ended?null:new Error('E_FONT_READ_UNVERIFIED'));
+                tx.onabort=()=>finish(issue||tx.error||new Error('E_FONT_READ_ABORTED'));
+                tx.onerror=()=>finish(issue||tx.error||new Error('E_FONT_READ_FAILED'));
+            }catch(e){try{tx?.abort();}catch(_){}finish(e);}
+        });
+    }
     // A successful IDB request does not guarantee the containing transaction
     // committed. Wait for oncomplete, and never report a failed read as "no fonts".
     async function all() {
@@ -43,7 +84,7 @@ window.MimaFontManager = (() => {
                 settled = true;
                 db.close();
                 if (error) reject(error);
-                else { rememberMetadata(value); resolve(value); }
+                else resolve(value);
             };
             try {
                 const tx = db.transaction(STORE, 'readonly');
@@ -65,7 +106,7 @@ window.MimaFontManager = (() => {
                 settled = true;
                 db.close();
                 if (error) reject(error);
-                else { notifyFontChange(); resolve(); }
+                else { releaseFont(record.id);notifyFontChange(); resolve(); }
             };
             try {
                 const tx = db.transaction(STORE, 'readwrite');
@@ -85,7 +126,7 @@ window.MimaFontManager = (() => {
                 settled = true;
                 db.close();
                 if (error) reject(error);
-                else { notifyFontChange(); resolve(); }
+                else { releaseFont(id);notifyFontChange(); resolve(); }
             };
             try {
                 const tx = db.transaction(STORE, 'readwrite');
@@ -100,13 +141,28 @@ window.MimaFontManager = (() => {
     function safeFamily(name='') {
         return String(name || 'MimaFont').replace(/\.[^.]+$/, '').replace(/[^\w\u3400-\u9fff\- ]+/g, ' ').trim().slice(0,80) || 'MimaFont';
     }
-    async function loadRecord(record) {
+    function disposeFont(entry) {
+        if(!entry)return;
+        try{document.fonts.delete(entry.face);}catch(_){}
+        if(entry.url){URL.revokeObjectURL(entry.url);entry.url='';}
+    }
+    function releaseFont(id) {const entry=loaded.get(id);if(entry){loaded.delete(id);disposeFont(entry);}}
+    function makeFont(record) {
         if (!record?.buffer || !window.FontFace) return false;
-        if (loaded.has(record.id)) return true;
-        const face = new FontFace(record.family, record.buffer);
-        await face.load();
-        document.fonts.add(face);
-        loaded.set(record.id, face);
+        const url=URL.createObjectURL(new Blob([record.buffer]));
+        try{return {face:new FontFace(record.family,`url("${url}")`,{display:'swap'}),url};}
+        catch(e){URL.revokeObjectURL(url);throw e;}
+    }
+    function attachFont(id,entry) {
+        releaseFont(id);document.fonts.add(entry.face);loaded.set(id,entry);
+        // A decoded face owns its font data. Its Blob URL can be released once
+        // loading settles; stale completions never touch a replacement entry.
+        const releaseSource=()=>{if(entry.url){URL.revokeObjectURL(entry.url);entry.url='';}};
+        entry.face.loaded.then(releaseSource,releaseSource);
+    }
+    function loadRecord(record) {
+        const entry=makeFont(record);if(!entry)return false;
+        try{attachFont(record.id,entry);}catch(e){disposeFont(entry);throw e;}
         return true;
     }
     async function importFile(file) {
@@ -116,19 +172,44 @@ window.MimaFontManager = (() => {
         const buffer = await file.arrayBuffer();
         const id = `font_${Date.now()}_${Math.random().toString(36).slice(2,7)}`;
         const record = { id, name:file.name, family:safeFamily(file.name), format:ext, size:file.size, buffer, createdAt:new Date().toISOString() };
-        await put(record);
-        await loadRecord(record);
-        return record;
-    }
-    async function init() {
-        const records = await all();
-        for (const record of records) {
-            try { await loadRecord(record); } catch (e) { console.warn('字体加载失败', record.name, e); }
+        // An explicit single-file import must prove it is a decodable font
+        // before saving or reporting success. Reuse that verified face; only
+        // the library's startup registration remains lazy.
+        const entry=makeFont(record);
+        if(!entry)throw new Error('当前浏览器无法校验本地字体，请使用支持 FontFace 的浏览器');
+        try{
+            await entry.face.load();
+            await put(record);
+        }catch(e){
+            disposeFont(entry);
+            if(entry?.face.status==='error')throw new Error('字体文件无法解析，请选择有效的 TTF / OTF / WOFF / WOFF2 文件');
+            throw e;
         }
-        applySelected();
-        // Never retain the backing ArrayBuffers in the application's font-list
-        // reference: FontFace objects already own the loaded font data.
-        return records.map(metadataOf);
+        if(entry)try{attachFont(id,entry);}catch(e){disposeFont(entry);console.warn('字体已保存，但暂无法注册',record.name,e);}
+        return metadataOf(record);
+    }
+    async function init(refresh=false) {
+        if(registryRead){await registryRead;return refresh?init(true):listMetadata();}
+        registryRead=(async()=>{
+            let revision,records;
+            do{
+                revision=fontRevision;const staged=new Map();
+                try{records=await readMetadata(staged);}
+                catch(e){for(const entry of staged.values())disposeFont(entry);throw e;}
+                if(revision!==fontRevision){for(const entry of staged.values())disposeFont(entry);continue;}
+                for(const id of loaded.keys())if(!staged.has(id))releaseFont(id);
+                for(const [id,entry] of staged){
+                    // Repeated init is idempotent. Cross-tab changes explicitly
+                    // refresh sources because an unchanged ID may have new bytes.
+                    if(!refresh&&loaded.get(id)?.face.status!=='error'&&loaded.has(id))disposeFont(entry);
+                    else try{attachFont(id,entry);}catch(e){disposeFont(entry);console.warn('字体注册失败',id,e);}
+                }
+                rememberMetadata(records);
+            }while(revision!==fontRevision);
+            initialized=true;applySelected(); // Read the latest choices, never a captured old selection.
+        })().finally(()=>{registryRead=null;});
+        await registryRead;
+        return listMetadata();
     }
     function getSelected(kind) { return localStorage.getItem(kind === 'ui' ? UI_KEY : STORY_KEY) || ''; }
     function setSelected(kind, family) {
@@ -212,15 +293,12 @@ window.MimaFontManager = (() => {
         }));
     }
     async function importPortable(records, { replace=false } = {}) {
-        const incoming = Array.isArray(records) ? records : [];
-        if (replace) {
-            const old = await all();
-            for (const r of old) await remove(r.id);
-            loaded.clear();
-        }
-        let imported = 0;
-        for (const raw of incoming) {
-            if (!raw?.bufferBase64) continue;
+        if(!Array.isArray(records))throw new Error('E_FONT_BACKUP_FORMAT');
+        // Decode the complete backup before touching durable data. In particular,
+        // a malformed replacement must not erase the user's existing library.
+        const incoming=[];
+        for (const raw of records) {
+            if (!raw?.bufferBase64) {if(replace)throw new Error('E_FONT_BACKUP_INVALID');continue;}
             const record = {
                 id: raw.id || `font_${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
                 name: raw.name || `${raw.family || 'MimaFont'}.${raw.format || 'woff2'}`,
@@ -230,12 +308,26 @@ window.MimaFontManager = (() => {
                 createdAt: raw.createdAt || new Date().toISOString(),
                 buffer: base64ToBuffer(raw.bufferBase64)
             };
-            await put(record);
-            try { await loadRecord(record); } catch (e) { console.warn('导入字体后加载失败', record.name, e); }
-            imported++;
+            if(!record.buffer.byteLength)throw new Error('E_FONT_BACKUP_SIZE');
+            incoming.push(record);
         }
+        const db=await openDb();
+        await new Promise((resolve,reject)=>{
+            let tx;
+            try{
+                tx=db.transaction(STORE,'readwrite');const store=tx.objectStore(STORE);
+                if(replace)store.clear();
+                for(const record of incoming)store.put(record);
+                tx.oncomplete=()=>{db.close();resolve();};
+                tx.onabort=()=>{db.close();reject(tx.error||new Error('E_FONT_WRITE_ABORTED'));};
+            }catch(e){try{tx?.abort();}catch(_){}db.close();reject(e);}
+        });
+        if(replace)for(const id of loaded.keys())releaseFont(id);
+        else for(const record of incoming)releaseFont(record.id);
+        notifyFontChange();
+        for(const record of incoming)try{loadRecord(record);}catch(e){console.warn('字体已保存，但暂无法注册',record.name,e);}
         applySelected();
-        return imported;
+        return incoming.length;
     }
     // Two-phase add-only import for full-settings restores. Never overwrite a
     // pre-existing ID; the rollback owns only records it inserted. All newly
@@ -278,12 +370,12 @@ window.MimaFontManager = (() => {
                     request.onsuccess=()=>records.push(record.id);request.onerror=()=>{err=request.error;};}
                 tx.oncomplete=()=>{db.close();resolve(records);};
                 tx.onabort=()=>{db.close();reject(err||tx.error||new Error('E_FONT_RESTORE_ABORTED'));};
-            }catch(e){db.close();reject(e);}
+            }catch(e){try{tx?.abort();}catch(_){}db.close();reject(e);}
         });
         // On a load error the durable binary still exists and can be restored
         // at next initialization; this is not a canonical data failure.
         if(added.length)notifyFontChange();
-        for(const record of plan.records)try{await loadRecord(record);}catch(e){console.warn('字体已保存，但暂无法加载',record.id,e);}
+        for(const record of plan.records)try{loadRecord(record);}catch(e){console.warn('字体已保存，但暂无法注册',record.id,e);}
         return {receiptId,added};
     }
     async function rollbackPortablePlan(receipt) {
@@ -295,17 +387,15 @@ window.MimaFontManager = (() => {
                    if(r.result?.restoreReceipt===receipt.receiptId)os.delete(id);
                    else {issue=new Error('E_FONT_ROLLBACK_CONFLICT');tx.abort();}
                 };r.onerror=()=>{issue=r.error;tx.abort();};}
-                tx.oncomplete=()=>{db.close();for(const id of receipt.added){const face=loaded.get(id);if(face){document.fonts.delete(face);loaded.delete(id);}}notifyFontChange();resolve(true);};
+                tx.oncomplete=()=>{db.close();for(const id of receipt.added)releaseFont(id);notifyFontChange();resolve(true);};
                 tx.onabort=()=>{db.close();reject(issue||tx.error||new Error('E_FONT_ROLLBACK_ABORTED'));};
-            }catch(e){db.close();reject(e);}
+            }catch(e){try{tx?.abort();}catch(_){}db.close();reject(e);}
         });
     }
     async function deleteFont(id) {
         const records = await listMetadata();
         const record = records.find(x => x.id === id);
         await remove(id);
-        const face = loaded.get(id);
-        if (face) { try { document.fonts.delete(face); } catch (_) {} loaded.delete(id); }
         if (record && getSelected('ui') === record.family) setSelected('ui','');
         if (record && getSelected('story') === record.family) setSelected('story','');
     }
