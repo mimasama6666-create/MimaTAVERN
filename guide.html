@@ -1,0 +1,225 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="color-scheme" content="light"><meta name="description" content="咪嘛馆 R19 玩家使用手册：从零开始，按步骤学习剧情、角色卡、百宝箱、小剧场、主题、备份。"><title>📖 咪嘛馆 · 一看就会的使用手册</title><style>
+:root{color-scheme:light;--ink:#392d35;--muted:#817381;--line:#eadce4;--bg:#f9f7f6;--paper:#fff;--petal:#fcf0f4;--pink:#ae587a;--plum:#6a4662;--cocoa:#755647;--accent:#eab8cb;--shadow:0 14px 42px rgba(87,59,76,.085)}
+*[hidden]{display:none!important}*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:80px}body{margin:0;color:var(--ink);font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);font-size:15px;line-height:1.65}button,input{font:inherit}button,a{-webkit-tap-highlight-color:transparent}button{cursor:pointer}a{color:inherit;text-decoration:none}a:focus-visible,button:focus-visible,input:focus-visible,summary:focus-visible{outline:3px solid #d57aab;outline-offset:3px}h1,h2,h3,p{margin-top:0}.guide-layout{display:grid;grid-template-columns:238px minmax(0,1fr);max-width:1250px;margin:0 auto;min-height:100svh}.sidebar{background:#f7f0f2;border-right:1px solid var(--line);padding:26px 15px;position:sticky;top:0;align-self:start;height:100svh;overflow:auto}.brand{display:flex;align-items:center;gap:9px;padding:2px 8px 14px}.brand img{width:42px;height:42px;border-radius:13px;object-fit:contain}.brand strong{display:block;font-size:16px}.brand small{display:block;color:var(--muted);font-size:11px}.side-label{font-size:11px;letter-spacing:1.2px;color:#a38a9a;font-weight:800;margin:18px 10px 8px}.side-nav{display:flex;flex-direction:column;gap:2px}.side-nav a{display:flex;align-items:center;gap:9px;border-radius:12px;padding:9px 10px;font-size:13px;color:#695563;transition:background .16s}.side-nav a:hover,.side-nav a:focus-visible{background:#fff}.side-nav a.current{background:#fff;box-shadow:0 2px 12px #8d718b12;color:#9a426b;font-weight:750}.side-note{font-size:11px;color:var(--muted);padding:16px 10px;border-top:1px solid var(--line);margin-top:18px}.main{min-width:0;padding:0 38px 64px}.toolbar{position:sticky;top:0;z-index:8;background:rgba(249,247,246,.95);backdrop-filter:blur(20px);display:flex;align-items:center;gap:12px;padding:14px 0;border-bottom:1px solid var(--line)}.toolbar strong{font-size:13px;white-space:nowrap}.search-shell{flex:1;position:relative;min-width:0}.search-shell input{width:100%;min-height:44px;padding:10px 15px 10px 39px;background:#fff;border:1px solid #e8dbe3;border-radius:13px;color:var(--ink);font-size:16px}.search-shell input::placeholder{color:#ac9dab}.search-icon{position:absolute;left:14px;top:12px;color:var(--muted)}.search-clear{border:0;background:transparent;position:absolute;right:8px;top:4px;min-height:36px;min-width:36px;color:var(--plum)}.print-btn{background:#fff;border:1px solid var(--line);border-radius:12px;min-height:43px;padding:7px 12px;color:var(--plum);font-size:13px;white-space:nowrap}.hero{padding:36px 0 25px}.eyebrow{text-transform:uppercase;font-size:11px;font-weight:800;letter-spacing:2px;color:#a47488}.hero h1{font-weight:850;font-size:clamp(27px,4.1vw,45px);line-height:1.22;letter-spacing:-1.4px;margin:10px 0 13px}.hero h1 em{font-style:normal;color:var(--pink)}.hero p{font-size:15px;color:#776874;max-width:720px;margin-bottom:14px}.hero-tags{display:flex;gap:7px;flex-wrap:wrap}.hero-tags span{font-size:11px;background:#f2e7eb;color:#87556d;padding:5px 10px;border-radius:20px}.goals-title{font-size:17px;margin:9px 0 13px}.goal-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-bottom:22px}.goal-card{display:flex;align-items:center;gap:13px;border:1px solid var(--line);background:var(--paper);box-shadow:0 4px 13px #65465e0b;border-radius:18px;padding:16px;min-height:90px;transition:transform .18s,border-color .18s}.goal-card:hover{border-color:#dba3bc;transform:translateY(-2px)}.goal-emoji{display:grid;place-items:center;background:#fff1f5;width:48px;height:48px;flex:0 0 48px;border-radius:15px;font-size:25px}.goal-card strong{display:block;font-size:15px}.goal-card small{display:block;color:var(--muted);font-size:12px}.goal-arrow{color:#b88fa6;font-size:29px;margin-left:auto}.map-demo{border:1px solid #ebdce2;border-radius:22px;padding:17px;background:linear-gradient(115deg,#fff,#fff4f7);margin:0 0 30px}.map-demo>strong{display:block;font-size:13px;margin-bottom:9px}.fake-topbar{display:flex;gap:5px;border:1px solid #ecdfe4;border-radius:11px;padding:8px;background:white;align-items:center}.fake-topbar span{padding:7px 9px;background:#f8f4f6;border:1px solid #efe5e9;border-radius:9px;font-size:12px;white-space:nowrap}.fake-topbar span:nth-child(2){flex:1;text-align:center;color:#a9a0a7;overflow:hidden;text-overflow:ellipsis}.fake-topbar span:last-child,.fake-topbar span:nth-last-child(2){border-color:#efbfce;background:#ffeff4;color:#9c5674;font-weight:750}.map-demo>small{display:block;font-size:11px;color:#9c8492;margin-top:8px}.chapters-label{font-size:18px;margin:30px 0 10px}.guide-topic{margin:16px 0;padding:29px clamp(16px,3vw,30px) 21px;background:white;border:1px solid var(--line);border-radius:23px;box-shadow:var(--shadow);scroll-margin-top:76px}.topic-kicker{color:#b26b8a;font-size:11px;letter-spacing:.7px;font-weight:800}.topic-kicker span{color:#cfc4ca;margin:0 5px}.topic-heading{display:flex;align-items:center;gap:13px;margin:7px 0 18px}.topic-heading .topic-emoji{display:grid;place-items:center;width:56px;height:56px;border-radius:17px;background:#fff0f6;font-size:29px;flex:0 0 56px}.topic-heading h2{font-size:clamp(19px,2.8vw,24px);letter-spacing:-.5px;line-height:1.3;margin:0 0 4px}.topic-heading p{font-size:13px;color:var(--muted);margin:0}.steps{padding:0;list-style:none;display:grid;gap:10px;margin:16px 0 20px}.step{display:flex;gap:13px;border-radius:14px;background:#faf8f9;border:1px solid #f0e7eb;padding:13px 15px}.step-num{font-variant-numeric:tabular-nums;color:#c382a0;font-size:20px;font-weight:800;line-height:1.2;flex:0 0 30px}.step-body{flex:1;min-width:0}.step-body strong{display:block;font-size:14px;line-height:1.4}.step-body p{font-size:13px;color:#746b73;line-height:1.65;margin:5px 0 0;overflow-wrap:anywhere}.jump-action{display:inline-flex;align-items:center;gap:7px;margin:10px 0 0;border:1px solid #e6bfd0;border-radius:11px;padding:7px 11px;font-size:12px;font-weight:800;color:#985678;background:#fff3f8;min-height:36px}.jump-action:hover{background:#f9e6ed}.result-lines{display:grid;gap:9px}.result-lines p{margin:0;border-left:3px solid #b6d8b8;padding:10px 12px;background:#f3f8f3;border-radius:0 10px 10px 0;font-size:13px;line-height:1.7}.result-lines p:nth-child(2){border-color:#e7c18a;background:#fff9ee}.result-lines strong{display:block;font-size:12px;margin-bottom:3px}.topic-note{margin-top:12px;border:1px solid #e8dbe3;border-radius:11px;font-size:13px}.topic-note summary{padding:11px 13px;color:#865d77;font-weight:700;cursor:pointer}.topic-note p{padding:0 14px 13px;color:#756b74;margin:0}.back-top{display:inline-block;font-size:12px;margin-top:12px;color:#9b6983}.more-section{padding-top:25px}.more-section h2{font-size:22px}.faqs details{background:white;border:1px solid var(--line);border-radius:12px;margin:8px 0}.faqs summary{padding:13px 16px;cursor:pointer;font-weight:700;font-size:14px}.faqs p{padding:0 16px 16px;color:#736a71;font-size:13px;margin:0}.glossary{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.glossary>div{background:white;border:1px solid var(--line);border-radius:13px;padding:12px}.glossary dt{font-size:13px;font-weight:750}.glossary dd{font-size:12px;color:var(--muted);margin:4px 0 0}.footer{margin-top:32px;color:var(--muted);font-size:12px;border-top:1px solid var(--line);padding-top:18px}.empty-search{text-align:center;padding:36px;border-radius:18px;background:white;color:var(--muted)}#search-count{font-size:12px;color:#967c8b}.jump-status{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);max-width:90vw;padding:10px 18px;background:#362630;color:white;border-radius:12px;font-size:12px;box-shadow:0 12px 30px #0003;z-index:15;pointer-events:none}
+@media(max-width:920px){.guide-layout{grid-template-columns:minmax(0,1fr)}.sidebar{min-width:0;position:static;height:auto;overflow:visible;padding:12px 17px 6px;border-right:0;border-bottom:1px solid var(--line)}.brand{padding:0 2px 9px}.side-label,.side-note{display:none}.side-nav{flex-direction:row;overflow-x:auto;scrollbar-width:none;white-space:nowrap;margin:0 -6px;padding:3px 6px}.side-nav a{flex:0 0 auto;font-size:12px;padding:7px 10px}.main{padding:0 18px 55px}.hero{padding:27px 0 19px}.toolbar{top:0}.guide-topic{scroll-margin-top:76px}}
+@media(max-width:550px){.main{padding:0 13px 45px}.toolbar{gap:8px;padding:9px 0}.toolbar strong{display:none}.print-btn{font-size:0;padding:6px 10px}.print-btn span{font-size:18px}.goal-grid{gap:8px}.goal-card{min-height:78px;padding:10px;gap:8px;border-radius:14px}.goal-emoji{width:36px;height:36px;flex-basis:36px;font-size:20px;border-radius:11px}.goal-card strong{font-size:13px}.goal-card small{font-size:10px;line-height:1.5}.goal-arrow{font-size:21px}.guide-topic{border-radius:18px;padding:21px 14px 16px}.step{padding:11px}.topic-heading .topic-emoji{width:44px;height:44px;flex-basis:44px;font-size:24px}.fake-topbar span{padding:5px 6px;font-size:11px}.glossary{grid-template-columns:1fr}.hero h1{letter-spacing:-.7px}.hero p{font-size:14px}}
+@media(max-width:355px){.goal-grid{grid-template-columns:1fr}.goal-card{min-height:70px}.goal-card small{font-size:11px}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{transition:none!important}}
+@media print{.sidebar,.toolbar,.jump-action,.back-top,.print-btn,.search-clear{display:none!important}.guide-layout{display:block}.main{padding:0}.guide-topic{break-inside:avoid;box-shadow:none;border:1px solid #ddd}.hero{padding-top:0}.topic-note{display:none}.goal-card{box-shadow:none}body{background:white}html{scroll-behavior:auto}}
+</style></head><body>
+<div class="guide-layout"><aside class="sidebar" aria-label="使用手册章节导航"><div class="brand"><img src="./icon-192.png" width="42" height="42" alt="咪嘛馆图标"><span><strong>咪嘛馆 · 使用手册</strong><small>R19 / 第八批 · 2026.10.27</small></span></div><div class="side-label">一步一步学</div><nav id="side-nav" class="side-nav" aria-label="章节目录"></nav><p class="side-note">独立阅读，不调用模型、不收费。<br>开发测试版 · 仅限成年人。</p></aside>
+<main class="main"><div class="toolbar"><strong>📖 一看就会</strong><div class="search-shell"><span class="search-icon" aria-hidden="true">⌕</span><input id="search" type="search" placeholder="搜问题：怎么备份、正则、主题……" aria-label="搜索使用手册教程"><button class="search-clear" id="clear-search" type="button" aria-label="清空搜索">×</button></div><button class="print-btn" id="print-guide" type="button" onclick="window.print()" aria-label="打印或另存为 PDF" title="打印或另存为 PDF"><span aria-hidden="true">⎙</span> 打印</button></div>
+<section id="intro"><div class="hero"><span class="eyebrow">MIMATAVERN · THE EASY GUIDE</span><h1>不会用？<br><em>点着点着就学会啦！</em></h1><p>完全不需要懂编程，也不需要看施工报告。先选你想做的事，每一步都告诉你<strong>点哪里、填什么、怎么看是否成功</strong>。</p><div class="hero-tags"><span>✓ 手机优先</span><span>✓ 没有技术门槛</span><span>✓ 避免误删存档</span><span>✓ 有问题可搜索</span></div></div>
+<h2 class="goals-title">你现在想做哪件事？</h2><div class="goal-grid"><a class="goal-card" href="#start"><span class="goal-emoji">🚀</span><span><strong>从零开始</strong><small>新建剧情、配置 API</small></span><span class="goal-arrow">›</span></a>
+<a class="goal-card" href="#tavern"><span class="goal-emoji">🎴</span><span><strong>玩角色卡</strong><small>PNG / JSON / CHARX</small></span><span class="goal-arrow">›</span></a>
+<a class="goal-card" href="#appearance"><span class="goal-emoji">🎨</span><span><strong>美化界面</strong><small>换主题、字体和音效</small></span><span class="goal-arrow">›</span></a>
+<a class="goal-card" href="#toolbox"><span class="goal-emoji">🪎</span><span><strong>快捷发指令</strong><small>推进剧情不用重打</small></span><span class="goal-arrow">›</span></a>
+<a class="goal-card" href="#phone"><span class="goal-emoji">📱</span><span><strong>玩虚拟手机</strong><small>私聊、群聊和动态</small></span><span class="goal-arrow">›</span></a>
+<a class="goal-card" href="#backup"><span class="goal-emoji">💾</span><span><strong>备份不丢档</strong><small>三套存档分开备份</small></span><span class="goal-arrow">›</span></a></div>
+<div class="map-demo"><strong>先认清主页顶部三个按钮（入口示意，不是真实截图）</strong><div class="fake-topbar" aria-label="顶部按钮示意"><span>☰ 剧情</span><span>🤍 当前剧情</span><span>功能</span><span>设置</span></div><small>【剧情】切故事　【功能】开小说/手机/工坊　【设置】调 API、人设、记忆和备份</small></div>
+</section><div class="chapters-label" id="tutorials">照着操作就好 <span id="search-count" aria-live="polite"></span></div><div id="empty-search" class="empty-search" hidden>没有找到对应教程。可以试试搜索「角色」「备份」「API」「主题」，或者清空搜索。</div>
+<article id="start" class="guide-topic" data-group="入门" tabindex="-1">
+  <div class="topic-kicker">入门 <span aria-hidden="true">/</span> 5 步操作</div>
+  <div class="topic-heading"><span class="topic-emoji" aria-hidden="true">🚀</span><div><h2>第一次来</h2><p>从空白页面开始，五步内和喜欢的角色说上话</p></div></div>
+  <ol class="steps"><li class="step"><span class="step-num">01</span><div class="step-body"><strong>确认进入主页</strong><p>先找到屏幕顶端的「剧情 · 功能 · 设置」，手机上也能看到。</p></div></li>
+<li class="step"><span class="step-num">02</span><div class="step-body"><strong>打开 API 设置</strong><p>点「设置」，再选「🔌 API（接口）」。输入你使用的服务商地址、密钥和模型，保存。</p><button type="button" class="jump-action" data-go="api">立即打开 <span aria-hidden="true">↗</span></button></div></li>
+<li class="step"><span class="step-num">03</span><div class="step-body"><strong>创建剧情</strong><p>点左上「☰ 剧情」→「＋ 新建剧情」。给剧情起名字并创建。</p><button type="button" class="jump-action" data-go="drawer">立即打开 <span aria-hidden="true">↗</span></button></div></li>
+<li class="step"><span class="step-num">04</span><div class="step-body"><strong>选择角色和自己</strong><p>「设置 → 🤍 角色」导入或创建角色卡及玩家面具，为当前剧情应用挂载。</p><button type="button" class="jump-action" data-go="roles">立即打开 <span aria-hidden="true">↗</span></button></div></li>
+<li class="step"><span class="step-num">05</span><div class="step-body"><strong>开始聊天</strong><p>回到剧情输入框，写一句话后点「➤ 发送」。</p></div></li></ol>
+  <div class="result-lines"><p><strong>✓ 做对了会怎样</strong>你在剧情里看到了自己的发言和角色回复，就是成功啦。</p><p><strong>↪ 不对劲时先检查</strong>如果角色不回话，先到「设置 → API」检查模型与连接；不要反复连点发送。</p></div>
+  <details class="topic-note"><summary>再多知道一点 <span aria-hidden="true">⌄</span></summary><p>不需要先学世界书、正则或编程；先能聊天再研究高级设置。</p></details>
+  <a class="back-top" href="#intro">↑ 返回顶部</a>
+ </article>
+<article id="tavern" class="guide-topic" data-group="入门" tabindex="-1">
+  <div class="topic-kicker">入门 <span aria-hidden="true">/</span> 4 步操作</div>
+  <div class="topic-heading"><span class="topic-emoji" aria-hidden="true">🎴</span><div><h2>玩下载的酒馆角色卡</h2><p>手里只有一张 PNG？从这里开始</p></div></div>
+  <ol class="steps"><li class="step"><span class="step-num">01</span><div class="step-body"><strong>打开酒馆入口</strong><p>点页面顶部「功能」→「🎴 玩酒馆角色卡」，也可以从剧情侧栏进入。</p><button type="button" class="jump-action" data-go="compat">立即打开 <span aria-hidden="true">↗</span></button></div></li>
+<li class="step"><span class="step-num">02</span><div class="step-body"><strong>选择角色卡</strong><p>在兼容游玩页点击「选择 PNG / JSON / CHARX」，选你的文件。</p></div></li>
+<li class="step"><span class="step-num">03</span><div class="step-body"><strong>确认人物和开场</strong><p>按页面提示选择角色卡版本、开场白及玩家称呼。</p></div></li>
+<li class="step"><span class="step-num">04</span><div class="step-body"><strong>创建并开始</strong><p>保存或进入故事，像普通聊天一样在底部发送消息。</p></div></li></ol>
+  <div class="result-lines"><p><strong>✓ 做对了会怎样</strong>看到角色的开场白、可以输入聊天，就是打开成功。</p><p><strong>↪ 不对劲时先检查</strong>酒馆兼容模式的故事和原生剧情是两套存档，请分别备份。</p></div>
+  <details class="topic-note"><summary>再多知道一点 <span aria-hidden="true">⌄</span></summary><p>角色卡里的全部外部脚本不保证可执行；“成功导入”不等于第三方插件百分百兼容。</p></details>
+  <a class="back-top" href="#intro">↑ 返回顶部</a>
+ </article>
+<article id="api" class="guide-topic" data-group="入门" tabindex="-1">
+  <div class="topic-kicker">入门 <span aria-hidden="true">/</span> 4 步操作</div>
+  <div class="topic-heading"><span class="topic-emoji" aria-hidden="true">🔌</span><div><h2>API 和模型怎么填</h2><p>不懂技术也能分清这四个东西</p></div></div>
+  <ol class="steps"><li class="step"><span class="step-num">01</span><div class="step-body"><strong>打开接口页</strong><p>「设置 → 🔌 API（接口）」。</p><button type="button" class="jump-action" data-go="api">立即打开 <span aria-hidden="true">↗</span></button></div></li>
+<li class="step"><span class="step-num">02</span><div class="step-body"><strong>填 API 地址</strong><p>复制服务商提供的接口地址，不要随便拼凑路径。</p></div></li>
+<li class="step"><span class="step-num">03</span><div class="step-body"><strong>填密钥和模型</strong><p>粘贴 API Key，并填写或选择服务商真正支持的模型名称。</p></div></li>
+<li class="step"><span class="step-num">04</span><div class="step-body"><strong>保存并试用</strong><p>保存设置，按界面可用的测试入口核对，然后回剧情发送一句短消息。</p></div></li></ol>
+  <div class="result-lines"><p><strong>✓ 做对了会怎样</strong>短句可以正常返回就说明基础通路可用。</p><p><strong>↪ 不对劲时先检查</strong>若提示 CORS / Failed to fetch，说明浏览器请求可能被服务商拒绝；不需要清空网站数据。</p></div>
+  <details class="topic-note"><summary>再多知道一点 <span aria-hidden="true">⌄</span></summary><p>模型“上下文总窗口”与“最大输出字数”不是一个数；发送一次可能产生模型费用。</p></details>
+  <a class="back-top" href="#intro">↑ 返回顶部</a>
+ </article>
+<article id="persona" class="guide-topic" data-group="常用" tabindex="-1">
+  <div class="topic-kicker">常用 <span aria-hidden="true">/</span> 5 步操作</div>
+  <div class="topic-heading"><span class="topic-emoji" aria-hidden="true">🤍</span><div><h2>挂载角色、面具、预设</h2><p>导入后不生效？最常见原因是没挂载</p></div></div>
+  <ol class="steps"><li class="step"><span class="step-num">01</span><div class="step-body"><strong>进入角色设置</strong><p>打开「设置 → 🤍 角色」，导入角色卡及自己的 User Persona。</p><button type="button" class="jump-action" data-go="roles">立即打开 <span aria-hidden="true">↗</span></button></div></li>
+<li class="step"><span class="step-num">02</span><div class="step-body"><strong>选当前剧情</strong><p>先确定现在打开的是你准备游玩的剧情。</p><button type="button" class="jump-action" data-go="drawer">立即打开 <span aria-hidden="true">↗</span></button></div></li>
+<li class="step"><span class="step-num">03</span><div class="step-body"><strong>应用挂载</strong><p>在角色设置里选中要使用的角色与玩家面具，并点击应用挂载。</p><button type="button" class="jump-action" data-go="roles">立即打开 <span aria-hidden="true">↗</span></button></div></li>
+<li class="step"><span class="step-num">04</span><div class="step-body"><strong>进一步丰富</strong><p>预设在「设置 → 🧩 预设」，世界书在「设置 → 📚 世界书」，同样要为剧情启用或挂载。</p><button type="button" class="jump-action" data-go="worldbook">立即打开 <span aria-hidden="true">↗</span></button></div></li>
+<li class="step"><span class="step-num">05</span><div class="step-body"><strong>最终核对</strong><p>「设置 → 🔬 Prompt（提示词）」查看本轮真实使用的材料。</p><button type="button" class="jump-action" data-go="prompt">立即打开 <span aria-hidden="true">↗</span></button></div></li></ol>
+  <div class="result-lines"><p><strong>✓ 做对了会怎样</strong>Prompt 检查器里能看到角色和设定的实际注入情况。</p><p><strong>↪ 不对劲时先检查</strong>资源库有内容，不代表当前剧情已经在用。</p></div>
+  <details class="topic-note"><summary>再多知道一点 <span aria-hidden="true">⌄</span></summary><p>世界书条目还取决于触发条件和预算；“挂上了”也不保证每条都会进入本轮请求。</p></details>
+  <a class="back-top" href="#intro">↑ 返回顶部</a>
+ </article>
+<article id="toolbox" class="guide-topic" data-group="常用" tabindex="-1">
+  <div class="topic-kicker">常用 <span aria-hidden="true">/</span> 4 步操作</div>
+  <div class="topic-heading"><span class="topic-emoji" aria-hidden="true">🪎</span><div><h2>百宝箱：一键发指令</h2><p>比如“推进剧情”，以后再也不用反复打字</p></div></div>
+  <ol class="steps"><li class="step"><span class="step-num">01</span><div class="step-body"><strong>找小图标</strong><p>回到剧情底部，找到发送箭头「➤」左边的「🪎」。</p><button type="button" class="jump-action" data-go="toolbox">立即打开 <span aria-hidden="true">↗</span></button></div></li>
+<li class="step"><span class="step-num">02</span><div class="step-body"><strong>添加一条指令</strong><p>点「新建指令」，填写名字，例如「推进剧情」，再输入要说的话。</p></div></li>
+<li class="step"><span class="step-num">03</span><div class="step-body"><strong>选发送方式</strong><p>「发送」会立即按正常用户消息发送；「仅填入」只把文字放进输入框供你修改。</p></div></li>
+<li class="step"><span class="step-num">04</span><div class="step-body"><strong>保存并使用</strong><p>保存后从百宝箱点对应指令。你也能导入、导出 JSON 指令集。</p></div></li></ol>
+  <div class="result-lines"><p><strong>✓ 做对了会怎样</strong>指令像自己发送的普通消息一样进入当前剧情。</p><p><strong>↪ 不对劲时先检查</strong>模型正在生成时，系统会防止重复提交。</p></div>
+  <details class="topic-note"><summary>再多知道一点 <span aria-hidden="true">⌄</span></summary><p>已有的输入框草稿不应被“快捷发送”清掉；如果你想先看看内容，请选「仅填入」。</p></details>
+  <a class="back-top" href="#intro">↑ 返回顶部</a>
+ </article>
+<article id="theater" class="guide-topic" data-group="常用" tabindex="-1">
+  <div class="topic-kicker">常用 <span aria-hidden="true">/</span> 4 步操作</div>
+  <div class="topic-heading"><span class="topic-emoji" aria-hidden="true">🎭</span><div><h2>小剧场：开场前的卡片</h2><p>展示介绍、欢迎页，或做可以点击的互动卡片</p></div></div>
+  <ol class="steps"><li class="step"><span class="step-num">01</span><div class="step-body"><strong>打开管理</strong><p>「设置 → 🎭 小剧场」，或者「🪎 百宝箱 → 小剧场」。</p><button type="button" class="jump-action" data-go="theater">立即打开 <span aria-hidden="true">↗</span></button></div></li>
+<li class="step"><span class="step-num">02</span><div class="step-body"><strong>创建素材</strong><p>点新建，或者导入 .html / .htm / .js 文件。初次可以先用内置示例。</p></div></li>
+<li class="step"><span class="step-num">03</span><div class="step-body"><strong>挂载到剧情</strong><p>选中「当前剧情」，保存并挂载。不同剧情能用不同小剧场。</p></div></li>
+<li class="step"><span class="step-num">04</span><div class="step-body"><strong>返回聊天</strong><p>小剧场会显示在角色开场白之前，不占一条普通聊天消息。</p></div></li></ol>
+  <div class="result-lines"><p><strong>✓ 做对了会怎样</strong>你能在聊天开头看到小剧场卡片。</p><p><strong>↪ 不对劲时先检查</strong>普通静态 HTML 不需要开启危险权限。</p></div>
+  <details class="topic-note"><summary>再多知道一点 <span aria-hidden="true">⌄</span></summary><p>陌生 JS 默认不能执行。只有充分信任时才授权脚本；读取完整剧情原文还需要单独授权。授权后脚本可能联网。</p></details>
+  <a class="back-top" href="#intro">↑ 返回顶部</a>
+ </article>
+<article id="appearance" class="guide-topic" data-group="常用" tabindex="-1">
+  <div class="topic-kicker">常用 <span aria-hidden="true">/</span> 5 步操作</div>
+  <div class="topic-heading"><span class="topic-emoji" aria-hidden="true">🎨</span><div><h2>换主题、字体和壁纸</h2><p>只想让咪嘛馆变漂亮？走这条路</p></div></div>
+  <ol class="steps"><li class="step"><span class="step-num">01</span><div class="step-body"><strong>先看普通外观</strong><p>「设置 → 🎨 外观」，选择内置主题、字体、字号和已有的自定义 CSS。</p><button type="button" class="jump-action" data-go="appearance">立即打开 <span aria-hidden="true">↗</span></button></div></li>
+<li class="step"><span class="step-num">02</span><div class="step-body"><strong>想自己捏主题</strong><p>点顶部「功能 → 🎨 可视化主题工坊」。</p><button type="button" class="jump-action" data-go="atelier">立即打开 <span aria-hidden="true">↗</span></button></div></li>
+<li class="step"><span class="step-num">03</span><div class="step-body"><strong>挑模板并编辑</strong><p>从模板开始，选择“想改哪里”，在“常用外观”调色、背景、按钮等。</p></div></li>
+<li class="step"><span class="step-num">04</span><div class="step-body"><strong>真实试穿</strong><p>在工坊里检查视觉效果；还不满意可以撤销，再调整。</p></div></li>
+<li class="step"><span class="step-num">05</span><div class="step-body"><strong>正式应用</strong><p>确认满意后点「应用全局主题」等正式应用/发布操作。</p></div></li></ol>
+  <div class="result-lines"><p><strong>✓ 做对了会怎样</strong>退出工坊后，主剧情也使用了新主题，才叫应用成功。</p><p><strong>↪ 不对劲时先检查</strong>仅试穿或保存草稿，不等于正式发布。</p></div>
+  <details class="topic-note"><summary>再多知道一点 <span aria-hidden="true">⌄</span></summary><p>换上自定义 CSS 后某处仍有灰底，可以在工坊试试「隐藏多余容器底色」，先预览再应用。</p></details>
+  <a class="back-top" href="#intro">↑ 返回顶部</a>
+ </article>
+<article id="sound" class="guide-topic" data-group="常用" tabindex="-1">
+  <div class="topic-kicker">常用 <span aria-hidden="true">/</span> 5 步操作</div>
+  <div class="topic-heading"><span class="topic-emoji" aria-hidden="true">✨</span><div><h2>按钮动画和自定义音效</h2><p>想换成猫爪粒子、可爱点击声？</p></div></div>
+  <ol class="steps"><li class="step"><span class="step-num">01</span><div class="step-body"><strong>打开声音开关</strong><p>「设置 → 🎨 外观 → 动画与点击音效」。</p><button type="button" class="jump-action" data-go="appearance">立即打开 <span aria-hidden="true">↗</span></button></div></li>
+<li class="step"><span class="step-num">02</span><div class="step-body"><strong>挑动画或静音</strong><p>动画、声音可以分别关闭；声音可以调音量。</p></div></li>
+<li class="step"><span class="step-num">03</span><div class="step-body"><strong>导入自己的声音</strong><p>分别给「普通按钮」「发送/继续/推进」「菜单/设置」导入声音文件。</p></div></li>
+<li class="step"><span class="step-num">04</span><div class="step-body"><strong>试听与恢复</strong><p>点击“试听”确认效果；不喜欢点「恢复主题声音」。</p></div></li>
+<li class="step"><span class="step-num">05</span><div class="step-body"><strong>高级配方</strong><p>工坊「交互音效」还能调整粒子、动效时长与每套主题自己的音频。</p><button type="button" class="jump-action" data-go="atelier">立即打开 <span aria-hidden="true">↗</span></button></div></li></ol>
+  <div class="result-lines"><p><strong>✓ 做对了会怎样</strong>点击按钮时按你的设置发出动画和声音。</p><p><strong>↪ 不对劲时先检查</strong>音频文件最大 4MB；能否播放还取决于浏览器和设备静音状态。</p></div>
+  <details class="topic-note"><summary>再多知道一点 <span aria-hidden="true">⌄</span></summary><p>个人覆盖声音与主题原声音是两层设置，换主题后个人音效仍会保留。</p></details>
+  <a class="back-top" href="#intro">↑ 返回顶部</a>
+ </article>
+<article id="memory" class="guide-topic" data-group="进阶" tabindex="-1">
+  <div class="topic-kicker">进阶 <span aria-hidden="true">/</span> 5 步操作</div>
+  <div class="topic-heading"><span class="topic-emoji" aria-hidden="true">🧠</span><div><h2>长剧情与记忆</h2><p>剧情很长，为什么 AI 有时忘事？</p></div></div>
+  <ol class="steps"><li class="step"><span class="step-num">01</span><div class="step-body"><strong>先确认原文还在</strong><p>本地 History 与单次发给模型的 Prompt 是两回事；超窗不等于删除存档。</p></div></li>
+<li class="step"><span class="step-num">02</span><div class="step-body"><strong>检查 Context</strong><p>「设置 → 🧠 Context（上下文）」看原文轮次、容量和预算。</p><button type="button" class="jump-action" data-go="context">立即打开 <span aria-hidden="true">↗</span></button></div></li>
+<li class="step"><span class="step-num">03</span><div class="step-body"><strong>管理记忆</strong><p>「设置 → 🗃️ 记忆」查看剧情摘要、核心记忆与事实记忆。</p><button type="button" class="jump-action" data-go="memory">立即打开 <span aria-hidden="true">↗</span></button></div></li>
+<li class="step"><span class="step-num">04</span><div class="step-body"><strong>手动整理</strong><p>决定是否总结，先看提示的请求次数和费用规划，再执行。</p></div></li>
+<li class="step"><span class="step-num">05</span><div class="step-body"><strong>失败时查草稿</strong><p>记忆 → 记忆任务诊断与安全恢复 → 未通过验收的生成原文。</p><button type="button" class="jump-action" data-go="memory">立即打开 <span aria-hidden="true">↗</span></button></div></li></ol>
+  <div class="result-lines"><p><strong>✓ 做对了会怎样</strong>正式记忆只有通过检查后才会写入；失败原文可查但不自动当成事实。</p><p><strong>↪ 不对劲时先检查</strong>有些总结需要真实 API 调用，可能收费。</p></div>
+  <details class="topic-note"><summary>再多知道一点 <span aria-hidden="true">⌄</span></summary><p>别为了“省 Token”随便清除剧情历史；先确认记忆是否确实覆盖了重要情节。</p></details>
+  <a class="back-top" href="#intro">↑ 返回顶部</a>
+ </article>
+<article id="regex" class="guide-topic" data-group="进阶" tabindex="-1">
+  <div class="topic-kicker">进阶 <span aria-hidden="true">/</span> 5 步操作</div>
+  <div class="topic-heading"><span class="topic-emoji" aria-hidden="true">🧬</span><div><h2>正则：隐藏某些词</h2><p>例如不想在显示正文里看到“极其”</p></div></div>
+  <ol class="steps"><li class="step"><span class="step-num">01</span><div class="step-body"><strong>打开正则</strong><p>「设置 → 🧬 正则」。</p><button type="button" class="jump-action" data-go="regex">立即打开 <span aria-hidden="true">↗</span></button></div></li>
+<li class="step"><span class="step-num">02</span><div class="step-body"><strong>建立规则</strong><p>模式填「极其」，替换内容留空，并选择“显示 / display”阶段。</p></div></li>
+<li class="step"><span class="step-num">03</span><div class="step-body"><strong>先测试</strong><p>在即时测试框输入带“极其”的句子，点「运行当前草稿」。</p></div></li>
+<li class="step"><span class="step-num">04</span><div class="step-body"><strong>保存、启用、挂载</strong><p>确保规则自身启用、规则包启用，并挂到当前剧情。</p></div></li>
+<li class="step"><span class="step-num">05</span><div class="step-body"><strong>回到正文看</strong><p>重新查看渲染，确认只影响你希望处理的内容。</p></div></li></ol>
+  <div class="result-lines"><p><strong>✓ 做对了会怎样</strong>显示里的“极其”被过滤就对了。</p><p><strong>↪ 不对劲时先检查</strong>显示正则只修改页面看起来的效果，不等于修改原始存档。</p></div>
+  <details class="topic-note"><summary>再多知道一点 <span aria-hidden="true">⌄</span></summary><p>新手先只用显示阶段；发送前、保存前和 Prompt 阶段可能改变模型实际接收的内容。</p></details>
+  <a class="back-top" href="#intro">↑ 返回顶部</a>
+ </article>
+<article id="novel" class="guide-topic" data-group="扩展玩法" tabindex="-1">
+  <div class="topic-kicker">扩展玩法 <span aria-hidden="true">/</span> 5 步操作</div>
+  <div class="topic-heading"><span class="topic-emoji" aria-hidden="true">✒</span><div><h2>写小说：生成与采纳</h2><p>AI 写出来 ≠ 自动覆盖你的正式正文</p></div></div>
+  <ol class="steps"><li class="step"><span class="step-num">01</span><div class="step-body"><strong>打开小说</strong><p>顶部「功能 → ✒ 小说创作」。</p><button type="button" class="jump-action" data-go="novel">立即打开 <span aria-hidden="true">↗</span></button></div></li>
+<li class="step"><span class="step-num">02</span><div class="step-body"><strong>建立小说</strong><p>选导入 TXT 或新建空白项目。</p></div></li>
+<li class="step"><span class="step-num">03</span><div class="step-body"><strong>选章节续写</strong><p>在“章节 / 正文”里选择目标章节，生成候选草稿。</p></div></li>
+<li class="step"><span class="step-num">04</span><div class="step-body"><strong>先检查后采纳</strong><p>确认没有乱写、重复或偏题后，点「✓ 采纳」，才写入正式正文。</p></div></li>
+<li class="step"><span class="step-num">05</span><div class="step-body"><strong>维护剧情档案</strong><p>到“剧情档案”整理人物关系、伏笔和时间线。</p></div></li></ol>
+  <div class="result-lines"><p><strong>✓ 做对了会怎样</strong>小说的正式正文增加了采纳的段落。</p><p><strong>↪ 不对劲时先检查</strong>失败时先看是否已经采纳成功，不要连点重复生成/采纳。</p></div>
+  <details class="topic-note"><summary>再多知道一点 <span aria-hidden="true">⌄</span></summary><p>续写和档案整理可能单独调用 API；小说工程与普通聊天不完全是一回事。</p></details>
+  <a class="back-top" href="#intro">↑ 返回顶部</a>
+ </article>
+<article id="phone" class="guide-topic" data-group="扩展玩法" tabindex="-1">
+  <div class="topic-kicker">扩展玩法 <span aria-hidden="true">/</span> 5 步操作</div>
+  <div class="topic-heading"><span class="topic-emoji" aria-hidden="true">📱</span><div><h2>小手机：虚拟聊天和朋友圈</h2><p>角色用的是咪嘛馆里的模拟手机，不是真 QQ / TG</p></div></div>
+  <ol class="steps"><li class="step"><span class="step-num">01</span><div class="step-body"><strong>打开小手机</strong><p>顶部「功能 → 📱 小手机」。</p><button type="button" class="jump-action" data-go="phone">立即打开 <span aria-hidden="true">↗</span></button></div></li>
+<li class="step"><span class="step-num">02</span><div class="step-body"><strong>先选自己</strong><p>在“我的”选择玩家面具。</p></div></li>
+<li class="step"><span class="step-num">03</span><div class="step-body"><strong>加联系人</strong><p>打开“通讯录”，把角色加入手机联系人。</p></div></li>
+<li class="step"><span class="step-num">04</span><div class="step-body"><strong>开始私聊或群聊</strong><p>在“消息”建立会话并发送。</p></div></li>
+<li class="step"><span class="step-num">05</span><div class="step-body"><strong>体验动态</strong><p>到“动态”发朋友圈，按按钮手动邀请角色浏览、互动。</p></div></li></ol>
+  <div class="result-lines"><p><strong>✓ 做对了会怎样</strong>能看到手机里的独立会话和动态，就是成功。</p><p><strong>↪ 不对劲时先检查</strong>这些都是模拟社交，不会给现实 QQ/TG 自动发消息。</p></div>
+  <details class="topic-note"><summary>再多知道一点 <span aria-hidden="true">⌄</span></summary><p>小手机使用独立数据库，钱包是虚拟 MIMA 币；别把它当成真实资金或真实平台登录。</p></details>
+  <a class="back-top" href="#intro">↑ 返回顶部</a>
+ </article>
+<article id="backup" class="guide-topic" data-group="必读" tabindex="-1">
+  <div class="topic-kicker">必读 <span aria-hidden="true">/</span> 4 步操作</div>
+  <div class="topic-heading"><span class="topic-emoji" aria-hidden="true">💾</span><div><h2>如何备份？先看这章！</h2><p>最容易踩坑：原生、酒馆、小手机不是同一个数据库</p></div></div>
+  <ol class="steps"><li class="step"><span class="step-num">01</span><div class="step-body"><strong>备份原生剧情</strong><p>「设置 → 💾 Data（数据）」→「导出剧情与设置」，把文件保存到手机“文件”里。</p><button type="button" class="jump-action" data-go="data">立即打开 <span aria-hidden="true">↗</span></button></div></li>
+<li class="step"><span class="step-num">02</span><div class="step-body"><strong>备份酒馆兼容剧情</strong><p>进「🎴 玩酒馆角色卡」的备份/恢复区；可选兼容单库或双库备份。</p><button type="button" class="jump-action" data-go="compat">立即打开 <span aria-hidden="true">↗</span></button></div></li>
+<li class="step"><span class="step-num">03</span><div class="step-body"><strong>备份小手机</strong><p>进入小手机“我的”相关备份入口，单独导出手机数据。</p><button type="button" class="jump-action" data-go="phone">立即打开 <span aria-hidden="true">↗</span></button></div></li>
+<li class="step"><span class="step-num">04</span><div class="step-body"><strong>检查文件确实存在</strong><p>看到实际文件在设备上，才算备份完成；建议在更新和换设备前做。</p></div></li></ol>
+  <div class="result-lines"><p><strong>✓ 做对了会怎样</strong>你应该拿到对应的真实备份文件。</p><p><strong>↪ 不对劲时先检查</strong>只导出“原生剧情与设置”并不等于已经备份小手机及酒馆兼容库。</p></div>
+  <details class="topic-note"><summary>再多知道一点 <span aria-hidden="true">⌄</span></summary><p>跨设备没有自动同步保证。恢复出现“部分成功”时先检查已恢复的内容，不要立即重复覆盖。</p></details>
+  <a class="back-top" href="#intro">↑ 返回顶部</a>
+ </article>
+<article id="troubleshoot" class="guide-topic" data-group="必读" tabindex="-1">
+  <div class="topic-kicker">必读 <span aria-hidden="true">/</span> 5 步操作</div>
+  <div class="topic-heading"><span class="topic-emoji" aria-hidden="true">🛟</span><div><h2>出问题了怎么办</h2><p>先保住数据，再查问题，不要乱删</p></div></div>
+  <ol class="steps"><li class="step"><span class="step-num">01</span><div class="step-body"><strong>别连续按发送</strong><p>若生成卡住，查看进度、已收到的草稿和“免费核对原任务”。</p></div></li>
+<li class="step"><span class="step-num">02</span><div class="step-body"><strong>界面怪怪的</strong><p>先留截图、版本信息；不要为了刷新 CSS 直接清除网站数据。</p></div></li>
+<li class="step"><span class="step-num">03</span><div class="step-body"><strong>AI 不认角色</strong><p>到「设置 → 🔬 Prompt」看实际注入，确认挂载和世界书触发。</p><button type="button" class="jump-action" data-go="prompt">立即打开 <span aria-hidden="true">↗</span></button></div></li>
+<li class="step"><span class="step-num">04</span><div class="step-body"><strong>读流式 HTML 被拉走？</strong><p>阅读时可以暂停跟随，要追最新内容再点「↓ 跟随输出」。</p></div></li>
+<li class="step"><span class="step-num">05</span><div class="step-body"><strong>真的要恢复</strong><p>先查看备份回执，分清主库成功和某项素材失败的情况。</p><button type="button" class="jump-action" data-go="data">立即打开 <span aria-hidden="true">↗</span></button></div></li></ol>
+  <div class="result-lines"><p><strong>✓ 做对了会怎样</strong>旧剧情还在、错误信息可查，就有机会安全处理。</p><p><strong>↪ 不对劲时先检查</strong>真机 Safari、复杂第三方主题与跨库迁移仍属于开发测试边界。</p></div>
+  <details class="topic-note"><summary>再多知道一点 <span aria-hidden="true">⌄</span></summary><p>禁止用“清除网站数据”当万能修复，更不要把 API Key 或私人 Prompt 发给陌生人。</p></details>
+  <a class="back-top" href="#intro">↑ 返回顶部</a>
+ </article>
+<section id="question-section" class="more-section"><h2>💬 最常问的八个问题</h2><div class="faqs"><details><summary>点哪儿能看使用手册？</summary><p>从顶栏“功能 → 📖 使用手册”或“设置 → 📖 使用手册”打开；酒馆兼容页的工具菜单也有入口。</p></details>
+<details><summary>别人给了 PNG 角色卡，我应该用哪个按钮？</summary><p>点“功能 → 🎴 玩酒馆角色卡”，选择 PNG/JSON/CHARX。不要只在原生资源检查器里浏览却忘记创建故事。</p></details>
+<details><summary>为什么我设置了角色，AI 还是不认识？</summary><p>检查当前剧情是否“应用挂载”。再去“设置 → 🔬 Prompt（提示词）”看这次请求实际带了什么。</p></details>
+<details><summary>我调了 CSS，为什么没变化？</summary><p>先看是否只是“预览 / 试穿”。工坊要明确“应用全局主题”之后才改变正式界面。</p></details>
+<details><summary>我打开流式 HTML 后怎么不跟着往下走了？</summary><p>这是阅读保护。想再次追随新文字，点击剧情里的“跟随输出”。</p></details>
+<details><summary>手机换了/清除网站数据，会自动恢复存档吗？</summary><p>不会。原生剧情、酒馆兼容库、小手机分别导出文件，再在新设备各自恢复。</p></details>
+<details><summary>百宝箱发送和仅填入有什么区别？</summary><p>“发送”就是像你亲自发了一条消息；“仅填入”不会发送，你可以先修改正文。</p></details>
+<details><summary>陌生 JS 小剧场可以放心点授权吗？</summary><p>不建议。运行 JS 和读取原文是不同权限；JS 有可能联网。只授权可信、能确认用途的脚本。</p></details></div></section>
+<section id="glossary-section" class="more-section"><h2>📚 看不懂这些词？</h2><dl class="glossary"><div><dt>剧情 / Session</dt><dd>一段独立聊天，不同剧情可以有不同人设。</dd></div>
+<div><dt>角色卡 / Character Card</dt><dd>角色的身份、说话方式、开场等资料。</dd></div>
+<div><dt>玩家面具 / Persona</dt><dd>AI 眼中的“你”是谁。</dd></div>
+<div><dt>API</dt><dd>模型服务商给你的聊天接口，需要自己配置。</dd></div>
+<div><dt>Prompt</dt><dd>真正发给模型的全部材料，不只是输入框那一句。</dd></div>
+<div><dt>世界书 / Worldbook</dt><dd>背景百科，需要满足条件才可能注入。</dd></div>
+<div><dt>正则 / Regex</dt><dd>按规则替换或隐藏文字，分显示与发送等阶段。</dd></div>
+<div><dt>草稿 / Draft</dt><dd>还没正式采纳/提交的内容。</dd></div>
+<div><dt>备份 / Backup</dt><dd>实际导出到本机的文件，不等于网站自动云同步。</dd></div></dl></section>
+<footer class="footer"><strong>咪嘛馆 · R19 玩家帮助中心</strong><p>根据 2026-10-27 第八批可信完整生产包核对入口及主要使用方法。此版本仍为开发测试版；真实 iOS Safari、复杂外部插件和跨设备全库恢复尚未全部验证。使用前请备份重要数据。第三方角色卡、主题与插件需遵守各自的授权与安全要求。仅限 18 岁及以上使用。</p></footer></main></div><div class="jump-status" id="jump-status" role="status" aria-live="polite" hidden></div><script>
+(function(){
+ 'use strict';
+ const q=document.getElementById('search');
+ const clear=document.getElementById('clear-search');
+ const status=document.getElementById('search-count');
+ const empty=document.getElementById('empty-search');
+ const topics=Array.from(document.querySelectorAll('.guide-topic'));
+ const nav=document.getElementById('side-nav');
+ const normalize=s=>String(s||'').toLocaleLowerCase().normalize('NFKC').replace(/\s+/g,'');
+ const entries=topics.map(t=>({el:t,text:normalize(t.textContent+' '+t.dataset.group)}));
+ const faqs=Array.from(document.querySelectorAll('.faqs details')).map(el=>({el,text:normalize(el.textContent)}));
+ const glossary=Array.from(document.querySelectorAll('.glossary>div')).map(el=>({el,text:normalize(el.textContent)}));
+ topics.forEach(t=>{const a=document.createElement('a');a.href='#'+t.id;a.textContent=t.querySelector('.topic-emoji').textContent+' '+t.querySelector('h2').textContent;nav.append(a);});
+ function filter(){clear.hidden=!q.value;const val=normalize(q.value);let seen=0;for(const item of entries){const shown=!val||item.text.includes(val);item.el.hidden=!shown;if(shown)seen++;}let questionCount=0,glossaryCount=0;for(const item of faqs){const match=!val||item.text.includes(val);item.el.hidden=!match;if(match)questionCount++;}for(const item of glossary){const match=!val||item.text.includes(val);item.el.hidden=!match;if(match)glossaryCount++;}document.getElementById('intro').hidden=!!val;document.getElementById('question-section').hidden=!!val&&questionCount===0;document.getElementById('glossary-section').hidden=!!val&&glossaryCount===0;empty.hidden=seen+questionCount+glossaryCount!==0;status.textContent=val?`找到 ${seen} 篇教程、${questionCount} 条问答、${glossaryCount} 条术语`:'共 '+topics.length+' 篇操作教程';nav.querySelectorAll('a').forEach(a=>{a.hidden=!!val&&document.querySelector(a.getAttribute('href'))?.hidden;});}
+ q.addEventListener('input',filter);
+ clear.addEventListener('click',()=>{q.value='';filter();q.focus();});
+ q.addEventListener('keydown',e=>{if(e.key==='Escape'){q.value='';filter();q.blur();}if(e.key==='Enter'){const t=topics.find(x=>!x.hidden);if(t){t.scrollIntoView({block:'start',behavior:'smooth'});t.focus({preventScroll:true});}}});
+ function toast(msg){const el=document.getElementById('jump-status');el.textContent=msg;el.hidden=false;clearTimeout(toast.id);toast.id=setTimeout(()=>el.hidden=true,3000);}
+ document.addEventListener('click',e=>{const b=e.target.closest('button[data-go]');if(!b)return;const target=b.dataset.go;if(!target)return;if(window.parent===window){toast('请先从咪嘛馆里打开本手册，才可以直接跳转功能。');return;}window.parent.postMessage({type:'mima-guide-navigate',target},'*');});
+ window.addEventListener('message',e=>{if(e.source!==parent||e.origin!==location.origin)return;const d=e.data;if(d?.type==='mima-guide-navigation-error')toast(d.message||'暂时无法打开该功能');});
+ let observer;if('IntersectionObserver'in window){observer=new IntersectionObserver(items=>{for(const item of items){if(item.isIntersecting){nav.querySelectorAll('a').forEach(a=>a.classList.toggle('current',a.getAttribute('href')==='#'+item.target.id));break;}}},{rootMargin:'-10% 0px -72% 0px'});topics.forEach(t=>observer.observe(t));}
+ filter();
+})();
+</script></body></html>

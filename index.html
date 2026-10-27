@@ -47,6 +47,7 @@
         <button class="ghost-btn" onclick="openSettings('api')" title="API 接口设置" aria-label="API 接口设置">🔌 API</button>
         <button class="ghost-btn" onclick="MimaThemeAtelier.open();closeDrawer()" title="打开主题工坊">🎨 主题</button>
         <button class="ghost-btn" id="mima-license-open" type="button" onclick="openMimaLicenseDialog()" title="阅读完整软件授权与免责声明">© 许可</button>
+        <button class="ghost-btn" type="button" onclick="closeDrawer();openMimaGuide()">📖 教程</button>
         <div class="standalone-note">独立版 · 数据保存在本机浏览器 · 仅限成年人</div>
     </div>
 </aside>
@@ -73,6 +74,7 @@
       <button onclick="openSettings('memory');MimaR6Nav.close()">🧠 剧情记忆</button>
       <button onclick="MimaThemeAtelier.open();MimaR6Nav.close()">🎨 可视化主题工坊</button>
       <button type="button" onclick="goPhone();MimaR6Nav.close()">📱 小手机（独立聊天）</button>
+      <button type="button" onclick="openMimaGuide();MimaR6Nav.close()">📖 玩家使用手册 · 新手教程</button>
       <button type="button" onclick="openMimaLicenseDialog();MimaR6Nav.close()">© 版权与许可 · 软件免责声明</button>
     </nav>
 
@@ -152,11 +154,58 @@ function openMimaLicenseDialog() {
 }
 </script>
 
+<!-- 玩家帮助中心：独立页面按需装载，不触碰剧情、存档和页面缩放 -->
+<dialog id="mima-guide-dialog" aria-label="咪嘛馆玩家使用手册">
+  <header class="mima-guide-head"><strong>📖 咪嘛馆 · 一看就会的使用手册</strong><div><a href="./guide.html" target="_blank" rel="noopener noreferrer" title="在新标签打开使用手册">独立打开 ↗</a><form method="dialog"><button type="submit" aria-label="关闭使用手册">关闭 ✕</button></form></div></header>
+  <iframe id="mima-guide-frame" title="咪嘛馆新手使用教程" data-src="./guide.html?v=20261027-r19-1" referrerpolicy="same-origin"></iframe>
+</dialog>
+<style>
+#mima-guide-dialog{box-sizing:border-box;position:fixed;inset:0;margin:auto;padding:0;z-index:2147483500;width:min(1060px,calc(100vw - 18px));max-width:calc(100vw - 18px);height:min(94dvh,940px);max-height:94dvh;border:1px solid #d9bec9;border-radius:20px;box-shadow:0 24px 76px #0006;overflow:hidden;background:#f9f7f6;color:#493844;font:14px system-ui,-apple-system,sans-serif;zoom:1}
+#mima-guide-dialog::backdrop{background:rgba(24,15,26,.58);backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px)}
+#mima-guide-dialog .mima-guide-head{box-sizing:border-box;height:56px;padding:8px 15px;display:flex;align-items:center;justify-content:space-between;gap:9px;border-bottom:1px solid #eadce4;background:#fff7fa}
+#mima-guide-dialog .mima-guide-head strong{font-size:14px;line-height:1.3;min-width:0}
+#mima-guide-dialog .mima-guide-head>div{display:flex;align-items:center;gap:9px;flex:none}
+#mima-guide-dialog .mima-guide-head a{font-size:12px;color:#83516b;text-decoration:underline}
+#mima-guide-dialog .mima-guide-head form{margin:0}
+#mima-guide-dialog .mima-guide-head button{background:#fff;border:1px solid #d6b7c5;color:#753e5c;padding:8px 13px;min-height:38px;border-radius:11px;font:700 13px system-ui,sans-serif;cursor:pointer}
+#mima-guide-frame{display:block;width:100%;height:calc(100% - 56px);border:0;background:#f9f7f6}
+@media(max-width:660px){#mima-guide-dialog{width:100vw;max-width:100vw;height:100dvh;max-height:100dvh;border:0;border-radius:0}#mima-guide-dialog .mima-guide-head{height:54px;padding:7px 12px}#mima-guide-dialog .mima-guide-head a{display:none}#mima-guide-frame{height:calc(100% - 54px)}}
+</style>
+<script>
+(function(){
+'use strict';
+const choices={
+ drawer:()=>openDrawer(),api:()=>openSettings('api'),roles:()=>openSettings('roles'),
+ worldbook:()=>openSettings('worldbook'),prompt:()=>openSettings('prompt'),
+ appearance:()=>openSettings('appearance'),context:()=>openSettings('context'),
+ memory:()=>openSettings('memory'),regex:()=>openSettings('regex'),data:()=>openSettings('data'),
+ toolbox:()=>MimaPlayTools.open('native','commands'),theater:()=>MimaPlayTools.open('native','theater'),
+ compat:()=>MimaCompatUI.open(),atelier:()=>MimaThemeAtelier.open(),
+ novel:()=>MimaNovelStudio.open(),phone:()=>goPhone()
+};
+window.openMimaGuide=function(){
+ const d=document.getElementById('mima-guide-dialog');if(!d)return;
+ if(typeof d.showModal!=='function'){window.open('./guide.html','_blank','noopener');return;}
+ if(!d.open)d.showModal();
+ const frame=document.getElementById('mima-guide-frame');
+ if(!frame.getAttribute('src'))frame.setAttribute('src',frame.dataset.src);
+};
+window.addEventListener('message',function(ev){
+ const frame=document.getElementById('mima-guide-frame');
+ if(!frame||ev.source!==frame.contentWindow||ev.origin!==location.origin)return;
+ const data=ev.data;if(!data||data.type!=='mima-guide-navigate'||typeof data.target!=='string'||!Object.prototype.hasOwnProperty.call(choices,data.target))return;
+ try{choices[data.target]();document.getElementById('mima-guide-dialog')?.close();}
+ catch(e){frame.contentWindow?.postMessage({type:'mima-guide-navigation-error',message:'打开功能失败，请从菜单手动进入。'},location.origin);console.warn('咪嘛馆使用手册导航失败',e);}
+});
+})();
+</script>
+
 <!-- 版本更新公告：不接入剧情数据，用户可永久关闭自动提醒 -->
 <div id="mima-release-note-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mima-release-note-title">
   <div class="modal-panel compact-panel mima-release-note-panel">
-    <div class="modal-head"><div><div class="eyebrow">开发版更新公告</div><h2 id="mima-release-note-title">咪嘛馆 · 流式阅读、音效试听与备份反馈修复（开发测试）</h2></div><button class="icon-btn" onclick="closeMimaReleaseNotice()" aria-label="关闭更新公告">✕</button></div>
+    <div class="modal-head"><div><div class="eyebrow">开发版更新公告</div><h2 id="mima-release-note-title">咪嘛馆 · 全新交互使用手册与帮助中心（开发测试）</h2></div><button class="icon-btn" onclick="closeMimaReleaseNotice()" aria-label="关闭更新公告">✕</button></div>
     <div class="mima-release-note-content">
+      <h3>本轮：内置一看就会的玩家帮助中心</h3><ul><li>功能菜单、设置页、剧情侧栏和酒馆兼容工具都可打开「📖 使用手册」；独立阅读，不调用模型，不修改存档</li><li>提供 14 篇零基础图文步骤、目标快捷入口、站内搜索、常见问题及术语解释；部分教程可直接跳转对应功能</li><li>手册使用独立页面与顶层弹窗，手机端独立滚动，不复写主应用样式、输入框、缩放或剧情状态</li><li>本轮仍为开发测试版；真实 iPhone Safari、复杂主题以及整馆端到端交互需继续验证</li></ul>
       <h3>本轮：流式阅读、试听与备份恢复反馈</h3><ul><li>流式 HTML 展开或手动翻阅历史后暂停自动追尾；只有明确点「跟随输出」才恢复，不会被普通滚动事件取消</li><li>普通外观设置中试听音效只播放所选声音一次；普通按钮原有音效与动画仍保留</li><li>完整备份或本机快照恢复时，如果主资料库成功但个人音效失败，会显示「部分完成」并在数据备份页留下具体原因；不会误导重复覆盖资料库</li><li>已做隔离 Chromium 真实点击、流式滚动及音效恢复写入失败注入测试；仍需真实 iPhone Safari 与跨设备恢复实测</li></ul><h3>此前：修复手机顶栏与个人音效导入</h3><ul><li>修复上一版误写坏的 ux-r6.css 样式加载标签，恢复顶部导航圆角与手机端隐藏桌面按钮；不需要清理剧情或重置主题</li><li>普通设置 → 外观 → 动画与点击音效：三类操作可分别导入 MP3/WAV/M4A/AAC，试听、恢复当前主题声音；写入完成后才确认保存</li><li>个人音效单独存放在浏览器 IndexedDB，切换主题仍优先使用个人音效，不修改工坊发布快照及 CSS；完整设置备份增加音效素材，旧备份仍支持</li><li>本轮针对性检查已通过；真实 iPhone Safari、真实安装跨版本缓存及整个网站运行未实测，仍为开发测试版</li></ul>
 
       <h3>本轮：流式 HTML 阅读与完成后位置修复</h3><ul><li>流式正文里打开的 HTML 折叠内容不再被后续字节刷新重置；主动展开时暂停自动跟随，可点「跟上新内容」继续</li><li>生成完成后沿用当前阅读位置：主动翻阅中的段落保持相对位置；仍在跟随最新正文时继续定位末尾，不再跳到新回复开头</li><li>显示正则异步渲染时等最终正文真正就绪再恢复位置；新触摸/滚动操作优先，避免旧完成回调抢走阅读控制权</li><li>流式内容、安全 HTML 净化、正则、历史记忆与主题配置保持原行为；已做手机宽度隔离交互测试，真实 iPhone Safari 仍待实测</li></ul>
@@ -198,6 +247,7 @@ function openMimaLicenseDialog() {
             <button data-tab="prompt" onclick="switchSettingsTab('prompt')">🔬 Prompt（提示词）</button>
             <button data-tab="diagnostics" onclick="switchSettingsTab('diagnostics')">🧾 诊断日志</button>
             <button data-tab="updates" onclick="switchSettingsTab('updates')">🆕 更新公告</button>
+            <button type="button" onclick="openMimaGuide()">📖 使用手册</button>
             <button data-tab="data" onclick="switchSettingsTab('data')">💾 Data（数据）</button>
         </nav>
         <div id="settings-content" class="settings-content"></div>
@@ -304,7 +354,7 @@ function openMimaLicenseDialog() {
     <pre id="compat-stscript-result" role="status" aria-live="polite">尚未执行；导入卡片不触发脚本。</pre>
    </details>
    <div class="compat-actions"><label>本地音频（用户手动播放）<input type="file" id="compat-audio" accept="audio/*"></label><div id="compat-media"></div></div>
-  <details id="compat-game-drawer" class="compat-game-drawer"><summary>功能、资源与诊断</summary><div id="compat-mount-status" role="status">进入剧情后显示实际绑定资源。</div><div id="compat-tools-stack"></div><details id="compat-diagnostics-panel"><summary>运行错误与正则诊断（不参与剧情）</summary><div id="compat-display-errors"></div><div id="compat-diagnostics"></div></details></details></div></section>
+  <details id="compat-game-drawer" class="compat-game-drawer"><summary>功能、资源与诊断</summary><div id="compat-mount-status" role="status">进入剧情后显示实际绑定资源。</div><div id="compat-tools-stack"><button type="button" onclick="openMimaGuide()">📖 玩家使用手册 · 新手教程</button></div><details id="compat-diagnostics-panel"><summary>运行错误与正则诊断（不参与剧情）</summary><div id="compat-display-errors"></div><div id="compat-diagnostics"></div></details></details></div></section>
   <section class="compat-advanced-panel"><h3>互动功能（手动授权）</h3><p>不自动运行来源中的 JavaScript。保留旧 Worker 与仅 DOM 的可视化沙箱；新增作者交互宿主，可独立授权变量与事件，并选择真实离线 jQuery/lodash/Vue/Zod 和本地模块。任意远程依赖、完整 MVU/Tavern Helper 尚未实现，具体能力、权限与状态见每项说明。</p><div id="compat-plugins"></div><div id="compat-css-list"></div><div id="compat-plugin-slot"></div><div id="compat-html-preview"></div></section>
   <section class="compat-advanced-panel"><h3>我的卡片与外部资源</h3><p>原始字节可原样导出；该资源未因检查而成为可执行插件。</p><div id="compat-sources"></div><div id="compat-sessions"></div></section>
   <section class="compat-advanced-panel"><h3>资料备份与恢复检查</h3><div class="compat-actions"><button id="compat-export">仅导出兼容数据库</button><button id="compat-export-both">导出原生 + 兼容</button><input id="compat-restore-file" type="file" accept=".json"><button id="compat-restore-check">只读检查备份</button><button id="compat-restore-apply">安全恢复缺失数据（不覆盖）</button></div>
@@ -341,7 +391,7 @@ function openMimaLicenseDialog() {
 <script src="./png-card-import.js?v=1.4.0&r11=20261012-2"></script>
 <script src="./png-resource-inspector.js?v=1.4.0"></script>
 <script src="./story-play-tools.js?playtools=20261027-3&factmemo=20261027-1&atelierux=20261027-r19&interaction=20261027-r19-prefs-1"></script>
-<script src="./app.js?batch8=publisher-tx-legacy-20261026&batch7=canonical-atomic-20261026&batch6=novel-order-and-empty-restore-20261025&batch4=worldbook-20261025&v=20261025-native-worker-r3&streamsave=20261025&streammode=20261025-thinkingfix-r3&recovery=20261025-p0-1&followup=20261025-r3&taskviewer=20261025-r2&promptclean=20261025-r1&oct25rework=novel-assist-3&reworkfix=20261025-p1-4&navguard=20261025-r19-p1-6&auditfix=20261025-p1-7&audit2=20261025-r2&perf-longtext=20261026-b8-1&batch8rootfix=20261026-1&batch8rework2=20261026&regex-display-batch-fix-20261026&batch8rework4=20261026&playtools=20261027-3&factmemo=20261027-1&atelierux=20261027-r19&interaction=20261027-r19-prefs-1&streamreading=20261027-1&personalSound=20261027-2&triplefix=20261027-1"></script>
+<script src="./app.js?batch8=publisher-tx-legacy-20261026&batch7=canonical-atomic-20261026&batch6=novel-order-and-empty-restore-20261025&batch4=worldbook-20261025&v=20261025-native-worker-r3&streamsave=20261025&streammode=20261025-thinkingfix-r3&recovery=20261025-p0-1&followup=20261025-r3&taskviewer=20261025-r2&promptclean=20261025-r1&oct25rework=novel-assist-3&reworkfix=20261025-p1-4&navguard=20261025-r19-p1-6&auditfix=20261025-p1-7&audit2=20261025-r2&perf-longtext=20261026-b8-1&batch8rootfix=20261026-1&batch8rework2=20261026&regex-display-batch-fix-20261026&batch8rework4=20261026&playtools=20261027-3&factmemo=20261027-1&atelierux=20261027-r19&interaction=20261027-r19-prefs-1&streamreading=20261027-1&personalSound=20261027-2&triplefix=20261027-1&guide=20261027-1"></script>
 <div id="mima-phone-root" hidden aria-label="咪嘛馆小手机独立模式"></div>
 <script src="./sha256-browser.js?v=r11-20261012-2"></script>
 <script src="./compat-author-contract.js?v=r16-20261015-1"></script>

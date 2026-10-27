@@ -10,6 +10,10 @@
 
 本项目的静态入口为 `index.html`。本地推荐使用可信的静态 HTTP 服务（例如在目录执行 `python -m http.server 8000`）并访问 `http://localhost:8000/`；无需后端服务。直接打开本地 HTML 的功能可受浏览器 file:// 安全策略限制。用户选择的模型 API/Provider 按各自配置和协议提供服务，软件不会自动提供模型额度。
 
+## 玩家使用手册
+
+第一次使用请打开网页右上角「功能 → 📖 玩家使用手册」；也可直接打开同目录的 [guide.html](./guide.html)，按“我想做什么”的目标选择零基础图文教程、搜索问题，并从教程快捷进入对应功能。手册离线可读，打开不调用模型、不读取私人剧情数据。
+
 ## 软件授权与扩展
 
 - 核心程序受根目录 [LICENSE](./LICENSE) 约束。正式名称：MimaTAVERN Personal Use and Independent Extensions License v1.0（限制性 Source-Available，不是 OSI 开源）。
