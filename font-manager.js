@@ -286,11 +286,28 @@ window.MimaFontManager = (() => {
         return bytes.buffer;
     }
     async function exportPortable() {
-        const records = await all();
-        return records.map(r => ({
-            id:r.id, name:r.name, family:r.family, format:r.format, size:r.size, createdAt:r.createdAt,
-            bufferBase64: bufferToBase64(r.buffer)
-        }));
+        // Export all original binaries, but cursor through one at a time rather
+        // than getAll() cloning every large ArrayBuffer into memory at once.
+        const db=await openDb();
+        return new Promise((resolve,reject)=>{
+            const records=[];let issue=null,tx;
+            try{
+                tx=db.transaction(STORE,'readonly');
+                const req=tx.objectStore(STORE).openCursor();
+                req.onsuccess=()=>{
+                    const cursor=req.result;if(!cursor)return;
+                    try{
+                        const r=cursor.value;
+                        records.push({id:r.id,name:r.name,family:r.family,format:r.format,size:r.size,createdAt:r.createdAt,bufferBase64:bufferToBase64(r.buffer)});
+                        cursor.continue();
+                    }catch(e){issue=e;try{tx.abort();}catch(_){} }
+                };
+                req.onerror=()=>{issue=req.error;try{tx.abort();}catch(_){} };
+                tx.oncomplete=()=>{db.close();resolve(records);};
+                tx.onabort=()=>{db.close();reject(issue||tx.error||new Error('E_FONT_EXPORT_ABORTED'));};
+                tx.onerror=()=>{issue=issue||tx.error;};
+            }catch(e){try{tx?.abort();}catch(_){}db.close();reject(e);}
+        });
     }
     async function importPortable(records, { replace=false } = {}) {
         if(!Array.isArray(records))throw new Error('E_FONT_BACKUP_FORMAT');
@@ -332,9 +349,19 @@ window.MimaFontManager = (() => {
     // Two-phase add-only import for full-settings restores. Never overwrite a
     // pre-existing ID; the rollback owns only records it inserted. All newly
     // added fonts are written in one IDB transaction, not a per-font loop.
+    async function readFontById(id) {
+        const db=await openDb();
+        return new Promise((resolve,reject)=>{
+            const tx=db.transaction(STORE,'readonly'),req=tx.objectStore(STORE).get(id);
+            let value=null,issue=null;
+            req.onsuccess=()=>{value=req.result;};
+            req.onerror=()=>{issue=req.error;try{tx.abort();}catch(_){} };
+            tx.oncomplete=()=>{db.close();resolve(value);};
+            tx.onabort=()=>{db.close();reject(issue||tx.error||new Error('E_FONT_COMPARE_ABORTED'));};
+        });
+    }
     async function planPortableImport(records) {
         if (!Array.isArray(records)) throw new Error('E_FONT_BACKUP_FORMAT');
-        const current = await all(), existing = new Map(current.map(f => [f.id,f]));
         const incoming = [], seen = new Set();
         for (const raw of records) {
             if (!raw || typeof raw !== 'object' || !raw.bufferBase64) throw new Error('E_FONT_BACKUP_INVALID');
@@ -349,7 +376,7 @@ window.MimaFontManager = (() => {
             if (!buffer.byteLength) throw new Error('E_FONT_BACKUP_SIZE');
             if (Number(raw.size)>0 && Number(raw.size)!==buffer.byteLength) throw new Error('E_FONT_BACKUP_SIZE_MISMATCH');
             const record = {id,name:String(raw.name||'imported.'+format),family:String(raw.family||safeFamily(raw.name)),format,size:buffer.byteLength,createdAt:raw.createdAt||new Date().toISOString(),buffer};
-            const previous=existing.get(id);
+            const previous=await readFontById(id);
             if(previous){
                 const a=new Uint8Array(previous.buffer||new ArrayBuffer(0)),b=new Uint8Array(buffer);
                 if(a.length!==b.length || a.some((v,i)=>v!==b[i]) || previous.family!==record.family) throw new Error('E_FONT_BACKUP_ID_CONFLICT');

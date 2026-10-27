@@ -368,7 +368,7 @@
         const result=edit(stored);
         if(result&&result[NO_LIBRARY_WRITE]===true){state=stored;return result.value;}
         const committed=await window.MimaLocalStore.saveState(stored,stored.storeRevision);
-        state=normalizeState(committed);
+        state={...stored,storeRevision:committed.storeRevision};
         return result;
       }catch(error){
         // A real CAS refusal must not leave obsolete resources on screen. The
@@ -479,7 +479,7 @@
       // CAS protects other tabs and the independent memory ledger. A conflict
       // is surfaced rather than overwritten; no fallback to blank storage.
       const committed=await window.MimaLocalStore.saveState(persisted,Number(persisted.storeRevision)||0,{signal});
-      state=normalizeState(committed);
+      state={...persisted,storeRevision:committed.storeRevision};
       s.recordRevision=normalized.recordRevision;
       return normalized;
       }catch(error){

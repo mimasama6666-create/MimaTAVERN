@@ -77,7 +77,11 @@ function normalizedReadingBoard(value){const r=value&&typeof value==='object'?va
  padding:clamp(r.padding??16,0,40),radius:clamp(r.radius??18,0,48)
 };}
 const PATTERNS=['dots','grid','stripes','diagonal','checker','waves','rings','radial','diamond','cross','halftone','none'];
-const clone=x=>JSON.parse(JSON.stringify(x));
+// Theme records are plain JSON trees. Copy containers, but keep immutable
+// strings (especially multi-MB base64 images/fonts/audio) shared by reference.
+// Editing the result cannot mutate the source; callers still own independent
+// arrays, elements, sound options and nested structures.
+const clone=x=>Array.isArray(x)?x.map(clone):x&&typeof x==='object'?Object.fromEntries(Object.entries(x).map(([k,v])=>[k,clone(v)])):x;
 const clamp=(n,a,b)=>Math.max(a,Math.min(b,Number.isFinite(+n)?+n:a));
 const hex=s=>/^#[0-9a-fA-F]{6}$/.test(String(s||''))?String(s):'#ffffff';
 const safeName=s=>String(s||'主题').replace(/[<>\u0000-\u001f]/g,'').slice(0,80);
@@ -354,6 +358,22 @@ function makeAssetURL(src){const comma=src.indexOf(',');if(comma<0||!/^data:(?:i
 function prepareAssets(project,owner){const used=new Set();return {used,url(src){if(!src||!/^data:/.test(src))return src;let entry=assetPool.get(src);if(!entry){entry=makeAssetURL(src);assetPool.set(src,entry);}used.add(src);return entry;},owner};}
 function commitAssetOwner(owner,used){assetOwners.set(owner,used);for(const [src,url] of assetPool){if(![...assetOwners.values()].some(set=>set.has(src))){URL.revokeObjectURL(url);assetPool.delete(src);}}}
 function releaseAssets(owner){commitAssetOwner(owner,new Set());}
+// A separate preview lease covers <img> stickers, which aren't part of CSS.
+// Keeping their Blob URLs out of DOM markup avoids repeated base64 attribute
+// allocations during edits; replacing the lease reclaims obsolete originals.
+function setPreviewImageAssets(sources=[]){
+ const entry=prepareAssets(null,'preview-images');
+ try{
+  for(const src of sources)entry.url(src);
+  commitAssetOwner('preview-images',entry.used);
+ }catch(e){
+  // A damaged saved image must not leak a half-prepared URL or discard the
+  // previous verified preview. Its original stored bytes remain untouched.
+  commitAssetOwner('preview-images',assetOwners.get('preview-images')||new Set());
+  throw e;
+ }
+}
+function previewImageUrl(src){return assetPool.get(src)||src;}
 function compiledWithAssets(p,mode,owner){const t=prepareAssets(p,owner);const css=compile(p,mode,{assetUrl:t.url});return {css,used:t.used};}
 function previewCss(project){
  // The lightweight material sketch intentionally has no legacy CSS or arbitrary authored extraCss.
@@ -1062,5 +1082,5 @@ function portableBundle(project){const files={},seen=new Map();let n=0;
 // Blob URLs are document-scoped. BFCache pagehide keeps this document and CSS alive.
 // Never revoke its live resources on pagehide; normal owner changes still reclaim stale URLs,
 // and the browser reclaims all object URLs when the document is actually destroyed.
-window.MimaAtelierCore={syncGlobalAppearance,migrateLegacyTheme,exportRecords,validateRecordImport,previewRecordImport,importRecords,cssSyncStatus,settleCssSync,appearanceWarnings,resolvePresentationPlan,presentationLayers,liveLegacyLayers,beginLivePreview,updateLivePreview,endLivePreview,appearanceDiagnostics,normalizeTextPolicy,computeStickerRect,renderAudit,getLastApplyReceipt:()=>lastApplyReceipt&&clone(lastApplyReceipt),getPreviewState:()=>previewSnapshot(),getPublishState:()=>({busy:publishInFlight,receipt:lastApplyReceipt&&clone(lastApplyReceipt),activeVersion:active?.version||0}),TARGETS,DEFAULT,DEFAULT_INTERACTIONS,normalizeInteractions,STYLES,PATTERNS,baseTheme,normalized,clone,clamp,hex,esc,rgba,uid,patternCSS,compile,get,saveDraft,apply,unapply,disabled,reaffirm,bypass,ready,_historySave:saveHistory,_historyLatest:latestHistory,listProjects,saveManual,listManual,forkDraft,exportPresetCss,resolveLibraryCss,releaseAssets,portableBundle,previewCss,getActive:()=>clone(active||{id:null,version:0}),getApplied:()=>applied&&clone(applied),getPresentationMode:()=>applied?.cssPriority||'',positionDecor};
+window.MimaAtelierCore={syncGlobalAppearance,migrateLegacyTheme,exportRecords,validateRecordImport,previewRecordImport,importRecords,cssSyncStatus,settleCssSync,appearanceWarnings,resolvePresentationPlan,presentationLayers,liveLegacyLayers,beginLivePreview,updateLivePreview,endLivePreview,appearanceDiagnostics,normalizeTextPolicy,computeStickerRect,renderAudit,getLastApplyReceipt:()=>lastApplyReceipt&&clone(lastApplyReceipt),getPreviewState:()=>previewSnapshot(),getPublishState:()=>({busy:publishInFlight,receipt:lastApplyReceipt&&clone(lastApplyReceipt),activeVersion:active?.version||0}),TARGETS,DEFAULT,DEFAULT_INTERACTIONS,normalizeInteractions,STYLES,PATTERNS,baseTheme,normalized,clone,clamp,hex,esc,rgba,uid,patternCSS,compile,get,saveDraft,apply,unapply,disabled,reaffirm,bypass,ready,_historySave:saveHistory,_historyLatest:latestHistory,listProjects,saveManual,listManual,forkDraft,exportPresetCss,resolveLibraryCss,releaseAssets,setPreviewImageAssets,previewImageUrl,portableBundle,previewCss,getActive:()=>clone(active||{id:null,version:0}),getApplied:()=>applied&&clone(applied),getPresentationMode:()=>applied?.cssPriority||'',positionDecor};
 })();

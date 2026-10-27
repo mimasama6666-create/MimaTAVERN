@@ -2365,19 +2365,28 @@ async function preloadAtelierVisualResources(project){
  for(const elements of [project.elements,project.variants?.night?.elements])
    for(const value of Object.values(elements||{}))if(value?.image)imageSources.add(value.image);
  for(const sticker of project.stickers||[])if(!sticker.hidden&&sticker.src)imageSources.add(sticker.src);
- const images=[...imageSources].map(src=>{
-   const pic=new Image();pic.src=src;
-   return typeof pic.decode==='function'?pic.decode():new Promise((resolve,reject)=>{
-     if(pic.complete)return pic.naturalWidth?resolve():reject(Error('图像数据无法解码'));
-     pic.onload=resolve;pic.onerror=()=>reject(Error('图像数据无法解码'));
-   });
- });
+ // Validate each original in turn, rather than decoding every full-resolution
+ // wallpaper/sticker at once. A decode failure still refuses the visual commit.
+ for(const src of imageSources){
+   const pic=new Image();
+   try{
+     pic.src=src;
+     if(typeof pic.decode==='function')await pic.decode();
+     else await new Promise((resolve,reject)=>{
+       if(pic.complete)return pic.naturalWidth?resolve():reject(Error('图像数据无法解码'));
+       pic.onload=resolve;pic.onerror=()=>reject(Error('图像数据无法解码'));
+     });
+   }finally{pic.onload=null;pic.onerror=null;pic.removeAttribute('src');}
+ }
  const selectedFamilies=new Set();
  for(const elements of [project.elements,project.variants?.night?.elements])
-  for(const value of Object.values(elements||{}))if(value?.fontFamily)selectedFamilies.add(value.fontFamily);
- const fonts=(project.fonts||[]).filter(f=>selectedFamilies.has(f.family)&&f.src&&typeof FontFace==='function')
-  .map(f=>new FontFace(f.family,`url("${f.src}") format("${({ttf:"truetype",otf:"opentype",woff:"woff",woff2:"woff2"}[String(f.format||"").toLowerCase()]||"truetype")}")`).load());
- await Promise.all([...images,...fonts]);
+   for(const value of Object.values(elements||{}))if(value?.fontFamily)selectedFamilies.add(value.fontFamily);
+ // Full-size font data also remains transient; don't hold many pending decoders.
+ if(typeof FontFace==='function')for(const f of project.fonts||[]){
+   if(!selectedFamilies.has(f.family)||!f.src)continue;
+   const face=new FontFace(f.family,`url("${f.src}") format("${({ttf:'truetype',otf:'opentype',woff:'woff',woff2:'woff2'})[String(f.format||'').toLowerCase()]||'truetype'}")`);
+   await face.load();
+ }
 }
 let emergencyCssVisualBypass=false; // tab-local rescue until reloaded; never pretend an IDB write succeeded
 function resumeCssAfterExplicitEnable(){emergencyCssVisualBypass=false;try{sessionStorage.removeItem('mima-atl-safe-disabled')}catch(e){console.warn('[CSS rescue] safe-mode storage unavailable',e)}}
