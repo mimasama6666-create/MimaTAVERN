@@ -1288,3 +1288,10 @@ html.mima-composer-keyboard .app-shell>.composer-shell{padding-bottom:10px}
 /* Responsive action sizing: scroll only the command strip, not the reading shortcut. */
 .app-shell>.composer-shell>.quick-actions>.quick-actions-scroll{gap:5px;scroll-snap-type:x proximity}
 .app-shell>.composer-shell>.quick-actions>.quick-actions-scroll>.chip-btn{font-size:.75rem;padding:6px 9px;min-height:36px;line-height:1.24;scroll-snap-align:start}
+
+/* R19 B8: independent visible-only font previews and honest load feedback. */
+.mima-font-load-status{padding:8px 11px;margin-top:10px;border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.4);font-size:.74rem;line-height:1.65}
+.mima-font-load-row{overflow-wrap:anywhere}
+.mima-font-load-error{color:#a52d47;font-weight:650}
+.mima-local-font-preview{font-size:1rem;line-height:1.5;overflow-wrap:anywhere}
+.mima-local-font-preview[data-preview-status=error]::after{content:' · 预览失败';font:400 .68rem system-ui,sans-serif;color:#a52d47}

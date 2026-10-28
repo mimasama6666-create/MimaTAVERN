@@ -14,6 +14,15 @@ window.MimaFontManager = (() => {
     let metadataRead = null, registryRead = null, fontRevision = 0, initialized = false;
     let previewFamily='', previewApplied='', previewEpoch=0;
     const applied={ui:'',story:''}, selectionEpoch={ui:0,story:0}, selectionWrites={ui:0,story:0}, pendingFonts=new Map();
+    // A persisted preference is not proof that a font has decoded/registered.
+    // This read-only status is surfaced to the user instead of silently hiding errors.
+    const loadStatus={ui:{family:'',state:'idle',message:''},story:{family:'',state:'idle',message:''}};
+    function reportLoad(kind,family,state,error='') {
+        loadStatus[kind]={family,state,message:String(error?.message||error||'').slice(0,240)};
+        try{window.dispatchEvent(new CustomEvent('mima-font-load-state',{detail:{kind,...loadStatus[kind]}}));}catch(_){ }
+    }
+    function getLoadStatus(kind){return {...loadStatus[kind==='ui'?'ui':'story']};}
+
     // Invalidate the cached picker listing when another open tab commits fonts.
     const fontChanges = typeof BroadcastChannel==='function' ? new BroadcastChannel('mima-tavern-font-metadata-v1') : null;
     if(fontChanges)fontChanges.onmessage = event => {
@@ -358,15 +367,22 @@ window.MimaFontManager = (() => {
             // FontFace.load(). Previously an unresolved/rejected load left the
             // entire page on its default font, even when selection was saved.
             setFontCss(kind,family);
+            reportLoad(kind,family,family?'loading':'default');
             try {
-                await acquireFamily(family);
+                const face=await acquireFamily(family);
                 if(epoch!==selectionEpoch[kind]||family!==getSelected(kind)){trimFonts();return;}
                 applied[kind]=family;
+                // URL/CSS families have no local FontFace in this registry; do not
+                // misreport a saved name as a verified loaded local font.
+                reportLoad(kind,family,face?'loaded':(family?'external':'default'));
                 trimFonts();
             } catch(error) {
                 // Only the request that still owns the selection may roll back
                 // its CSS. An older failure must not overwrite a newer choice.
-                if(epoch===selectionEpoch[kind]&&family===getSelected(kind))setFontCss(kind,previous);
+                if(epoch===selectionEpoch[kind]&&family===getSelected(kind)){
+                    setFontCss(kind,previous);
+                    reportLoad(kind,family,'error',error);
+                }
                 throw error;
             }
         };
@@ -529,5 +545,5 @@ window.MimaFontManager = (() => {
         if (record && getSelected('ui') === record.family) setSelected('ui','');
         if (record && getSelected('story') === record.family) setSelected('story','');
     }
-    return { init, all, listMetadata, getByFamily, ensureFamily, useFamily, releaseUsage, importFile, deleteFont, getSelected, setSelected, applySelected, urlFonts, addUrlFont, deleteUrlFont, exportPortable, importPortable, planPortableImport, commitPortablePlan, rollbackPortablePlan };
+    return { init, all, listMetadata, getByFamily, ensureFamily, useFamily, releaseUsage, importFile, deleteFont, getSelected, getLoadStatus, setSelected, applySelected, urlFonts, addUrlFont, deleteUrlFont, exportPortable, importPortable, planPortableImport, commitPortablePlan, rollbackPortablePlan };
 })();
