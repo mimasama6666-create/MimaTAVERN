@@ -2576,7 +2576,8 @@ function updateFontApplicationStatus(){
     else if(info.state==='error'&&info.family===wanted){
       row.classList.add('mima-font-load-error');
       row.textContent=`${label}「${wanted}」未能加载：${info.message||'无法解析字体文件'}（已显示替代字体，原文件仍保留）`;
-    }else if(info.state==='loaded'&&info.family===wanted){row.textContent=`${label}「${wanted}」：已注册到浏览器`; }
+    }else if(info.state==='loaded'&&info.family===wanted){row.textContent=`${label}「${wanted}」：字体已加载`; }
+    else if(info.state==='registered'&&info.family===wanted){row.textContent=`${label}「${wanted}」：已注册，浏览器正在按需加载`; }
     else if(info.state==='external'&&info.family===wanted){row.textContent=`${label}「${wanted}」：本地文件未注册，可能来自网络字体或外部 CSS；请查看诊断确认`;}
     else {row.textContent=`${label}「${wanted}」：正在恢复或尚未确认加载成功`;} 
     panel.appendChild(row);
@@ -2640,6 +2641,7 @@ async function mimaInspectFontFailure(){
   const urls=MimaFontManager.urlFonts();const output={diagnostic:'MimaTAVERN-font-readonly-20261029',recordedAt:new Date().toISOString(),
    environment:{userAgent:clip(navigator.userAgent),fontFaceSupported:typeof window.FontFace==='function',fontSetSupported:!!document.fonts},
    selections:selected,
+   loadStatus:{ui:MimaFontManager.getLoadStatus?.('ui'),story:MimaFontManager.getLoadStatus?.('story')},
    cssVariables:{uiInline:document.documentElement.style.getPropertyValue('--font-ui').trim(),storyInline:document.documentElement.style.getPropertyValue('--font-story').trim(),uiComputed:getComputedStyle(document.documentElement).getPropertyValue('--font-ui').trim(),storyComputed:getComputedStyle(document.documentElement).getPropertyValue('--font-story').trim()},
    usedElements:{},faces:allFaces.slice(0,40),localAssets:{},customCss:{},conclusion:[]};
   for(const [name,selector] of Object.entries({app:'body',input:'#story-input',story:'#story-chat-box .msg-content',storyProse:'#story-chat-box .story-prose',fontPreview:'#font-preview-sample'})){

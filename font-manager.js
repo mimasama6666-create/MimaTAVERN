@@ -159,25 +159,48 @@ window.MimaFontManager = (() => {
     function releaseFont(id) {const entry=loaded.get(id);if(entry){loaded.delete(id);disposeFont(entry);}}
     function makeFont(record) {
         if (!record?.buffer || !window.FontFace) return false;
-        // Old builds passed a Blob URL to FontFace. On WebKit, forcing URL
-        // decoding and revoking/re-registering that URL introduced an extra
-        // resource lifetime. The already-durable ArrayBuffer is a valid native
-        // FontFace source and does not depend on blob URL fetches at all.
-        try { return {face:new FontFace(record.family,record.buffer,{display:'swap'}),url:''}; }
-        catch (binaryError) {
-            // Preserve older FontFace implementations that only accept CSS src.
-            const url=URL.createObjectURL(new Blob([record.buffer]));
-            try{return {face:new FontFace(record.family,`url("${url}")`,{display:'swap'}),url};}
-            catch(error){URL.revokeObjectURL(url);throw error;}
+        // The pre-CSS-optimization iOS path: register a CSS URL-backed face and
+        // let the browser start loading when the selected family is rendered.
+        // Creating a native ArrayBuffer face and awaiting load() before keeping
+        // it registered was introduced with the crash optimization and breaks
+        // the previous registration guarantee when decoding rejects or stalls.
+        const url=URL.createObjectURL(new Blob([record.buffer]));
+        try { return {face:new FontFace(record.family,`url("${url}")`,{display:'swap'}),url,revision:fontRevision}; }
+        catch(error){URL.revokeObjectURL(url);throw error;}
+    }
+    function reportRegisteredFace(entry,state,error='') {
+        // An older async callback cannot change the status of a replacement.
+        if(loaded.get(entry.id)!==entry)return;
+        for(const kind of ['ui','story']) {
+            if(getSelected(kind)===entry.face.family && applied[kind]===entry.face.family)
+                reportLoad(kind,entry.face.family,state,error);
         }
     }
     function attachFont(id,entry) {
-        // Commit only a verified replacement; a failed add leaves the last face usable.
-        document.fonts.add(entry.face);releaseFont(id);
-        for(const [otherId,other] of loaded)if(other.face.family===entry.face.family)releaseFont(otherId);
+        // Commit the new registered face before retiring a previous copy.
+        // Keep the Blob URL alive while WebKit may still need to fetch it.
+        document.fonts.add(entry.face);
+        releaseFont(id);
+        for(const [otherId,other] of loaded)
+            if(other.face.family===entry.face.family)releaseFont(otherId);
+        entry.id=id;
         loaded.set(id,entry);
-        // Selected/visible faces stay registered until their last owner releases
-        // them; native binary sources do not need a Blob URL at all.
+        entry.face.loaded.then(
+            ()=>{
+                if(loaded.get(id)!==entry)return;
+                entry.state='loaded';
+                // Source bytes are retained by a successfully loaded FontFace;
+                // no further URL reads are needed while the face is alive.
+                if(entry.url){URL.revokeObjectURL(entry.url);entry.url='';}
+                reportRegisteredFace(entry,'loaded');
+            }, error=>{
+                if(loaded.get(id)!==entry)return;
+                entry.state='error';
+                // Keep an error visible rather than removing evidence and
+                // silently pretending that the system fallback is the font.
+                reportRegisteredFace(entry,'error',error);
+            }
+        );
     }
     async function importFile(file) {
         if (!file) throw new Error('没有选择字体文件');
@@ -235,29 +258,32 @@ window.MimaFontManager = (() => {
             const metadata=newestFamilyRecord(await listMetadata(),family);
             if(!metadata)return null; // A URL/CSS/system family has no local binary.
             const current=loaded.get(metadata.id);
-            if(current?.revision===fontRevision)return current.face;
+            if(current?.revision===fontRevision && current.state!=='error')return current.face;
             const revision=fontRevision,record=await readFontById(metadata.id);
             if(!record?.buffer)throw new Error('所选字体的本地文件不存在');
             const entry=makeFont(record);if(!entry)throw new Error('当前浏览器无法加载本地字体');
             try {
-                // Register before awaiting status; native ArrayBuffer FontFace is
-                // already decoded in modern browsers. A failed/stale load only
-                // disposes its candidate and leaves the old face intact.
-                document.fonts.add(entry.face);
-                await entry.face.load();
-                if(revision!==fontRevision){disposeFont(entry);throw new Error('字体库已变化，请重新选择字体');}
-                if(!wantedFamily(family)){disposeFont(entry);return null;}
-                entry.revision=revision;attachFont(record.id,entry);trimFonts(family);
+                if(revision!==fontRevision || !wantedFamily(family)){
+                    disposeFont(entry);return null;
+                }
+                // Preserve the proven pre-optimization behavior: the selected
+                // FontFace stays in document.fonts immediately, *without*
+                // gating registration on load()/decode. Safari can resolve it
+                // using normal CSS matching as soon as the browser renders.
+                attachFont(record.id,entry);
+                trimFonts(family);
                 return entry.face;
             }catch(error){disposeFont(entry);throw error;}
         })();
-        pendingFonts.set(key,task);task.finally(()=>{if(pendingFonts.get(key)===task)pendingFonts.delete(key);}).catch(()=>{});
+        pendingFonts.set(key,task);
+        task.finally(()=>{if(pendingFonts.get(key)===task)pendingFonts.delete(key);}).catch(()=>{});
         return task;
     }
     // One explicit picker preview, plus the two currently applied choices.
     async function ensureFamily(family) {
         const requested=previewFamily=String(family||''),epoch=++previewEpoch;
         const face=await acquireFamily(requested);
+        if(face)await face.load();
         if(epoch===previewEpoch)previewApplied=requested;
         trimFonts();return face;
     }
@@ -269,7 +295,11 @@ window.MimaFontManager = (() => {
         if(previous?.requested===family&&previous.revision===fontRevision)return previous.task;
         const usage={requested:family,applied:previous?.applied||'',revision:fontRevision,task:null};
         usages.set(owner,usage);
-        const task=acquireFamily(family).then(face=>{if(usages.get(owner)===usage)usage.applied=family;return face;})
+        const task=acquireFamily(family).then(async face=>{
+            if(face)await face.load();
+            if(usages.get(owner)===usage && face?.status==='loaded')usage.applied=family;
+            return face;
+        })
             .finally(()=>trimFonts());
         usage.task=task;task.catch(()=>{});return task;
     }
@@ -374,7 +404,8 @@ window.MimaFontManager = (() => {
                 applied[kind]=family;
                 // URL/CSS families have no local FontFace in this registry; do not
                 // misreport a saved name as a verified loaded local font.
-                reportLoad(kind,family,face?'loaded':(family?'external':'default'));
+                reportLoad(kind,family,face?(face.status==='loaded'?'loaded':(face.status==='error'?'error':'registered')):(family?'external':'default'));
+                if(face?.status==='error')reportLoad(kind,family,'error','浏览器未能解码此字体，原记录仍保留');
                 trimFonts();
             } catch(error) {
                 // Only the request that still owns the selection may roll back
