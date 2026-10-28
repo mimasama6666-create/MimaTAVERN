@@ -83,6 +83,27 @@ async function transact(names,mode,work){const db=await open();return new Promis
  tx.oncomplete=()=>{db.close();resolve(output);};tx.onabort=()=>{db.close();reject(rootError||tx.error||error('E_STORE_UNVERIFIED','事务已中止'));};tx.onerror=()=>{rootError??=tx.error;};});}
 async function get(store,id){if(!STORES.includes(store))throw error('E_STORE_UNVERIFIED','未知 store');const db=await open();return new Promise((resolve,reject)=>{const tx=db.transaction(store,'readonly');let found,issue;const r=tx.objectStore(store).get(id);r.onsuccess=()=>found=r.result;r.onerror=()=>issue=r.error;tx.oncomplete=()=>{db.close();if(issue)reject(issue);else resolve(found===undefined?null:found);};tx.onabort=()=>{db.close();reject(issue||tx.error||error('E_STORE_UNVERIFIED','读取失败'));};});}
 async function all(store){if(!STORES.includes(store))throw error('E_STORE_UNVERIFIED','未知 store');const db=await open();return new Promise((resolve,reject)=>{const tx=db.transaction(store,'readonly');let result,issue;const r=tx.objectStore(store).getAll();r.onsuccess=()=>result=r.result;r.onerror=()=>issue=r.error;tx.oncomplete=()=>{db.close();if(issue)reject(issue);else resolve(result);};tx.onabort=()=>{db.close();reject(issue||tx.error||error('E_STORE_UNVERIFIED','枚举失败'));};});}
+// IDB cannot project fields in getAll. A cursor drops each heavy source/raw
+// value before advancing, returning only metadata to list UIs. No binary/raw
+// array or DOM closure is ever built for browsing the library.
+async function listMetadata(store) {
+ if(!['source_capsules','resource_ir'].includes(store))throw error('E_STORE_UNVERIFIED','不支持的元数据列表');
+ const db=await open();return new Promise((resolve,reject)=>{
+  let tx,issue,ended=false;const records=[];
+  try{
+   tx=db.transaction(store,'readonly');const request=tx.objectStore(store).openCursor();
+   request.onsuccess=()=>{const cursor=request.result;if(!cursor){ended=true;return;}
+    const value=cursor.value;
+    if(store==='source_capsules'){const {id,filename,format,sha256,importedAt,revision}=value;records.push({id,filename,format,sha256,importedAt,revision});}
+    else {const {id,sourceId,kind,name,path,revision}=value;records.push({id,sourceId,kind,name,path,revision});}
+    cursor.continue();
+   };
+   request.onerror=()=>{issue=request.error;};
+  }catch(e){try{tx?.abort();}catch(_){}db.close();reject(e);return;}
+  tx.oncomplete=()=>{db.close();if(issue||!ended)reject(issue||error('E_STORE_UNVERIFIED','元数据枚举不完整'));else resolve(records);};
+  tx.onabort=()=>{db.close();reject(issue||tx.error||error('E_STORE_UNVERIFIED','元数据枚举中止'));};
+ });
+}
 // Indexed reads avoid a full scan on every story turn. Browser schema v2
 // is mandatory. Old isolated test doubles without db.version emulate v1.
 async function byIndex(name,field,key){
@@ -247,5 +268,5 @@ async function restoreVerified(parsed,{dryRun=true,mode='merge-new-only',allowLe
   tx.onabort=()=>{db.close();reject(issue||tx.error||error('E_STORE_UNVERIFIED','恢复事务被中止，资料未写入'));};
  });
 }
-return Object.freeze({DB,VERSION,STORES,error,uid,open,get,all,byIndex,putCAS,putVariableWithGrant,importSource,importRegexSource,snapshot,jsonify,packBackup,unpackBackup,parseBackup,restoreVerified,verifySources,verifyRelationships});
+return Object.freeze({DB,VERSION,STORES,error,uid,open,get,all,listMetadata,byIndex,putCAS,putVariableWithGrant,importSource,importRegexSource,snapshot,jsonify,packBackup,unpackBackup,parseBackup,restoreVerified,verifySources,verifyRelationships});
 });

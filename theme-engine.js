@@ -19,8 +19,10 @@
   function apply(input={}){
     const settings=normalizeSettings(input);
     if(typeof document!=='undefined'&&document.documentElement){
-      if(settings.theme==='default')document.documentElement.removeAttribute('data-mima-theme');else document.documentElement.setAttribute('data-mima-theme',settings.theme);
-      document.documentElement.style.colorScheme=settings.theme==='midnight'?'dark':'light';
+      const bypass=new URLSearchParams(typeof location==='undefined'?'':location.search).get('noCss')==='1'||root.MimaCssRecoveryBypass===true;
+      const custom=!bypass&&settings.globalCssEnabled!==false&&!!settings.globalCssPresetId;
+      if(custom||settings.theme==='default')document.documentElement.removeAttribute('data-mima-theme');else document.documentElement.setAttribute('data-mima-theme',settings.theme);
+      document.documentElement.style.colorScheme=!custom&&settings.theme==='midnight'?'dark':'light';
       const meta=document.querySelector?.('meta[name="theme-color"]');if(meta){const colors={default:'#dfe1e4',midnight:'#111216',eink:'#c8c9c2',paper:'#e8dfcf','seoul-mist':'#f1f2f4','sakura-milk':'#fff0f5','lilac-cloud':'#f3effb','aqua-sky':'#eaf8fd','material-snow':'#f6f8fc','fluent-blue':'#eef5fe'};meta.setAttribute('content',colors[settings.theme]||colors.default);}
     }
     return settings;

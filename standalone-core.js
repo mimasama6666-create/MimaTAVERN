@@ -353,7 +353,7 @@
       regexPacks: legacyRoot(raw.regexPacks,'legacy_regexpack',normalizeRegexPack),
       theaterCards:legacyRoot(raw.theaterCards,'legacy_theater',p=>normalizePlayResource(p,'theater')),quickCommands:legacyRoot(raw.quickCommands,'legacy_command',p=>normalizePlayResource(p,'command')),settingTemplates:legacyRoot(raw.settingTemplates,'legacy_template',normalizeSettingTemplate),
       novelProjects: arr(raw.novelProjects).map((p,index)=>{const x=stableLegacyNovel(p,index);return window.MimaNovelEngine?.normalizeProject?window.MimaNovelEngine.normalizeProject(x):x;}),
-      themeSettings: window.MimaThemeEngine?.normalizeSettings?window.MimaThemeEngine.normalizeSettings(raw.themeSettings||{}):{theme:'default',updatedAt:''}
+      themeSettings: window.MimaThemeEngine?.normalizeSettings?window.MimaThemeEngine.normalizeSettings(raw.themeSettings||{}):{theme:'default',updatedAt:'',...(raw.themeSettings||{})}
     };
   }
 
@@ -383,6 +383,29 @@
     sessionSaveTail=task.then(()=>{},()=>{});
     return task;
   }
+  function normalizeAppearance(raw){
+    return {...raw,cssPresets:legacyRoot(raw.cssPresets,'legacy_css',normalizeCssPreset),
+      themeSettings:window.MimaThemeEngine?.normalizeSettings?window.MimaThemeEngine.normalizeSettings(raw.themeSettings||{}):{theme:'default',...(raw.themeSettings||{})}};
+  }
+  function commitAppearanceEdit(edit){
+    const commit=async()=>{
+      let result;
+      try{
+        const appearance=await window.MimaLocalStore.commitAppearance(raw=>{
+          const stored=normalizeAppearance(raw);result=edit(stored);
+          if(result&&result[NO_LIBRARY_WRITE]===true){result=result.value;return false;}
+          Object.assign(raw,stored);
+        });
+        state=window.MimaLocalStore.mergeAppearance(state,normalizeAppearance(appearance));
+        return result;
+      }catch(error){
+        try{state=window.MimaLocalStore.mergeAppearance(state,normalizeAppearance(await window.MimaLocalStore.loadAppearance()));}
+        catch(readError){console.error('E_APPEARANCE_REFRESH_FAILED_AFTER_WRITE',readError);}
+        throw error;
+      }
+    };
+    const task=sessionSaveTail.then(commit,commit);sessionSaveTail=task.then(()=>{},()=>{});return task;
+  }
   function resourceChanged(a,b){return JSON.stringify(a) !== JSON.stringify(b);}
   function assertResourceFresh(table,id,stored){
     const seen=state[table].find(item=>item.id===id)||null;
@@ -393,7 +416,7 @@
   }
   function commitResource(table,value,expectedUpdatedAt){
     const input=clone(value);
-    return commitLibraryEdit(stored=>{
+    return (table==='cssPresets'?commitAppearanceEdit:commitLibraryEdit)(stored=>{
       const current=assertResourceFresh(table,input.id,stored);
       if(current&&expectedUpdatedAt&&String(expectedUpdatedAt)!==String(current.updatedAt||''))
         throw new ApiError('E_CANONICAL_CONFLICT','资源已更新，旧编辑不能覆盖新内容：'+table+'/'+input.id);
@@ -420,6 +443,14 @@
     }
   }
   function deleteResource(table,id,unlink){
+    if(table==='cssPresets')return commitAppearanceEdit(stored=>{
+      const current=assertResourceFresh(table,id,stored);
+      if(!current)return {[NO_LIBRARY_WRITE]:true,value:{deleted:false}};
+      stored.cssPresets=stored.cssPresets.filter(item=>item.id!==id);
+      if(stored.themeSettings?.globalCssPresetId===id)stored.themeSettings={...stored.themeSettings,globalCssPresetId:null,globalCssEnabled:false};
+      if(!stored.deletedCssIds.includes(id)){stored.deletedCssIds.push(id);stored.deletedCssAt={...stored.deletedCssAt,[id]:nowIso()};}
+      return {deleted:true};
+    });
     return commitLibraryEdit(stored=>{
       const current=assertResourceFresh(table,id,stored);
       if(!current)return {[NO_LIBRARY_WRITE]:true,value:{deleted:false}};
@@ -536,7 +567,7 @@
     const input=body.preset;
     if(!/^css-atl-[a-f0-9]{64}$/.test(input.id||'')||!/^css-release:[a-zA-Z0-9:_-]{1,180}$/.test(input.atelierReleaseKey||''))throw Error('工坊发布指纹无效');
     if(input.scope!=='app'||input.surface!=='global')throw Error('工坊 CSS 必须以全局主题方式发布');
-    const result=await commitLibraryEdit(stored=>{
+    const result=await commitAppearanceEdit(stored=>{
       const preset=normalizeCssPreset({...input,createdAt:nowIso(),updatedAt:nowIso()});
       const old=stored.cssPresets.find(x=>x.id===preset.id||x.atelierReleaseKey===preset.atelierReleaseKey);
       if(old&&(old.id!==preset.id||old.atelierReleaseKey!==preset.atelierReleaseKey||old.css!==preset.css))throw Error('同一工坊发布指纹对应不同 CSS，拒绝覆盖历史版本');
@@ -552,7 +583,7 @@
   async function publishAssistantCss(body={}){
     const input=body.preset||{};
     if(input.scope!=='app'||input.surface!=='global'||!String(input.css||'').trim())throw Error('助手全局 CSS 作用域或正文无效');
-    const result=await commitLibraryEdit(stored=>{
+    const result=await commitAppearanceEdit(stored=>{
       const preset=normalizeCssPreset({...input,atelierReleaseKey:'',updatedAt:nowIso()});
       const existing=stored.cssPresets.find(p=>p.id===preset.id);
       if(existing&&(existing.css!==preset.css||existing.scope!=='app'||existing.atelierReleaseKey))throw Error('同 ID 助手 CSS 与原版本冲突；拒绝修改既有预设');
@@ -628,7 +659,7 @@
   }
   async function saveThemeSettings(input={}){
     const baseline=clone(state.themeSettings);
-    const next=await commitLibraryEdit(stored=>{
+    const next=await commitAppearanceEdit(stored=>{
       if(resourceChanged(baseline,stored.themeSettings))
         throw new ApiError('E_CANONICAL_CONFLICT','外观已在其他窗口修改，请刷新后再调整');
       stored.themeSettings=window.MimaThemeEngine?.normalizeSettings?
@@ -3936,5 +3967,6 @@
   }
 
   window.MimaMemoryContracts=Object.freeze({normalizeManualMemory});
-  window.MimaStandalone={getPlayTools:()=>({theaterCards:state.theaterCards.map(p=>({...p})),quickCommands:state.quickCommands.map(p=>({...p}))}),init,handle,previewMemoryPlan,memorySourceParts,memoryWorkPlan,runRecordedMemory,memorySourceFingerprint,memoryFactSignature,manualReplyFingerprint,isManuallyRecoveredReply,getApiConfig,saveApiConfig,apiCapacityIdentity,effectiveRequestConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,validateStoryReply,classifyStoryReply,applyRegexForSession,applyRegexForSessionAsync,applyRegexBatchForSessionAsync,hasActiveRegexForSession,resolveMacrosForSession,compileUserInputForPrompt,exportLibrary,importLibrary,previewLibraryImport,validateLibrary,assemble,getLastUsage,getPhoneResources:()=>({masks:clone(state.masks),presets:clone(state.presets),worldbooks:clone(state.worldbooks),themeSettings:clone(state.themeSettings),storeRevision:state.storeRevision}),getState:()=>clone(state)};
+  // Normalized CSS presets contain scalar fields; copy their records without serializing History or immutable CSS strings.
+  window.MimaStandalone={getPlayTools:()=>({theaterCards:state.theaterCards.map(p=>({...p})),quickCommands:state.quickCommands.map(p=>({...p}))}),init,handle,previewMemoryPlan,memorySourceParts,memoryWorkPlan,runRecordedMemory,memorySourceFingerprint,memoryFactSignature,manualReplyFingerprint,isManuallyRecoveredReply,getApiConfig,saveApiConfig,apiCapacityIdentity,effectiveRequestConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,validateStoryReply,classifyStoryReply,applyRegexForSession,applyRegexForSessionAsync,applyRegexBatchForSessionAsync,hasActiveRegexForSession,resolveMacrosForSession,compileUserInputForPrompt,exportLibrary,importLibrary,previewLibraryImport,validateLibrary,assemble,getLastUsage,getPhoneResources:()=>({masks:clone(state.masks),presets:clone(state.presets),worldbooks:clone(state.worldbooks),themeSettings:clone(state.themeSettings),storeRevision:state.storeRevision}),getThemeSettings:()=>clone(state.themeSettings),getCssAppearance:()=>({themeSettings:clone(state.themeSettings),cssPresets:state.cssPresets.map(p=>({...p}))}),getState:()=>clone(state)};
 })();

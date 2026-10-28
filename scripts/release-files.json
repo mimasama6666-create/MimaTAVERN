@@ -115,5 +115,7 @@
   "vendor/marked-LICENSE.md",
   "worldbook-match-worker.js",
   "worldbook-match.js",
-  "tavern-backup.js"
+  "tavern-backup.js",
+  "css-resources.js",
+  "native-history-window.js"
 ]

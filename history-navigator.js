@@ -24,7 +24,7 @@ function setup(){if(host||!(box=document.getElementById('story-chat-box')))retur
 function toggle(state){setup();expanded=state;host.classList.toggle('expanded',state);$('.mima-history-panel').hidden=!state;const btn=$('.mima-history-handle');btn.setAttribute('aria-expanded',String(state));btn.setAttribute('aria-label',state?'收起历史导航':'展开历史导航');refreshProgress();}
 // Snapshot only fields affecting canonical search and its DOM projection.
 // Comparing values, not array identity, handles same-session rehydration.
-let messageRevision=[];
+let messageRevision=[],searchEpoch=0;
 // Search projects only the currently visible text. Archived versions are read
 // by their own action, so their full bodies do not belong in this revision.
 function revisionOf(m){return [m?.id||'',m?.role||'',m?.content||'',!!m?.isEdited];}
@@ -33,7 +33,7 @@ function unchangedRevision(next){return next.length===messageRevision.length&&ne
 function sync(id,list){
  setup();if(!host)return;
  const next=Array.isArray(list)?list:[],sameSession=id===session;
- const revisions=next.map(revisionOf),unchanged=sameSession&&unchangedRevision(revisions);
+ const revisions=next.map(revisionOf),unchanged=sameSession&&unchangedRevision(revisions);if(!unchanged)searchEpoch++;
  if(!sameSession){origin=null;searchHits=[];searchPage=0;searchTerm='';
   $('[data-search]').value='';$('.mima-history-results').replaceChildren();$('.mima-history-pages').hidden=true;
   window.CSS?.highlights?.delete('mima-history-match');}
@@ -45,7 +45,7 @@ function sync(id,list){
  messageNodes.clear();
  if(sameSession&&!unchanged&&searchTerm){
   const previousPage=searchPage;
-  rebuildSearch(previousPage);
+  void rebuildSearch(previousPage).catch(error=>report('搜索未完成：'+error.message));
   if(origin?.anchor?.id&&!messages.some(m=>m.id===origin.anchor.id))origin.anchor.id=null;
   report('剧情内容已更新，搜索结果重新核对（'+searchHits.length+' 条）。');
  }
@@ -101,7 +101,7 @@ function scrollByVisual(view,delta){
 }
 function jumpId(id){const idx=messages.findIndex(m=>m.id===id);if(idx<0)return report('这条消息已被修改或删除，未调整原有历史。');
  if(!origin)origin={session,anchor:currentAnchor()};
- const node=findMessageNode(id);
+ window.MimaNativeHistoryWindow?.ensure(id);const node=findMessageNode(id);
  if(!node)return report('目标尚未显示；不会误跳到其他剧情。');
  scrollByVisual(box,node.getBoundingClientRect().top-box.getBoundingClientRect().top-14);
  node.classList.remove('mima-history-highlight');void node.offsetWidth;node.classList.add('mima-history-highlight');
@@ -109,7 +109,7 @@ function jumpId(id){const idx=messages.findIndex(m=>m.id===id);if(idx<0)return r
 function jumpNumber(kind,n){if(!Number.isSafeInteger(n)||n<1)return report('请输入正整数。');if(kind==='message'){const msg=messages[n-1];if(!msg)return report('消息序号超出当前历史范围。');return jumpId(msg.id);}
  let count=0;const msg=messages.find(m=>{if(m.role==='user')count++;return m.role==='user'&&count===n;});if(!msg)return report('当前剧情没有这一轮玩家发言。');jumpId(msg.id);}
 function returnToOrigin(){if(!origin)return report('尚无需要返回的位置。');if(origin.session!==session){origin=null;return report('会话已经切换，已取消旧定位。');}
- const ref=origin.anchor;origin=null;window.CSS?.highlights?.delete('mima-history-match');const node=findMessageNode(ref?.id);
+ const ref=origin.anchor;window.MimaNativeHistoryWindow?.ensure(ref?.id);origin=null;window.CSS?.highlights?.delete('mima-history-match');const node=findMessageNode(ref?.id);
  if(node)scrollByVisual(box,node.getBoundingClientRect().top-box.getBoundingClientRect().top-ref.offset);else box.scrollTop=ref?.scrollTop||0;
  report('已返回跳转前的阅读位置。');refreshProgress();}
 function jumpLast(){if(!messages.length)return;const last=messages[messages.length-1];if(!last.id)return;return jumpId(last.id);}
@@ -132,7 +132,7 @@ function visibleText(msg,nodes){
 function rawText(msg){return String(msg.content||'');}
 function focusMatch(id,term){
  if(!term)return;
- const content=findMessageNode(id)?.querySelector(':scope > .msg-content');if(!content)return;
+ window.MimaNativeHistoryWindow?.ensure(id);const content=findMessageNode(id)?.querySelector(':scope > .msg-content');if(!content)return;
  const walker=document.createTreeWalker(content,NodeFilter.SHOW_TEXT);const spans=[];let joined='',part;
  while((part=walker.nextNode())){
   if(!part.nodeValue)continue;
@@ -149,20 +149,22 @@ function focusMatch(id,term){
  if(typeof Highlight!=='undefined'&&window.CSS?.highlights)CSS.highlights.set('mima-history-match',new Highlight(range));
 }
 function search(){
- const term=$('[data-search]').value.trim();if(!term){searchTerm='';searchHits=[];$('.mima-history-results').replaceChildren();$('.mima-history-pages').hidden=true;return report('输入需要查找的文字或短语。');}
- searchTerm=term;searchMode=$('[data-raw-search]').checked?'raw':'visible';rebuildSearch(0);
+ const term=$('[data-search]').value.trim();if(!term){searchTerm='';searchHits=[];++searchEpoch;$('.mima-history-results').replaceChildren();$('.mima-history-pages').hidden=true;return report('输入需要查找的文字或短语。');}
+ searchTerm=term;searchMode=$('[data-raw-search]').checked?'raw':'visible';return rebuildSearch(0).catch(error=>report('搜索未完成：'+error.message));
 }
-function rebuildSearch(page){
- if(!searchTerm)return;
- const raw=searchMode==='raw',needle=searchTerm.toLocaleLowerCase();searchHits=[];
- const nodes=raw?null:makeMessageIndex();
- for(let i=0;i<messages.length;i++){
-  const msg=messages[i];if(!msg?.id)continue;
-  const source=raw?rawText(msg):visibleText(msg,nodes),pos=source.toLocaleLowerCase().indexOf(needle);
-  if(pos>=0)searchHits.push({msg,i,snippet:source.slice(Math.max(0,pos-22),Math.min(source.length,pos+searchTerm.length+36))});
+async function rebuildSearch(page){
+ if(!searchTerm)return;const epoch=++searchEpoch,list=messages.slice(),term=searchTerm,raw=searchMode==='raw',needle=term.toLocaleLowerCase(),hits=[];
+ const nodes=raw?null:makeMessageIndex();report('正在核对完整历史中的可见文字…');
+ for(let i=0;i<list.length;i++){
+  if(epoch!==searchEpoch)return;const msg=list[i];if(!msg?.id)continue;
+  const source=raw?rawText(msg):window.MimaNativeHistoryWindow?await MimaNativeHistoryWindow.readVisibleText(msg.id,{settle:()=>window.MimaHistoryDisplaySettled?.()}):visibleText(msg,nodes);
+  if(epoch!==searchEpoch)return;const pos=source.toLocaleLowerCase().indexOf(needle);
+  if(pos>=0)hits.push({msg,i,snippet:source.slice(Math.max(0,pos-22),Math.min(source.length,pos+term.length+36))});
+  if(i%24===23)await new Promise(r=>setTimeout(r,0));
  }
- showSearchPage(Math.min(page,Math.max(0,Math.ceil(searchHits.length/100)-1)));
+ if(epoch!==searchEpoch)return;searchHits=hits;showSearchPage(Math.min(page,Math.max(0,Math.ceil(searchHits.length/100)-1)));report('找到 '+hits.length+' 条消息。');
 }
+
 function showSearchPage(page){
  const size=100,pages=Math.ceil(searchHits.length/size);if(!Number.isInteger(page)||page<0||page>=Math.max(1,pages))return;
  searchPage=page;const results=$('.mima-history-results');results.replaceChildren();

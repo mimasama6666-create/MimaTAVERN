@@ -4,6 +4,7 @@ const C=window.MimaAtelierCore;if(!C){console.error('MimaAtelierCore missing');r
 const $=id=>shadow?.getElementById(id),esc=C.esc,cl=C.clone,uid=C.uid;
 let catalogSearch='',catalogKind='all',catalogPage=0,previewCandidate=null,previewLayer='combined';
 let previewFrameRequest=null;
+let projectListTask=null,projectListEpoch=0,projectListOffset=0,projectListController=null;
 let host=null,shadow=null,project=null,tab='templates',selected=['shell'],patternId=null,stickerId=null,undo=[],redo=[],saveTimer=null,previewStyle=null,statusTimer=null,opened=false,drag=null,applying=false,activeVersion=0,sceneMode='day',previewMode='structure',previewDevice='fit',gestureKey=null,saveQueue=Promise.resolve(),draftVersions=new Map(),fullscreen=false,previewTimer=null,beforeSnapshot=null,compareBefore=false,openingPromise=null,draftConflict=null,changingProject=false,liveDocked=false,liveRevisionTimer=null,liveDockOpId=null,pickingRealArea=false;
 const FIELD_GROUPS={
  '材质与颜色':[
@@ -90,7 +91,7 @@ async function saveCssToLibrary(source=project,{updateDraft=true,publish=false}=
  if(!globalThis.crypto?.subtle)throw Error('当前上下文不支持安全摘要，CSS 库同步暂不可用；工坊已发布的主题不会回滚。');
  const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(persistent))))).map(x=>x.toString(16).padStart(2,'0')).join('');
  const releaseKey='css-release:'+candidate.id+':'+digest;
- const verifiedCssState=window.MimaStandalone?.getState?.();if(!Array.isArray(verifiedCssState?.cssPresets))throw Error('正式 CSS 列表未经过验证，拒绝在未知归属状态下覆盖或新建');
+ const verifiedCssState=window.MimaStandalone?.getCssAppearance?.();if(!Array.isArray(verifiedCssState?.cssPresets))throw Error('正式 CSS 列表未经过验证，拒绝在未知归属状态下覆盖或新建');
  const existing=verifiedCssState.cssPresets.find(x=>x.atelierReleaseKey===releaseKey);
  // A CSS resource is an immutable versioned reference. A prior linkedCssId belongs
  // to a prior session and must NEVER be PATCHed when a new digest is published.
@@ -302,12 +303,20 @@ async function endRealPagePreview(){
  if(opened)refreshPreview();
  note('已核对最新正式主题并返回；试穿没有提交。');
 }
+function releaseEditorPreview(){
+ clearTimeout(saveTimer);saveTimer=null;clearTimeout(previewTimer);previewTimer=null;clearTimeout(statusTimer);statusTimer=null;cancelLiveRevision();
+ if(previewFrameRequest!==null){cancelAnimationFrame(previewFrameRequest);previewFrameRequest=null;}
+ ++projectListEpoch;projectListController?.abort();projectListController=null;projectListTask=null;drag=null;if(dockViewportFrame){cancelAnimationFrame(dockViewportFrame);dockViewportFrame=0;}
+ const frame=$('atl-sandbox-preview');if(frame){frame.srcdoc='';frame.hidden=true;}
+ const stickers=$('atl-preview-stickers');if(stickers)stickers.replaceChildren();
+ if(previewStyle)previewStyle.textContent='';C.releaseAssets('preview');C.releaseAssets('preview-images');
+}
 async function readOnlyExit(){
  // Explicitly retain Core recovery debt; closing the editor is not settlement.
  clearTimeout(saveTimer);suspendedDraft=true;setFullscreen(false);setLiveDock(false);
  // Read-only exit never depends on a broken IndexedDB write. The working draft
  // remains in this tab's memory, not a fabricated durable save.
- host.style.display='none';opened=false;C.releaseAssets('preview');
+ host.style.display='none';opened=false;releaseEditorPreview();
  document.documentElement.classList.remove('mima-atl-editing');
  syncPreviewControls();
 }
@@ -321,10 +330,11 @@ function renderStatus(message){
   warnings.replaceChildren(summary,...all.map(msg=>{const p=document.createElement('p');p.textContent=msg;return p;}));}
  if(message)note(message);
 }
-async function open(){if(opened)return;if(openingPromise)return openingPromise;openingPromise=(async()=>{start();await C.ready;await saveQueue;const active=C.getActive();activeVersion=active.version;
+async function open(){if(opened)return;if(openingPromise)return openingPromise;openingPromise=(async()=>{start();await C.ready;const active=C.getActive();activeVersion=active.version;
  if(suspendedDraft&&project){host.style.display='block';opened=true;suspendedDraft=false;
  document.documentElement.classList.add('mima-atl-editing');setFullscreen(false);render();refreshPreview();syncPreviewControls();
  note('已恢复本页保留的未保存草稿。存储故障期间不要刷新页面；可重试核对正式主题。',true);return;}
+ await saveQueue.catch(error=>console.warn('[Atelier] previous draft save failed; reopening remains available',error));
  const draftId=window.sessionStorage.getItem('mima-atl-current'),recent=await C.get('lastEdited');let loaded=draftId?await C.get('project:'+draftId):null;
  if(!loaded&&recent?.id)loaded=await C.get('project:'+recent.id);
  if(!loaded&&active.id)loaded=await C.get('project:'+active.id);
@@ -336,9 +346,9 @@ async function open(){if(opened)return;if(openingPromise)return openingPromise;o
 })();try{return await openingPromise;}finally{openingPromise=null;}
 }
 
-async function close(){if(!host)return;if(isPreviewPending())await endRealPagePreview();if(liveDocked)setLiveDock(false);clearTimeout(saveTimer);await persistBeforeSwitch();setFullscreen(false);clearTimeout(previewTimer);if(previewFrameRequest!==null){cancelAnimationFrame(previewFrameRequest);previewFrameRequest=null;}host.style.display='none';opened=false;C.releaseAssets('preview');C.releaseAssets('preview-images');document.documentElement.classList.remove('mima-atl-editing');}
+async function close(){if(!host)return;if(isPreviewPending())await endRealPagePreview();if(liveDocked)setLiveDock(false);clearTimeout(saveTimer);await persistBeforeSwitch();setFullscreen(false);host.style.display='none';opened=false;releaseEditorPreview();document.documentElement.classList.remove('mima-atl-editing');}
 function syncStickerAssetPreview(){if(!project)return;const selectedId=project.stickers.some(s=>s.id===stickerId)?stickerId:project.stickers.at(-1)?.id;try{C.setPreviewImageAssets(project.stickers.filter(s=>!s.hidden||s.id===selectedId).map(s=>s.src));}catch(e){console.error('[Atelier] sticker image preview failed; stored assets preserved',e);note('贴纸预览无法解码，原图仍保留：'+e.message,true);}}
-function render(){if(!opened)return;syncStickerAssetPreview();const openSections=new Set([...shadow.querySelectorAll('#atl-editor-content details[data-atl-section][open]')].map(n=>n.dataset.atlSection));syncPreviewControls();const more=shadow.querySelector('.atl-tab-more');for(const b of shadow.querySelectorAll('[data-tab]'))b.classList.toggle('active',b.dataset.tab===tab);const area=$('atl-editor-content');if(tab==='design')area.innerHTML=renderDesign();else if(tab==='templates'){area.innerHTML=renderTemplates();renderCatalogResults();}else if(tab==='interactions')area.innerHTML=renderInteractions();else if(tab==='patterns')area.innerHTML=renderPatterns();else if(tab==='stickers')area.innerHTML=renderStickers();else if(tab==='project')area.innerHTML=renderProject();if(tab==='design')for(const id of openSections){const section=area.querySelector(`details[data-atl-section="${id}"]`);if(section)section.open=true;}renderStatus();if(tab==='project')showProjects();}
+function render(){if(!opened)return;syncStickerAssetPreview();const openSections=new Set([...shadow.querySelectorAll('#atl-editor-content details[data-atl-section][open]')].map(n=>n.dataset.atlSection));syncPreviewControls();const more=shadow.querySelector('.atl-tab-more');for(const b of shadow.querySelectorAll('[data-tab]'))b.classList.toggle('active',b.dataset.tab===tab);const area=$('atl-editor-content');if(tab==='design')area.innerHTML=renderDesign();else if(tab==='templates'){area.innerHTML=renderTemplates();renderCatalogResults();}else if(tab==='interactions')area.innerHTML=renderInteractions();else if(tab==='patterns')area.innerHTML=renderPatterns();else if(tab==='stickers')area.innerHTML=renderStickers();else if(tab==='project')area.innerHTML=renderProject();if(tab==='design')for(const id of openSections){const section=area.querySelector(`details[data-atl-section="${id}"]`);if(section)section.open=true;}renderStatus();if(tab==='project')showProjects();else{++projectListEpoch;projectListController?.abort();projectListController=null;projectListTask=null;}}
 function targetChecks(){return `<div class="atl-picker" role="group" aria-label="选择需要编辑的界面区域">${Object.entries(C.TARGETS).map(([id,t])=>`<label><input type="checkbox" data-target="${id}" ${selected.includes(id)?'checked':''}><span>${esc(t.label)}</span></label>`).join('')}</div><p class="atl-hint">可多选。选「整体背景」时模糊是背景图片的模糊（需有图）；其他面板则是表面磨砂。修改保存于草稿，须试穿后正式应用。</p>${selected.some(k=>(k==='status'||k==='safeHtmlHost')&&!project.regions[k])?'<p class="atl-protected">当前所选的角色 HTML 区域受保护，所以这里的修改不会覆盖角色自己的设计。<button type="button" data-action="authorize-selected">授权工坊接管选中的 HTML 区域</button></p>':''}`}
 function fieldControl([k,name,type,a,b,step]){const vals=selected.map(x=>edition().elements[x]?.[k]);const equal=vals.every(v=>v===vals[0]);let value=equal?vals[0]:edition().elements[selected[0]][k],sub=equal?'':`<span class="atl-mixed">不同值</span>`;
  if(k==='blur')name=selected.length===1&&selected[0]==='shell'?'页面背景图片模糊（需先导图）':selected.includes('shell')?'不同区域的背景图模糊 / 表面磨砂':'面板表面磨砂（透过背景看纹理）';
@@ -594,6 +604,7 @@ async function actions(a){if(a?.startsWith('demo-')){const kind=a.slice(5);windo
  if(a==='inspect')return inspect();if(a==='export-diagnostics')return download('mima-appearance-diagnostics.json',JSON.stringify(await C.appearanceDiagnostics(),null,2),'application/json');
  if(a==='snapshot'){const key=`history:${project.id}:${Date.now()}`;await queueDraft();await C._historySave(key,project);return note('历史版本已保存');}
  if(a==='restore-history'){const p=await C._historyLatest(project.id);if(!p)return note('暂时没有历史快照',true);push();project=C.normalized(p);changed();render();return note('已从最近历史快照恢复到草稿，尚未正式应用');}
+ if(a==='more-projects'||a==='previous-projects'){projectListOffset=Math.max(0,projectListOffset+(a==='more-projects'?50:-50));++projectListEpoch;projectListController?.abort();projectListTask=null;return showProjects();}
  if(a.startsWith('load:')){const targetId=a.slice(5);if(targetId===project?.id){await persistBeforeSwitch();return note('当前正在编辑的就是这份自动草稿，最新修改已保存，无需重新载入');}await persistBeforeSwitch();const saved=await C.get('project:'+targetId);if(!saved)throw new Error('主题不存在，可能已被其他窗口移除');await switchToTheme(saved);return note('已载入自动草稿，旧编辑已保护');}
  if(a.startsWith('manual:')){const saved=await C.get(a);if(!saved)throw new Error('手动版本已不存在');const fork=await C.forkDraft({...saved,id:uid(),draftVersion:0,linkedCssId:''});await switchToTheme(fork);return note('手动版本已作为新的独立草稿打开，原版本不变');}
  if(a==='fork-conflict'){const copy=await C.forkDraft(snapshot(project));await switchToTheme(copy);return note('发生版本冲突的作品已另存为独立草稿');}
@@ -606,13 +617,16 @@ let imageIntent='add-sticker';
 async function onImage(e){const file=e.target.files?.[0];if(!file)return;try{if(!/^image\/(png|jpeg|webp|gif)$/.test(file.type))throw new Error('仅支持 PNG/JPEG/WebP/GIF');if(file.size>5*1024*1024)throw new Error('单张素材限制 5MB，可先压缩图片');const target={projectId:project.id,edition:sceneMode,selected:[...selected],intent:imageIntent};const src=await readData(file);if(project.id!==target.projectId||sceneMode!==target.edition||selected.join('|')!==target.selected.join('|')||imageIntent!==target.intent)return note('图片读取完成，但编辑目标已切换；不会误写到其它工程。请重新选择后导入。',true);push();if(target.intent==='background-image')selected.forEach(id=>edition().elements[id].image=src);else{const s={id:uid(),name:file.name.slice(0,65),src,anchor:'shell',x:50,y:75,width:28,rotate:0,opacity:100,hidden:false,plane:'behind'};project.stickers.push(s);stickerId=s.id;tab='stickers';}changed();render();}catch(err){note('导入图片失败：'+err.message,true)}}
 function readData(file){return new Promise((res,rej)=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.onerror=()=>rej(fr.error||Error('文件读取失败'));fr.readAsDataURL(file);})}
 function colorFromDataURL(src){return new Promise((resolve,reject)=>{const im=new Image();im.onload=()=>{try{const c=document.createElement('canvas');c.width=c.height=32;const ctx=c.getContext('2d',{willReadFrequently:true});ctx.drawImage(im,0,0,32,32);const d=ctx.getImageData(0,0,32,32).data,colors=[];for(let i=0;i<d.length;i+=16)if(d[i+3]>150)colors.push([d[i],d[i+1],d[i+2]]);if(!colors.length)throw Error('图片无不透明色彩');const q=colors.reduce((sum,c)=>sum.map((v,j)=>v+c[j]),[0,0,0]);resolve('#'+q.map(v=>Math.round(v/colors.length).toString(16).padStart(2,'0')).join(''));}catch(e){reject(e)}};im.onerror=()=>reject(Error('图片无法读取颜色'));im.src=src})}
-async function showProjects(){const area=$('atl-saved-projects');if(!area)return;
- try{const [ids,manual]=await Promise.all([C.listProjects(),C.listManual()]);const values=await Promise.all(ids.map(id=>C.get('project:'+id)));
+async function showProjects(){
+ if(!opened||tab!=='project')return;
+ const area=$('atl-saved-projects');if(!area)return;const epoch=projectListEpoch;
+ if(!projectListTask){projectListController=new AbortController();const signal=projectListController.signal;const task=Promise.all([C.listProjectMetadata({offset:projectListOffset,limit:50,signal}),C.listManualMetadata({offset:projectListOffset,limit:50,signal})]);projectListTask=task;task.finally(()=>{if(projectListTask===task)projectListTask=null;}).catch(()=>{});}
+ try{const [drafts,manual]=await projectListTask;if(!opened||tab!=='project'||epoch!==projectListEpoch)return;
+ const target=$('atl-saved-projects');if(!target)return;
  const btn=(p,action,label)=>`<button data-action="${esc(action)}" class="atl-project-item">${esc(p.name)}<small>${label} · ${new Date(p.manualSavedAt||p.updatedAt).toLocaleString()}</small></button>`;
- const man=manual.filter(v=>v.project).sort((a,b)=>(b.project.manualSavedAt||0)-(a.project.manualSavedAt||0));
- const drafts=values.filter(Boolean).sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
- area.innerHTML=`<h3>★ 手动保存的版本 (${man.length})</h3>${man.map(v=>btn(v.project,v.key,'手动保存')).join('')||'<p class="atl-hint">尚无手动版本，点击「保存草稿」可建立版本。</p>'}<h3>◌ 自动防丢草稿 (${drafts.length})</h3>${drafts.map(p=>btn(p,'load:'+p.id,'自动草稿')).join('')||'<p class="atl-hint">暂无草稿</p>'}`;
- }catch(e){area.textContent='读取失败：'+e.message;}}
+ target.innerHTML=`<h3>★ 手动保存的版本 (${manual.total})</h3>${manual.items.map(p=>btn(p,p.key,'手动保存')).join('')||'<p class="atl-hint">尚无手动版本，点击「保存草稿」可建立版本。</p>'}<h3>◌ 自动防丢草稿 (${drafts.total})</h3>${drafts.items.map(p=>btn(p,'load:'+p.id,'自动草稿')).join('')||'<p class="atl-hint">暂无草稿</p>'}${projectListOffset?'<button data-action="previous-projects">上一页版本</button>':''}${drafts.hasMore||manual.hasMore?'<button data-action="more-projects">下一页版本</button>':''}`;
+ }catch(e){if(e.name!=='AbortError'&&opened&&tab==='project'&&epoch===projectListEpoch){const target=$('atl-saved-projects');if(target)target.textContent='读取失败：'+e.message;}}
+}
 function inspect(){const issues=[];if(project.stickers.length>12)issues.push('贴纸超过 12 张，低性能手机可能出现渲染负担。');for(const s of project.stickers)if(s.anchor!=='shell'&&s.width>100)issues.push(`${s.name} 宽度超过锚点区域，可能遮挡内容。`);for(const [k,e] of Object.entries(project.elements)){if(e.alpha===0&&e.ink===e.fill)issues.push(`${C.TARGETS[k].label} 文字可能不易阅读。`);if(e.blur>=40)issues.push(`${C.TARGETS[k].label} 背景模糊较高。`);if(['glass','aqua'].includes(e.material)&&e.blur===0)issues.push(`${C.TARGETS[k].label} 选择玻璃但手动关闭了背景模糊（0px）。`);if(['glass','aqua'].includes(e.material)&&e.alpha>=92)issues.push(`${C.TARGETS[k].label} 背景很不透明（${e.alpha}%），可能遮住实际磨砂效果。`);}const activated=C.getApplied(),userLayers=['mima-custom-css-style','mima-global-css-style'].map(id=>({id,css:document.getElementById(id)?.textContent||''})).filter(x=>x.css.trim());
  if(userLayers.length){issues.push(`当前加载 ${userLayers.length} 层旧 CSS：${userLayers.map(x=>x.id).join('、')}。工坊工程优先级：${C.resolvePresentationPlan(project).mode}。`);const locks=userLayers.reduce((n,x)=>n+(x.css.match(/!important\b/gi)||[]).length,0);if(locks)issues.push(`旧 CSS 中检测到 ${locks} 处 !important；即使工坊区域优先也可能被覆盖，建议用合成预览逐区核对。`);}else issues.push('未发现已挂载的旧自定义 CSS 样式标签；内置主题仍参与页面样式。');
  if(activated?.id){for(const [label,selector] of [['顶栏','.topbar'],['消息','.assistant-msg > .msg-content'],['底栏','.composer-shell']]){const el=document.querySelector(selector);if(!el)continue;const cs=getComputedStyle(el);issues.push(`当前已挂载主题 ${label}：背景模糊 ${cs.backdropFilter||cs.webkitBackdropFilter||'未读取'}；裁剪 ${cs.clipPath||'未读取'}。`);}}

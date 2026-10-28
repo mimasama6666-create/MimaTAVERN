@@ -4,9 +4,12 @@
  */
 (() => {
   const DB_NAME = 'mimamao_tavern_standalone';
-  const DB_VERSION = 1;
+  // v2 fences older bundles: their v1 opens must fail rather than overwrite
+  // the appearance overlay with an obsolete whole-library snapshot.
+  const DB_VERSION = 2;
   const STORE = 'kv';
   const STATE_KEY = 'state';
+  const APPEARANCE_KEY = 'appearance_v1';
   const SETTINGS_SNAPSHOT_KEY = 'settings_snapshot_v1';
   const EMPTY_THEME = { theme: 'default', updatedAt: '' };
 
@@ -40,15 +43,95 @@
       throw new Error('E_CANONICAL_CANDIDATE_UNVERIFIED: 写入资料库必须提供完整的七类资源和外观设置，拒绝覆盖');
     }
   }
+  function blankState() {
+    return {schemaVersion:4,storeRevision:0,sessions:[],masks:[],presets:[],worldbooks:[],cssPresets:[],regexPacks:[],theaterCards:[],quickCommands:[],settingTemplates:[],novelProjects:[],themeSettings:{...EMPTY_THEME}};
+  }
+  function appearanceFromState(value) {
+    return {version:1,baseRevision:Number(value?.storeRevision)||0,storeRevision:Number(value?.storeRevision)||0,
+      cssPresets:value?.cssPresets||[],themeSettings:value?.themeSettings||{...EMPTY_THEME},deletedCssIds:[],deletedCssAt:{},savedAt:value?.savedAt||''};
+  }
+  function assertAppearance(value) {
+    if(!value||value.version!==1||!Number.isInteger(value.storeRevision)||value.storeRevision<0||
+      !Number.isInteger(value.baseRevision)||value.baseRevision<0||value.baseRevision>value.storeRevision||
+      !Array.isArray(value.cssPresets)||!value.themeSettings||typeof value.themeSettings!=='object'||Array.isArray(value.themeSettings)||
+      !Array.isArray(value.deletedCssIds)||value.deletedCssIds.some(id=>typeof id!=='string'))
+      throw Error('E_APPEARANCE_UNVERIFIED: 外观记录无法核实，拒绝覆盖');
+    return value;
+  }
+  // Apply deletion metadata without inspecting or cloning any message/chapter.
+  // Tombstones remain until a complete canonical write folds them into state.
+  function mergeAppearance(base,appearance) {
+    assertAppearance(appearance);
+    const next={...base,cssPresets:appearance.cssPresets,themeSettings:appearance.themeSettings,storeRevision:appearance.storeRevision,savedAt:appearance.savedAt};
+    if(!appearance.deletedCssIds.length)return next;
+    const deleted=new Set(appearance.deletedCssIds);
+    next.sessions=(base.sessions||[]).map(s=>deleted.has(s.customCssId)?{...s,customCssId:null,customCssEnabled:false,recordRevision:(Number(s.recordRevision)||0)+1}:s);
+    next.novelProjects=(base.novelProjects||[]).map(p=>deleted.has(p.appearance?.customCssId)?{...p,appearance:{...p.appearance,customCssId:null,customCssEnabled:false},recordRevision:(Number(p.recordRevision)||0)+1}:p);
+    next.settingTemplates=(base.settingTemplates||[]).map(t=>deleted.has(t.config?.customCssId)?{...t,config:{...t.config,customCssId:null,customCssEnabled:false},revision:(Number(t.revision)||0)+1,updatedAt:appearance.deletedCssAt?.[t.config.customCssId]||appearance.savedAt}:t);
+    return next;
+  }
+  // Every canonical read, including direct memory transactions, uses both keys
+  // under the SAME IDB transaction. This request facade preserves callback code.
+  function readCanonical(kv) {
+    const request={},base=kv.get(STATE_KEY),appearance=kv.get(APPEARANCE_KEY);let ready=0;
+    const fail=error=>{request.error=error;request.onerror?.({target:request});};
+    const done=()=>{if(++ready!==2)return;try{
+      if(base.result!==undefined&&!isCanonicalStateRecord(base.result))throw Error('E_CANONICAL_STATE_UNVERIFIED');
+      assertAppearance(appearance.result);
+      if((Number(base.result?.storeRevision)||0)!==appearance.result.baseRevision)throw Error('E_APPEARANCE_BASE_CONFLICT');
+      request.result=mergeAppearance(base.result||blankState(),appearance.result);
+    }catch(error){fail(error);return;}request.onsuccess?.({target:request});};
+    base.onsuccess=done;appearance.onsuccess=done;
+    base.onerror=()=>fail(base.error);appearance.onerror=()=>fail(appearance.error);
+    return request;
+  }
+  function putCanonical(kv,value) {
+    // The caller owns CAS validation in this same transaction. Pair the full
+    // document with the overlay head, including memory-specific canonical writes.
+    kv.put(value,STATE_KEY);kv.put(appearanceFromState(value),APPEARANCE_KEY);
+  }
   function openDb() {
     return new Promise((resolve, reject) => {
+      let rejected=false,upgradeIssue;
       const req = indexedDB.open(DB_NAME, DB_VERSION);
+      req.onblocked=()=>{rejected=true;reject(Error('E_DATABASE_UPGRADE_BLOCKED: 请关闭其他旧版咪嘛馆窗口后重试，资料未被覆盖'));};
       req.onupgradeneeded = () => {
-        const db = req.result;
-        if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
+        const db=req.result;
+        if(!db.objectStoreNames.contains(STORE))db.createObjectStore(STORE);
+        if(rejected){req.transaction.abort();return;}
+        const kv=req.transaction.objectStore(STORE),old=kv.get(STATE_KEY);
+        old.onsuccess=()=>{try{
+          if(old.result!==undefined&&!isCanonicalStateRecord(old.result))throw Error('E_CANONICAL_STATE_UNVERIFIED: 旧资料结构无法核实，停止升级');
+          // Additive migration only. Original history and saved CSS stay intact.
+          kv.put(appearanceFromState(old.result),APPEARANCE_KEY);
+        }catch(error){upgradeIssue=error;req.transaction.abort();}};
       };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
+      req.onsuccess = () => {const db=req.result;db.onversionchange=()=>db.close();if(rejected)db.close();else resolve(db);};
+      req.onerror = () => reject(upgradeIssue||req.error);
+    });
+  }
+  async function loadAppearance(){const value=await get(APPEARANCE_KEY);return assertAppearance(value);}
+  // edit is synchronous and receives a detached, small IDB clone. False means
+  // no write; exceptions abort. No state document or message is read here.
+  async function commitAppearance(edit,{signal=null}={}) {
+    const db=await openDb();
+    if(signal?.aborted){db.close();throw new DOMException('外观保存已取消','AbortError');}
+    return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE);let result,issue;
+      const abort=()=>{issue=new DOMException('外观保存已取消','AbortError');try{tx.abort();}catch{}};
+      signal?.addEventListener?.('abort',abort,{once:true});
+      const req=kv.get(APPEARANCE_KEY);
+      req.onerror=()=>{issue=req.error;tx.abort();};
+      req.onsuccess=()=>{try{
+        const value=assertAppearance(req.result),revision=value.storeRevision,baseRevision=value.baseRevision;
+        const outcome=edit(value);if(outcome&&typeof outcome.then==='function')throw Error('E_APPEARANCE_ASYNC_EDIT');
+        if(outcome===false){result=value;return;}
+        result={...value,baseRevision,storeRevision:revision+1,savedAt:new Date().toISOString()};assertAppearance(result);
+        if(signal?.aborted){abort();return;}kv.put(result,APPEARANCE_KEY);
+      }catch(error){issue=error;tx.abort();}};
+      const close=()=>{signal?.removeEventListener?.('abort',abort);db.close();};
+      tx.oncomplete=()=>{close();resolve(result);};
+      tx.onabort=()=>{close();reject(issue||tx.error||Error('E_APPEARANCE_WRITE_ABORTED'));};
     });
   }
   async function get(key) {
@@ -56,7 +139,7 @@
     return new Promise((resolve, reject) => {
       let value, issue;
       const tx = db.transaction(STORE, 'readonly');
-      const req = tx.objectStore(STORE).get(key);
+      const req = key===STATE_KEY?readCanonical(tx.objectStore(STORE)):tx.objectStore(STORE).get(key);
       // A request's onsuccess is not evidence that its containing IndexedDB
       // transaction committed. A later abort must never turn into a verified
       // "missing" state or an empty memory journal.
@@ -109,7 +192,7 @@
       const cancel=()=>{problem=new DOMException('生成已取消，资料库未提交','AbortError');try{tx.abort();}catch(e){if(e?.name!=='InvalidStateError')problem=e;}};
       signal?.addEventListener?.('abort',cancel,{once:true});
       const release=()=>signal?.removeEventListener?.('abort',cancel);
-      const req = objectStore.get(STATE_KEY);
+      const req = readCanonical(objectStore);
       req.onerror = () => { problem = req.error || new Error('资料库读取失败'); tx.abort(); };
       req.onsuccess = () => {
         if(signal?.aborted){cancel();return;}
@@ -124,7 +207,7 @@
           tx.abort(); return;
         }
         result = { ...candidate, storeRevision: revision + 1, schemaVersion: 4, savedAt: new Date().toISOString() };
-        objectStore.put(result, STATE_KEY);
+        putCanonical(objectStore,result);
       };
       tx.oncomplete = () => { release();db.close();resolve(result); };
       tx.onabort = () => { release();db.close();reject(problem || tx.error || new Error('资料库事务中止')); };
@@ -595,11 +678,11 @@
         // Any unrelated canonical collection changed since preview fails closed.
         result={...candidateState,storeRevision:revision+1,schemaVersion:4,savedAt:new Date().toISOString()};
         const settled={...repair,state:'approved',settledAt:result.savedAt};
-        kv.put(result,STATE_KEY);
+        putCanonical(kv,result);
         kv.put(settled,htmlRepairKey(sessionId,messageId));
         kv.put(settled,htmlRepairArchiveKey(candidateId));
       };
-      const a=kv.get(STATE_KEY),b=kv.get(htmlRepairKey(sessionId,messageId));
+      const a=readCanonical(kv),b=kv.get(htmlRepairKey(sessionId,messageId));
       a.onerror=()=>fail(a.error||Error('E_CANONICAL_READ_FAILED'));
       b.onerror=()=>fail(b.error||Error('E_HTML_REPAIR_READ_FAILED'));
       a.onsuccess=()=>{current=a.result;presentState=true;settle();};
@@ -618,7 +701,7 @@
     // canonical source. An unrelated or stale tab cannot overwrite the report.
     const db=await openDb();return new Promise((resolve,reject)=>{
       const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE);let result,problem;
-      const req=kv.get(STATE_KEY);
+      const req=readCanonical(kv);
       req.onerror=()=>{problem=req.error||Error('E_CANONICAL_READ_FAILED');tx.abort();};
       req.onsuccess=()=>{
         try{
@@ -781,7 +864,7 @@
         leaseUntilEpoch:Date.now()+MEMORY_LEASE_MS,recoveryCount:recovering?(Number(old.recoveryCount||0)+1):0,
         recoveredFromAttemptId:resumeIdentity?old.attemptId:null};
       job.checkpoints[job.checkpoints.length-1].attemptId=job.attemptId;
-      const sr=kv.get(STATE_KEY);
+      const sr=readCanonical(kv);
       sr.onerror=()=>tx.abort();
       sr.onsuccess=()=>{
         try{
@@ -833,7 +916,7 @@
       const jr=kv.get(jobKey(job.sessionId,job.kind));jr.onerror=()=>fail('E_MEMORY_JOURNAL_READ');
       jr.onsuccess=()=>{
         const active=jr.result;if(!active||active.id!==job.id||active.attemptId!==job.attemptId||active.status!=='running'){fail('E_MEMORY_JOB_FENCED');return;}
-        const sr=kv.get(STATE_KEY);sr.onerror=()=>fail('E_MEMORY_STORE_READ');sr.onsuccess=()=>{
+        const sr=readCanonical(kv);sr.onerror=()=>fail('E_MEMORY_STORE_READ');sr.onsuccess=()=>{
           const current=sr.result;if(!isCanonicalStateRecord(current)){fail('E_MEMORY_STORE_UNVERIFIED');return;}
           const index=current.sessions.findIndex(x=>x.id===job.sessionId);if(index<0){fail('E_STORY_SESSION_MISSING');return;}
           const latest=current.sessions[index];
@@ -865,7 +948,7 @@
           const changed={...latest,...currentPatch,recordRevision:(Number(latest.recordRevision)||0)+1,updatedAt:new Date().toISOString()};
           const sessions=current.sessions.slice();sessions[index]=changed;
           committed={...current,sessions,storeRevision:(Number(current.storeRevision)||0)+1,savedAt:new Date().toISOString()};
-          kv.put(committed,STATE_KEY);
+          putCanonical(kv,committed);
           kv.put({...active,status:'committed',stage:'saved',code:'',lastCommittedAttemptId:job.attemptId,revision:active.revision+1,updatedAt:new Date().toISOString(),finishedAt:new Date().toISOString()},jobKey(job.sessionId,job.kind));
         };
       };
@@ -890,7 +973,7 @@
         if((job.checkpoints||[]).some(x=>x.stage==='human_'+reviewStage+'_accepted'||x.stage==='human_'+reviewStage+'_rejected')){fail('E_MEMORY_REVIEW_ALREADY_SETTLED');return;}
         const text=String(editedText||'').trim();
         if(decision==='accept'&&(!text||text.length>25000)){fail('E_MEMORY_REVIEW_INVALID_TEXT');return;}
-        const sr=kv.get(STATE_KEY);sr.onerror=()=>fail('E_MEMORY_REVIEW_STATE_READ');sr.onsuccess=()=>{
+        const sr=readCanonical(kv);sr.onerror=()=>fail('E_MEMORY_REVIEW_STATE_READ');sr.onsuccess=()=>{
           const state=sr.result;
           if(!isCanonicalStateRecord(state)){fail('E_MEMORY_STORE_UNVERIFIED');return;}
           const idx=state.sessions.findIndex(x=>x?.id===sessionId);
@@ -945,7 +1028,7 @@
                 rollingSourceFingerprint:window.MimaStandalone.memorySourceFingerprint(session.messages,fullEnd)};
             }
             const revised={...session,...patch,recordRevision:(Number(session.recordRevision)||0)+1,updatedAt:stamp};
-            state.sessions[idx]=revised;kv.put({...state,storeRevision:(Number(state.storeRevision)||0)+1,savedAt:stamp},STATE_KEY);
+            state.sessions[idx]=revised;putCanonical(kv,{...state,storeRevision:(Number(state.storeRevision)||0)+1,savedAt:stamp});
           }
           kv.put(updatedJob,jobKey(sessionId,kind));result={status:updatedJob.status,kind,sessionId,jobId};
         };
@@ -965,7 +1048,7 @@
       jr.onsuccess=()=>{
         const job=jr.result;
         if(job?.status==='running'&&Number(job.leaseUntilEpoch||0)>Date.now()){fail('E_MEMORY_JOB_PENDING');return;}
-        const sr=kv.get(STATE_KEY);sr.onerror=()=>fail('E_MEMORY_STORE_READ');
+        const sr=readCanonical(kv);sr.onerror=()=>fail('E_MEMORY_STORE_READ');
         sr.onsuccess=()=>{
           const state=sr.result;
           if(!isCanonicalStateRecord(state)){fail('E_MEMORY_STORE_UNVERIFIED');return;}
@@ -989,7 +1072,7 @@
             for(const key of keys)patch[key]=saved[key];patch.rollingArchive=archive.slice(0,-1);
           }
           const sessions=state.sessions.slice();sessions[index]={...session,...patch,updatedAt:new Date().toISOString(),recordRevision:(Number(session.recordRevision)||0)+1};
-          kv.put({...state,sessions,storeRevision:(Number(state.storeRevision)||0)+1,savedAt:new Date().toISOString()},STATE_KEY);
+          putCanonical(kv,{...state,sessions,storeRevision:(Number(state.storeRevision)||0)+1,savedAt:new Date().toISOString()});
           if(job&&action==='revoke')kv.put({...job,status:'discarded',stage:'user_revoked_summary',updatedAt:new Date().toISOString(),revision:(Number(job.revision)||0)+1},jobKey(sessionId,'rolling'));
           result={sessionId,action,archiveCount:patch.rollingArchive.length};
         };
@@ -1030,7 +1113,7 @@
       const oldReq=kv.get(mergeDraftKey(sessionId));oldReq.onerror=()=>fail('E_MEMORY_MERGE_DRAFT_READ');oldReq.onsuccess=()=>{
         const old=oldReq.result;
         if(old&&!['DISCARDED','COMMITTED'].includes(old.status)){fail('E_MEMORY_MERGE_DRAFT_EXISTS');return;}
-        const sr=kv.get(STATE_KEY);sr.onerror=()=>fail('E_MEMORY_STORE_READ');sr.onsuccess=()=>{
+        const sr=readCanonical(kv);sr.onerror=()=>fail('E_MEMORY_STORE_READ');sr.onsuccess=()=>{
           const state=sr.result,impl=window.MimaStandalone,contract=window.MimaMemoryContracts;
           if(!isCanonicalStateRecord(state)||!impl?.memoryFactSignature||!contract?.normalizeManualMemory){fail('E_MEMORY_STORE_UNVERIFIED');return;}
           const session=state.sessions.find(x=>x.id===sessionId);
@@ -1074,7 +1157,7 @@
            stageRecord.sessionId!==job.sessionId||stageRecord.contractDigest!==stageDigest||
            factStageText(stageRecord.outputText)!==fact.content||stageRecord.referenceDigest!==job.referenceDigest||
            window.MimaSHA256.digest(new TextEncoder().encode(stageRecord.outputText))!==stageRecord.outputDigest){tx.abort();return;}
-        const request=kv.get(STATE_KEY);
+        const request=readCanonical(kv);
         request.onerror=()=>tx.abort();
         request.onsuccess=()=>{
           try{if(memoryReferenceContract(request.result,job.sessionId,job.referenceSelection)!==record.referenceContract)tx.abort();
@@ -1104,11 +1187,11 @@
       const fail=code=>{problem=new Error(code);tx.abort();};
       const receipt=kv.get(factRangeReceiptKey(operationId));receipt.onerror=()=>fail('E_MEMORY_FACT_RECEIPT_READ');receipt.onsuccess=()=>{
         if(receipt.result){if(receipt.result.sessionId!==sessionId||receipt.result.jobId!==jobId||JSON.stringify(receipt.result.stages.slice().sort())!==JSON.stringify(stageIds.slice().sort())){fail('E_MEMORY_FACT_OPERATION_COLLISION');return;}
-          const sr=kv.get(STATE_KEY);sr.onerror=()=>fail('E_MEMORY_STORE_READ');sr.onsuccess=()=>{if(!isCanonicalStateRecord(sr.result)){fail('E_MEMORY_STORE_UNVERIFIED');return;}result=sr.result;};return;}
+          const sr=readCanonical(kv);sr.onerror=()=>fail('E_MEMORY_STORE_READ');sr.onsuccess=()=>{if(!isCanonicalStateRecord(sr.result)){fail('E_MEMORY_STORE_UNVERIFIED');return;}result=sr.result;};return;}
         const jr=kv.get(jobKey(sessionId,'facts'));jr.onerror=()=>fail('E_MEMORY_JOURNAL_READ');jr.onsuccess=()=>{
           const job=jr.result;if(!job||job.id!==jobId||job.kind!=='facts'||(job.status==='running'&&Number(job.leaseUntilEpoch||0)>Date.now())||!['failed','interrupted','aborted','needs_review','partially_committed','running'].includes(job.status)){fail('E_MEMORY_FACT_JOB_UNAVAILABLE');return;}
           if(job.options?.scope==='all'&&job.options?.replaceExisting===true){fail('E_MEMORY_FACT_REPLACE_ATOMIC_REQUIRED');return;}
-          const sr=kv.get(STATE_KEY);sr.onerror=()=>fail('E_MEMORY_STORE_READ');sr.onsuccess=()=>{
+          const sr=readCanonical(kv);sr.onerror=()=>fail('E_MEMORY_STORE_READ');sr.onsuccess=()=>{
             const canonical=sr.result,impl=window.MimaStandalone,contracts=window.MimaMemoryContracts;
             if(!isCanonicalStateRecord(canonical)||!impl?.memorySourceFingerprint||!contracts?.normalizeManualMemory||!window.MimaSHA256?.digest){fail('E_MEMORY_STORE_UNVERIFIED');return;}
             const index=canonical.sessions.findIndex(x=>x.id===sessionId);if(index<0){fail('E_STORY_SESSION_MISSING');return;}
@@ -1125,7 +1208,7 @@
                 const unique=new Set(existing.map(f=>f.id));if(ranges.some(r=>unique.has(r.fact.id))){fail('E_MEMORY_FACT_ID_CONFLICT');return;}
                 const updated={...live,manualMemory:{...memory,facts:existing.concat(ranges.map(r=>r.fact)).sort((a,b)=>a.startRound-b.startRound||a.endRound-b.endRound)},recordRevision:(Number(live.recordRevision)||0)+1,updatedAt:new Date().toISOString()};
                 const sessions=canonical.sessions.slice();sessions[index]=updated;result={...canonical,sessions,storeRevision:(Number(canonical.storeRevision)||0)+1,savedAt:new Date().toISOString()};
-                kv.put(result,STATE_KEY);
+                putCanonical(kv,result);
                 kv.put({sessionId,jobId,operationId,stages:stageIds,rounds:ranges.map(r=>[r.startRound,r.endRound]),committedAt:new Date().toISOString()},factRangeReceiptKey(operationId));
                 kv.put({...job,status:'partially_committed',stage:'partial_fact_ranges_committed',revision:(Number(job.revision)||0)+1,updatedAt:new Date().toISOString()},jobKey(sessionId,'facts'));
                 return;
@@ -1163,7 +1246,7 @@
     const db=await openDb();return new Promise((resolve,reject)=>{
       const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE);let issue,result;
       const fail=m=>{issue=new Error(m);tx.abort();};
-      const proceed=draft=>{const sr=kv.get(STATE_KEY);sr.onerror=()=>fail('E_MEMORY_MERGE_STATE_READ');
+      const proceed=draft=>{const sr=readCanonical(kv);sr.onerror=()=>fail('E_MEMORY_MERGE_STATE_READ');
       sr.onsuccess=()=>{
         const canonical=sr.result;
         if(!isCanonicalStateRecord(canonical)){fail('E_MEMORY_STORE_UNVERIFIED');return;}
@@ -1197,7 +1280,7 @@
         const next={...session,manualMemory:{...manual,facts:nextFacts},recordRevision:(Number(session.recordRevision)||0)+1,updatedAt:stamp};
         const sessions=canonical.sessions.slice();sessions[idx]=next;
         result={...canonical,sessions,storeRevision:(Number(canonical.storeRevision)||0)+1,savedAt:stamp};
-        kv.put(result,STATE_KEY);
+        putCanonical(kv,result);
         kv.put({sessionId,mergedId:id,originalFacts:facts,afterSignature:impl.memoryFactSignature(nextFacts),
           selectedIds,createdAt:stamp},factMergeUndoKey(sessionId));
         if(draft)kv.put({...draft,status:'COMMITTED',version:draft.version+1,committedAt:stamp},mergeDraftKey(sessionId));
@@ -1215,7 +1298,7 @@
       const undoReq=kv.get(factMergeUndoKey(sessionId));undoReq.onerror=()=>fail('E_MEMORY_MERGE_UNDO_READ');
       undoReq.onsuccess=()=>{
         const undo=undoReq.result;if(!undo){fail('E_MEMORY_MERGE_UNDO_UNAVAILABLE');return;}
-        const sr=kv.get(STATE_KEY);sr.onerror=()=>fail('E_MEMORY_MERGE_STATE_READ');
+        const sr=readCanonical(kv);sr.onerror=()=>fail('E_MEMORY_MERGE_STATE_READ');
         sr.onsuccess=()=>{
           const current=sr.result,impl=window.MimaStandalone,contract=window.MimaMemoryContracts;
           if(!isCanonicalStateRecord(current)||!impl?.memoryFactSignature||!contract?.normalizeManualMemory){fail('E_MEMORY_STORE_UNVERIFIED');return;}
@@ -1225,7 +1308,7 @@
           const updated={...session,manualMemory:{...manual,facts:undo.originalFacts},recordRevision:(Number(session.recordRevision)||0)+1,updatedAt:new Date().toISOString()};
           const sessions=current.sessions.slice();sessions[idx]=updated;
           result={...current,sessions,storeRevision:(Number(current.storeRevision)||0)+1,savedAt:new Date().toISOString()};
-          kv.put(result,STATE_KEY);kv.delete(factMergeUndoKey(sessionId));
+          putCanonical(kv,result);kv.delete(factMergeUndoKey(sessionId));
         };
       };
       tx.oncomplete=()=>{db.close();resolve(result);};tx.onabort=()=>{db.close();reject(issue||tx.error||new Error('E_MEMORY_MERGE_UNDO_ABORTED'));};
@@ -1292,5 +1375,5 @@
     if(text.length!==receipt.persistedChars)throw new Error('E_GENERATION_FRAGMENT_INCOMPLETE');
     return {receipt,text,complete:true};
   }
-  window.MimaLocalStore={exportPlayToolRecords,importPlayToolRecords,listPlayToolLocal,getPlayToolLocal:key=>get('play_tools_v1:'+key),putPlayToolLocal:(key,value)=>set('play_tools_v1:'+key,value),generationReceipt,generationAppendFragment,generationRead,getRollingPreflight,putRollingPreflight,clearRollingPreflight,commitHtmlRepair,putHtmlRepairCandidate,getHtmlRepairCandidate,setHtmlRepairCandidateState,listMemoryStages,inspectLegacyMemoryStages,putMemoryRejectedDraft,listMemoryRejectedDrafts,memoryReferenceContract,putFactRangeCandidate,listFactRangeCandidates,commitVerifiedFactRanges,getMergeStage,putMergeStage,getMergeDraft,createMergeDraft,updateMergeDraft,commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,clearSettingsSnapshot,getMemoryJob,getMemoryStage,putMemoryStage,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
+  window.MimaLocalStore={loadAppearance,commitAppearance,mergeAppearance,exportPlayToolRecords,importPlayToolRecords,listPlayToolLocal,getPlayToolLocal:key=>get('play_tools_v1:'+key),putPlayToolLocal:(key,value)=>set('play_tools_v1:'+key,value),generationReceipt,generationAppendFragment,generationRead,getRollingPreflight,putRollingPreflight,clearRollingPreflight,commitHtmlRepair,putHtmlRepairCandidate,getHtmlRepairCandidate,setHtmlRepairCandidateState,listMemoryStages,inspectLegacyMemoryStages,putMemoryRejectedDraft,listMemoryRejectedDrafts,memoryReferenceContract,putFactRangeCandidate,listFactRangeCandidates,commitVerifiedFactRanges,getMergeStage,putMergeStage,getMergeDraft,createMergeDraft,updateMergeDraft,commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,clearSettingsSnapshot,getMemoryJob,getMemoryStage,putMemoryStage,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
 })();

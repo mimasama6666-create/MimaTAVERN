@@ -49,7 +49,7 @@ function sanitise(untrusted){
  }
  return template.innerHTML;
 }
-// Card HTML lives in an opaque iframe. Only the host-authored resize bridge runs;
+// Card HTML lives in an opaque iframe. Only host-authored nonce bridges run;
 // card-provided scripts/event handlers remain stripped and cannot obtain host origin.
 function stabilizeViewportCss(css){
  return String(css).replace(/("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|(-?(?:\d*\.)?\d+)(?:dvh|svh|lvh|vh)\b)/gi,(all,token,n)=>n===undefined?all:'calc('+n+' * var(--mima-stable-vh))');
@@ -72,11 +72,59 @@ function srcdoc(content, options={}){
  const csp="default-src 'none'; script-src "+(legacyNoResize?"'none'":"'nonce-"+nonce+"'")+"; connect-src 'none'; img-src data:; media-src 'none'; font-src data:; style-src 'unsafe-inline'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'";
  const stableHeight=Math.max(160,Math.min(3000,Number(options.viewportHeight)||800));
  const base=':root{--mima-stable-vh:'+(stableHeight/100)+'px}html,body{margin:0;padding:0;overflow-wrap:anywhere}body{background:transparent;color:'+cleanColor+';font-family:'+cleanFont+';font-size:'+cleanFontSize+';line-height:'+cleanLineHeight+';letter-spacing:'+letterSpacing+';white-space:normal}mima-flow{display:flow-root;min-width:0}.mima-text-prose{white-space:pre-wrap}:where(p,blockquote,ul,ol,dl){margin-block:'+paragraphGap+'}:where(mima-flow>p){text-indent:'+firstLineIndent+'}*,*:before,*:after{box-sizing:border-box}table{max-width:100%;border-collapse:collapse}td,th{border:1px solid #9995;padding:5px}img,svg{max-width:100%;height:auto}pre,code{white-space:pre-wrap;overflow-wrap:anywhere}';
- // The trusted bridge does no DOM mutation. It only reports its own measured
- // content height. Parent verifies token, source window, and session generation.
- const bridge='(function(){const key='+JSON.stringify(token)+';let previous=0;function report(){const flow=document.querySelector("mima-flow");if(!flow)return;const style=getComputedStyle(document.body);const spacing=[style.paddingBottom,style.borderBottomWidth,style.marginBottom].reduce((n,v)=>n+(parseFloat(v)||0),0);const h=Math.max(1,Math.ceil(flow.getBoundingClientRect().bottom+spacing));if(h!==previous){previous=h;parent.postMessage({mimaSafeHeight:key,height:h},"*");}}new ResizeObserver(report).observe(document.body);new ResizeObserver(report).observe(document.querySelector("mima-flow"));addEventListener("load",report);document.addEventListener("DOMContentLoaded",report);report();})();';
+ // The height bridge reports measured content size. Parent verifies the token,
+ // source window and session generation for every trusted bridge message.
+ const bridge='(function(){const key='+JSON.stringify(token)+';let previous=0;function report(){if(window.__mimaPresentationReady!==true)return;const flow=document.querySelector("mima-flow");if(!flow)return;const style=getComputedStyle(document.body);const spacing=[style.paddingBottom,style.borderBottomWidth,style.marginBottom].reduce((n,v)=>n+(parseFloat(v)||0),0);const h=Math.max(1,Math.ceil(flow.getBoundingClientRect().bottom+spacing));if(h!==previous){previous=h;parent.postMessage({mimaSafeHeight:key,height:h},"*");}}new ResizeObserver(report).observe(document.body);new ResizeObserver(report).observe(document.querySelector("mima-flow"));addEventListener("load",report);addEventListener("mima-presentation-ready",report);document.addEventListener("DOMContentLoaded",report);report();})();';
  const fontBridge='(function(){const key='+JSON.stringify(token)+';addEventListener("message",async function(e){if(e.source!==parent||e.data?.mimaSafeFont!==key)return;const data=e.data;if(typeof data.family!=="string"||data.family.length>160||!(data.buffer instanceof ArrayBuffer))return;try{const face=new FontFace(data.family,data.buffer);await face.load();document.fonts.add(face);parent.postMessage({mimaSafeFontResult:key,family:data.family,status:"loaded"},"*");}catch(error){parent.postMessage({mimaSafeFontResult:key,family:data.family,status:"error",message:error.message},"*");}});})();';
- return '<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="'+csp+'"><meta name="viewport" content="width=device-width,initial-scale=1"><style>'+base+'\n'+css+'</style></head><body><mima-flow>'+html+'</mima-flow>'+(legacyNoResize?'':'<script nonce="'+nonce+'">'+bridge+fontBridge+'</script>')+'</body></html>';
+ // The nonce-authored bridge snapshots only presentation controls. It never
+ // exports HTML or runs card script; restoration assigns plain DOM properties.
+ const stateBridge='('+function(key){
+  const selector='details,input,textarea,select,[contenteditable="true"]';let activation=null;
+  function snapshot(){const state=Array.from(document.querySelectorAll(selector),function(node,index){
+   const item={index,tag:node.tagName};
+   if(node.tagName==='DETAILS')item.open=node.open;
+   else if(node.tagName==='SELECT')item.selected=Array.from(node.options,function(option){return option.selected;});
+   else if(node.tagName==='INPUT'||node.tagName==='TEXTAREA'){
+    item.type=node.type;if(node.type!=='file')item.value=node.value;
+    item.checked=node.checked;
+    if(typeof node.selectionStart==='number'){item.start=node.selectionStart;item.end=node.selectionEnd;item.direction=node.selectionDirection;}
+   }else item.text=node.textContent;
+   return item;
+  });
+   Array.from(document.querySelectorAll('mima-flow *')).forEach(function(node,index){if(node.scrollTop||node.scrollLeft)state.push({kind:'scroll',index,tag:node.tagName,top:node.scrollTop,left:node.scrollLeft});});
+   if(scrollX||scrollY)state.push({kind:'viewport',top:scrollY,left:scrollX});
+   return state;
+  }
+  function report(request){parent.postMessage({mimaSafeState:key,activation,request:request||'',state:snapshot()},'*');}
+  addEventListener('message',function(event){
+   if(event.source!==parent)return;const data=event.data;
+   if(data?.mimaSafeSnapshot===key&&data.activation===activation&&typeof data.request==='string'){report(data.request);return;}
+   if(data?.mimaSafeRestore!==key||!Array.isArray(data.state)||!Number.isSafeInteger(data.activation))return;
+   activation=data.activation;
+   const nodes=document.querySelectorAll(selector);
+   for(const item of data.state){
+    if(item.kind==='scroll'||item.kind==='viewport')continue;
+    const node=nodes[item.index];if(!node||node.tagName!==item.tag)continue;
+    if(node.tagName==='DETAILS'&&typeof item.open==='boolean')node.open=item.open;
+    else if(node.tagName==='SELECT'&&Array.isArray(item.selected))Array.from(node.options).forEach(function(option,index){option.selected=item.selected[index]===true;});
+    else if(node.tagName==='INPUT'||node.tagName==='TEXTAREA'){
+     if(node.type!==item.type)continue;
+     if(node.type!=='file'&&typeof item.value==='string')node.value=item.value;
+     if(typeof item.checked==='boolean')node.checked=item.checked;
+     if(typeof item.start==='number')try{node.setSelectionRange(item.start,item.end,item.direction);}catch(_){}
+    }else if(typeof item.text==='string')node.textContent=item.text;
+   }
+   const scrollNodes=document.querySelectorAll('mima-flow *');
+   for(const item of data.state){
+    if(item.kind==='viewport')scrollTo(Number(item.left)||0,Number(item.top)||0);
+    else if(item.kind==='scroll'){const node=scrollNodes[item.index];if(node?.tagName===item.tag){node.scrollLeft=Number(item.left)||0;node.scrollTop=Number(item.top)||0;}}
+   }
+   window.__mimaPresentationReady=true;dispatchEvent(new Event('mima-presentation-ready'));
+   report('restored');
+  });
+  for(const name of ['input','change','toggle','scroll'])document.addEventListener(name,function(){report('');},true);
+ }.toString()+')('+JSON.stringify(token)+');';
+ return '<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="'+csp+'"><meta name="viewport" content="width=device-width,initial-scale=1"><style>'+base+'\n'+css+'</style></head><body><mima-flow>'+html+'</mima-flow>'+(legacyNoResize?'':'<script nonce="'+nonce+'">'+bridge+fontBridge+stateBridge+'</script>')+'</body></html>';
 }
 return Object.freeze({classify,srcdoc,safeCssText,stabilizeViewportCss,maxBytes});
 });
