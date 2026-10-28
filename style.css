@@ -744,7 +744,11 @@ html[data-mima-theme="eink"] .novel-text-unit[open]>summary,html[data-mima-theme
 /* Minimize only excess quick-action shell space; buttons retain original size. */
 .composer-shell{padding-top:5px;}
 .quick-actions{padding-bottom:2px;margin-bottom:1px;}
-#mima-reading-toggle{margin-left:auto;position:sticky;right:0;z-index:2;box-shadow:0 0 0 2px var(--surface,#fff);}
+/* The reading action occupies its own column. It never overlays scrollable actions. */
+.quick-actions{overflow:visible;align-items:center;gap:6px}
+.quick-actions-scroll{display:flex;align-items:center;flex:1 1 auto;min-width:0;overflow-x:auto;overflow-y:hidden;gap:6px;scrollbar-width:none;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch}
+.quick-actions-scroll::-webkit-scrollbar{display:none}
+#mima-reading-toggle{position:static;right:auto;margin:0;flex:0 0 40px;width:40px;min-width:40px;height:38px;padding:0;display:grid;place-items:center;font-size:19px;line-height:1;box-shadow:none}
 .mima-reading-hint{position:fixed;bottom:12vh;left:50%;transform:translateX(-50%);border-radius:999px;background:rgba(0,0,0,.84);color:#fff;padding:11px 16px;pointer-events:none;z-index:5000;font-size:13px;white-space:nowrap;max-width:96vw;}
 .mima-reading-hint[hidden]{display:none;}
 body.mima-reading-mode .app-shell>.topbar,body.mima-reading-mode .app-shell>.mima-feature-menu,
@@ -1280,3 +1284,7 @@ html.mima-composer-keyboard .app-shell>.composer-shell{padding-bottom:10px}
 
 /* Batch 8 standalone: mobile settings touch targets, without altering zoom. */
 @media(max-width:620px){#settings-modal .settings-panel .settings-tabs button{min-height:55px;display:inline-flex;align-items:center;justify-content:center;font-size:.95rem}}
+
+/* Responsive action sizing: scroll only the command strip, not the reading shortcut. */
+.app-shell>.composer-shell>.quick-actions>.quick-actions-scroll{gap:5px;scroll-snap-type:x proximity}
+.app-shell>.composer-shell>.quick-actions>.quick-actions-scroll>.chip-btn{font-size:.75rem;padding:6px 9px;min-height:36px;line-height:1.24;scroll-snap-align:start}

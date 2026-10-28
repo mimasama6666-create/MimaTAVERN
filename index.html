@@ -12,7 +12,7 @@
     <meta name="apple-mobile-web-app-title" content="咪嘛馆">
     <link rel="manifest" href="./site.webmanifest?v=20261027-mima-r19-icon2">
     <title>咪嘛馆 · MimaTAVERN（酒馆） · Standalone（独立版）</title>
-    <link rel="stylesheet" href="./style.css?v=20261025-r19-viewport-density-1&hotfix=1.1.3&release=1.3.1&auditfix=1.3.2&themefix=1.4.0&memoryfix=1.3.9&uihotfix=20261013-1&ctxsave=20261013-2&diagnostics=r8&r13=20261015-1&manualrecovery=20261015-r14-2&replylayout=20261016-r16.2&librarycss=20261019-r3&templateux=20261021-r13-generation-polish&r19manual=20261022-1&settingssheet=20261023-1&r19-dual-rework=20261024&keyboard=20261025-r3&p0recovery=20261025-ui-1&density=20261025-r3&taskviewer=20261025-r2&promptclean=20261025-r1&oct25rework=novel-assist-3&reworkfix=20261025-p1-4">
+    <link rel="stylesheet" href="./style.css?v=20261025-r19-viewport-density-1&hotfix=1.1.3&release=1.3.1&auditfix=1.3.2&themefix=1.4.0&memoryfix=1.3.9&uihotfix=20261013-1&ctxsave=20261013-2&diagnostics=r8&r13=20261015-1&manualrecovery=20261015-r14-2&replylayout=20261016-r16.2&librarycss=20261019-r3&templateux=20261021-r13-generation-polish&r19manual=20261022-1&settingssheet=20261023-1&r19-dual-rework=20261024&keyboard=20261025-r3&p0recovery=20261025-ui-1&density=20261025-r3&taskviewer=20261025-r2&promptclean=20261025-r1&oct25rework=novel-assist-3&reworkfix=20261025-p1-4&readingui=20261029-1">
     <link rel="stylesheet" href="./theme-skin.css?v=1.4.0">
 <link rel="stylesheet" href="./mima-interaction.css?v=20261027-r19-personal-audio-2">
     <link rel="stylesheet" href="./compat-style.css?v=r11-card-launch-20261014&mvustatus=r11.8&dynamic=r11.14&redesign=20261014-inline-2">
@@ -111,6 +111,7 @@
             <input id="director-note" class="field" placeholder="导演指令：只影响演绎，不算 User（用户）台词">
         </div>
         <div class="quick-actions">
+            <div class="quick-actions-scroll">
             <button type="button" id="generation-task-viewer-open" class="chip-btn hidden" onclick="openGenerationTaskViewer()">◷ 上一轮</button>
             <button type="button" id="generation-reconcile-footer" class="chip-btn hidden" onclick="retryGenerationReconciliation()" aria-label="重新核对失败剧情（不调用模型）">↻ 核对失败轮</button>
             <button class="chip-btn" onclick="toggleDirector()">🎬 导演</button>
@@ -119,7 +120,8 @@
             <button class="chip-btn" onclick="continueMsg()">» 续写</button>
             <button class="chip-btn" onclick="autoAdvance()">✦ 推进</button>
             <button id="stop-btn" class="chip-btn danger hidden" onclick="stopGeneration()">■ 停止</button>
-            <button id="mima-reading-toggle" class="chip-btn" onclick="setImmersiveReading(true)" aria-label="进入沉浸阅读" title="沉浸阅读 · 双击剧情恢复界面">⛶ 阅读</button>
+            </div>
+            <button id="mima-reading-toggle" type="button" class="chip-btn" onclick="setImmersiveReading(true)" aria-label="进入沉浸阅读" title="沉浸阅读 · 双击剧情恢复界面">⛶</button>
         </div>
         <div class="composer-row" style="position:relative">
             <textarea id="story-input" rows="1" placeholder="写下你的动作、语言或剧情……"></textarea><span id="r19-draft-status" role="status" aria-live="polite" style="position:absolute;right:56px;bottom:-9px;font:10px system-ui,sans-serif;pointer-events:none;z-index:1"></span>
@@ -203,8 +205,10 @@ window.addEventListener('message',function(ev){
 <!-- 版本更新公告：不接入剧情数据，用户可永久关闭自动提醒 -->
 <div id="mima-release-note-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mima-release-note-title">
   <div class="modal-panel compact-panel mima-release-note-panel">
-    <div class="modal-head"><div><div class="eyebrow">开发版更新公告</div><h2 id="mima-release-note-title">咪嘛馆 · 世界书、兼容草稿与主题工坊修复（开发测试）</h2></div><button class="icon-btn" onclick="closeMimaReleaseNotice()" aria-label="关闭更新公告">✕</button></div>
+    <div class="modal-head"><div><div class="eyebrow">开发版更新公告</div><h2 id="mima-release-note-title">咪嘛馆 · 字体恢复与阅读按钮修复（开发测试）</h2></div><button class="icon-btn" onclick="closeMimaReleaseNotice()" aria-label="关闭更新公告">✕</button></div>
     <div class="mima-release-note-content">
+      <h3>2026-10-29 · 本地字体与阅读按钮专项修复</h3>
+      <p><strong>修复：</strong>修正上一轮字体按需加载中可能在显示期间过早释放 Blob 字体资源、以及等解码后才向浏览器注册字体的回归路径。仍按选择或可见阅读器按需加载，不回退为启动解码全部字体。<strong>体验：</strong>手机底栏「阅读」改为独立的 ⛶ 图标按钮，其余快捷按钮可独立横向滑动，不再发生 sticky 遮挡。<strong>未验证：</strong>真实 iPhone Safari 里的原有私有字体文件和长期切换/闪退情况尚需实际设备核验，仍是开发测试版。</p>
       <h3>本轮独立验收后的精准返工</h3><p><strong>2026-10-27 R2：</strong>修复酒馆草稿并发读取可能覆盖新编辑，以及消息实际已发送却因草稿清理失败被误报为发送失败。出现清理问题时提示“消息已保存”并提供重试清理入口；新输入不会被清空。主题工坊统一 ZIP 导入与导出条目预算，98 张及更多独立素材能完整导回，越界会在导出前说明。<strong>仍是开发测试版：</strong>跨页面主题完整共用、V3/CHARX 资源自动绑定、复杂酒馆插件兼容和真实 iPhone Safari 验收尚未完成。</p><h3>前轮审计返工</h3><p><strong>2026-10-27 兼容与工坊修复：</strong>世界书按原卡扫描深度、大小写和递归规则执行；没有声明的插入位置采用可见默认槽位。酒馆独立剧情草稿按故事保存并支持刷新恢复，成功发送后不再把旧草稿填回来；提供恢复原卡规则入口。主题工坊修复旧主题迁移回执、自身导出 ZIP 无法重新导入和当前草稿被倒载旧版本的问题。</p><p><strong>仍未完成：</strong>酒馆与原生剧情主题未实现完整共享；部分 V3/CHARX 素材只有保留/预览、尚不能自动绑定；复杂 STscript/MVU 仍是有限兼容；iPhone Safari 与真实 Provider 长时流程尚待真机验收。当前仍是开发测试版。</p><ul><li>数据备份页增加包含原生、酒馆兼容、小手机与原始媒体、工坊、壁纸、字体和工具草稿的整馆归档；预检冲突后逐库新增，进度持久保存，中断可继续，不会把多库操作误报为原子事务</li><li>本地字体逐条读取并交给浏览器按需加载，不再在启动时主动解码整个字体库；系统与正文字体独立设置、主题引用及字体原件均保留</li><li>长历史 Prompt 正则按完整消息分批隔离执行，保序且不切断单条正文；每批复用规则编译，失败不会采纳部分过滤结果</li><li>历史视图与搜索导航不再为未显示的旧版本正文反复创建大段 JSON；完整原文、旧版本、编辑、分支、复制和定位均保留</li><li>已并入后续第八批的事实记忆、紧凑百宝箱、工坊、流式阅读、独立音效和内置使用手册；第八批 viewport 与键盘布局保持原样</li></ul><p>仍是开发测试版。真实 iPhone Safari、完整酒馆高级插件等价及超长历史的完整离屏虚拟化尚未验收完成；没有用删历史、停用特效或限制素材数量代替修复。</p>
       <h3>本轮：内置一看就会的玩家帮助中心</h3><ul><li>功能菜单、设置页、剧情侧栏和酒馆兼容工具都可打开「📖 使用手册」；独立阅读，不调用模型，不修改存档</li><li>提供 14 篇零基础图文步骤、目标快捷入口、站内搜索、常见问题及术语解释；部分教程可直接跳转对应功能</li><li>手册使用独立页面与顶层弹窗，手机端独立滚动，不复写主应用样式、输入框、缩放或剧情状态</li><li>本轮仍为开发测试版；真实 iPhone Safari、复杂主题以及整馆端到端交互需继续验证</li></ul>
       <h3>本轮：流式阅读、试听与备份恢复反馈</h3><ul><li>流式 HTML 展开或手动翻阅历史后暂停自动追尾；只有明确点「跟随输出」才恢复，不会被普通滚动事件取消</li><li>普通外观设置中试听音效只播放所选声音一次；普通按钮原有音效与动画仍保留</li><li>完整备份或本机快照恢复时，如果主资料库成功但个人音效失败，会显示「部分完成」并在数据备份页留下具体原因；不会误导重复覆盖资料库</li><li>已做隔离 Chromium 真实点击、流式滚动及音效恢复写入失败注入测试；仍需真实 iPhone Safari 与跨设备恢复实测</li></ul><h3>此前：修复手机顶栏与个人音效导入</h3><ul><li>修复上一版误写坏的 ux-r6.css 样式加载标签，恢复顶部导航圆角与手机端隐藏桌面按钮；不需要清理剧情或重置主题</li><li>普通设置 → 外观 → 动画与点击音效：三类操作可分别导入 MP3/WAV/M4A/AAC，试听、恢复当前主题声音；写入完成后才确认保存</li><li>个人音效单独存放在浏览器 IndexedDB，切换主题仍优先使用个人音效，不修改工坊发布快照及 CSS；完整设置备份增加音效素材，旧备份仍支持</li><li>本轮针对性检查已通过；真实 iPhone Safari、真实安装跨版本缓存及整个网站运行未实测，仍为开发测试版</li></ul>
@@ -388,13 +392,13 @@ window.addEventListener('message',function(ev){
 <script src="./mima-file-export.js?v=20261022-r19-p0-p5-recovery"></script>
 <script src="./html-structure-contract.js?v=20261021-r412&template-ux=20261022-r16-capacity-recovery&r19p6=20261022-final&r19rework=20261023-p0p1-2&r19manualturn=20261023-r5"></script>
 <script src="./standalone-core.js?batch8=publisher-tx-legacy-20261026&batch7=canonical-atomic-20261026&batch6=novel-order-and-empty-restore-20261025&batch5=restore-novel-20261025&batch4=worldbook-20261025&v=20261025-native-worker-r3&base=20261022-r17-source-audit&template-ux=20261022-r16-capacity-recovery&provider-diagnostic=20261022-r18&unverified-window=20261022-r19&r7=20261021-contract&r9=20261021-reader-default-postcommit&r13gen=20261022-r15&r19manual=20261022-1&settingssheet=20261023-1&r19p6=20261022-final&r19recovery=20261023-p012&r19rework=20261023-p0p1-2&r19manualturn=20261023-r5&streamsave=20261025&postheader=20261025-r1&streammode=20261025-thinkingfix-r3&recovery=20261025-p0-1&taskviewer=20261025-r2&promptclean=20261025-r1&oct25rework=novel-assist-3&reworkfix=20261025-p1-4&navguard=20261025-r19-p1-6&auditfix=20261025-p1-7&audit2=20261025-r2&batch8rootfix=20261026-1&regex-display-batch-fix-20261026=&playtools=20261027-3&factmemo=20261027-1&atelierux=20261027-r19&interaction=20261027-r19-prefs-1&memfix=20261028-r19-b8&cssrepair=20261028-b8-complete-3"></script>
-<script src="./font-manager.js?v=1.1.0&fontsplit=20261013-1&txguard=20261013-2&r9=20261021-reader-default-postcommit&r13gen=20261022-r15&urlfontlibrary=20261025-r3&perf-font-meta=20261026-b8-1&batch8rootfix=20261026-1&batch8rework2=20261026&auditJoint=20261027-3&memfix=20261028-r19-b8&cssrepair=20261028-b8-complete-3"></script>
+<script src="./font-manager.js?v=1.1.0&fontsplit=20261013-1&txguard=20261013-2&r9=20261021-reader-default-postcommit&r13gen=20261022-r15&urlfontlibrary=20261025-r3&perf-font-meta=20261026-b8-1&batch8rootfix=20261026-1&batch8rework2=20261026&auditJoint=20261027-3&memfix=20261028-r19-b8&cssrepair=20261028-b8-complete-3&fontui=20261029-1"></script>
 <script src="./png-card-import.js?v=1.4.0&r11=20261012-2"></script>
 <script src="./png-resource-inspector.js?v=1.4.0"></script>
 <script src="./story-play-tools.js?playtools=20261027-3&factmemo=20261027-1&atelierux=20261027-r19&interaction=20261027-r19-prefs-1&auditJoint=20261027-3"></script>
 <script src="./native-history-window.js?v=20261028-b8-cssrepair&cssrepair=20261028-b8-complete-3"></script>
 <script src="./css-resources.js?v=20261028-b8-cssrepair&cssrepair=20261028-b8-complete-3"></script>
-<script src="./app.js?batch8=publisher-tx-legacy-20261026&batch7=canonical-atomic-20261026&batch6=novel-order-and-empty-restore-20261025&batch4=worldbook-20261025&v=20261025-native-worker-r3&streamsave=20261025&streammode=20261025-thinkingfix-r3&recovery=20261025-p0-1&followup=20261025-r3&taskviewer=20261025-r2&promptclean=20261025-r1&oct25rework=novel-assist-3&reworkfix=20261025-p1-4&navguard=20261025-r19-p1-6&auditfix=20261025-p1-7&audit2=20261025-r2&perf-longtext=20261026-b8-1&batch8rootfix=20261026-1&batch8rework2=20261026&regex-display-batch-fix-20261026=&batch8rework4=20261026&playtools=20261027-3&factmemo=20261027-1&atelierux=20261027-r19&interaction=20261027-r19-prefs-1&streamreading=20261027-1&personalSound=20261027-2&triplefix=20261027-1&guide=20261027-1&auditJoint=20261027-3&draftfix=20261027r2&memfix=20261028-r19-b8&cssrepair=20261028-b8-complete-3"></script>
+<script src="./app.js?batch8=publisher-tx-legacy-20261026&batch7=canonical-atomic-20261026&batch6=novel-order-and-empty-restore-20261025&batch4=worldbook-20261025&v=20261025-native-worker-r3&streamsave=20261025&streammode=20261025-thinkingfix-r3&recovery=20261025-p0-1&followup=20261025-r3&taskviewer=20261025-r2&promptclean=20261025-r1&oct25rework=novel-assist-3&reworkfix=20261025-p1-4&navguard=20261025-r19-p1-6&auditfix=20261025-p1-7&audit2=20261025-r2&perf-longtext=20261026-b8-1&batch8rootfix=20261026-1&batch8rework2=20261026&regex-display-batch-fix-20261026=&batch8rework4=20261026&playtools=20261027-3&factmemo=20261027-1&atelierux=20261027-r19&interaction=20261027-r19-prefs-1&streamreading=20261027-1&personalSound=20261027-2&triplefix=20261027-1&guide=20261027-1&auditJoint=20261027-3&draftfix=20261027r2&memfix=20261028-r19-b8&cssrepair=20261028-b8-complete-3&fontui=20261029-1"></script>
 <div id="mima-phone-root" hidden aria-label="咪嘛馆小手机独立模式"></div>
 <script src="./sha256-browser.js?v=r11-20261012-2"></script>
 <script src="./compat-author-contract.js?v=r16-20261015-1"></script>

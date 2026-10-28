@@ -159,10 +159,10 @@ window.MimaFontManager = (() => {
         document.fonts.add(entry.face);releaseFont(id);
         for(const [otherId,other] of loaded)if(other.face.family===entry.face.family)releaseFont(otherId);
         loaded.set(id,entry);
-        // A decoded face owns its font data. Its Blob URL can be released once
-        // loading settles; stale completions never touch a replacement entry.
-        const releaseSource=()=>{if(entry.url){URL.revokeObjectURL(entry.url);entry.url='';}};
-        entry.face.loaded.then(releaseSource,releaseSource);
+        // Keep this source alive for as long as the selected face is in use.
+        // On WebKit a loaded FontFace can still be needed for later CSS matching;
+        // revoking its Blob URL immediately after load may drop the actual glyphs.
+        // trimFonts/releaseFont revoke it when no UI/story/reader owns the face.
     }
     async function importFile(file) {
         if (!file) throw new Error('没有选择字体文件');
@@ -184,7 +184,11 @@ window.MimaFontManager = (() => {
             if(entry?.face.status==='error')throw new Error('字体文件无法解析，请选择有效的 TTF / OTF / WOFF / WOFF2 文件');
             throw e;
         }
-        disposeFont(entry); // Imported metadata appears immediately; decode again only on actual use.
+        disposeFont(entry); // No permanent face for unselected imports.
+        // Replacing/importing a name already selected must restore its visible face
+        // after the database revision invalidated the previous registration.
+        if(getSelected('ui')===record.family||getSelected('story')===record.family)
+            await applySelected().catch(error=>console.warn('字体已保存，但选中字体重新挂载失败',error));
         return metadataOf(record);
     }
     async function getByFamily(family) {
@@ -214,6 +218,9 @@ window.MimaFontManager = (() => {
             if(!record?.buffer)throw new Error('所选字体的本地文件不存在');
             const entry=makeFont(record);if(!entry)throw new Error('当前浏览器无法加载本地字体');
             try {
+                // Register BEFORE explicit decoding, as older working builds did.
+                // A failed/stale load disposes only the candidate; an old face stays alive.
+                document.fonts.add(entry.face);
                 await entry.face.load();
                 if(revision!==fontRevision){disposeFont(entry);throw new Error('字体库已变化，请重新选择字体');}
                 if(!wantedFamily(family)){disposeFont(entry);return null;}
