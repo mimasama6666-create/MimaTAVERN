@@ -24,6 +24,12 @@ function buildZip(files) {
 }
 try {
   if (out===root) throw new Error('invalid output');
+  // Catch the exact class of regression where a stylesheet <link rel> is corrupted
+  // but the file is still included in the ZIP. CSS existence alone cannot detect it.
+  const entry=fs.readFileSync(path.join(root,'index.html'),'utf8');
+  const navTag=(entry.match(/<link\b[^>]*>/gi)||[]).find(tag=>/\bhref\s*=\s*["']\.\/ux-r6\.css(?:\?|["'])/i.test(tag));
+  if(!navTag||!/\brel\s*=\s*["']stylesheet["']/i.test(navTag))
+    throw new Error('Mobile topbar stylesheet ux-r6.css missing or malformed in index.html');
   const result=verifyRelease(root);
   const inventory=JSON.parse(fs.readFileSync(path.join(root,'scripts/release-files.json'),'utf8'));
   // Only files in the pinned normal production inventory are packaged; audit/test/rollback files are excluded.
