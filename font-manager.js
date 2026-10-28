@@ -4,15 +4,15 @@ window.MimaFontManager = (() => {
     const STORE = 'fonts';
     const UI_KEY = 'mimamao_tavern_ui_font';
     const STORY_KEY = 'mimamao_tavern_story_font';
-    // UI, story, visible readers and one explicit preview own loaded faces. Binary sources
-    // are created on demand and revoked as soon as decoding settles.
+    // UI, story, visible readers and one explicit preview own loaded faces.
+    // Only selected/visible sources are decoded; stored records remain untouched.
     const loaded = new Map();
     const usages = new Map();
     // The font picker only needs metadata. Keep the initial verified font list's
     // metadata in memory instead of cloning every multi-MB ArrayBuffer on each visit.
     let metadataCache = null;
     let metadataRead = null, registryRead = null, fontRevision = 0, initialized = false;
-    let previewFamily='', previewApplied='', previewEpoch=0, loadQueue=Promise.resolve();
+    let previewFamily='', previewApplied='', previewEpoch=0;
     const applied={ui:'',story:''}, selectionEpoch={ui:0,story:0}, selectionWrites={ui:0,story:0}, pendingFonts=new Map();
     // Invalidate the cached picker listing when another open tab commits fonts.
     const fontChanges = typeof BroadcastChannel==='function' ? new BroadcastChannel('mima-tavern-font-metadata-v1') : null;
@@ -150,19 +150,25 @@ window.MimaFontManager = (() => {
     function releaseFont(id) {const entry=loaded.get(id);if(entry){loaded.delete(id);disposeFont(entry);}}
     function makeFont(record) {
         if (!record?.buffer || !window.FontFace) return false;
-        const url=URL.createObjectURL(new Blob([record.buffer]));
-        try{return {face:new FontFace(record.family,`url("${url}")`,{display:'swap'}),url};}
-        catch(e){URL.revokeObjectURL(url);throw e;}
+        // Old builds passed a Blob URL to FontFace. On WebKit, forcing URL
+        // decoding and revoking/re-registering that URL introduced an extra
+        // resource lifetime. The already-durable ArrayBuffer is a valid native
+        // FontFace source and does not depend on blob URL fetches at all.
+        try { return {face:new FontFace(record.family,record.buffer,{display:'swap'}),url:''}; }
+        catch (binaryError) {
+            // Preserve older FontFace implementations that only accept CSS src.
+            const url=URL.createObjectURL(new Blob([record.buffer]));
+            try{return {face:new FontFace(record.family,`url("${url}")`,{display:'swap'}),url};}
+            catch(error){URL.revokeObjectURL(url);throw error;}
+        }
     }
     function attachFont(id,entry) {
         // Commit only a verified replacement; a failed add leaves the last face usable.
         document.fonts.add(entry.face);releaseFont(id);
         for(const [otherId,other] of loaded)if(other.face.family===entry.face.family)releaseFont(otherId);
         loaded.set(id,entry);
-        // Keep this source alive for as long as the selected face is in use.
-        // On WebKit a loaded FontFace can still be needed for later CSS matching;
-        // revoking its Blob URL immediately after load may drop the actual glyphs.
-        // trimFonts/releaseFont revoke it when no UI/story/reader owns the face.
+        // Selected/visible faces stay registered until their last owner releases
+        // them; native binary sources do not need a Blob URL at all.
     }
     async function importFile(file) {
         if (!file) throw new Error('没有选择字体文件');
@@ -191,8 +197,16 @@ window.MimaFontManager = (() => {
             await applySelected().catch(error=>console.warn('字体已保存，但选中字体重新挂载失败',error));
         return metadataOf(record);
     }
+    // Different imports may have the same filename/family. The newest committed
+    // record is the one the user most recently picked/imported; never silently
+    // reload a stale same-family binary from an older IDB cursor entry.
+    function newestFamilyRecord(records,family) {
+        const matches=records.filter(record=>record.family===family);
+        matches.sort((a,b)=>String(a.createdAt||'').localeCompare(String(b.createdAt||''))||String(a.id).localeCompare(String(b.id)));
+        return matches.at(-1)||null;
+    }
     async function getByFamily(family) {
-        const record=(await listMetadata()).find(item=>item.family===family);
+        const record=newestFamilyRecord(await listMetadata(),family);
         return record ? readFontById(record.id) : null;
     }
     function trimFonts(extra='') {
@@ -207,10 +221,9 @@ window.MimaFontManager = (() => {
         if(!family)return Promise.resolve(null);
         const key=fontRevision+':'+family;
         if(pendingFonts.has(key))return pendingFonts.get(key);
-        const task=loadQueue.catch(()=>{}).then(async()=>{
-            // Queued requests that have lost all owners need no source at all.
+        const task=(async()=>{
             if(!wantedFamily(family))return null;
-            const metadata=(await listMetadata()).find(item=>item.family===family);
+            const metadata=newestFamilyRecord(await listMetadata(),family);
             if(!metadata)return null; // A URL/CSS/system family has no local binary.
             const current=loaded.get(metadata.id);
             if(current?.revision===fontRevision)return current.face;
@@ -218,8 +231,9 @@ window.MimaFontManager = (() => {
             if(!record?.buffer)throw new Error('所选字体的本地文件不存在');
             const entry=makeFont(record);if(!entry)throw new Error('当前浏览器无法加载本地字体');
             try {
-                // Register BEFORE explicit decoding, as older working builds did.
-                // A failed/stale load disposes only the candidate; an old face stays alive.
+                // Register before awaiting status; native ArrayBuffer FontFace is
+                // already decoded in modern browsers. A failed/stale load only
+                // disposes its candidate and leaves the old face intact.
                 document.fonts.add(entry.face);
                 await entry.face.load();
                 if(revision!==fontRevision){disposeFont(entry);throw new Error('字体库已变化，请重新选择字体');}
@@ -227,8 +241,7 @@ window.MimaFontManager = (() => {
                 entry.revision=revision;attachFont(record.id,entry);trimFonts(family);
                 return entry.face;
             }catch(error){disposeFont(entry);throw error;}
-        });
-        loadQueue=task.catch(()=>{});
+        })();
         pendingFonts.set(key,task);task.finally(()=>{if(pendingFonts.get(key)===task)pendingFonts.delete(key);}).catch(()=>{});
         return task;
     }
@@ -258,7 +271,10 @@ window.MimaFontManager = (() => {
             let records,revision;
             do{
                 revision=fontRevision;records=await listMetadata();initialized=true;
-                await applySelected().catch(error=>console.warn('字体库可用，但所选字体加载失败',error));
+                // Do not gate the whole tavern startup on decoding a large font.
+                // applySelected writes CSS synchronously, while decoded faces
+                // are registered as their per-family reads complete.
+                void applySelected().catch(error=>console.warn('字体库可用，但所选字体加载失败',error));
             }while(revision!==fontRevision);
             return records;
         })().finally(()=>{registryRead=null;});
@@ -322,21 +338,37 @@ window.MimaFontManager = (() => {
         if(getSelected('story')===found.family)setSelected('story','');
         urlFontStyle();applySelected();return true;
     }
+    function setFontCss(kind,family) {
+        const root=document.documentElement;
+        if(kind==='ui')root.style.setProperty('--font-ui',family
+            ? `'${String(family).replace(/'/g,'')}', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`
+            : '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif');
+        else {
+            const legacy=localStorage.getItem('storyFontUrl') ? localStorage.getItem('storyFontFamily')||'MimaUrlFont' : '';
+            const story=family||legacy;
+            root.style.setProperty('--font-story',story
+                ? `'${String(story).replace(/'/g,'')}', var(--font-ui)` : 'var(--font-ui)');
+        }
+    }
     async function applySelected(kind=null) {
         urlFontStyle();
         const applyKind=async kind=>{
-            const epoch=++selectionEpoch[kind],family=getSelected(kind);
-            await acquireFamily(family);
-            if(epoch!==selectionEpoch[kind]||family!==getSelected(kind)){trimFonts();return;}
-            applied[kind]=family;
-            const root=document.documentElement;
-            if(kind==='ui')root.style.setProperty('--font-ui',family ? `'${String(family).replace(/'/g,'')}', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif` : '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif');
-            else {
-                const legacy=localStorage.getItem('storyFontUrl') ? localStorage.getItem('storyFontFamily')||'MimaUrlFont' : '';
-                const story=family||legacy;
-                root.style.setProperty('--font-story',story ? `'${String(story).replace(/'/g,'')}', var(--font-ui)` : 'var(--font-ui)');
+            const epoch=++selectionEpoch[kind],family=getSelected(kind),previous=applied[kind];
+            // This CSS assignment must NOT wait for the IndexedDB read or
+            // FontFace.load(). Previously an unresolved/rejected load left the
+            // entire page on its default font, even when selection was saved.
+            setFontCss(kind,family);
+            try {
+                await acquireFamily(family);
+                if(epoch!==selectionEpoch[kind]||family!==getSelected(kind)){trimFonts();return;}
+                applied[kind]=family;
+                trimFonts();
+            } catch(error) {
+                // Only the request that still owns the selection may roll back
+                // its CSS. An older failure must not overwrite a newer choice.
+                if(epoch===selectionEpoch[kind]&&family===getSelected(kind))setFontCss(kind,previous);
+                throw error;
             }
-            trimFonts();
         };
         const task=Promise.all((kind?[kind]:['ui','story']).map(applyKind)).then(async result=>{
             await Promise.all(Array.from(usages,([owner,usage])=>useFamily(owner,usage.requested).catch(error=>console.warn('阅读字体加载失败，原选择保留',error))));

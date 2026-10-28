@@ -931,7 +931,7 @@ function setupImmersiveReading(){
 }
 // User-facing release notes: once per distinct production release by default.
 // Avoid touching Store/History or making automatic announcements mandatory.
-const MIMA_RELEASE_NOTES_VERSION='R19-20261029-BATCH8-FONT-READING-REWORK-DEV';
+const MIMA_RELEASE_NOTES_VERSION='R19-20261029-BATCH8-FONT-ROOTFIX2-DEV';
 const MIMA_RELEASE_NOTES_SEEN='mima-release-notes-seen:'+MIMA_RELEASE_NOTES_VERSION;
 const MIMA_RELEASE_NOTES_OPTOUT='mima-release-notes-disable-auto-v1';
 function openMimaReleaseNotice(){
@@ -2553,7 +2553,7 @@ async function copyDefaultCss(){try{const css=await loadDefaultCssSource();await
 async function exportDefaultCss(){try{const css=await loadDefaultCssSource();downloadText('mimamao-default-v1.0.9.css',css,'text/css;charset=utf-8');toast('咪嘛馆默认 CSS（样式）已导出')}catch(e){toast(`导出默认 CSS 失败：${e.message}`)}}
 async function forkDefaultCss(){try{const css=await loadDefaultCssSource();openCssPresetEditor();qs('css-pre-name').value='咪嘛馆默认主题 · 二改';qs('css-pre-scope').value='app';qs('css-pre-code').value=css;toast('默认 CSS 已装进编辑器，可直接全局二改')}catch(e){toast(`载入默认 CSS 失败：${e.message}`)}}
 function chooseFontImport(){qs('font-file-input').value='';qs('font-file-input').click()}
-async function importFontFile(file){try{const r=await MimaFontManager.importFile(file);fontRecords=await MimaFontManager.listMetadata();if(!MimaFontManager.getSelected('story'))MimaFontManager.setSelected('story',r.family);renderAppearanceTab(qs('settings-content'));toast(`字体 ${r.family} 已导入`) }catch(e){toast(e.message)}}
+async function importFontFile(file){try{const r=await MimaFontManager.importFile(file);fontRecords=await MimaFontManager.listMetadata();let selectionFailure=null;if(!MimaFontManager.getSelected('story'))try{await MimaFontManager.setSelected('story',r.family)}catch(error){selectionFailure=error}renderAppearanceTab(qs('settings-content'));toast(selectionFailure?`字体 ${r.family} 已保存，但尚未成功应用：${selectionFailure.message}`:`字体 ${r.family} 已导入`) }catch(e){toast(e.message)}}
 async function changeFont(kind,family){try{await MimaFontManager.setSelected(kind,family);}catch(e){toast('字体未切换：'+e.message);const control=qs(kind==='ui'?'font-ui-select':'font-story-select');if(control)control.value=MimaFontManager.getSelected(kind);}}
 let fontPreviewEpoch=0;async function previewLocalFont(id){const epoch=++fontPreviewEpoch,record=fontRecords.find(f=>f.id===id);if(!record)return;try{await MimaFontManager.ensureFamily(record.family);if(epoch!==fontPreviewEpoch)return;const el=qs('font-preview-sample');if(el){el.style.fontFamily=record.family;el.textContent='Aa 咪嘛馆字体预览 · '+record.family;}}catch(e){toast('字体预览失败：'+e.message);}}
 window.previewLocalFont=previewLocalFont;
