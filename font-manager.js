@@ -185,22 +185,28 @@ window.MimaFontManager = (() => {
             if(other.face.family===entry.face.family)releaseFont(otherId);
         entry.id=id;
         loaded.set(id,entry);
-        entry.face.loaded.then(
-            ()=>{
-                if(loaded.get(id)!==entry)return;
-                entry.state='loaded';
-                // Source bytes are retained by a successfully loaded FontFace;
-                // no further URL reads are needed while the face is alive.
-                if(entry.url){URL.revokeObjectURL(entry.url);entry.url='';}
-                reportRegisteredFace(entry,'loaded');
-            }, error=>{
-                if(loaded.get(id)!==entry)return;
-                entry.state='error';
-                // Keep an error visible rather than removing evidence and
-                // silently pretending that the system fallback is the font.
-                reportRegisteredFace(entry,'error',error);
-            }
-        );
+        // Merely adding a FontFace does not guarantee WebKit starts a font
+        // request: the CSS may have been laid out using fallback *before* this
+        // late IndexedDB registration. Begin loading explicitly after adding,
+        // but do not await it on the tavern startup / settings path.
+        // Keep the Blob URL until this entry is actually released; a pending
+        // WebKit font request must never see its source revoked underneath it.
+        try {
+            Promise.resolve(entry.face.load()).then(
+                ()=>{
+                    if(loaded.get(id)!==entry)return;
+                    entry.state='loaded';
+                    reportRegisteredFace(entry,'loaded');
+                },error=>{
+                    if(loaded.get(id)!==entry)return;
+                    entry.state='error';
+                    reportRegisteredFace(entry,'error',error);
+                }
+            );
+        } catch(error) {
+            entry.state='error';
+            reportRegisteredFace(entry,'error',error);
+        }
     }
     async function importFile(file) {
         if (!file) throw new Error('没有选择字体文件');
@@ -242,7 +248,13 @@ window.MimaFontManager = (() => {
         return record ? readFontById(record.id) : null;
     }
     function trimFonts(extra='') {
-        const keep=new Set([applied.ui,applied.story,previewApplied,extra,...Array.from(usages.values(),x=>x.applied)].filter(Boolean));
+        // A requested font also owns its entry while the IDB read / decode is
+        // in progress. Releasing a different preview must not evict it before
+        // the selection or reader can mark it as applied.
+        const keep=new Set([getSelected('ui'),getSelected('story'),applied.ui,applied.story,
+            previewFamily,previewApplied,extra,
+            ...Array.from(usages.values(),x=>x.requested),
+            ...Array.from(usages.values(),x=>x.applied)].filter(Boolean));
         for(const [id,entry] of loaded)if(!keep.has(entry.face.family))releaseFont(id);
     }
     function wantedFamily(family) {
@@ -348,7 +360,11 @@ window.MimaFontManager = (() => {
             const url=f.url.replace(/[\"'\\()\s]/g,'');
             const fam=f.family.replace(/[\"'\\;{}\n\r]/g,'');
             if(!url||!fam)continue;
-            if(f.css===true){imports.push(`@import url("${url}");`);continue;}
+            if(f.css===true){
+                // Batch-added CSS stays inactive until chosen; older manual CSS links retain their behavior.
+                if(f.lazy===true && getSelected('ui')!==f.family && getSelected('story')!==f.family)continue;
+                imports.push(`@import url("${url}");`);continue;
+            }
             faces.push(`@font-face{font-family:"${fam}";src:url("${url}");font-display:swap;}`);
         }
         const css=imports.join('\n')+faces.join('\n');
@@ -368,6 +384,129 @@ window.MimaFontManager = (() => {
         const record={id,name,url,css,family:css?family:'MimaUrl_'+id};
         localStorage.setItem(URL_LIBRARY_KEY,JSON.stringify([...fonts,record]));
         urlFontStyle();return record;
+    }
+    // Import a pasted set of font links in one localStorage transaction. Existing
+    // URL entries, saved binaries, and current UI/story choices are never changed.
+    function batchFontCandidates(raw){
+        const text=String(raw||'');
+        if(text.length>65536)throw Error('一次粘贴的内容太长，请分批导入');
+        const items=[];
+        for(const line of text.split(/\r?\n/)){
+            if(!line.trim())continue;
+            // Accept plain links, space-separated links and pasted @import/link tags.
+            const links=line.match(/https?:\/\/[^\s"'()<>，、]+/gi);
+            if(links?.length){
+                for(const found of links)items.push(found.replace(/[;,；]+$/,''));
+            }else items.push(line.trim()); // Never silently ignore malformed lines.
+        }
+        if(items.length>200)throw Error('一次最多识别 200 条链接，请分批导入');
+        return items;
+    }
+    function urlFontDetails(address){
+        const url=String(address||'').trim().replace(/&amp;/gi,'&');
+        let parsed;try{parsed=new URL(url);}catch(_){throw Error('不是有效的 URL');}
+        if(parsed.protocol!=='https:'||parsed.username||parsed.password||
+            /[\s"'()\\]/.test(url)||url.length>2048)throw Error('需要不含账号密码的 HTTPS 字体链接');
+        const css=parsed.hostname.toLowerCase()==='fonts.googleapis.com'||/\.css$/i.test(parsed.pathname);
+        return {url,parsed,css};
+    }
+    async function detectCssFamily(details){
+        const {url,parsed}=details;
+        // Google Fonts encodes the family in its query string. No network
+        // request or CORS permission is required for that supported URL format.
+        if(parsed.hostname.toLowerCase()==='fonts.googleapis.com'){
+            const family=parsed.searchParams.getAll('family').map(v=>v.split(':')[0].replace(/\+/g,' ').trim()).find(Boolean);
+            if(family)return family;
+            throw Error('Google Fonts 地址缺少 family 参数');
+        }
+        let response;
+        try{response=await fetch(url,{credentials:'omit',mode:'cors'});}
+        catch(_){throw Error('无法跨站读取 CSS 字体族名；请用上方单条导入填写字体族名');}
+        if(!response.ok)throw Error('CSS 无法读取（HTTP '+response.status+'）');
+        const length=Number(response.headers.get('content-length')||0);
+        if(length>512*1024)throw Error('CSS 文件过大，无法自动识别字体族名');
+        const css=(await response.text()).slice(0,512*1024+1);
+        if(css.length>512*1024)throw Error('CSS 文件过大，无法自动识别字体族名');
+        const faces=css.match(/@font-face\s*\{[^}]*\}/gi)||[];
+        for(const face of faces){
+            const match=face.match(/font-family\s*:\s*(?:"([^"]+)"|'([^']+)'|([^;\r\n}]+))/i);
+            const family=(match?.[1]||match?.[2]||match?.[3]||'').trim();
+            if(family)return family;
+        }
+        throw Error('CSS 未找到 @font-face 字体族名；请用上方单条导入');
+    }
+    function urlFontsForBatchWrite(){
+        const saved=localStorage.getItem(URL_LIBRARY_KEY);
+        if(saved===null)return [];
+        let records;try{records=JSON.parse(saved);}catch(_){throw Error('原链接字体库读取异常，已保留原数据，没有覆盖');}
+        const valid=urlFonts();
+        if(!Array.isArray(records)||records.length!==valid.length)
+            throw Error('原链接字体库存在无法识别的记录，已保留原数据，没有覆盖');
+        return valid;
+    }
+    async function addUrlFontsBatch(raw){
+        const candidates=batchFontCandidates(raw);
+        if(!candidates.length)throw Error('请先粘贴字体链接，每行一条');
+        const existing=urlFontsForBatchWrite(),seen=new Set(existing.map(f=>f.url));
+        const rejected=[],pending=[];
+        for(const candidate of candidates){
+            try{
+                const details=urlFontDetails(candidate);
+                if(seen.has(details.url)){
+                    rejected.push({url:candidate,reason:'重复链接，已跳过'});continue;
+                }
+                seen.add(details.url);
+                pending.push(details);
+            }catch(error){rejected.push({url:candidate,reason:error.message||String(error)});}
+        }
+        // Only unknown CSS sources require a remote metadata read. Bounded
+        // concurrency avoids flooding an iPhone with stylesheet requests.
+        const results=new Array(pending.length);let next=0;
+        await Promise.all(Array.from({length:Math.min(4,pending.length)},async()=>{
+            while(next<pending.length){
+                const i=next++,details=pending[i];
+                try{results[i]=details.css?await detectCssFamily(details):null;}
+                catch(error){results[i]={error:error.message||String(error)};}
+            }
+        }));
+        // CSS inspection may await remote requests. Another tab could have
+        // edited the library meanwhile; re-read before committing so no newer
+        // records disappear from a stale full-array write.
+        const latest=urlFontsForBatchWrite();
+        const taken=new Set(latest.map(f=>f.name));
+        const committedUrls=new Set(latest.map(f=>f.url));
+        const cssFamilies=new Set(latest.filter(f=>f.css).map(f=>f.family.toLowerCase()));
+        let number=1;
+        const added=[];
+        for(let i=0;i<pending.length;i++){
+            const details=pending[i],result=results[i];
+            if(result?.error){rejected.push({url:details.url,reason:result.error});continue;}
+            if(committedUrls.has(details.url)){
+                rejected.push({url:details.url,reason:'其他页面已收藏此链接'});continue;
+            }
+            if(latest.length+added.length>=100){
+                rejected.push({url:details.url,reason:'字体收藏库最多 100 个'});continue;
+            }
+            while(taken.has('自定义字体'+number))number++;
+            const name='自定义字体'+number++;taken.add(name);
+            const id='urlfont_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,11);
+            const family=details.css?String(result||'').trim():'MimaUrl_'+id;
+            if(!family||/["'\;{}\n\r]/.test(family)){
+                rejected.push({url:details.url,reason:'字体族名含无效 CSS 字符'});continue;
+            }
+            if(details.css && cssFamilies.has(family.toLowerCase())){
+                rejected.push({url:details.url,reason:'CSS 字体族名与已有字体重复，不能独立切换'});continue;
+            }
+            added.push({id,name,url:details.url,css:details.css,family,lazy:details.css});
+            if(details.css)cssFamilies.add(family.toLowerCase());
+            committedUrls.add(details.url);
+        }
+        // Atomic: if storage is full/unavailable, do not report partial success.
+        if(added.length){
+            localStorage.setItem(URL_LIBRARY_KEY,JSON.stringify([...latest,...added]));
+            urlFontStyle();
+        }
+        return {added,rejected};
     }
     function deleteUrlFont(id){
         const records=urlFonts(),found=records.find(x=>x.id===id);
@@ -576,5 +715,5 @@ window.MimaFontManager = (() => {
         if (record && getSelected('ui') === record.family) setSelected('ui','');
         if (record && getSelected('story') === record.family) setSelected('story','');
     }
-    return { init, all, listMetadata, getByFamily, ensureFamily, useFamily, releaseUsage, importFile, deleteFont, getSelected, getLoadStatus, setSelected, applySelected, urlFonts, addUrlFont, deleteUrlFont, exportPortable, importPortable, planPortableImport, commitPortablePlan, rollbackPortablePlan };
+    return { init, all, listMetadata, getByFamily, ensureFamily, useFamily, releaseUsage, importFile, deleteFont, getSelected, getLoadStatus, setSelected, applySelected, urlFonts, addUrlFont, addUrlFontsBatch, deleteUrlFont, exportPortable, importPortable, planPortableImport, commitPortablePlan, rollbackPortablePlan };
 })();
