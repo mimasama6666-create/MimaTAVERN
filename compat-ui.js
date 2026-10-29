@@ -513,6 +513,7 @@ async function refreshMessages(){if(!activeId||!opened||!$('compat-lab')?.classL
 
   if(statusNode){clear(statusNode);if(state.active){const table=el('dl',{className:'compat-mvu-readonly'},statusNode);const rows=root.MimaCompatMVU?.statusRows?.(state.state,{limit:40})||[];for(const row of rows){const group=el('div',{className:'compat-mvu-pair'},table);el('dt',{text:row.path},group);el('dd',{text:row.value},group);}if(rows.length===40)el('small',{text:'仅展示前 40 项；完整状态在下方，未裁剪存档。'},statusNode);}else el('small',{text:'暂无可验证的动态变量状态。'},statusNode);}
  }catch(e){if(activeId!==sessionId||sessionGeneration!==generation||messageRenderGeneration!==renderTicket)return;if(statusNode){clear(statusNode);el('small',{text:'状态校验失败，原存档未修改。'},statusNode);}mvuNode.textContent='MVU 状态验证失败（未清空存档）：'+(e.code||'E_MVU')+' '+e.message;}}
+ const perfCompatStarted=root.MimaPerfDiagnostics?.isRunning()?performance.now():0;
  const box=$('compat-messages'),shadow=box; // R12.2: safe text uses native DOM; untrusted HTML remains in opaque sandbox iframe
  // Old resize messages cannot change a newly rendered conversation.
  for(const old of box.querySelectorAll('.compat-inline-mvu-template'))old.remove();
@@ -568,6 +569,7 @@ async function refreshMessages(){if(!activeId||!opened||!$('compat-lab')?.classL
  if(wasFollowing)box.scrollTop=box.scrollHeight;
  else if(anchor?.isConnected)root.MimaHistoryNavigator.scrollByVisual(box,anchor.getBoundingClientRect().top-box.getBoundingClientRect().top-anchorOffset);
  syncLatestButton();scheduleFrameWindow();
+ if(perfCompatStarted)root.MimaPerfDiagnostics?.mark('compat_render',performance.now()-perfCompatStarted);
 }
 function syncLatestButton(){const box=$('compat-messages'),button=$('compat-follow-latest');if(button)button.hidden=!box||box.scrollHeight-box.scrollTop-box.clientHeight<96;}
 

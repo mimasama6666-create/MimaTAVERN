@@ -117,5 +117,6 @@
   "worldbook-match.js",
   "tavern-backup.js",
   "css-resources.js",
-  "native-history-window.js"
+  "native-history-window.js",
+  "performance-diagnostics.js"
 ]

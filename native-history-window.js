@@ -45,45 +45,68 @@
   unlock(record);
   try{state.hydrate(record.el,record.msg,()=>{if(active===state&&record.live&&record.el.isConnected)restoreControls(record.el,record.controls);});}catch(error){placeholder(record,record.height);console.warn('[Native History] Could not render message',error);return false;}
   record.live=true;record.el.dataset.mimaNativeWindow='live';
-  restoreControls(record.el,record.controls);state.live.add(record);return true;
+  restoreControls(record.el,record.controls);state.live.add(record);window.MimaPerfDiagnostics?.mark('history_hydrate');return true;
  }
  function suspend(record,state){
   if(!record.live||record.pins||record.el.contains(document.activeElement))return;
   if(record.el.dataset.mimaDisplayRegex!=='pending')record.controls=captureControls(record.el);const text=textOf(record);if(text!==null)record.text=text;
   // offsetHeight is unscaled layout geometry. getBoundingClientRect is reserved
   // for viewport comparisons, so CSS zoom never doubles the retained height.
-  record.height=Math.max(40,record.el.offsetHeight);placeholder(record,record.height);state.live.delete(record);
+  record.height=Math.max(40,record.el.offsetHeight);placeholder(record,record.height);state.live.delete(record);window.MimaPerfDiagnostics?.mark('history_suspend');
  }
- function distance(record,view){const rect=record.el.getBoundingClientRect();return rect.bottom<view.top?view.top-rect.bottom:rect.top>view.bottom?rect.top-view.bottom:0;}
  function update(state){
   if(active!==state||!state.box.isConnected||!state.enabled)return;
-  const view=state.box.getBoundingClientRect(),margin=Math.max(600,view.height*1.5),entries=state.entries;
-  // Native transcript siblings have monotone geometry. Binary search avoids a
-  // layout read for every message on each scroll; observers cover CSS reorders.
+  const perfStart=window.MimaPerfDiagnostics?.isRunning()?performance.now():0;
+  const view=state.box.getBoundingClientRect();
+  const enterMargin=Math.max(600,view.height*1.5);
+  // Keep already-rendered messages a little longer than newly-entering ones.
+  // This avoids suspending/re-rendering a message at every scroll boundary.
+  const exitMargin=enterMargin+Math.max(400,view.height);
+  const entries=state.entries,now=performance.now(),geometry=new Map();
+  const locate=record=>{
+   let info=geometry.get(record);
+   if(!info){
+    const rect=record.el.getBoundingClientRect();
+    info={rect,distance:rect.bottom<view.top?view.top-rect.bottom:rect.top>view.bottom?rect.top-view.bottom:0};
+    geometry.set(record,info);
+   }
+   return info;
+  };
+  // The original article shells keep document order, even when their content
+  // is unloaded. Find the beginning of the extended viewport logarithmically.
   let low=0,high=entries.length;
-  while(low<high){const mid=(low+high)>>>1;if(entries[mid].el.getBoundingClientRect().bottom<view.top-margin)low=mid+1;else high=mid;}
+  while(low<high){const mid=(low+high)>>>1;if(locate(entries[mid]).rect.bottom<view.top-exitMargin)low=mid+1;else high=mid;}
   const candidates=new Set();
-  for(let i=low;i<entries.length&&candidates.size<state.maxLive;i++){
-   const record=entries[i],rect=record.el.getBoundingClientRect();if(rect.top>view.bottom+margin)break;candidates.add(record);
+  for(let i=low;i<entries.length;i++){
+   const record=entries[i],info=locate(record);
+   if(info.rect.top>view.bottom+exitMargin)break;
+   if(info.distance<=enterMargin||(record.live&&info.distance<=exitMargin))candidates.add(record);
   }
-  for(const record of state.live)if(record.pins||record.el.contains(document.activeElement)||record.forceUntil>performance.now())candidates.add(record);
-  for(const record of state.intersecting){if(record.el.isConnected&&distance(record,view)<=margin)candidates.add(record);}
-  const ranked=[...candidates].sort((a,b)=>{
-   const protectedRank=r=>r.pins||r.el.contains(document.activeElement)?0:r.forceUntil>performance.now()?1:2;
-   return protectedRank(a)-protectedRank(b)||distance(a,view)-distance(b,view);
-  });
-  const keep=new Set(ranked.slice(0,state.maxLive));
-  // An actively edited control remains mounted even if the user scrolls away.
+  for(const record of state.live){
+   if(record.pins||record.el.contains(document.activeElement)||record.forceUntil>now)candidates.add(record);
+  }
+  for(const record of state.intersecting){
+   if(record.el.isConnected&&locate(record).distance<=enterMargin)candidates.add(record);
+  }
+  // Compute all geometry and priority once, rather than reading layout on
+  // every Array.sort comparator invocation (previously O(n log n) reads).
+  const ranked=[...candidates].map(record=>({record,
+   priority:record.pins||record.el.contains(document.activeElement)?0:record.forceUntil>now?1:2,
+   distance:locate(record).distance
+  })).sort((a,b)=>a.priority-b.priority||a.distance-b.distance);
+  const keep=new Set(ranked.slice(0,state.maxLive).map(item=>item.record));
+  // Never unmount a control being edited or a message pinned for search.
   for(const record of state.live)if(record.pins||record.el.contains(document.activeElement))keep.add(record);
   for(const record of [...state.live])if(!keep.has(record))suspend(record,state);
   for(const record of keep)hydrate(record,state);
+  if(perfStart)window.MimaPerfDiagnostics?.mark('history_update',performance.now()-perfStart);
  }
  function sync(box,messages,options={}){
   const list=Array.isArray(messages)?messages:[];
   if(!box||!list.length){reset();return;}
   const sessionChanged=active&&options.sessionId!==undefined&&active.sessionId!==options.sessionId;
   if(active&&(active.box!==box||sessionChanged))reset();
-  if(!active){const controller=new AbortController();active={box,controller,sessionId:options.sessionId,entries:[],byId:new Map(),live:new Set(),intersecting:new Set(),raf:0,maxLive:80};
+  if(!active){const controller=new AbortController();active={box,controller,sessionId:options.sessionId,entries:[],byId:new Map(),live:new Set(),intersecting:new Set(),observed:new Set(),raf:0,maxLive:80};
    const state=active;box.addEventListener('scroll',schedule,{passive:true,signal:controller.signal});
    box.addEventListener('focusout',schedule,{signal:controller.signal});window.addEventListener('resize',schedule,{passive:true,signal:controller.signal});
    if(typeof IntersectionObserver!=='undefined')state.intersection=new IntersectionObserver(items=>{if(active!==state)return;for(const item of items){const record=recordsByNode.get(item.target);if(!record)continue;if(item.isIntersecting)state.intersecting.add(record);else state.intersecting.delete(record);}schedule();},{root:box,rootMargin:'1200px 0px'});
@@ -95,8 +118,16 @@
   for(const el of box.children){const msg=messagesById.get(el.dataset.msgId);if(!msg||!el.matches('article.message'))continue;
    let record=recordsByNode.get(el);if(!record){record={el,msg,live:true,controls:[],text:null,height:180,pins:0};recordsByNode.set(el,record);}record.msg=msg;entries.push(record);
   }
-  state.intersection?.disconnect();state.intersecting.clear();state.entries=entries;state.byId=new Map(entries.map(record=>[record.el.dataset.msgId,record]));state.live=new Set(entries.filter(record=>record.live));
-  for(const record of entries)state.intersection?.observe(record.el);
+  state.entries=entries;state.byId=new Map(entries.map(record=>[record.el.dataset.msgId,record]));state.live=new Set(entries.filter(record=>record.live));
+  // Appending a turn must not disconnect/reobserve the entire history.
+  // Only attach new articles and detach articles no longer in this transcript.
+  const observedNow=new Set(entries.map(record=>record.el));
+  for(const node of state.observed)if(!observedNow.has(node)){
+   state.intersection?.unobserve(node);
+   const previous=recordsByNode.get(node);if(previous)state.intersecting.delete(previous);
+  }
+  for(const node of observedNow)if(!state.observed.has(node))state.intersection?.observe(node);
+  state.observed=observedNow;
   if(list.length<=120){for(const record of entries)hydrate(record,state);}else update(state);
   schedule();
  }

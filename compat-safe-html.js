@@ -122,7 +122,16 @@ function srcdoc(content, options={}){
    window.__mimaPresentationReady=true;dispatchEvent(new Event('mima-presentation-ready'));
    report('restored');
   });
-  for(const name of ['input','change','toggle','scroll'])document.addEventListener(name,function(){report('');},true);
+  // A touch scroll may emit dozens of events per second. A complete snapshot
+  // scans every descendant, so coalesce scroll-only updates. The parent still
+  // requests a synchronous snapshot before suspending this iframe.
+  let scrollTimer=null;
+  document.addEventListener('scroll',function(){
+   if(scrollTimer!==null||window.__mimaPresentationReady!==true)return;
+   scrollTimer=setTimeout(function(){scrollTimer=null;report('');},160);
+  },true);
+  for(const name of ['input','change','toggle'])document.addEventListener(name,function(){report('');},true);
+  addEventListener('pagehide',function(){if(scrollTimer!==null){clearTimeout(scrollTimer);scrollTimer=null;report('');}});
  }.toString()+')('+JSON.stringify(token)+');';
  return '<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="'+csp+'"><meta name="viewport" content="width=device-width,initial-scale=1"><style>'+base+'\n'+css+'</style></head><body><mima-flow>'+html+'</mima-flow>'+(legacyNoResize?'':'<script nonce="'+nonce+'">'+bridge+fontBridge+stateBridge+'</script>')+'</body></html>';
 }

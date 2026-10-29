@@ -931,7 +931,7 @@ function setupImmersiveReading(){
 }
 // User-facing release notes: once per distinct production release by default.
 // Avoid touching Store/History or making automatic announcements mandatory.
-const MIMA_RELEASE_NOTES_VERSION='R19-20261029-BATCH8-FONT-V5-URL-BATCH-DEV';
+const MIMA_RELEASE_NOTES_VERSION='R19-20261029-BATCH8-PERF-DIAG-V5.2-DEV';
 const MIMA_RELEASE_NOTES_SEEN='mima-release-notes-seen:'+MIMA_RELEASE_NOTES_VERSION;
 const MIMA_RELEASE_NOTES_OPTOUT='mima-release-notes-disable-auto-v1';
 function openMimaReleaseNotice(){
@@ -961,7 +961,7 @@ async function renderSettingsContent(){
     const box=qs('settings-content');
     if(settingsTab==='png-resources'){renderPngResourcesTab(box);return;}
     if(settingsTab==='templates'){void renderSettingTemplatesTab(box);return;}
-    if(!currentSessionData&&!['appearance','api','data','diagnostics','templates','updates'].includes(settingsTab)){box.innerHTML='<div class="empty-state"><p>选择一种方式开始。</p><div class="toolbar"><button class="primary-btn" onclick="openNewSessionModal()">开始新剧情</button><button class="ghost-btn" onclick="MimaCompatUI.open()">🎴 玩酒馆角色卡</button></div></div>';return}
+    if(!currentSessionData&&!['appearance','api','data','diagnostics','performance','templates','updates'].includes(settingsTab)){box.innerHTML='<div class="empty-state"><p>选择一种方式开始。</p><div class="toolbar"><button class="primary-btn" onclick="openNewSessionModal()">开始新剧情</button><button class="ghost-btn" onclick="MimaCompatUI.open()">🎴 玩酒馆角色卡</button></div></div>';return}
     if(settingsTab==='roles')renderRolesTab(box);
     else if(settingsTab==='worldbook')renderWorldbookTab(box);
     else if(settingsTab==='presets')renderPresetsTab(box);
@@ -972,6 +972,7 @@ async function renderSettingsContent(){
     else if(settingsTab==='api')renderApiTab(box);
     else if(settingsTab==='prompt')renderPromptTab(box);
     else if(settingsTab==='diagnostics')renderDiagnosticsTab(box);
+    else if(settingsTab==='performance')renderPerformanceTab(box);
     else if(settingsTab==='updates')renderMimaUpdatesTab(box);
     else if(settingsTab==='data')renderDataTab(box,renderEpoch);
 }
@@ -2832,6 +2833,41 @@ async function refreshPromptInspector(){
     root.innerHTML=`<div class="prompt-stats"><div class="stat-card"><div class="stat-num">${Number(d.estimatedInputTokens||0).toLocaleString()}</div><div class="stat-label">估算输入 Tokens</div></div><div class="stat-card"><div class="stat-num">${d.recentMessageCount}/${d.recentMessageLimit||'—'}</div><div class="stat-label">最近消息窗口</div></div><div class="stat-card"><div class="stat-num">${d.matchedWorldbookEntries.length}</div><div class="stat-label">世界书命中</div></div><div class="stat-card"><div class="stat-num">${cacheText}</div><div class="stat-label">最近缓存命中 Tokens</div></div><div class="stat-card"><div class="stat-num">${d.systemChars}</div><div class="stat-label">System 字符</div></div><div class="stat-card"><div class="stat-num">${d.finalMessageCount}</div><div class="stat-label">最终 Messages</div></div></div><div class="cache-insight-card"><strong>🧊 Cache Insight（缓存观察）</strong><div class="row-sub">${cacheNote} 缓存是否真正命中由上游 Provider 决定；咪嘛馆不会伪造“已缓存”。</div></div><div class="row-sub">${d.contextTrace?.uncoveredRawCount?`本轮有 ${d.contextTrace.uncoveredRawCount} 条待总结旧原文处于最近窗口外；相关检索 ${d.contextTrace.retrievedCount} 条，未覆盖 ${d.contextTrace.omittedCount} 条（原文仍在本地）。`:'旧原文覆盖无额外缺口。'} ${d.contextTrace?.budgetVerified?'上下文预算：使用玩家配置的模型窗口。':'模型上下文窗口未核实：大请求将拒绝发送；请填写服务商真实窗口，不会猜测 32K 或 100 万容量。'} · 分批移出 ${Number(d.contextTrace?.plannedTrimRounds||0)} 轮，保留至少 ${Number(d.contextTrace?.protectedRecentRounds||20)} 轮，记忆来源覆盖 ${d.contextTrace?.memoryCoverageProof?'已核对':'未验证'}。</div><div class="row-sub">🧹 历史 HTML 净化：${escapeHtml(d.historyHtmlProjection?.mode==='raw'?'已关闭':'已开启')} · 发送历史中转换 ${Number(d.historyHtmlProjection?.changedMessages||0)} / ${Number(d.historyHtmlProjection?.processedMessages||0)} 条角色消息 · 减少 ${Number(d.historyHtmlProjection?.savedChars||0).toLocaleString()} 字符 · 粗估减少 ${Number(d.historyHtmlProjection?.estimatedTokensSaved||0).toLocaleString()} Tokens（不是上游精确计费）。玩家消息与 System 预设不计入此项。</div><h4>本轮 Prompt 构成（字符数，非精确 Tokens）</h4><div class="hit-list">${(d.sections||[]).slice().sort((a,b)=>b.chars-a.chars).map(x=>`<div class="hit-item">${escapeHtml(x.name)}：${Number(x.chars||0).toLocaleString()} 字符</div>`).join('')||'<div class="hit-item">暂无项目</div>'}</div><h4>本轮记忆注入情况</h4><div class="hit-list">${(d.memoryTrace||[]).map(x=>`<div class="hit-item">${x.kind==='rolling'?'滚动剧情摘要':x.kind==='core'?'核心记忆':`事实记忆 第${x.startRound}–${x.endRound}轮`}：${x.injected?'✅ 已进入本轮 System 请求':'— 本轮未注入'} · ${Number(x.chars||0)} 字 · ${escapeHtml(x.reason||'unknown')}${!x.sourceCurrent&&x.injected?' · 旧剧情已修改，但保留玩家选择的记忆注入':''}</div>`).join('')||'<div class="hit-item">没有可用记忆记录</div>'}</div><div class="row-sub">这反映当前时间线的 Prompt 预览；旧轮冻结重说和失败重试仍按原请求快照发送，不自动追加新记忆。</div><h4>本轮世界书</h4><div class="row-sub">本轮预算：${Number(d.worldbookBudgetChars??0).toLocaleString()} 字符，实际占用：${Number(d.worldbookUsedChars??0).toLocaleString()} 字符。未注入条目请核对触发条件与跳过原因。</div><div class="hit-list">${d.matchedWorldbookEntries.length?d.matchedWorldbookEntries.map(x=>`<div class="hit-item">✅ ${escapeHtml(x.bookName)} / ${escapeHtml(x.entryName)} · Depth（深度） ${x.depth} · ${escapeHtml(x.position)} · ${escapeHtml(x.reason)}${x.hits?.length?` · 命中：${escapeHtml(x.hits.join(', '))}`:''}</div>`).join(''):'<div class="hit-item">本轮没有触发世界书条目；未触发条目不会进入本轮 Prompt。</div>'}</div><h4 style="margin-top:16px">实际 System 消息（玩家挂载与来源资料）</h4><pre class="prompt-pre">${escapeHtml(d.actualSystemPreview||'')}</pre><h4>旧版资料分栏（本轮资料已按来源列入消息队列）</h4><pre class="prompt-pre">${escapeHtml(d.userMaterialPreview||'（本轮无资料块）')}</pre><h4>面具加载与注入状态</h4><div class="hit-list">${(d.maskTrace||[]).map(x=>`<div class="hit-item">${escapeHtml(x.kind)} / ${escapeHtml(x.name||x.id||'未挂载')}：${escapeHtml(x.reason)} · ${x.injected?'已注入 System 资料':'未注入'}</div>`).join('')}</div><h4>原生预设挂载与实际出站（小值先发，0 最前）</h4><div class="row-sub">未挂载、已禁用和空内容均不会发送。数字只控制排列，无法保证模型服从或自动解决自由文本矛盾；请在下方完整消息队列核对。</div><div class="hit-list">${(d.presetTrace||[]).map(x=>`<div class="hit-item">${escapeHtml(x.name||x.id)}：${escapeHtml(x.reason)} · priority=${x.priority??'—'} · ${x.injected?`消息 #${x.sendIndex} · 已进入 System`:'未注入'}</div>`).join('')||'本轮未挂载预设'}</div><h4>世界书未注入原因</h4><div class="hit-list">${(d.worldbookMountTrace||[]).filter(x=>x.reason!=='enabled').map(x=>`<div class="hit-item">${escapeHtml(x.bookName||x.bookId)}：${escapeHtml(x.reason)}</div>`).join('')}${(d.skippedWorldbookEntries||[]).map(x=>`<div class="hit-item">${escapeHtml(x.bookName)} / ${escapeHtml(x.entryName)}：${escapeHtml(x.reason)}${x.reason==='budget'?`（需要 ${x.neededChars} 字符，剩余 ${x.remainingChars}）`:''}</div>`).join('')||'无额外跳过条目'}</div><h4>世界书深度注入（System 来源资料）</h4><div class="hit-list">${(d.depthInjections||[]).map(x=>`<div class="hit-item">${escapeHtml(x.bookName)} / ${escapeHtml(x.entryName)} · depth=${x.depth} · ${x.chars} 字符</div>`).join('')||'本轮无深度注入'}</div><details style="margin-top:12px"><summary>查看完整 Message（消息）队列</summary><pre class="prompt-pre">${escapeHtml(d.messagePreview.map(x=>`#${x.index+1} ${x.role}\n${x.content}`).join('\n\n'))}</pre></details>`;
 }
 
+// Opt-in read-only performance diagnostics: no History/Memory or settings writes.
+function renderPerformanceTab(box){
+ const meter=window.MimaPerfDiagnostics;
+ box.innerHTML=`<section class="settings-section mima-perf-panel"><h3>⚡ 性能检查 · 只读</h3>
+ <p class="helper">用于排查正常聊天、流式生成和长剧情阅读时的卡顿与重复工作。手动开始后关闭设置，照常使用咪嘛馆，再回来停止并查看结果。平时完全不采样；本次记录只存在当前页面内存，刷新自动清空。</p>
+ <div class="toolbar"><button type="button" class="primary-btn" id="mima-perf-start">▶ 开始记录</button><button type="button" class="ghost-btn" id="mima-perf-stop">■ 停止记录</button><button type="button" class="ghost-btn" id="mima-perf-refresh">刷新结果</button></div>
+ <div class="toolbar"><button type="button" class="ghost-btn" id="mima-perf-copy">复制诊断 JSON</button><button type="button" class="ghost-btn" id="mima-perf-download">导出 JSON</button><button type="button" class="ghost-btn" id="mima-perf-clear">清空本次记录</button></div>
+ <p id="mima-perf-status" role="status" class="row-sub"></p>
+ <div id="mima-perf-summary" class="prompt-stats"></div>
+ <div id="mima-perf-signals" class="hit-list"></div>
+ <details><summary>查看完整性能数据（不包含剧情、密钥或字体文件）</summary><pre id="mima-perf-report" class="prompt-pre"></pre></details>
+ <p class="helper">采样只记录渲染入口次数、操作耗时、DOM 变化、历史消息重挂载、部分浏览器长任务和抽样帧间隔。它不能直接测量手机温度、电池功耗、GPU 绘制次数或真实 CPU 占用；Safari 不支持的指标会标记为不支持，而不是显示成零。</p></section>`;
+ const status=box.querySelector('#mima-perf-status'),summary=box.querySelector('#mima-perf-summary'),signals=box.querySelector('#mima-perf-signals'),report=box.querySelector('#mima-perf-report');
+ function display(){const data=meter?.snapshot()||{status:'unavailable'},running=!!meter?.isRunning();
+  box.querySelector('#mima-perf-start').disabled=running;box.querySelector('#mima-perf-start').textContent=(!running&&data.startedAt)?'▶ 开始新一轮记录':'▶ 开始记录';box.querySelector('#mima-perf-stop').disabled=!running;
+  const available=!!data.startedAt;box.querySelector('#mima-perf-copy').disabled=!available;box.querySelector('#mima-perf-download').disabled=!available;box.querySelector('#mima-perf-clear').disabled=!available;
+  if(!available){status.textContent='尚未开始记录。点「开始记录」后关闭设置，正常玩一段剧情。';summary.textContent='';signals.textContent='';report.textContent='';return;}
+  status.textContent=(running?'● 正在记录（离开设置后继续）':'■ 已停止记录')+' · 前台采样 '+data.foregroundSeconds+' 秒 · '+(data.support.longTasks?'支持长任务监测':'浏览器不支持长任务监测');
+  const rows=[['原生剧情刷新',data.operations.native_refresh.count+' 次'],['流式正文更新',data.operations.stream_dom_patch.count+' 次'],['兼容剧情刷新',data.operations.compat_render.count+' 次'],['刷新最慢耗时',(data.operations.native_refresh.duration?.maxMs??'—')+' ms'],['历史重挂',String(data.operations.history_hydrate.count)+' 条'],['历史卸载',String(data.operations.history_suspend.count)+' 条'],['抽样卡顿帧',data.frameIntervalSample.over100+' / '+data.frameIntervalSample.measured],['浏览器长任务',data.support.longTasks?data.browserLongTasks.count+' 次':'不支持']];
+  summary.replaceChildren(...rows.map(([name,num])=>{const card=document.createElement('div');card.className='stat-card';const n=document.createElement('div');n.className='stat-num';n.textContent=num;const l=document.createElement('div');l.className='stat-label';l.textContent=name;card.append(n,l);return card;}));
+  signals.replaceChildren(...data.signals.map(t=>{const node=document.createElement('div');node.className='hit-item';node.textContent=t;return node;}));
+  report.textContent=JSON.stringify(data,null,2);
+ }
+ box.querySelector('#mima-perf-start').onclick=()=>{if(meter.snapshot().startedAt&&!meter.isRunning()&&!confirm('重新开始会覆盖本页之前的性能记录。需要保存旧结果请先复制或导出。确定开始新一轮吗？'))return;meter.start();display()};
+ box.querySelector('#mima-perf-stop').onclick=()=>{meter.stop();display()};
+ box.querySelector('#mima-perf-refresh').onclick=display;
+ box.querySelector('#mima-perf-clear').onclick=()=>{meter.reset();display()};
+ box.querySelector('#mima-perf-copy').onclick=async()=>{const result=JSON.stringify(meter.snapshot(),null,2);
+   try{if(!navigator.clipboard?.writeText)throw new Error('当前环境不支持自动复制');await navigator.clipboard.writeText(result);toast('已复制只读性能报告');}
+   catch(error){report.closest('details').open=true;report.textContent=result;toast('自动复制不可用，请长按下方报告选取复制');}
+ };
+ box.querySelector('#mima-perf-download').onclick=()=>{const blob=new Blob([JSON.stringify(meter.snapshot(),null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const link=document.createElement('a');link.href=url;link.download='MimaTAVERN-performance-readonly.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),2000);};
+ display();
+}
+
 // Independent diagnostics viewer. No route into canonical History or Memory.
 const diagnosticViewState={scope:'session',kind:'all',selectedId:null};
 function renderDiagnosticsTab(box){
@@ -3343,8 +3379,10 @@ async function renderLiveStreamText(){
         if(st.displayText!==raw||token!==r19RegexRenderToken()||renderMode!==currentSessionData?.renderMode){st.regexDirty=true;continue;}
         const allowHtml=currentSessionData?.renderMode==='safe_html';
         st.contentNode.className=`msg-content tavern-story-content live-stream-content${allowHtml?' safe-html-content':''}`;
+        const perfDomAt=window.MimaPerfDiagnostics?.isRunning()?performance.now():0;
         const staged=document.createElement('div');appendRenderedContent(staged,rendered,allowHtml,true);
         patchLiveRenderedChildren(st.contentNode,staged);
+        if(perfDomAt)window.MimaPerfDiagnostics?.mark('stream_dom_patch',performance.now()-perfDomAt);
         const box=qs('story-chat-box');if(box&&st.followTail!==false&&!readingMode)box.scrollTop=box.scrollHeight;
         st.lastPaintDurationMs=Math.round((performance.now()-started)*100)/100;
         st.paints=(st.paints||0)+1;
@@ -3977,6 +4015,7 @@ function refreshChatBox(options={}){
  }
  r19EnqueueDisplayRegex(displayTasks,currentSessionId,regexToken);
  window.__mimaR19RenderStats={count:messages.length,created,reused,durationMs:Math.round((performance.now()-start)*100)/100};
+ window.MimaPerfDiagnostics?.mark('native_refresh',performance.now()-start,{created,reused,messages:messages.length});
  if(contextChange||created||prior.size!==messages.length||[...prior.keys()].some((id,i)=>messages[i]?.id!==id))window.MimaHistoryNavigator?.sync(currentSessionId,messages);
  requestAnimationFrame(()=>{
   if(renderedSessionId!==currentSessionId||renderedEpoch!==sessionNavigationEpoch||renderedLayoutEpoch!==readingLayoutEpoch)return;
