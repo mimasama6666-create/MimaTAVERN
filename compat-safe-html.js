@@ -135,5 +135,5 @@ function srcdoc(content, options={}){
  }.toString()+')('+JSON.stringify(token)+');';
  return '<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="'+csp+'"><meta name="viewport" content="width=device-width,initial-scale=1"><style>'+base+'\n'+css+'</style></head><body><mima-flow>'+html+'</mima-flow>'+(legacyNoResize?'':'<script nonce="'+nonce+'">'+bridge+fontBridge+stateBridge+'</script>')+'</body></html>';
 }
-return Object.freeze({classify,srcdoc,safeCssText,stabilizeViewportCss,maxBytes});
+return Object.freeze({classify,sanitise,srcdoc,safeCssText,stabilizeViewportCss,maxBytes});
 });

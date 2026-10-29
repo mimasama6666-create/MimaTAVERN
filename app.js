@@ -931,7 +931,7 @@ function setupImmersiveReading(){
 }
 // User-facing release notes: once per distinct production release by default.
 // Avoid touching Store/History or making automatic announcements mandatory.
-const MIMA_RELEASE_NOTES_VERSION='R19-20261029-BATCH8-FONT-MEDIA-V5.7-DEV';
+const MIMA_RELEASE_NOTES_VERSION='R19-20261030-BATCH8-HTML-REPAIR-V5.10-DEV';
 const MIMA_RELEASE_NOTES_SEEN='mima-release-notes-seen:'+MIMA_RELEASE_NOTES_VERSION;
 const MIMA_RELEASE_NOTES_OPTOUT='mima-release-notes-disable-auto-v1';
 function openMimaReleaseNotice(){
@@ -1285,7 +1285,7 @@ function exportRegexPack(id){const p=regexPacks.find(x=>x.id===id);if(p)download
 
 function renderContextTab(box){const ps=currentSessionData.promptSettings||{};box.innerHTML=`<section class="settings-section"><h3>🪐 Session（剧情会话）</h3><div class="form-grid"><div class="form-full"><label class="form-label">标题</label><input id="ctx-title" class="field" value="${escapeHtml(currentSessionData.title||'')}"></div><div><label class="form-label">Canon Level（设定层级）</label><select id="ctx-canon" class="field">${['temporary','alternate','soft','core'].map(x=>`<option value="${x}" ${currentSessionData.canonLevel===x?'selected':''}>${canonLabel(x)}</option>`).join('')}</select></div><div><label class="form-label">Temperature（温度）</label><input id="ctx-temp" class="field" type="number" min="0.1" max="2" step="0.05" value="${getTemp()}"></div></div><p class="helper">Standalone（独立版）中所有 Session（剧情会话）都是浏览器本地独立宇宙，不会写入任何 MIMAMAO / Telegram 世界。</p></section>
 <section class="settings-section"><h3>🧠 长剧情与记忆</h3>
-    <div class="context-window-link" role="status"><strong>当前 API 模型上下文总窗口：${Number(MimaStandalone.getApiConfig()?.contextWindowTokens)>=4096?`${Number(MimaStandalone.getApiConfig().contextWindowTokens).toLocaleString()} Tokens`:'未配置（0 / 未知）'}</strong><span>它决定是否需要按 10 轮规划裁剪；与最大输出 Tokens 不同。未知时不假定 32K 上限，也不裁删历史；完整请求由服务商判断能否接收。</span><button type="button" class="ghost-btn" onclick="openSettings('api')">去设置模型实际窗口</button></div><div class="form-grid"><div><label class="form-label">自动整理时，最近多少条剧情保持原样（按消息计）</label><input id="ctx-recent" class="field" type="number" min="6" max="100000" step="1" value="${Number(ps.recentMessageLimit??34)}"><div class="row-sub">这是自动整理时保留的近期消息窗口；模型容量允许时仍优先提供完整原始 History。修改后请点击下方保存。</div></div><div><label class="form-label">Prompt 超窗时每批移出最早完整剧情轮次</label><input id="ctx-trim-batch" class="field" type="number" min="1" max="100" step="1" value="${Number(ps.contextTrimBatchRounds??10)}"><div class="row-sub">默认 10 轮；只有来源已被有效滚动记忆覆盖才允许从单次请求中移出。本地 History 永不删除。</div></div><div><label class="form-label">Prompt 至少保留的最新完整剧情轮次</label><input id="ctx-trim-min-recent" class="field" type="number" min="1" max="100000" step="1" value="${Number(ps.contextMinRecentRounds??20)}"><div class="row-sub">默认 20 轮；保留后仍超窗时停止请求并提示调整，不会擅自牺牲最近剧情。</div></div><div><label class="form-label">较早剧情每积累多少条后可自动整理</label><input id="ctx-summary-trigger" class="field" type="number" min="12" max="200" value="${Number(ps.summaryTriggerMessages||28)}"><div class="row-sub">默认 28 条；不删减原始剧情，也不影响手动整理。</div></div><div><label class="form-label">世界书总预算（字符，最多 1,000,000）</label><input id="ctx-wbbudget" class="field" type="number" min="1000" max="1000000" step="1" value="${Number(ps.worldbookBudgetChars??16000)}"><div class="row-sub">这是本轮命中条目允许占用的字符上限，不保证所有条目都触发；实际仍受模型上下文窗口限制。超过窗口会报错，不会暗中删除原始剧情。</div></div><div class="form-full"><label class="form-label">🎭 AIRP 输入语义</label><select id="ctx-airp-mode" class="field"><option value="auto" ${(ps.inputSemanticMode||'raw')==='auto'?'selected':''}>智能自动（主动选择，可能误判）</option><option value="dialogue_first" ${ps.inputSemanticMode==='dialogue_first'?'selected':''}>对话优先：普通文本=台词，括号=动作/心理</option><option value="quote_dialogue" ${ps.inputSemanticMode==='quote_dialogue'?'selected':''}>引号台词：引号=台词，其余普通文本=动作</option><option value="raw" ${(ps.inputSemanticMode||'raw')==='raw'?'selected':''}>原样发送（默认）：关闭语义解析</option></select><div class="row-sub">默认按原文发送；已存消息保留当时的解析模式。选择并保存非原样模式才会对新消息启用语义改写，可能误判。智能自动会兼容两种常见 AIRP：有明确引号时把引号当台词、周围当动作；没有引号时普通文本默认台词，括号永远不是台词。括号中的明确“心想/内心/OS”等会标记为私密想法。</div></div><div class="form-full"><label class="check-row"><input id="ctx-history-html-projection" type="checkbox" ${ps.historyHtmlMode!=='raw'?'checked':''}> 历史剧情 HTML 转纯文本（仅新模型请求和记忆总结，不改存档、渲染或预设）</label><div class="row-sub">保留 HTML 正文/状态栏文字与数值，去除布局标签、CSS 和装饰代码。预设/世界书/玩家输入不转换；按原请求重说保持旧快照。含真正代码示例的剧情可关闭。</div></div><div class="form-full"><label class="check-row"><input id="ctx-summary" type="checkbox" ${ps.autoRollingEnabled===true?'checked':''}> 自动整理较早剧情（会调用模型，可能收费）</label><label class="check-row"><input id="ctx-inject-saved-rolling" type="checkbox" ${ps.injectSavedRolling!==false?'checked':''}> 让 AI 参考以前保存的剧情摘要（与自动生成独立）</label><div class="row-sub">首次自动整理一般要积累至少 ${Math.max(0,Math.max(18,Number(ps.recentMessageLimit??34)-4)+Number(ps.summaryTriggerMessages||28))} 条消息（当前尚未总结时）；消息不等于问答轮。原始剧情不会删除。曾经失败的任务将暂停，需手动确认才继续。</div><label class="form-label">自动整理单次最多允许多少次模型请求</label><input id="ctx-auto-rolling-budget" class="field" type="number" min="1" max="20" value="${Number(ps.autoRollingMaxRequests||1)}"><label class="check-row"><input id="ctx-complete-html" type="checkbox" ${ps.outputContract?.completeHtml===true?'checked':''}> 明确要求回复 HTML 标签完整闭合（普通文本不受限制）</label><label class="check-row"><input id="ctx-require-html" type="checkbox" ${ps.outputContract?.requireHtml===true?'checked':''}> 独立 HTML 结构合同：必须包含 HTML 及下面的必需结构（默认关闭）</label><div class="row-sub">缺失结构将保护性拒绝自动入库，不会后台重复调用 API；可通过坏回复诊断和手动代码修复处理。</div><label class="check-row"><input id="ctx-three-part-html" type="checkbox" ${ps.outputContract?.structureMode==='three_part_html_status'?'checked':''}> 三段式 HTML 完整性检查（开头环境栏＋正文＋八个末尾模块；仅当前剧情主动开启）</label><label class="check-row"><input id="ctx-html-strict-values" type="checkbox" ${ps.outputContract?.strictValues===true?'checked':''}> 严格检查 progress 数值（可选）</label><label class="form-label">必需 CSS 选择器（每行或逗号分隔）</label><textarea id="ctx-html-selectors" class="field textarea" rows="2">${escapeHtml(ps.outputContract?.requiredSelectors||'')}</textarea><label class="form-label">标准 HTML 参考消息（手动选择，仅角色回复）</label><select id="ctx-html-template-message" class="field"><option value="">不绑定模板</option>${arr(currentSessionData.messages).filter(m=>m.role==='assistant'&&/[<][A-Za-z]/.test(m.content||'')).map(m=>`<option value="${escapeHtml(m.id)}" ${ps.outputContract?.templateMessageId===m.id?'selected':''}>${escapeHtml((m.content||'').replace(/<[^>]*>/g,' ').trim().slice(0,70)||m.id)}</option>`).join('')}</select><label class="form-label">模板的正文容器 CSS 选择器（唯一插槽，手动代码修复必填）</label><input id="ctx-html-body-slot" class="field" value="${escapeHtml(ps.outputContract?.bodySelector||'')}" placeholder="例如 .story-body"><label class="form-label">状态容器 CSS 选择器（含实时数据时不可自动伪造）</label><input id="ctx-html-status-slot" class="field" value="${escapeHtml(ps.outputContract?.statusSelector||'')}" placeholder="例如 .status-panel"><label class="form-label">允许继承固定文字的静态容器选择器（每行一个；仅授权固定标题/说明，不得包含正文槽或状态栏）</label><textarea id="ctx-html-static-slots" class="field textarea" rows="2">${escapeHtml(ps.outputContract?.staticSelectors||'')}</textarea><label class="form-label">允许自动继承固定 CSS 的规则选择器（每行一个；仅当该规则确实不含动态状态时授权）</label><textarea id="ctx-html-static-css" class="field textarea" rows="2">${escapeHtml(ps.outputContract?.staticCssSelectors||'')}</textarea><label class="form-label">明确属于固定布局的 class / 动画名（用空格或换行分隔；例如 card-wrapper，动态状态类不要填）</label><textarea id="ctx-html-static-classes" class="field textarea" rows="2">${escapeHtml(ps.outputContract?.staticClassTokens||'')}</textarea><label class="form-label">固定 HTML/CSS 注释精确白名单（每行一个，仅填写注释内部文字）</label><textarea id="ctx-html-static-comments" class="field textarea" rows="2">${escapeHtml(ps.outputContract?.staticCommentTexts||'')}</textarea><label class="check-row"><input id="ctx-pinned-on" type="checkbox" ${ps.pinnedFactsEnabled!==false?'checked':''}> 注入 Pinned Facts（固定事实）</label></div><div class="form-full"><label class="form-label">📌 Pinned Facts（固定事实，一行一条）</label><textarea id="ctx-pinned" class="field textarea">${escapeHtml(arr(currentSessionData.pinnedFacts).join('\n'))}</textarea></div><div class="form-full"><label class="form-label">玩家备注</label><textarea id="ctx-usernotes" class="field textarea">${escapeHtml(currentSessionData.userNotes||'')}</textarea></div><div class="form-full"><label class="form-label">AI（人工智能）备注</label><textarea id="ctx-ainotes" class="field textarea">${escapeHtml(currentSessionData.aiNotes||'')}</textarea></div></div></section>
+    <div class="context-window-link" role="status"><strong>当前 API 模型上下文总窗口：${Number(MimaStandalone.getApiConfig()?.contextWindowTokens)>=4096?`${Number(MimaStandalone.getApiConfig().contextWindowTokens).toLocaleString()} Tokens`:'未配置（0 / 未知）'}</strong><span>它决定是否需要按 10 轮规划裁剪；与最大输出 Tokens 不同。未知时不假定 32K 上限，也不裁删历史；完整请求由服务商判断能否接收。</span><button type="button" class="ghost-btn" onclick="openSettings('api')">去设置模型实际窗口</button></div><div class="form-grid"><div><label class="form-label">自动整理时，最近多少条剧情保持原样（按消息计）</label><input id="ctx-recent" class="field" type="number" min="6" max="100000" step="1" value="${Number(ps.recentMessageLimit??34)}"><div class="row-sub">这是自动整理时保留的近期消息窗口；模型容量允许时仍优先提供完整原始 History。修改后请点击下方保存。</div></div><div><label class="form-label">Prompt 超窗时每批移出最早完整剧情轮次</label><input id="ctx-trim-batch" class="field" type="number" min="1" max="100" step="1" value="${Number(ps.contextTrimBatchRounds??10)}"><div class="row-sub">默认 10 轮；只有来源已被有效滚动记忆覆盖才允许从单次请求中移出。本地 History 永不删除。</div></div><div><label class="form-label">Prompt 至少保留的最新完整剧情轮次</label><input id="ctx-trim-min-recent" class="field" type="number" min="1" max="100000" step="1" value="${Number(ps.contextMinRecentRounds??20)}"><div class="row-sub">默认 20 轮；保留后仍超窗时停止请求并提示调整，不会擅自牺牲最近剧情。</div></div><div><label class="form-label">较早剧情每积累多少条后可自动整理</label><input id="ctx-summary-trigger" class="field" type="number" min="12" max="200" value="${Number(ps.summaryTriggerMessages||28)}"><div class="row-sub">默认 28 条；不删减原始剧情，也不影响手动整理。</div></div><div><label class="form-label">世界书总预算（字符，最多 1,000,000）</label><input id="ctx-wbbudget" class="field" type="number" min="1000" max="1000000" step="1" value="${Number(ps.worldbookBudgetChars??16000)}"><div class="row-sub">这是本轮命中条目允许占用的字符上限，不保证所有条目都触发；实际仍受模型上下文窗口限制。超过窗口会报错，不会暗中删除原始剧情。</div></div><div class="form-full"><label class="form-label">🎭 AIRP 输入语义</label><select id="ctx-airp-mode" class="field"><option value="auto" ${(ps.inputSemanticMode||'raw')==='auto'?'selected':''}>智能自动（主动选择，可能误判）</option><option value="dialogue_first" ${ps.inputSemanticMode==='dialogue_first'?'selected':''}>对话优先：普通文本=台词，括号=动作/心理</option><option value="quote_dialogue" ${ps.inputSemanticMode==='quote_dialogue'?'selected':''}>引号台词：引号=台词，其余普通文本=动作</option><option value="raw" ${(ps.inputSemanticMode||'raw')==='raw'?'selected':''}>原样发送（默认）：关闭语义解析</option></select><div class="row-sub">默认按原文发送；已存消息保留当时的解析模式。选择并保存非原样模式才会对新消息启用语义改写，可能误判。智能自动会兼容两种常见 AIRP：有明确引号时把引号当台词、周围当动作；没有引号时普通文本默认台词，括号永远不是台词。括号中的明确“心想/内心/OS”等会标记为私密想法。</div></div><div class="form-full"><label class="check-row"><input id="ctx-history-html-projection" type="checkbox" ${ps.historyHtmlMode!=='raw'?'checked':''}> 历史剧情 HTML 转纯文本（仅新模型请求和记忆总结，不改存档、渲染或预设）</label><div class="row-sub">保留 HTML 正文/状态栏文字与数值，去除布局标签、CSS 和装饰代码。预设/世界书/玩家输入不转换；按原请求重说保持旧快照。含真正代码示例的剧情可关闭。</div></div><div class="form-full"><label class="check-row"><input id="ctx-summary" type="checkbox" ${ps.autoRollingEnabled===true?'checked':''}> 自动整理较早剧情（会调用模型，可能收费）</label><label class="check-row"><input id="ctx-inject-saved-rolling" type="checkbox" ${ps.injectSavedRolling!==false?'checked':''}> 让 AI 参考以前保存的剧情摘要（与自动生成独立）</label><div class="row-sub">首次自动整理一般要积累至少 ${Math.max(0,Math.max(18,Number(ps.recentMessageLimit??34)-4)+Number(ps.summaryTriggerMessages||28))} 条消息（当前尚未总结时）；消息不等于问答轮。原始剧情不会删除。曾经失败的任务将暂停，需手动确认才继续。</div><label class="form-label">自动整理单次最多允许多少次模型请求</label><input id="ctx-auto-rolling-budget" class="field" type="number" min="1" max="20" value="${Number(ps.autoRollingMaxRequests||1)}"><label class="check-row"><input id="ctx-complete-html" type="checkbox" ${ps.outputContract?.completeHtml===true?'checked':''}> 明确要求回复 HTML 标签完整闭合（普通文本不受限制）</label><label class="check-row"><input id="ctx-require-html" type="checkbox" ${ps.outputContract?.requireHtml===true?'checked':''}> 独立 HTML 结构合同：必须包含 HTML 及下面的必需结构（默认关闭）</label><div class="row-sub">缺失结构将保护性拒绝自动入库，不会后台重复调用 API；可通过坏回复诊断和手动代码修复处理。</div><label class="check-row"><input id="ctx-three-part-html" type="checkbox" ${ps.outputContract?.structureMode==='three_part_html_status'?'checked':''}> 三段式 HTML 完整性检查（开头环境栏＋正文＋八个末尾模块；仅当前剧情主动开启）</label><label class="check-row"><input id="ctx-html-strict-values" type="checkbox" ${ps.outputContract?.strictValues===true?'checked':''}> 严格检查 progress 数值（可选）</label><label class="check-row"><input id="ctx-html-strict-template" type="checkbox" ${ps.outputContract?.strictTemplatePath===true?'checked':''}> 严格匹配模板层级（开启后不允许额外包装层；默认关闭）</label><label class="form-label">必需 CSS 选择器（每行或逗号分隔）</label><textarea id="ctx-html-selectors" class="field textarea" rows="2">${escapeHtml(ps.outputContract?.requiredSelectors||'')}</textarea><label class="form-label">标准 HTML 参考消息（手动选择，仅角色回复）</label><select id="ctx-html-template-message" class="field"><option value="">不绑定模板</option>${arr(currentSessionData.messages).filter(m=>m.role==='assistant'&&/[<][A-Za-z]/.test(m.content||'')).map(m=>`<option value="${escapeHtml(m.id)}" ${ps.outputContract?.templateMessageId===m.id?'selected':''}>${escapeHtml((m.content||'').replace(/<[^>]*>/g,' ').trim().slice(0,70)||m.id)}</option>`).join('')}</select><label class="form-label">模板的正文容器 CSS 选择器（唯一插槽，手动代码修复必填）</label><input id="ctx-html-body-slot" class="field" value="${escapeHtml(ps.outputContract?.bodySelector||'')}" placeholder="例如 .story-body"><label class="form-label">状态容器 CSS 选择器（含实时数据时不可自动伪造）</label><input id="ctx-html-status-slot" class="field" value="${escapeHtml(ps.outputContract?.statusSelector||'')}" placeholder="例如 .status-panel"><label class="form-label">允许继承固定文字的静态容器选择器（每行一个；仅授权固定标题/说明，不得包含正文槽或状态栏）</label><textarea id="ctx-html-static-slots" class="field textarea" rows="2">${escapeHtml(ps.outputContract?.staticSelectors||'')}</textarea><label class="form-label">允许自动继承固定 CSS 的规则选择器（每行一个；仅当该规则确实不含动态状态时授权）</label><textarea id="ctx-html-static-css" class="field textarea" rows="2">${escapeHtml(ps.outputContract?.staticCssSelectors||'')}</textarea><label class="form-label">明确属于固定布局的 class / 动画名（用空格或换行分隔；例如 card-wrapper，动态状态类不要填）</label><textarea id="ctx-html-static-classes" class="field textarea" rows="2">${escapeHtml(ps.outputContract?.staticClassTokens||'')}</textarea><label class="form-label">固定 HTML/CSS 注释精确白名单（每行一个，仅填写注释内部文字）</label><textarea id="ctx-html-static-comments" class="field textarea" rows="2">${escapeHtml(ps.outputContract?.staticCommentTexts||'')}</textarea><label class="check-row"><input id="ctx-pinned-on" type="checkbox" ${ps.pinnedFactsEnabled!==false?'checked':''}> 注入 Pinned Facts（固定事实）</label></div><div class="form-full"><label class="form-label">📌 Pinned Facts（固定事实，一行一条）</label><textarea id="ctx-pinned" class="field textarea">${escapeHtml(arr(currentSessionData.pinnedFacts).join('\n'))}</textarea></div><div class="form-full"><label class="form-label">玩家备注</label><textarea id="ctx-usernotes" class="field textarea">${escapeHtml(currentSessionData.userNotes||'')}</textarea></div><div class="form-full"><label class="form-label">AI（人工智能）备注</label><textarea id="ctx-ainotes" class="field textarea">${escapeHtml(currentSessionData.aiNotes||'')}</textarea></div></div></section>
 <div class="toolbar"><button id="ctx-save" class="primary-btn" type="button" onclick="saveContextSettings()">保存长剧情与会话设置</button><span class="row-sub">保存成功后，重新打开此页面仍会显示你设定的数值。</span></div>
 <section class="settings-section"><h3>💾 本地档案</h3><p class="helper">剧情、角色卡、世界书、预设、正则包保存在当前浏览器 IndexedDB（本地数据库）。分享剧情请选“纯剧情 TXT/JSON”，不含预设与历史请求快照；“原始会话存档”和“完整剧情资料备份”保留生成请求快照等私密上下文，仅用于自己的恢复与迁移。字体、API Key、小手机数据库和兼容库不会被打进这份“剧情资料备份”。</p><div class="toolbar"><button class="primary-btn" onclick="exportStoryTranscript('txt')">⇩ 纯剧情 TXT</button><button class="ghost-btn" onclick="exportStoryTranscript('json')">⇩ 纯剧情 JSON</button><button class="ghost-btn" onclick="exportCurrentSession()">⇩ 原始会话存档（可导回）</button><button class="ghost-btn" onclick="exportWholeLibrary()">⇩ 原生剧情+工坊+壁纸备份</button><button class="ghost-btn" onclick="chooseLibraryImport()">⇧ 导入剧情资料备份</button><button class="danger-btn" onclick="deleteCurrentSession()">删除当前剧情</button></div></section>`}
 async function saveContextSettings(){
@@ -1333,9 +1333,11 @@ async function saveContextSettings(){
         pinnedFactsEnabled:qs('ctx-pinned-on').checked};
     expected.outputContract=(qs('ctx-complete-html').checked||qs('ctx-require-html')?.checked||qs('ctx-three-part-html')?.checked)?{
        completeHtml:qs('ctx-complete-html').checked,requireHtml:!!(qs('ctx-require-html')?.checked||qs('ctx-three-part-html')?.checked),
-       structureMode:qs('ctx-three-part-html')?.checked?'three_part_html_status':'legacy',strictValues:!!qs('ctx-html-strict-values')?.checked,
+       strictTemplatePath:!!qs('ctx-html-strict-template')?.checked,structureMode:qs('ctx-three-part-html')?.checked?'three_part_html_status':'legacy',strictValues:!!qs('ctx-html-strict-values')?.checked,
        requiredSelectors:qs('ctx-html-selectors')?.value||'',templateMessageId:qs('ctx-html-template-message')?.value||'',
        bodySelector:qs('ctx-html-body-slot')?.value||'',statusSelector:qs('ctx-html-status-slot')?.value||'',staticSelectors:qs('ctx-html-static-slots')?.value||'',staticCssSelectors:qs('ctx-html-static-css')?.value||'',staticCommentTexts:qs('ctx-html-static-comments')?.value||'',staticClassTokens:qs('ctx-html-static-classes')?.value||''}:null;
+    const htmlConfigErrors=window.MimaHtmlStructure.configErrors(expected.outputContract||{});
+    if(htmlConfigErrors.length){toast('HTML 选择器无效，设置未保存：'+htmlConfigErrors.map(x=>x.field+'：'+x.selector).join('；'));return null;}
     // Do not overwrite unrelated Persona/source switches while saving context.
     const saved=await patchCurrent({
         title:qs('ctx-title').value||'未命名咪嘛宇宙',
@@ -3005,8 +3007,10 @@ async function recoverDiagnosticReply(diagnosticId){
 }
 async function reviewRejectedDiagnosticHtml(record){
     if(!record?.id||String(record.action||'').startsWith('compat_'))return toast('本入口仅支持原生剧情的失败输出。');
+    const ticket=beginHtmlReview();
     const result=await fetchStory('/sessions/'+encodeURIComponent(record.sessionId)+'/recover-reply/html-repair','POST',{diagnosticId:record.id},false);
-    if(!result.success)return toast('无法安全修复：'+(result.code||result.msg||'未知原因')+'；没有调用 API。');
+    if(!isCurrentHtmlReview(ticket))return;
+    if(!result.success)return toast('无法安全修复：'+htmlRepairError(result)+'；没有调用 API。');
     const candidate=result.data;
     editorState={type:'rejected_html_code_repair',sessionId:record.sessionId,msg:{id:candidate.messageId},candidate,record};
     qs('editor-title').textContent='拒绝的模型正文 · 手动代码补全预览';
@@ -3024,8 +3028,8 @@ async function reviewRejectedDiagnosticHtml(record){
       let dynamicValues;try{dynamicValues=readHtmlRepairDynamicFields();}catch(error){return toast(error.message);}
       const done=await fetchStory('/sessions/'+encodeURIComponent(e.sessionId)+'/recover-reply','POST',
         {diagnosticId:e.record.id,confirmed:true,htmlCandidateId:e.candidate.id,dynamicValues},false);
-      if(!done.success)return toast('恢复未提交：'+(done.code||done.msg));
-      qs('editor-modal').classList.add('hidden');
+      if(!done.success)return toast('恢复未提交：'+htmlRepairError(done));
+      if(editorState===e)closeEditor();
       if(currentSessionId===e.sessionId){currentSessionData=done.data.session;refreshChatBox({scrollToBottom:false});}
       await refreshSessionSummaryList();toast('原失败正文已按 HTML 结构修复并恢复，没有再次调用模型。');
       if(settingsTab==='diagnostics')await refreshDiagnosticsView();
@@ -4141,7 +4145,7 @@ if(needsDisplay&&displayTasks){
  appendRenderedContent(content,cleanCorruptText(immediate),allowHtml,role==='assistant');
 }
 div.appendChild(content);
-if(role==='user'||role==='assistant'){const tools=document.createElement('div');tools.className='msg-tools';tools.append(makeToolButton('复制原文',()=>copyStoryMessageText(liveMsg())),makeToolButton('编辑',()=>openMessageEditor(liveMsg(),false)),makeToolButton('从这里分支',()=>openMessageEditor(liveMsg(),true)),makeToolButton('删除',()=>deleteStoryMessage(liveMsg()),true));if(role==='assistant'&&currentSessionData?.promptSettings?.outputContract?.requireHtml)tools.append(makeToolButton('HTML检测 / 代码补全',()=>reviewStoryHtmlRepair(liveMsg())));if(role==='assistant'&&currentSessionData?.promptSettings?.outputContract?.requireHtml)tools.append(makeToolButton('AI重排（另收费）',()=>reviewStoryAiHtmlRepair(liveMsg())));if(role==='assistant'&&msg.versions?.length)tools.append(makeToolButton('看旧版本',()=>showVersions(liveMsg())));div.appendChild(tools)}box.appendChild(div);return div}
+if(role==='user'||role==='assistant'){const tools=document.createElement('div');tools.className='msg-tools';tools.append(makeToolButton('复制原文',()=>copyStoryMessageText(liveMsg())),makeToolButton('编辑',()=>openMessageEditor(liveMsg(),false)),makeToolButton('从这里分支',()=>openMessageEditor(liveMsg(),true)),makeToolButton('删除',()=>deleteStoryMessage(liveMsg()),true));if(role==='assistant'&&(currentSessionData?.promptSettings?.outputContract?.requireHtml||currentSessionData?.promptSettings?.outputContract?.completeHtml))tools.append(makeToolButton('HTML检测 / 代码补全',()=>reviewStoryHtmlRepair(liveMsg())));if(role==='assistant'&&currentSessionData?.promptSettings?.outputContract?.requireHtml)tools.append(makeToolButton('AI重排（另收费）',()=>reviewStoryAiHtmlRepair(liveMsg())),makeToolButton('查看重排草稿',()=>showHtmlRepairDraft(liveMsg())));if(role==='assistant'&&msg.versions?.length)tools.append(makeToolButton('看旧版本',()=>showVersions(liveMsg())));div.appendChild(tools)}box.appendChild(div);return div}
 async function copyStoryMessageText(message){
  if(!message)return toast('原消息已不存在，未复制任何内容');
  try{
@@ -4170,21 +4174,69 @@ function readHtmlRepairDynamicFields(){const result={};for(const el of qs('edito
     if(!el.value.trim())throw new Error('状态值尚未全部填写，请先确认本轮事实：'+el.dataset.htmlDynamicKey);
     result[el.dataset.htmlDynamicKey]=el.value.trim();
 }return result;}
+function htmlRepairError(result){
+ const labels={E_HTML_SYNTAX:'HTML 标签残缺或交叉，原文已保留，可先尝试免费补全。',E_HTML_REPAIR_AMBIGUOUS:'原文含混合 HTML，无法只补闭合；可尝试 AI 重排或手动编辑。',E_HTML_TAG_CLOSURE_NOT_NEEDED:'原文不缺闭合标签；若要恢复缺少的模块，请绑定标准 HTML 模板。',E_HTML_REPAIR_BODY_SLOT_NOT_UNIQUE:'模板中找不到唯一正文容器，请检查正文容器选择器。',E_HTML_REPAIR_TEMPLATE_INCOMPLETE:'模板无法满足当前结构要求，请检查必需模块与选择器。',E_HTML_CONTRACT_SELECTOR_INVALID:'有无效的 CSS 选择器，请修正长剧情设置中的对应条目。'};
+ return [labels[result.code],result.msg,result.details].filter(Boolean).join('；')+(result.code?' ['+result.code+']':'');
+}
+let htmlReviewSequence=0;
+function beginHtmlReview(sessionId=currentSessionId){return {id:++htmlReviewSequence,sessionId,editor:editorState};}
+function isCurrentHtmlReview(ticket,readOnly=false){return !!ticket&&ticket.id===htmlReviewSequence&&ticket.sessionId===currentSessionId&&ticket.editor===editorState&&(readOnly||!currentGenerationOwner());}
+async function showHtmlRepairDraft(msg,fallback='',expectedId='',ownerSessionId=currentSessionId,ticket=null,recovery={}){
+ ticket=ticket||beginHtmlReview(ownerSessionId);
+ if(!isCurrentHtmlReview(ticket,true))return;
+ const sessionId=ticket.sessionId,response=await fetchStory(`/sessions/${sessionId}/messages/${msg.id}/html-repair/draft`,'GET',null,false);
+ if(!isCurrentHtmlReview(ticket,true))return;
+ const received=recovery.draft?.sessionId===sessionId&&recovery.draft?.messageId===msg.id?recovery.draft:null;
+ if(!response.success&&!fallback&&!received)return toast('草稿读取未完成，原记录未修改：'+htmlRepairError(response));
+ const saved=response.success?response.data:null,matching=expectedId&&saved?.id!==expectedId?null:saved,draft=matching||received;
+ if(!draft&&!fallback)return toast('这条消息还没有未采纳的重排草稿。');
+ const truncated=!draft&&recovery.truncated===true;
+ editorState={type:'html_repair_draft',msg,sessionId};
+ qs('editor-title').textContent='未采纳的 HTML 重排草稿';qs('editor-eyebrow').textContent='已收到 · 未写入剧情';
+ const body=qs('editor-body');body.replaceChildren();
+ const note=document.createElement('p');note.className='helper';note.textContent=truncated?'这里只收到被截断的返回片段，不是完整草稿；原剧情未修改。':draft?.reason||'返回文本未通过格式检查；原剧情未修改。';
+ const area=document.createElement('textarea');area.className='field textarea tall';area.value=draft?.content||fallback;area.style.userSelect='text';
+ const copy=document.createElement('button');copy.className='ghost-btn';copy.textContent=truncated?'复制返回片段':'复制完整草稿';copy.onclick=async()=>{try{await copyTextPortable(area.value);toast(truncated?'已复制返回片段':'已复制完整草稿');}catch(e){toast('复制失败：'+e.message);}};
+ body.append(note,area,copy);
+ if(draft?.persisted===false){
+   const download=document.createElement('button');download.className='ghost-btn';download.textContent='下载完整草稿';download.onclick=async()=>{try{await downloadText('咪嘛馆-未保存的HTML重排草稿.txt',area.value);}catch(e){toast('下载未完成：'+e.message);}};body.append(download);
+ }
+ setupEditorButtons(null,()=>{if(currentSessionId!==sessionId)return toast('请回到原剧情再编辑。');if(currentGenerationOwner())return toast('当前生成尚未完成；可以先复制草稿，结束后再转入编辑。');openMessageEditor({...msg,content:area.value},false);});
+ qs('editor-save').textContent='转入手动编辑（尚不保存）';qs('editor-modal').classList.remove('hidden');
+}
 async function reviewStoryHtmlRepair(msg){
+ let ticket;
+ try{
     if(!msg?.id||currentGenerationOwner())return toast('当前生成任务尚未完成，不能修复其消息。');
     const sessionId=currentSessionId,contract=currentSessionData?.promptSettings?.outputContract;
-    if(!contract?.requireHtml)return toast('请先在长剧情设置里开启独立 HTML 结构合同。');
-    const valid=window.MimaHtmlStructure.inspect(msg.content,contract);
-    if(valid.ok)return toast('这条消息已满足 HTML 结构合同；未修改原文。');
-    if(!contract.templateMessageId)return toast('缺少标准 HTML 模板。请先在长剧情设置里选择一条格式正确的角色回复。');
+    if(!contract?.requireHtml&&!contract?.completeHtml)return toast('请先在长剧情设置中开启 HTML 完整性或结构检查。');
+    ticket=beginHtmlReview(sessionId);
+    const diagnostic=await fetchStory(`/sessions/${sessionId}/messages/${msg.id}/html-repair/inspect`,'GET',null,false);
+    if(!isCurrentHtmlReview(ticket))return;
+    if(!diagnostic.success)return toast('检查未完成：'+htmlRepairError(diagnostic));
+    const stages=diagnostic.data,valid=stages.canonical;
+    if(valid.status==='config_error')return toast('选择器配置错误：'+valid.missing.join('；'));
+    if(valid.ok){
+      const rows=[['模型原文',stages.raw],['存档正文（输出处理后）',valid],['显示正则后',stages.display],['安全渲染后',stages.safe]];
+      const faults=rows.filter(([,v])=>!v.ok);
+      const renderNote=stages.renderMode!=='safe_html'?'；当前使用纯文本显示，可在外观设置中选择安全 HTML 显示':'';
+      if(!faults.length&&!renderNote)return toast('原文、存档、显示正则和安全渲染检查通过；无需修复。');
+      editorState={type:'html_diagnostic',sessionId};qs('editor-title').textContent='HTML 分阶段检查';qs('editor-eyebrow').textContent='原剧情未修改';
+      const body=qs('editor-body');body.replaceChildren();
+      for(const [name,v] of rows){const line=document.createElement('p');line.textContent=name+'：'+(v.ok?'通过':v.missing.join('；'));body.appendChild(line);}
+      const tip=document.createElement('p');tip.className='helper';tip.textContent='存档结构已通过，补全不会改写正确原文。'+(!stages.safe.ok&&stages.display.ok?'原生安全显示移除了必需节点或属性，请调整模板选择器或使用受支持的结构。':'')+(stages.rules?.length?'请到正则设置检查显示规则：'+stages.rules.map(p=>p.name).join('、'):'')+renderNote;body.appendChild(tip);
+      for(const item of stages.trace||[]){const p=document.createElement('p');p.textContent='结构首次变化的显示规则：'+item.name+'；'+item.missing.join('；');body.appendChild(p);}
+      setupEditorButtons(null,()=>closeEditor());qs('editor-save').textContent='知道了';qs('editor-modal').classList.remove('hidden');return;
+    }
     const result=await fetchStory(`/sessions/${sessionId}/messages/${msg.id}/html-repair`,'POST',{},false);
-    if(!result.success)return toast('代码修复停止：'+(result.code||result.msg||'结构不明确')+'（无额外 API 请求）');
+    if(!isCurrentHtmlReview(ticket))return;
+    if(!result.success)return toast('代码修复停止（未发送 API）：'+htmlRepairError(result));
     const candidate=result.data;
     editorState={type:'html_code_repair',msg,candidate,sessionId};
     qs('editor-title').textContent='HTML 免 API 代码补全 · 差异审阅';
     qs('editor-eyebrow').textContent='CODE GENERATED / UNCOMMITTED · 不生成新状态事实';
     const body=qs('editor-body');body.replaceChildren();
-    const intro=document.createElement('p');intro.className='helper';intro.textContent='下面是当前原文和按已绑定模板组装的候选。仅主人确认后才归档原版本并应用；关闭不会修改任何剧情。缺失动态状态一律拒绝自动生成。';body.appendChild(intro);
+    const intro=document.createElement('p');intro.className='helper';intro.textContent=candidate.repairMode==='tag_closure'?'这里只在原文末尾追加缺少的闭合标签，不改动原有字符。确认后才保存，并保留原版本；取消不会修改剧情。':'下面是当前原文和按参考模板恢复的候选，保留可确认的现存正文与状态。缺失状态需要主人填写；确认后才保存，并保留原版本。';body.appendChild(intro);
     for(const [label,text] of [['原正文（不变）',candidate.oldContent],['候选 HTML（未提交）',candidate.proposedContent]]){
       const title=document.createElement('label');title.className='form-label';title.textContent=label;
       const area=document.createElement('textarea');area.className='field textarea tall';area.readOnly=true;area.value=text;area.style.userSelect='text';body.append(title,area);
@@ -4192,6 +4244,7 @@ async function reviewStoryHtmlRepair(msg){
     appendHtmlRepairDynamicFields(body,candidate);
     setupEditorButtons(null,()=>approveStoryHtmlRepair());
     qs('editor-save').textContent='确认应用代码修复';qs('editor-modal').classList.remove('hidden');
+ }catch(error){if(!ticket||isCurrentHtmlReview(ticket))toast('HTML 检查未完成：'+(error.message||error));}
 }
 async function reviewStoryAiHtmlRepair(msg){
     if(!msg?.id||currentGenerationOwner())return toast('当前生成未结算，请先完成原任务。');
@@ -4200,14 +4253,16 @@ async function reviewStoryAiHtmlRepair(msg){
       return toast('请先绑定 HTML 标准模板和唯一正文槽，再使用 AI 重排。');
     if(!confirm('只有混合 HTML 等代码不能直接恢复、且正文可逐字核验时才尝试。优先使用免费代码补全。这是额外的付费模型请求，明确确认后最多请求一次，不会自动重试。费用取决于当前配置的网关费率，无法在此可靠报价。若原文/模板不能逐字验证，结果会被拒收，仍可能产生一次费用。继续吗？'))return;
     const sessionId=currentSessionId;
+    const ticket=beginHtmlReview(sessionId);
     const response=await fetchStory(`/sessions/${sessionId}/messages/${msg.id}/html-repair/ai`,'POST',{confirmedCharge:true},false);
-    if(!response.success)return toast('AI 重排失败（不会自动重试）：'+(response.code||response.msg));
+    if(!isCurrentHtmlReview(ticket))return;
+    if(!response.success){toast('AI 重排未采纳：'+htmlRepairError(response));if(response.repairDraftId||response.partialDraft||response.recoveryDraft)await showHtmlRepairDraft(msg,response.partialDraft||'',response.repairDraftId||response.recoveryDraft?.id||'',sessionId,ticket,{draft:response.recoveryDraft,truncated:response.partialDraftTruncated});return;}
     const candidate=response.data;
     editorState={type:'html_code_repair',msg,candidate,sessionId};
-    qs('editor-title').textContent='AI HTML 重排 · 严格逐字验证通过 · 未提交';
-    qs('editor-eyebrow').textContent='EXPLICIT PAID SINGLE REQUEST / OWNER APPROVAL REQUIRED';
+    qs('editor-title').textContent=response.data.apiRequests===0?'免费代码修复 · 本次未发送 API':'AI HTML 重排 · 逐字核验通过 · 未提交';
+    qs('editor-eyebrow').textContent=response.data.apiRequests===0?'未发送 API · 未修改剧情':'单次重排返回 · 尚未保存';
     const body=qs('editor-body');body.replaceChildren();
-    const note=document.createElement('p');note.textContent='模型仅完成排版；原文字节及模板静态节点通过了代码核验。主人确认后才写入，原始 rawContent 与版本保留。';body.appendChild(note);
+    const note=document.createElement('p');note.textContent=(response.data.apiRequests===0?'本次由本机代码免费修复，没有发送模型请求。':'模型仅完成排版，正文逐字文本、已有状态与模板结构通过了代码核验。')+'确认后才写入，原始模型回复与版本保留。';body.appendChild(note);
     for(const [label,text] of [['现有正文',candidate.oldContent],['AI 排版候选',candidate.proposedContent]]){
       const title=document.createElement('label');title.className='form-label';title.textContent=label;
       const area=document.createElement('textarea');area.className='field textarea tall';area.readOnly=true;area.value=text;body.append(title,area);
@@ -4221,8 +4276,8 @@ async function approveStoryHtmlRepair(){
     if(!confirm('确定应用这份经主人确认状态值的 HTML 修复？原回复仍会在旧版本中保留。'))return;
     let dynamicValues;try{dynamicValues=readHtmlRepairDynamicFields();}catch(err){return toast(err.message);}
     const result=await fetchStory(`/sessions/${e.sessionId}/messages/${e.msg.id}/html-repair/approve`,'POST',{candidateId:e.candidate.id,dynamicValues},false);
-    if(!result.success)return toast('代码修复未能提交：'+(result.code||result.msg));
-    if(currentSessionId===e.sessionId){currentSessionData=result.data;closeEditor();refreshChatBox();}
+    if(!result.success)return toast('代码修复未能提交：'+htmlRepairError(result));
+    if(currentSessionId===e.sessionId){currentSessionData=result.data;if(editorState===e)closeEditor();refreshChatBox();}
     toast('主人已批准代码修复；原始模型回复及旧版本保留。');
 }
 function openMessageEditor(msg,truncateAfter=false){editorState={type:'message',msg,truncateAfter,sessionId:currentSessionId};qs('editor-title').textContent=truncateAfter?'编辑并从这里建立新时间线':'编辑消息';qs('editor-eyebrow').textContent='STORY MESSAGE（剧情消息）';qs('editor-body').innerHTML=`<label class="form-label">消息内容</label><textarea id="message-edit-content" class="field textarea tall">${escapeHtml(msg.content||'')}</textarea>${truncateAfter?'<p class="helper">保存后，这条消息之后的旧剧情会进入 archivedBranches（归档分支），不会直接丢失。</p>':'<p class="helper">如果这是角色错误输出，也可以直接删除这一条；删除只影响当前剧情历史，不会删除角色卡、预设或其他资料库。</p>'}`;setupEditorButtons(truncateAfter?null:()=>deleteStoryMessage(msg),saveMessageEditor);qs('editor-modal').classList.remove('hidden')}

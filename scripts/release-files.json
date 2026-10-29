@@ -118,5 +118,8 @@
   "tavern-backup.js",
   "css-resources.js",
   "native-history-window.js",
-  "performance-diagnostics.js"
+  "performance-diagnostics.js",
+  "vendor/html-parser-7.3.0.js",
+  "vendor/parse5-LICENSE.txt",
+  "vendor/entities-LICENSE.txt"
 ]

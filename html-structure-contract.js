@@ -3,69 +3,42 @@
  * This module never accesses an API or commits a canonical message.
  */
 (function(){'use strict';
- const selectors=v=>String(v||'').split(/\s*[,\n]\s*/).map(x=>x.trim()).filter(Boolean);
+ // Split only at top level: commas inside :is(), :not() and quoted
+ // attributes belong to the selector, not to the settings list.
+ function selectors(value){
+   const out=[];let part='',quote='',escape=false,depth=0;
+   for(const ch of String(value||'')){
+     if(escape){part+=ch;escape=false;continue;}
+     if(ch==='\\'){part+=ch;escape=true;continue;}
+     if(quote){part+=ch;if(ch===quote)quote='';continue;}
+     if(ch==='"'||ch==="'"){part+=ch;quote=ch;continue;}
+     if(ch==='('||ch==='[')depth++;
+     if(ch===')'||ch===']')depth--;
+     if((ch===','||ch==='\n')&&depth===0){if(part.trim())out.push(part.trim());part='';}
+     else part+=ch;
+   }
+   if(part.trim())out.push(part.trim());return out;
+ }
+ const htmlError=(code,detail='')=>Object.assign(Error(code+(detail?': '+detail:'')),{code,details:detail});
+ function configErrors(contract={}){
+   const errors=[];
+   for(const key of ['requiredSelectors','bodySelector','statusSelector','staticSelectors','staticCssSelectors']){
+     for(const sel of selectors(contract[key]))try{document.querySelector(sel);}catch{errors.push({field:key,selector:sel});}
+   }
+   return errors;
+ }
  const elTree=content=>new DOMParser().parseFromString('<!doctype html><html><body>'+String(content||'')+'</body></html>','text/html').body;
  const commentAuthorizations=c=>new Set(String(c?.staticCommentTexts||'').split(/\r?\n/).map(v=>v.trim()).filter(Boolean));
  const cssAuthorizations=c=>selectors(c?.staticCssSelectors);
  const voids=new Set(['area','base','br','col','embed','hr','img','input','link','meta','param','source','track','wbr']);
  const markup=s=>/<\/?[A-Za-z][\w:.-]*(?:\s|>|\/)/.test(String(s||''));
- // Read HTML in tokenizer context, not with a global tag regex: a JS string,
- // textarea value, comment or DOCTYPE must never become an element.
- const rawTextTags=new Set(['script','style','xmp','iframe','noembed','noframes','plaintext']);
- const rcdataTags=new Set(['textarea','title']);
- const optionalEnd={li:['li'],dt:['dt','dd'],dd:['dd','dt'],p:['p','div','section','article','header','footer','main','nav','aside','h1','h2','h3','h4','h5','h6','ul','ol','table','pre','blockquote'],
-   option:['option','optgroup'],optgroup:['optgroup'],tr:['tr'],td:['td','th'],th:['td','th'],thead:['tbody','tfoot'],tbody:['tbody','tfoot'],tfoot:['tbody']};
+ // The vendored standards parser supplies source locations as well as a tree:
+ // DOM auto-repair alone is never evidence of original closing tags.
  function tokenize(source){
-   const src=String(source||''),stack=[];let i=0,seen=false;
-   const error=(reason)=>({ok:false,reason,stack:[...stack],seen});
-   const popOptional=(tag)=>{while(stack.length&&optionalEnd[stack.at(-1)]?.includes(tag))stack.pop();};
-   while(i<src.length){
-     const active=stack.at(-1);
-     if(active==='plaintext'){i=src.length;break;}
-     if(rawTextTags.has(active)||rcdataTags.has(active)){
-       const close=new RegExp('</'+active+'\\s*>','ig');close.lastIndex=i;
-       const hit=close.exec(src);
-       if(!hit){return error('unclosed_'+active);}
-       stack.pop();i=close.lastIndex;continue;
-     }
-     const start=src.indexOf('<',i);if(start<0)break;i=start;
-     if(src.startsWith('<!--',i)){const end=src.indexOf('-->',i+4);if(end<0)return error('unfinished_comment');i=end+3;continue;}
-     if(/^<!doctype\b/i.test(src.slice(i))){
-       // The public identifier may contain > in a quote; parse until unquoted >.
-       let j=i+2,quote='';for(;j<src.length;j++){const ch=src[j];if(quote){if(ch===quote)quote='';}else if(ch==='"'||ch==="'")quote=ch;else if(ch==='>')break;}
-       if(j>=src.length)return error('unfinished_doctype');i=j+1;continue;
-     }
-     if(src.startsWith('<![CDATA[',i)){const end=src.indexOf(']]>',i+9);if(end<0)return error('unfinished_cdata');i=end+3;continue;}
-     if(src.startsWith('<?',i)){const end=src.indexOf('?>',i+2);if(end<0)return error('unfinished_processing_instruction');i=end+2;continue;}
-     const match=/^<(\/)?([A-Za-z][\w:.-]*)\b/.exec(src.slice(i));
-     if(!match){
-       // Literal less-than text, e.g. "3 < 5", is not markup.
-       if(/^<!|^<\/?[A-Za-z]/.test(src.slice(i)))return error('malformed_tag');
-       i++;continue;
-     }
-     const tag=match[2].toLowerCase();let j=i+match[0].length,quote='';
-     for(;j<src.length;j++){const ch=src[j];if(quote){if(ch===quote)quote='';}else if(ch==='"'||ch==="'")quote=ch;else if(ch==='>')break;}
-     if(j>=src.length)return error('unfinished_tag');
-     const whole=src.slice(i,j+1),isClosing=!!match[1],selfClosing=/\/\s*>$/.test(whole);seen=true;
-     // In text/html, '/>' does NOT close ordinary HTML elements. Only SVG/MathML
-     // foreign content has self-closing semantics (except HTML integration points).
-     const foreignStart=Math.max(stack.lastIndexOf('svg'),stack.lastIndexOf('math'));
-     const insideForeign=foreignStart>=0&&!stack.slice(foreignStart+1).includes('foreignobject');
-     if(isClosing){
-       // Optional end tags are not missing markup in HTML documents.
-       while(stack.length&&stack.at(-1)!==tag&&optionalEnd[stack.at(-1)])stack.pop();
-       if(stack.at(-1)!==tag)return error('mismatched_closing_'+tag);
-       stack.pop();
-     }else if(!voids.has(tag)){
-       popOptional(tag);
-       if(!(selfClosing&&(insideForeign||tag==='svg'||tag==='math')))stack.push(tag);
-     }
-     i=j+1;
-   }
-   while(stack.length&&optionalEnd[stack.at(-1)])stack.pop();
-   return stack.length?error('unclosed_'+stack.at(-1)):{ok:true,stack:[],seen};
+   if(!window.MimaHtmlParser?.analyze)throw htmlError('E_HTML_PARSER_UNAVAILABLE','HTML 解析器未加载，请完整更新生产包。');
+   return window.MimaHtmlParser.analyze(source);
  }
- function rawBalance(source){const result=tokenize(source);return {ok:result.ok,...(!result.ok?{reason:result.reason}:{})};}
+ function rawBalance(source){const result=tokenize(source);return {ok:result.ok,...(!result.ok?{reason:result.reason,offset:result.offset}:{})};}
  // This repair changes only a demonstrably absent suffix: never rewrite any
  // original byte, never close unsafe RAWTEXT or guess malformed markup.
  function closeUnclosedTags(source){
@@ -81,15 +54,15 @@
    if(!tokenize(proposedContent).ok)throw Error('E_HTML_TAG_CLOSURE_VERIFICATION_FAILED');
    return {proposedContent,oldContent:original,appended,repairActions:['append_missing_closing_tags'],confidence:'lexical_append_only',missingFields:[]};
  }
- function onlyUnique(body,sel){let list;try{list=body.querySelectorAll(sel);}catch{throw Error('E_HTML_CONTRACT_SELECTOR_INVALID: '+sel);}return list;}
+ function onlyUnique(body,sel){let list;try{list=body.querySelectorAll(sel);}catch{throw htmlError('E_HTML_CONTRACT_SELECTOR_INVALID',sel);}return list;}
  function path(node){let r=[],el=node;while(el&&el.parentElement&&el!==el.ownerDocument.body){const siblings=[...el.parentElement.children].filter(n=>n.tagName===el.tagName);r.push(el.tagName+':'+siblings.indexOf(el));el=el.parentElement;}return r.reverse().join('/');}
  // Opt-in structure contract: mixed HTML prefix + unwrapped narrative prose + status tail.
  // Legacy selector-only contracts retain their historical semantics.
  const statusOrder=['mima-gaze','mima-bond','mima-abyss','mima-pulse','mima-cocoon','mima-echo','mima-pets','mima-nexus'];
- function threePart(content,{strictValues=false}={}){
-   const source=String(content||''),body=elTree(source),missing=[],warnings=[];
-   const balanced=rawBalance(source);
-   if(!balanced.ok)missing.push('(HTML未闭合:'+balanced.reason+')');
+ function threePart(content,{strictValues=false}={},parsedBody=null,parsedSyntax=null){
+   const source=String(content||''),body=parsedBody||elTree(source),missing=[],warnings=[];
+   const balanced=parsedSyntax||rawBalance(source);
+   if(!balanced.ok)missing.push('(HTML标签不完整:'+balanced.reason+'，字符 '+((balanced.offset||0)+1)+')');
    const get=cls=>[...body.getElementsByClassName(cls)];
    const current=get('mima-current'),tails=statusOrder.map(cls=>get(cls));
    if(current.length!==1)missing.push('.mima-current (必须唯一，实际 '+current.length+')');
@@ -111,13 +84,8 @@
        if(!narrative)missing.push('(开头状态栏与末尾状态栏之间没有剧情正文)');
      }catch{missing.push('(正文区间无法确认，状态结构可能交叉)');}
      if(strictValues){
-       for(const meter of body.querySelectorAll('progress[value],meter[value]')){
-         const raw=meter.getAttribute('value')||'';
-         if(!/^\d+(?:\.\d+)?$/.test(raw)||Number(raw)<0||Number(raw)>Number(meter.getAttribute('max')||100)){
-           missing.push('(数值未填写或超范围:'+meter.localName+')');
-         }
-       }
-     }else if([...body.querySelectorAll('progress[value],meter[value]')].some(x=>!/^(?:\d+(?:\.\d+)?)$/.test(x.getAttribute('value')||''))){warnings.push('存在未填写的进度值；可选严格数值检查');}
+       try{verifyExistingNumbers(body,{strictValues:true});}catch(e){missing.push(e.message);}
+     }else if([...body.querySelectorAll('progress[value],meter[value]')].some(x=>!validHtmlNumber(x.getAttribute('value')))){warnings.push('存在未填写的进度值；可选严格数值检查');}
    }
    return {ok:missing.length===0,missing,warnings,status:missing.length?'three_part_incomplete':'three_part_complete',structureKind:'three_part_html_status'};
  }
@@ -134,18 +102,22 @@
    return 'suffix';
  }
  function inspect(content,contract={}){
-   if(!contract.requireHtml)return {ok:true,missing:[],status:'disabled'};
-   if(contract.structureMode==='three_part_html_status')return threePart(content,{strictValues:contract.strictValues===true});
-   const source=String(content||''),body=elTree(source),missing=[];
+   const errors=configErrors(contract);
+   if(errors.length)return {ok:false,missing:errors.map(e=>e.field+'：'+e.selector),status:'config_error',code:'E_HTML_CONTRACT_SELECTOR_INVALID',errors};
+   if(!contract.requireHtml){const check=contract.completeHtml?rawBalance(content):{ok:true};
+     if(check.ok&&contract.strictValues)try{verifyExistingNumbers(elTree(content),contract);}catch(e){return {ok:false,missing:[e.message],status:'value_error',code:'E_HTML_VALUE_INVALID'};}
+     return {ok:check.ok,missing:check.ok?[]:[check.reason],status:check.ok?'complete':'syntax_error',...check};}
+   const source=String(content||''),body=elTree(source),balanced=rawBalance(source),shape=contract.structureMode==='three_part_html_status'?threePart(content,{strictValues:false},body,balanced):null,missing=[...(shape?.missing||[])];
+   if(contract.strictValues)try{verifyExistingNumbers(body,contract);}catch(e){missing.push(e.message);}
    if(!markup(source))missing.push('(HTML)');
-   const balanced=rawBalance(source);if(!balanced.ok)missing.push('(HTML未闭合:'+balanced.reason+')');
+   if(!balanced.ok&&!shape)missing.push('(HTML标签不完整:'+balanced.reason+'，字符 '+((balanced.offset||0)+1)+')');
    const ref=typeof contract.templateHtml==='string'&&contract.templateHtml?elTree(contract.templateHtml):null;
    const required=new Set([...selectors(contract.requiredSelectors),contract.bodySelector,contract.statusSelector].filter(Boolean));
    for(const sel of required){const matched=onlyUnique(body,sel),expected=ref?onlyUnique(ref,sel):null;
      if(matched.length!==1)missing.push(sel+` (必须唯一，实际 ${matched.length})`);
-     else if(ref&&(expected.length!==1||path(matched[0])!==path(expected[0])))missing.push(sel+' (DOM层级与模板不一致)');
+     else if(ref&&contract.strictTemplatePath===true&&(expected.length!==1||path(matched[0])!==path(expected[0])))missing.push(sel+' (DOM层级与模板不一致)');
    }
-   return {ok:markup(source)&&balanced.ok&&!missing.length,missing,status:markup(source)?'structure':'plain_text'};
+   return {ok:markup(source)&&balanced.ok&&!missing.length,missing,...(shape?{warnings:shape.warnings,structureKind:shape.structureKind}:{}),syntax:balanced,...(!balanced.ok?{code:'E_HTML_SYNTAX'}:missing.some(x=>x.includes('E_HTML_REPAIR_CURRENT_VALUE_INVALID'))?{code:'E_HTML_VALUE_INVALID'}:{}),status:!balanced.ok?'syntax_error':markup(source)?'structure':'plain_text'};
  }
  function safeAttributes(body,contract={}){
    const blocked=/^(script|iframe|object|embed|meta|link|base|form|svg|math|video|audio|picture|source|input|button|textarea|select|template)$/i;
@@ -189,25 +161,63 @@
    if(!String(value).trim()||/[;{}<>\u0000]/.test(value)||dangerousStyleValue.test(value))throw Error('E_HTML_REPAIR_DYNAMIC_CSS_INVALID');
    return String(value).trim();
  }
- function cssStaticElement(el,contract){return cssAuthorizations(contract).some(sel=>{try{return el.matches(sel);}catch{throw Error('E_HTML_CONTRACT_SELECTOR_INVALID: '+sel);}});}
+ function cssStaticElement(el,contract){return cssAuthorizations(contract).some(sel=>{try{return el.matches(sel);}catch{throw htmlError('E_HTML_CONTRACT_SELECTOR_INVALID',sel);}});}
  function cssRuleAuthorized(rule,contract){const selector=String(rule.selectorText||'').trim();return !!selector&&cssAuthorizations(contract).includes(selector);}
  function cssStatusValue(prop){return !fixedLayoutCss.has(String(prop).toLowerCase());}
  function cssRuleValue(prop,value,key){return prop==='content'?JSON.stringify(value===null?`【待确认:${key}】`:validCssValue(value)):(value===null?`var(--mima-pending-${key})`:validCssValue(value));}
+ function statusMappings(model,current,bodySel,contract){
+   let sels=contract.statusSelector?[String(contract.statusSelector)]:contract.structureMode==='three_part_html_status'?['.mima-current',...statusOrder.map(c=>'.'+c)]:[];
+   if(!sels.length){
+     const discovered=[...model.querySelectorAll('[class*="status" i],[id*="status" i],meter,progress')];
+     for(const el of discovered.filter(el=>!discovered.some(other=>other!==el&&other.contains(el)))){
+       const classes=[...el.classList].filter(c=>/status|meter/i.test(c));
+       const sel=el.id?'#'+CSS.escape(el.id):classes.length?classes.map(c=>'.'+CSS.escape(c)).join(''):el.localName;
+       if(onlyUnique(model,sel).length!==1)throw htmlError('E_HTML_REPAIR_STATUS_SLOT_NOT_UNIQUE',sel);
+       sels.push(sel);
+     }
+   }
+   const result=[];
+   for(const sel of new Set(sels)){
+     const ref=onlyUnique(model,sel),live=current?onlyUnique(current,sel):[];
+     if(ref.length!==1||live.length>1)throw htmlError('E_HTML_REPAIR_STATUS_SLOT_NOT_UNIQUE',sel);
+     if(ref[0].matches(bodySel)||ref[0].querySelector(bodySel)||live[0]?.matches(bodySel)||live[0]?.querySelector(bodySel))throw htmlError('E_HTML_REPAIR_OVERLAPPING_SLOTS',sel);
+     result.push({selector:sel,template:ref[0],current:live[0]||null});
+   }
+   return result.filter(m=>!result.some(other=>other!==m&&other.template.contains(m.template)));
+ }
+ function validHtmlNumber(value){
+   return typeof value==='string'&&/^-?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(value)&&Number.isFinite(Number(value));
+ }
+ function verifyExistingNumbers(root,contract){
+   if(!contract.strictValues)return;
+   const meters=[...(root.matches?.('progress,meter')?[root]:[]),...root.querySelectorAll('progress,meter')];
+   for(const el of meters){
+     const invalid=()=>{throw htmlError('E_HTML_REPAIR_CURRENT_VALUE_INVALID',el.outerHTML+' 数值格式或范围无效，请修正数值。');};
+     const read=(name,fallback)=>{const raw=el.getAttribute(name);if(raw===null)return fallback;if(!validHtmlNumber(raw))invalid();return Number(raw);};
+     const max=read('max',1),value=read('value',null);
+     if(el.localName==='progress'){
+       if(max<=0||value!==null&&(value<0||value>max))invalid();
+     }else{
+       const min=read('min',0),low=read('low',min),high=read('high',max),optimum=read('optimum',min/2+max/2);
+       if(max<min||value===null||value<min||value>max||low<min||low>max||high<low||high>max||optimum<min||optimum>max)invalid();
+     }
+   }
+ }
  function skeleton(source,template,contract,values=null){
    if(!contract?.requireHtml)throw Error('E_HTML_REPAIR_NOT_ENABLED');
+   const config=configErrors(contract);if(config.length)throw htmlError('E_HTML_CONTRACT_SELECTOR_INVALID',config.map(x=>x.field+'：'+x.selector).join('；'));
+   const templateSyntax=rawBalance(template);if(!templateSyntax.ok)throw htmlError('E_HTML_REPAIR_TEMPLATE_INCOMPLETE','参考模板本身标签不完整：'+templateSyntax.reason);
    const model=elTree(template);safeAttributes(model,contract);
    const bodySel=String(contract.bodySelector||'').trim();
    if(!bodySel||onlyUnique(model,bodySel).length!==1)throw Error('E_HTML_REPAIR_BODY_SLOT_NOT_UNIQUE');
    const body=onlyUnique(model,bodySel)[0];
-   // Never copy any child, attribute-carried state, or old prose from this slot.
-   for(const a of [...body.attributes]){
-     if(/^(?:data-(?!mima-)|title$|aria-|value$)/i.test(a.name))body.removeAttribute(a.name);
-   }
    body.textContent=source;
    const statusSel=String(contract.statusSelector||'').trim();
+   const structureSelectors=[bodySel,statusSel,...selectors(contract.requiredSelectors),...(contract.structureMode==='three_part_html_status'?['.mima-current',...statusOrder.map(x=>'.'+x)]:[])].filter(Boolean);
+   const structureTokens=new Set(structureSelectors.flatMap(sel=>[...sel.matchAll(/\.([a-zA-Z_][\w-]*)/g)].map(m=>m[1])));
    let statuses=[];
    if(statusSel)statuses=[...onlyUnique(model,statusSel)];
-   else statuses=[...model.querySelectorAll('[class*="status" i],[id*="status" i],[class*="meter" i],[id*="meter" i],meter,progress')];
+   else statuses=[...model.querySelectorAll((contract.structureMode==='three_part_html_status'?'.mima-current,'+statusOrder.map(x=>'.'+x).join(',')+',':'')+'[class*="status" i],[id*="status" i],[class*="meter" i],[id*="meter" i],meter,progress')];
    if(statusSel&&statuses.length!==1)throw Error('E_HTML_REPAIR_STATUS_SLOT_NOT_UNIQUE');
    const roots=statuses.filter(el=>el!==body&&!body.contains(el)&&!statuses.some(other=>other!==el&&other.contains(el)));
    if(roots.some(el=>el.contains(body)))throw Error('E_HTML_REPAIR_OVERLAPPING_SLOTS');
@@ -221,6 +231,19 @@
    }
    const staticText=node=>authorized.some(el=>el.contains(node));
    const inStatus=node=>roots.some(el=>el===node||el.contains(node));
+   const currentRoots=new Set(),currentBodyAttributes=new Map();
+   if(contract.repairSourceHtml&&markup(contract.repairSourceHtml)){
+     const current=elTree(contract.repairSourceHtml);safeAttributes(current,contract);
+     const currentBody=onlyUnique(current,bodySel);
+     if(currentBody.length!==1)throw htmlError('E_HTML_AI_SOURCE_PROSE_UNVERIFIABLE');
+     verifyExistingNumbers(currentBody[0],contract);
+     body.innerHTML=currentBody[0].innerHTML;
+     for(const attr of [...currentBody[0].attributes]){currentBodyAttributes.set(attr.name,attr.value);if(!body.hasAttribute(attr.name))body.setAttribute(attr.name,attr.value);}
+     for(const mapping of statusMappings(model,current,bodySel,contract))if(mapping.current){
+       verifyExistingNumbers(mapping.current,contract);
+       const copy=mapping.current.cloneNode(true);mapping.template.replaceWith(copy);currentRoots.add(copy);
+     }
+   }
    const fields=[];let n=0;
    const fill=(kind,label,old,assign)=>{
      const key='html_field_'+n++;
@@ -291,7 +314,7 @@
      el.textContent=(comments.length?comments.join('\n')+'\n':'')+rewrite(sheet.cssRules).join('\n');
    };
    const walk=node=>{
-     if(node===body)return;
+     if(currentRoots.has(node))return;
      if(node.nodeType===8){
        const old=node.nodeValue||'';
        if(commentAuthorizations(contract).has(old.trim()))return;
@@ -313,6 +336,7 @@
      if(!staticText(node)){
        for(const a of [...node.attributes]){
          const name=a.name,old=a.value;
+         if(node===body&&currentBodyAttributes.has(name)){const live=currentBodyAttributes.get(name);node.setAttribute(name,name==='class'?[...new Set([...live.split(/\s+/),...old.split(/\s+/).filter(c=>structureTokens.has(c))])].filter(Boolean).join(' '):live);continue;}
          if(name.startsWith('data-mima-'))throw Error('E_HTML_REPAIR_RESERVED_ATTRIBUTE');
          if(name==='style'){
            const scratch=document.createElement('span');scratch.setAttribute('style',old);
@@ -335,7 +359,7 @@
            // unrecognized semantic classes require human verification.
            const authorizedTokens=new Set(String(contract.staticClassTokens||'').split(/[\s,]+/).filter(Boolean));
            const staticClasses=old.split(/\s+/).filter(Boolean).filter(x=>
-             /^(?:story-body|static-title|status|status-panel|meter|progress|bar|track|fill|label|value|row|col|grid|panel|box|card|content|text|left|right|small|large)$/i.test(x)||authorizedTokens.has(x));
+             /^(?:story-body|static-title|status|status-panel|meter|progress|bar|track|fill|label|value|row|col|grid|panel|box|card|content|text|left|right|small|large)$/i.test(x)||authorizedTokens.has(x)||structureTokens.has(x));
            const dynamicClasses=old.split(/\s+/).filter(Boolean).filter(x=>!staticClasses.includes(x));
            if(dynamicClasses.length)fill('class','状态 class（仅填本轮确认的类别）',dynamicClasses.join(' '),(value,key)=>{
              if(value!==null&&!/^[a-zA-Z0-9_-]+(?:\s+[a-zA-Z0-9_-]+)*$/.test(value))throw Error('E_HTML_REPAIR_DYNAMIC_CLASS_INVALID');
@@ -344,6 +368,7 @@
            });
            continue;
          }
+
          if(name==='role'||name==='dir'||name==='lang'||name==='tabindex')continue;
          if(name==='id'&&/^[a-z_][a-z0-9_-]*$/i.test(old)&&!/(?:\d{2,}|happy|sad|angry|dead|alive|mood|emotion|hp\d|value\d)/i.test(old))continue;
          if(name==='hidden'){fill('boolean','隐藏状态 hidden',old||'hidden',(value,key)=>{
@@ -356,14 +381,15 @@
          // is dynamic. There is no safe default from last turn.
          const numeric=/^(?:value|max|min|aria-valuenow|aria-valuemax|aria-valuemin)$/i.test(name);
          fill(numeric?'number':'attribute',status?`状态属性 ${name}`:`未归属属性 ${name}`,old,(value,key)=>{
-           if(value===null){node.removeAttribute(name);node.setAttribute('data-mima-pending-attribute-'+n,key);}
+           if(value===null){node.setAttribute(name,`【待确认:${key}】`);node.setAttribute('data-mima-pending-attribute-'+n,key);}
            else {
-             if(numeric&&!/^-?\d+(?:\.\d+)?$/.test(value))throw Error('E_HTML_REPAIR_DYNAMIC_NUMBER_INVALID: '+key);
+             if(numeric&&!validHtmlNumber(value))throw Error('E_HTML_REPAIR_DYNAMIC_NUMBER_INVALID: '+key);
              node.setAttribute(name,value);
            }
          });
        }
      }
+     if(node===body)return;
      for(const child of [...node.childNodes])walk(child);
    };
    for(const node of [...model.childNodes])walk(node);
@@ -380,69 +406,120 @@
    throw Error('E_HTML_REPAIR_AMBIGUOUS: 源内容包含混合 HTML，可选择单次 AI 排版或自行编辑');
  }
  function propose(current,template,contract={}){
-   const source=exactSource(current),result=skeleton(source,template,contract);
-   const checked=inspect(result.html,{...contract,templateHtml:result.html});
-   if(!checked.ok)throw Error('E_HTML_REPAIR_TEMPLATE_INCOMPLETE: '+checked.missing.join(','));
-   return {proposedContent:result.html,repairActions:['restore_static_shell','insert_original_story','flag_dynamic_values'],
-     confidence:'structural_only',missingFields:result.fields};
+   let result;
+   if(markup(current)){
+     const syntax=rawBalance(current);
+     if(!syntax.ok){try{closeUnclosedTags(current);}catch{throw htmlError('E_HTML_REPAIR_AMBIGUOUS','原文存在交叉或残缺标签，无法仅靠代码确认；可选择高级重排或手动编辑。');}}
+     const plan=restorationPlan(current,template,contract);
+     result={html:plan.targetHtml,fields:plan.missingFields};
+   }else result=skeleton(exactSource(current),template,contract);
+   const checked=inspect(result.html,{...contract,strictValues:false,templateHtml:template});
+   if(!checked.ok)throw htmlError('E_HTML_REPAIR_TEMPLATE_INCOMPLETE',checked.missing.join('；'));
+   return {proposedContent:result.html,repairActions:['restore_static_shell','preserve_original_story_and_available_state','flag_missing_values'],confidence:'structural_only',missingFields:result.fields};
  }
  function finalizeProposal(current,template,contract,candidate,values){
    if(!values||typeof values!=='object')throw Error('E_HTML_REPAIR_DYNAMIC_VALUES_REQUIRED');
    const pending=propose(current,template,contract);
    if(pending.proposedContent!==candidate)throw Error('E_HTML_REPAIR_CHANGED');
    for(const field of pending.missingFields){if(!Object.hasOwn(values,field.key)||!String(values[field.key]).trim())throw Error('E_HTML_REPAIR_DYNAMIC_FIELD_MISSING: '+field.key);}
-   const result=skeleton(exactSource(current),template,contract,values).html;
-   if(!inspect(result,{...contract,templateHtml:result}).ok)throw Error('E_HTML_REPAIR_FINAL_CONTRACT_FAILED');
+   const result=markup(current)?finalizeWithProse(restorationPlan(current,template,contract).expectedProse,template,contract,candidate,values,current):skeleton(exactSource(current),template,contract,values).html;
+   if(!inspect(result,{...contract,templateHtml:template}).ok)throw Error('E_HTML_REPAIR_FINAL_CONTRACT_FAILED');
    return result;
  }
  // Paid AI can attempt a mixed fragment that the deterministic path refuses.
  // It must emit a precise *source-preserving* structure; untrusted values never
  // acquire the status of current facts simply because a model returned them.
- function aiAdmission(source,template,contract){
-   if(!contract?.requireHtml)throw Error('E_HTML_AI_CONTRACT_DISABLED');
-   const model=elTree(template);safeAttributes(model);
-   if(onlyUnique(model,String(contract.bodySelector||'')).length!==1)throw Error('E_HTML_AI_BODY_SLOT_NOT_UNIQUE');
-   // Inspect HTML safely without granting it authority. No API is called here.
-   // Partially closed markup is the primary opt-in rescue case; the inert
-   // parser may identify a unique prose slot, but cannot authorize new facts.
+ function repairAttempt(source,template,contract={}){
+   const errors=configErrors(contract);if(errors.length)throw htmlError('E_HTML_CONTRACT_SELECTOR_INVALID',errors.map(e=>e.field+'：'+e.selector).join('；'));
+   let closure;
+   try{closure=closeUnclosedTags(source);}catch(e){if(!template)throw e;}
+   if(closure){const check=inspect(closure.proposedContent,{...contract,templateHtml:template||''});if(check.ok)return {...closure,repairMode:'tag_closure'};}
+   if(!template)throw htmlError('E_HTML_REPAIR_TEMPLATE_MISSING','当前内容不能仅补闭合；请绑定标准 HTML 参考消息和正文容器。');
+   return {...propose(source,template,contract),repairMode:'template_restore'};
+ }
+ function verifyOutsideSource(outside,model,contract){
+   if(outside.textContent.trim())throw htmlError('E_HTML_AI_SOURCE_OUTSIDE_BODY_UNVERIFIED','正文容器之外还有未归属文字；未发送请求，请先编辑正文范围。');
+   const signature=el=>JSON.stringify([el.localName,[...el.attributes].map(a=>[a.name,a.value]).sort((a,b)=>a[0].localeCompare(b[0]))]);
+   const layoutAttributes=new Set(['class','id','role','dir','lang','tabindex']);
+   const templateLayouts=new Set([model,...model.querySelectorAll('*')].map(signature));
+   const comments=commentAuthorizations(contract);
+   const layoutAttribute=(el,attr)=>{
+     if(layoutAttributes.has(attr.name))return true;
+     if(attr.name!=='style'||/\/\*/.test(attr.value))return false;
+     const style=el.style;
+     return !attr.value.trim()||style.length>0&&[...style].every(prop=>!dangerousStyleValue.test(style.getPropertyValue(prop))&&(cssStaticElement(el,contract)||!cssStatusValue(prop)&&!uncertainCssValue(style.getPropertyValue(prop))));
+   };
+   const walk=node=>{
+     if(node.nodeType===8&&node.nodeValue.trim()&&!comments.has(node.nodeValue.trim()))throw htmlError('E_HTML_AI_SOURCE_STATE_UNMAPPED','正文容器之外还有未归属注释，请先保留或明确标注其用途；未发送 API。');
+     if(node.nodeType===1){
+       const attrs=[...node.attributes];
+       if(attrs.length&&(attrs.some(a=>!layoutAttribute(node,a))||!templateLayouts.has(signature(node))))throw htmlError('E_HTML_AI_SOURCE_STATE_UNMAPPED','正文容器之外还有未归属属性：'+node.localName+' '+attrs.map(a=>a.name).join('、')+'；请先确认状态归属，未发送 API。');
+     }
+     for(const child of node.childNodes)walk(child);
+   };
+   walk(outside);
+ }
+ function restorationPlan(source,template,contract){
+   if(!contract?.requireHtml)throw htmlError('E_HTML_AI_CONTRACT_DISABLED');
+   const errors=configErrors(contract);if(errors.length)throw htmlError('E_HTML_CONTRACT_SELECTOR_INVALID',errors.map(e=>e.selector).join('；'));
+   const templateSyntax=rawBalance(template);if(!templateSyntax.ok)throw htmlError('E_HTML_REPAIR_TEMPLATE_INCOMPLETE','参考模板本身标签不完整：'+templateSyntax.reason);
+   const model=elTree(template);safeAttributes(model,contract);
+   const bodySel=String(contract.bodySelector||'');
+   if(!bodySel||onlyUnique(model,bodySel).length!==1)throw htmlError('E_HTML_AI_BODY_SLOT_NOT_UNIQUE');
    let expected=String(source||'');
    if(markup(source)){
-     const parsed=elTree(source);safeAttributes(parsed);
-     const body=onlyUnique(parsed,String(contract.bodySelector||''));
-     if(body.length!==1)throw Error('E_HTML_AI_SOURCE_PROSE_UNVERIFIABLE');
-     // Do not silently discard plot prose outside the approved body slot.
-     // Old status labels are quarantined as pending human fields, while any
-     // other out-of-slot narrative makes paid rescue unsafe before charging.
+     const parsed=elTree(source);safeAttributes(parsed,contract);
+     const body=onlyUnique(parsed,bodySel);
+     if(body.length!==1)throw htmlError('E_HTML_AI_SOURCE_PROSE_UNVERIFIABLE','原文没有唯一正文容器，请先编辑标明正文范围。');
      const outside=parsed.cloneNode(true);
-     for(const el of [...onlyUnique(outside,String(contract.bodySelector||''))])el.remove();
-     const statusSelector=String(contract.statusSelector||'').trim();
-     const oldStatuses=statusSelector?[...onlyUnique(outside,statusSelector)]:[...outside.querySelectorAll('[class*="status" i],[id*="status" i],[class*="meter" i],[id*="meter" i],meter,progress')];
-     for(const el of oldStatuses)el.remove();
-     for(const el of [...outside.querySelectorAll('style')])el.remove();
-     if(outside.textContent.trim())throw Error('E_HTML_AI_SOURCE_OUTSIDE_BODY_UNVERIFIED');
+     for(const el of [...onlyUnique(outside,bodySel)])el.remove();
+     const outsideMappings=statusMappings(model,outside,bodySel,contract);
+     for(const mapping of outsideMappings)mapping.current?.remove();
+     // Unmapped or duplicate status roots remain evidence, even if text-empty.
+     if(outside.querySelector('[class*="status" i],[id*="status" i],meter,progress'+(contract.structureMode==='three_part_html_status'?',.mima-current,'+statusOrder.map(c=>'.'+c).join(',') : '')))throw htmlError('E_HTML_AI_SOURCE_STATE_UNMAPPED','原文含未能一一映射的状态模块，请保留原文并检查模板/状态容器；未发送 API。');
+     for(const sel of selectors(contract.staticSelectors))for(const el of [...onlyUnique(outside,sel)])el.remove();
+     const templateStyles=[...model.querySelectorAll('style')].map(el=>el.textContent);
+     for(const el of [...outside.querySelectorAll('style')]){if(!templateStyles.includes(el.textContent))throw htmlError('E_HTML_AI_SOURCE_STYLE_UNVERIFIED','原文样式与模板不同，请先确认样式来源。');el.remove();}
+     verifyOutsideSource(outside,model,contract);
      expected=body[0].textContent||'';
-     if(!expected.trim())throw Error('E_HTML_AI_SOURCE_PROSE_EMPTY');
+     if(!expected.trim())throw htmlError('E_HTML_AI_SOURCE_PROSE_EMPTY');
    }
-   return {expectedProse:expected,deterministicAvailable:!markup(source)};
+   const repairContract={...contract,repairSourceHtml:source};
+   const target=skeleton(expected,template,repairContract);
+   const verdict=inspect(target.html,{...contract,strictValues:false,templateHtml:template});
+   if(!verdict.ok)throw htmlError('E_HTML_REPAIR_TEMPLATE_INCOMPLETE',verdict.missing.join('；'));
+   return {expectedProse:expected,targetHtml:target.html,missingFields:target.fields};
  }
-  function finalizeWithProse(prose,template,contract,candidate,values){
-    const pending=skeleton(prose,template,contract);
-    if(pending.html!==candidate)throw Error('E_HTML_AI_LAYOUT_OR_DYNAMIC_UNVERIFIED');
-    for(const field of pending.fields)if(!Object.hasOwn(values||{},field.key)||!String(values[field.key]).trim())throw Error('E_HTML_REPAIR_DYNAMIC_FIELD_MISSING: '+field.key);
-    const final=skeleton(prose,template,contract,values).html;
-    if(!inspect(final,{...contract,templateHtml:final}).ok)throw Error('E_HTML_REPAIR_FINAL_CONTRACT_FAILED');
-    return final;
-  }
+ function aiAdmission(source,template,contract){
+   const plan=restorationPlan(source,template,contract);let deterministicAvailable=false;
+   try{repairAttempt(source,template,contract);deterministicAvailable=true;}catch{}
+   return {...plan,deterministicAvailable};
+ }
+ function comparable(model,bodySelector){
+   const clone=model.cloneNode(true),body=onlyUnique(clone,bodySelector)[0];
+   const walk=node=>{if(node===body||node.nodeType===1&&/^(PRE|TEXTAREA|STYLE|SCRIPT)$/.test(node.tagName))return;
+     for(const child of [...node.childNodes]){
+       if(child.nodeType===3&&!child.nodeValue.trim()&&node.children.length&&(!child.previousSibling||child.previousSibling.nodeType===1)&&(!child.nextSibling||child.nextSibling.nodeType===1))child.remove();
+       else walk(child);
+     }
+   };walk(clone);return clone;
+ }
+ function finalizeWithProse(prose,template,contract,candidate,values,source=''){
+   const repairContract={...contract,repairSourceHtml:source};
+   const pending=skeleton(prose,template,repairContract);
+   if(!comparable(elTree(pending.html),contract.bodySelector).isEqualNode(comparable(elTree(candidate),contract.bodySelector)))throw htmlError('E_HTML_AI_LAYOUT_OR_DYNAMIC_UNVERIFIED');
+   for(const field of pending.fields)if(!Object.hasOwn(values||{},field.key)||!String(values[field.key]).trim())throw htmlError('E_HTML_REPAIR_DYNAMIC_FIELD_MISSING',field.key);
+   const final=skeleton(prose,template,repairContract,values).html;
+   if(!inspect(final,{...contract,templateHtml:template}).ok)throw htmlError('E_HTML_REPAIR_FINAL_CONTRACT_FAILED');
+   return final;
+ }
  function verifyReformat(source,output,template,contract){
-   const admit=aiAdmission(source,template,contract),model=elTree(output);safeAttributes(model);
-   if(!inspect(output,contract).ok)throw Error('E_HTML_AI_MISSING_OR_UNCLOSED_NODE');
+   const admit=aiAdmission(source,template,contract),model=elTree(output);safeAttributes(model,contract);
+   if(!inspect(output,{...contract,strictValues:false}).ok)throw htmlError('E_HTML_AI_MISSING_OR_UNCLOSED_NODE');
    const b=onlyUnique(model,String(contract.bodySelector||''));
-   if(b.length!==1||b[0].textContent!==admit.expectedProse)throw Error('E_HTML_AI_FACT_ADDED_OR_PROSE_CHANGED');
-   // AI may repair original mixed markup, but must not change a single static
-   // template node nor manufacture a dynamic status value.
-   const expected=skeleton(admit.expectedProse,template,contract);
-   if(!model.isEqualNode(elTree(expected.html)))throw Error('E_HTML_AI_LAYOUT_OR_DYNAMIC_UNVERIFIED');
-   return {ok:true,missingFields:expected.fields};
+   if(b.length!==1||b[0].textContent!==admit.expectedProse)throw htmlError('E_HTML_AI_FACT_ADDED_OR_PROSE_CHANGED');
+   if(!comparable(model,contract.bodySelector).isEqualNode(comparable(elTree(admit.targetHtml),contract.bodySelector)))throw htmlError('E_HTML_AI_LAYOUT_OR_DYNAMIC_UNVERIFIED');
+   return {ok:true,missingFields:admit.missingFields,normalizedContent:admit.targetHtml};
  }
- window.MimaHtmlStructure=Object.freeze({inspect,threePart,continuationKind,propose,finalizeProposal,finalizeWithProse,aiAdmission,verifyReformat,rawBalance,closeUnclosedTags});
+ window.MimaHtmlStructure=Object.freeze({selectors,configErrors,repairAttempt,inspect,threePart,continuationKind,propose,finalizeProposal,finalizeWithProse,aiAdmission,verifyReformat,rawBalance,closeUnclosedTags});
 })();

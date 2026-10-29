@@ -638,6 +638,18 @@
       tx.onabort=()=>{db.close();reject(tx.error||Error('E_HTML_REPAIR_STORE_FAILED'))};
     });
   }
+  // Separate unadopted output journal: never a canonical story/candidate.
+  async function putHtmlRepairDraft(draft){
+    if(!draft?.id||!draft.sessionId||!draft.messageId||typeof draft.content!=='string'||draft.accepted!==false)throw Error('E_HTML_AI_DRAFT_INVALID');
+    const db=await openDb();return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE);
+      kv.put(draft,'html_repair_draft_v1:'+draft.sessionId+':'+draft.messageId);
+      kv.put(draft,'html_repair_draft_archive_v1:'+draft.id);
+      tx.oncomplete=()=>{db.close();resolve(draft)};
+      tx.onabort=()=>{db.close();reject(tx.error||Error('E_HTML_AI_DRAFT_SAVE_FAILED'))};
+    });
+  }
+  const getHtmlRepairDraft=(sessionId,messageId)=>get('html_repair_draft_v1:'+sessionId+':'+messageId);
   async function getHtmlRepairCandidate(sessionId,msgId){return get(htmlRepairKey(sessionId,msgId));}
   async function setHtmlRepairCandidateState(sessionId,msgId,id,state){
     if(!['approved','rejected'].includes(state))throw Error('E_HTML_REPAIR_STATUS_INVALID');
@@ -1375,5 +1387,5 @@
     if(text.length!==receipt.persistedChars)throw new Error('E_GENERATION_FRAGMENT_INCOMPLETE');
     return {receipt,text,complete:true};
   }
-  window.MimaLocalStore={loadAppearance,commitAppearance,mergeAppearance,exportPlayToolRecords,importPlayToolRecords,listPlayToolLocal,getPlayToolLocal:key=>get('play_tools_v1:'+key),putPlayToolLocal:(key,value)=>set('play_tools_v1:'+key,value),generationReceipt,generationAppendFragment,generationRead,getRollingPreflight,putRollingPreflight,clearRollingPreflight,commitHtmlRepair,putHtmlRepairCandidate,getHtmlRepairCandidate,setHtmlRepairCandidateState,listMemoryStages,inspectLegacyMemoryStages,putMemoryRejectedDraft,listMemoryRejectedDrafts,memoryReferenceContract,putFactRangeCandidate,listFactRangeCandidates,commitVerifiedFactRanges,getMergeStage,putMergeStage,getMergeDraft,createMergeDraft,updateMergeDraft,commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,clearSettingsSnapshot,getMemoryJob,getMemoryStage,putMemoryStage,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
+  window.MimaLocalStore={putHtmlRepairDraft,getHtmlRepairDraft,loadAppearance,commitAppearance,mergeAppearance,exportPlayToolRecords,importPlayToolRecords,listPlayToolLocal,getPlayToolLocal:key=>get('play_tools_v1:'+key),putPlayToolLocal:(key,value)=>set('play_tools_v1:'+key,value),generationReceipt,generationAppendFragment,generationRead,getRollingPreflight,putRollingPreflight,clearRollingPreflight,commitHtmlRepair,putHtmlRepairCandidate,getHtmlRepairCandidate,setHtmlRepairCandidateState,listMemoryStages,inspectLegacyMemoryStages,putMemoryRejectedDraft,listMemoryRejectedDrafts,memoryReferenceContract,putFactRangeCandidate,listFactRangeCandidates,commitVerifiedFactRanges,getMergeStage,putMergeStage,getMergeDraft,createMergeDraft,updateMergeDraft,commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,clearSettingsSnapshot,getMemoryJob,getMemoryStage,putMemoryStage,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
 })();

@@ -9,6 +9,10 @@
   const API_CONFIG_KEY = 'MIMAMAO_TAVERN_STANDALONE_API_V1';
   let state = { storeRevision: 0, schemaVersion: 4, sessions: [], masks: [], presets: [], worldbooks: [], cssPresets: [], regexPacks: [], theaterCards: [], quickCommands: [], settingTemplates: [], novelProjects: [], themeSettings:{theme:'default',updatedAt:''} };
   let lastUsage = null; // v1.1.4: upstream usage/cache telemetry only; never treated as canonical story data.
+  // Emergency copies survive view changes when IndexedDB cannot save a return.
+  // They are deliberately page-local, and the draft UI explains the limitation.
+  const volatileHtmlRepairDrafts = new Map();
+  const htmlDraftKey = (sessionId,messageId) => JSON.stringify([sessionId,messageId]);
 
   const nowIso = () => new Date().toISOString();
   const stableRecordCreatedAt = x => x.createdAt || x.updatedAt || (x.id ? '' : nowIso());
@@ -83,6 +87,7 @@
         requireHtml:input.outputContract.requireHtml===true,
         structureMode:input.outputContract.structureMode==='three_part_html_status'?'three_part_html_status':'legacy',
         strictValues:input.outputContract.strictValues===true,
+        strictTemplatePath:input.outputContract.strictTemplatePath===true,
         requiredSelectors:String(input.outputContract.requiredSelectors||'').slice(0,600),
         templateMessageId:String(input.outputContract.templateMessageId||'').slice(0,200),
         bodySelector:String(input.outputContract.bodySelector||'').slice(0,200),
@@ -1340,6 +1345,7 @@
   function apiErrorHint(code,status,message=''){
     const m=String(message||'');
     if(status===400&&/(?:prompt_rejected|prompt[_ -]?blocked|prohibited[_ -]?content|blocked by upstream content policy|content[_ -]?filter|prohibited.use.policy)/i.test(m))return '接口明确报告内容政策拦截。本轮请求已被服务端拒绝，原始请求与剧情已保留，不会自动重复计费。';
+    if(String(code||'').startsWith('E_HTML_'))return '这是本机 HTML 检查、修复或保存阶段的反馈；原剧情未被失败候选覆盖。请按具体原因检查模板、选择器或待确认字段。';
     if(code==='E_API_CONFIG')return '请检查 API Base URL（基础地址）、模型名和高级端点设置。';
     if(code==='E_API_NETWORK_CORS')return '浏览器没有拿到可读取的响应。常见原因是 CORS（跨域）被 API 服务拦截、域名不可达、HTTPS 证书异常或网络中断。';
     if(code==='E_API_BAD_JSON')return '接口返回了网页、网关文本或其他非 JSON 内容。通常是 API 地址填错、反代报错，或服务端没有按 OpenAI-compatible 格式响应。';
@@ -1366,6 +1372,8 @@
     if(e?.name==='AbortError')return e;
     if(e instanceof ApiError)return e;
     const m=e?.message||String(e);
+    const localCode=e?.code||/^E_HTML_[A-Z0-9_]+/.exec(m)?.[0];
+    if(localCode&&String(localCode).startsWith('E_HTML_'))return new ApiError(localCode,m,{details:e?.details||'',hint:'这是本机 HTML 检查或修复阶段的问题；未修改剧情。请检查提示中的结构、选择器或模板。'});
     if(e instanceof TypeError||/Failed to fetch|NetworkError|Load failed|fetch failed/i.test(m))return new ApiError('E_API_NETWORK_CORS',m);
     return new ApiError(fallback,m);
   }
@@ -1846,6 +1854,7 @@
     observedFinish=ending;
     if(options.resultMeta){options.resultMeta.finishReason=ending.reason;options.resultMeta.finishKind=ending.kind;options.resultMeta.refused=!!data?.choices?.[0]?.message?.refusal;options.resultMeta.requestId=requestId;}
     try{options.onDiagnostic?.({type:'provider_result',finishKind:ending.kind,finishReason:ending.reason,responseChars:0});}catch(e){console.error('诊断事件回调失败',e);}
+    options.onReceivedText?.(contentPiece(data?.choices?.[0]?.message?.content??data?.choices?.[0]?.text??''));
     if(ending.kind==='blocked'||ending.kind==='abnormal'){
       const evidence=contentPiece(data?.choices?.[0]?.message?.content??data?.choices?.[0]?.text??'');
       try{assertFinishState({finishKind:ending.kind,finishReason:ending.reason},evidence.length);}
@@ -3077,12 +3086,13 @@
     // restoreRejectedReply; display still uses the existing Safe HTML sanitizer.
     if(meta.manualRecovery===true)return reply;
     if(meta.outputContract?.completeHtml===true)validateCompleteHtml(reply);
-    if(meta.outputContract?.requireHtml===true){
+    if(meta.outputContract?.requireHtml===true||meta.outputContract?.completeHtml===true&&meta.outputContract?.strictValues===true){
       const validator=window.MimaHtmlStructure;
       if(!validator?.inspect)throw new ApiError('E_HTML_CONTRACT_RUNTIME_MISSING','HTML 结构校验模块未加载，拒绝伪成功');
       const verdict=validator.inspect(reply,meta.outputContract);
-      if(!verdict.ok)throw new ApiError(verdict.status==='plain_text'?'E_HTML_STRUCTURE_MISSING':'E_HTML_REQUIRED_NODE_MISSING',
-        '回复缺少主人指定的 HTML 结构；候选已保留在生成诊断中，不会后台重刷收费模型。',{
+      if(!verdict.ok&&verdict.code==='E_HTML_VALUE_INVALID')throw new ApiError('E_HTML_VALUE_INVALID','回复中的进度数值未满足已开启的严格数值检查。',{details:JSON.stringify({missing:verdict.missing,stage:'story_output_contract'})});
+      if(!verdict.ok)throw new ApiError(verdict.code||(verdict.status==='plain_text'?'E_HTML_STRUCTURE_MISSING':'E_HTML_REQUIRED_NODE_MISSING'),
+        verdict.status==='config_error'?'HTML 选择器配置无效，请修正长剧情设置；原返回已保留。':verdict.status==='syntax_error'?'回复的 HTML 标签残缺或交叉；原文已保留，未自动重刷收费模型。':'回复缺少主人指定的 HTML 结构；候选已保留在生成诊断中，不会后台重刷收费模型。',{
           details:JSON.stringify({missing:verdict.missing,stage:'story_output_contract'})});
     }
     return reply;
@@ -3094,7 +3104,7 @@
     if(!validator?.rawBalance)throw new ApiError('E_HTML_VALIDATOR_UNAVAILABLE','HTML 检查器未加载，禁止静默放过待验收正文。');
     const check=validator.rawBalance(String(raw??''));
     if(!check.ok)throw new ApiError('E_STORY_OUTPUT_INCOMPLETE','回复未满足已开启的 HTML 完整性检查，未提交残缺正文。',{
-      details:JSON.stringify({stage:'story_output_contract',reason:check.reason})});
+      details:JSON.stringify({stage:'story_output_contract',reason:check.reason,offset:check.offset})});
     return raw;
   }
   async function processStoryTurn(id,userText,action='send',signal,temp=.85,options={},progress=null){
@@ -3482,20 +3492,16 @@
     const contract=session.promptSettings?.outputContract||{};
     const template=session.messages.find(x=>x.id===contract.templateMessageId&&x.role==='assistant');
     const validator=window.MimaHtmlStructure;
-    if(!validator?.closeUnclosedTags)throw new ApiError('E_HTML_REPAIR_RUNTIME_MISSING','本地 HTML 修复模块未加载');
+    if(!validator?.repairAttempt)throw new ApiError('E_HTML_REPAIR_RUNTIME_MISSING','本地 HTML 修复模块未加载');
     // Prefer an exact lexical suffix fix over reconstructing a body/template.
     // If lexical closure is impossible, retain the legacy template restoration.
-    let attempt,repairMode='tag_closure';
-    try{attempt=validator.closeUnclosedTags(raw);}
-    catch(tagError){
-      if(!contract.requireHtml||!template)throw new ApiError('E_HTML_TAG_CLOSURE_UNSAFE','当前 HTML 不能只靠补闭合标签安全修复，且没有绑定结构模板。',{details:String(tagError.message)});
-      attempt=validator.propose(raw,template.content,contract);repairMode='template_restore';
-    }
-    const templateDigest=repairMode==='template_restore'?await exactDigest({content:template.content,contract}):'';
+    const attempt=validator.repairAttempt(raw,template?.content,contract),repairMode=attempt.repairMode;
+    const templateDependent=repairMode==='template_restore'||contract.strictTemplatePath===true&&!!template;
+    const templateDigest=templateDependent?await exactDigest({content:template.content,contract}):'';
     const messageId='rejected_'+record.id;
     const candidate={version:1,sessionId:id,messageId,recoveryDiagnosticId:record.id,recoveryGenerationId:pending.id,
       recoveryAttempt:pending.attempt,baseContentDigest:await exactDigest({raw,canonicalFingerprint:pending.canonicalFingerprint}),
-      templateMessageId:repairMode==='template_restore'?template.id:null,templateDigest,contractDigest:await exactDigest(contract),repairMode,
+      templateMessageId:templateDependent?template.id:null,templateDigest,contractDigest:await exactDigest(contract),repairMode,
       proposedContent:attempt.proposedContent,oldContent:raw,repairActions:attempt.repairActions,
       confidence:attempt.confidence,missingFields:attempt.missingFields,provenance:'code_generated_recovery',state:'pending',createdAt:nowIso()};
     candidate.id=await exactDigest({id,messageId,baseContentDigest:candidate.baseContentDigest,templateDigest,proposedContent:candidate.proposedContent});
@@ -3528,7 +3534,9 @@
       if(c.repairMode==='tag_closure'){
         // Recompute against the immutable Provider raw: exact equality and a
         // complete closing-tag grammar are required at commit time.
-        const fresh=window.MimaHtmlStructure.closeUnclosedTags(raw);
+        const closureTemplate=c.templateMessageId?session.messages.find(x=>x.id===c.templateMessageId):null;
+        if(c.templateMessageId&&(!closureTemplate||c.templateDigest!==await exactDigest({content:closureTemplate.content,contract})))throw new ApiError('E_HTML_REPAIR_TEMPLATE_STALE','模板已变化。');
+        const fresh=window.MimaHtmlStructure.repairAttempt(raw,closureTemplate?.content,contract);
         if(fresh.proposedContent!==c.proposedContent||fresh.oldContent!==raw||c.missingFields?.length)
           throw new ApiError('E_HTML_REPAIR_SOURCE_CHANGED','原文或补全算法结果不匹配');
         recoveredContent=fresh.proposedContent;
@@ -3579,21 +3587,41 @@
     }else saved=await saveSession({...session,pendingGeneration:null,legacyMemoryQuarantined:true});
     return {session:saved,messageId:target.id,alreadyRestored:false,action};
   }
+  async function inspectHtmlMessage(id,msgId){
+    state=normalizeState(await window.MimaLocalStore.loadState());
+    const session=getSession(id),message=session?.messages.find(x=>x.id===msgId);
+    if(!message)throw new ApiError('E_HTML_REPAIR_TARGET_MISSING','原消息不存在。');
+    const contract=session.promptSettings?.outputContract||{},template=session.messages.find(x=>x.id===contract.templateMessageId&&x.role==='assistant');
+    const context={...contract,templateHtml:template?.content||''},validator=window.MimaHtmlStructure;
+    const raw=String(message.rawContent??message.content),canonical=String(message.content||'');
+    const trace=[];let before=canonical;
+    for(const pack of activeRegexPacks(session))for(const rule of arr(pack.rules).filter(r=>r.enabled!==false&&(r.phase||'display')==='display')){
+      const after=await window.MimaRegexEngine.applyAsync(before,[{...pack,rules:[rule]}],'display');
+      const a=validator.inspect(before,context),b=validator.inspect(after,context);
+      if(a.ok&&!b.ok)trace.push({name:rule.name||rule.id||pack.name||pack.id,missing:b.missing});
+      before=after;
+    }
+    const diagnostics=[],display=await applyRegexForSessionAsync(session,canonical,'display',diagnostics);
+    if(typeof window.sanitizeAllowedHtml!=='function')throw new ApiError('E_HTML_RENDERER_UNAVAILABLE','原生安全渲染器未加载，无法核对最终显示；请完整更新页面。');
+    const safe=window.sanitizeAllowedHtml(display,'mima_diagnostic');
+    return {raw:validator.inspect(raw,context),canonical:validator.inspect(canonical,context),
+      display:validator.inspect(display,context),safe:validator.inspect(safe,context),
+      renderMode:session.renderMode,trace,rules:activeRegexPacks(session).filter(p=>arr(p.rules).some(r=>r.enabled!==false)).map(p=>({id:p.id,name:p.name||p.title||p.id})),diagnostics};
+  }
   async function prepareHtmlRepair(id,msgId){
     state=normalizeState(await window.MimaLocalStore.loadState());
     const source=getSession(id),session=source?normalizeSession(clone(source)):null,message=session?.messages.find(x=>x.id===msgId);
     if(!session||!message||message.role!=='assistant')throw new ApiError('E_HTML_REPAIR_TARGET_MISSING','目标角色回复不存在。');
     const contract=session.promptSettings?.outputContract||{};
-    if(!contract.requireHtml||!contract.templateMessageId)throw new ApiError('E_HTML_REPAIR_TEMPLATE_MISSING','请先在上下文设置中绑定一条正确的 HTML 模板消息。');
     const template=session.messages.find(x=>x.id===contract.templateMessageId&&x.role==='assistant');
-    if(!template)throw new ApiError('E_HTML_REPAIR_TEMPLATE_STALE','指定格式参考已不在当前剧情中，不能猜测结构。');
     const validator=window.MimaHtmlStructure;
-    if(!validator?.propose)throw new ApiError('E_HTML_REPAIR_RUNTIME_MISSING','HTML 代码修复模块未加载。');
+    if(!validator?.repairAttempt)throw new ApiError('E_HTML_REPAIR_RUNTIME_MISSING','HTML 代码修复模块未加载。');
     const targetDigest=await exactDigest({content:message.content,rawContent:message.rawContent,versions:message.versions});
-    const templateDigest=await exactDigest({content:template.content,contract});
-    const attempt=validator.propose(message.content,template.content,contract);
+    const attempt=validator.repairAttempt(message.content,template?.content,contract),repairMode=attempt.repairMode;
+    const templateDependent=repairMode==='template_restore'||contract.strictTemplatePath===true&&!!template;
+    const templateDigest=templateDependent?await exactDigest({content:template.content,contract}):'';
     const candidate={version:1,sessionId:id,messageId:msgId,branchId:message.branchId||'main',baseMessageVersion:arr(message.versions).length,
-      baseContentDigest:targetDigest,templateMessageId:template.id,templateDigest,contractDigest:await exactDigest(contract),
+      baseContentDigest:targetDigest,repairMode,templateMessageId:templateDependent?template.id:null,templateDigest,contractDigest:await exactDigest(contract),
       proposedContent:attempt.proposedContent,oldContent:message.content,repairActions:attempt.repairActions,
       confidence:attempt.confidence,missingFields:attempt.missingFields,provenance:'code_generated',state:'pending',createdAt:nowIso()};
     candidate.id=await exactDigest({id,msgId,targetDigest,templateDigest,proposedContent:candidate.proposedContent});
@@ -3613,13 +3641,36 @@
     // Reject unsupported status data BEFORE the charge. Do not ask a model to
     // guess missing state values, even when the resulting HTML looks plausible.
     const admitted=validator.aiAdmission(message.content,template.content,contract);
-    if(admitted.deterministicAvailable)throw new ApiError('E_HTML_AI_CODE_FIRST','当前正文可用免 API 静态代码补全，请先选择代码修复；不会重复消费 API。');
+    if(admitted.deterministicAvailable)return {...await prepareHtmlRepair(id,msgId),apiRequests:0};
     const targetDigest=await exactDigest({content:message.content,rawContent:message.rawContent,versions:message.versions});
     const templateDigest=await exactDigest({content:template.content,contract});
     const sys='你是严格的 HTML 排版器，不是剧情写手。唯一允许的任务是把原 HTML 中明确位于正文槽的逐字文本按固定模板复原。状态栏每个动态字段必须换成模板标注的【待确认】占位；不得沿用模板的旧状态，不得新增人物事实或改变 CSS、节点、属性。只输出完整 HTML。';
-    const user=`【原始正文】\n${message.content}\n\n【固定模板】\n${template.content}\n\n【正文槽】\n${contract.bodySelector}\n\n严格保持正文每个原始字符不变。`;
+    const user=`【原始正文】\n${message.content}\n\n【必须原样使用的目标骨架】\n${admitted.targetHtml}\n\n【必须逐字保留的正文】\n${admitted.expectedProse}\n\n【待确认字段映射】\n${JSON.stringify(admitted.missingFields)}\n\n【正文槽】\n${contract.bodySelector}\n\n原样保留骨架中每一个精确占位符，不得填入新事实；仅允许正文槽之外容器之间的排版换行。`;
     const cfg=getApiConfig();
-    const returned=await callModelWithConfig([{role:'system',content:sys},{role:'user',content:user}],cfg,0.1,null,{streamOverride:false});
+    let returned='';
+    const draftId=makeId('html_draft');
+    const keepDraft=async(error)=>{
+      const draft={id:draftId,sessionId:id,messageId:msgId,content:returned||String(error?.partialDraft||''),
+        oldContent:message.content,baseContentDigest:targetDigest,templateDigest,createdAt:nowIso(),
+        accepted:false,errorCode:error?.code||'E_HTML_AI_RESULT_UNSAFE',reason:String(error?.message||error||'未采纳的模型返回')};
+      if(!draft.content)return;
+      const key=htmlDraftKey(id,msgId);
+      try{
+        await window.MimaLocalStore.putHtmlRepairDraft(draft);
+        const previous=volatileHtmlRepairDrafts.get(key);
+        if(previous&&previous.createdAt<=draft.createdAt)volatileHtmlRepairDrafts.delete(key);
+        if(error&&typeof error==='object')error.htmlRepairDraftId=draft.id;
+      }catch(saveError){
+        const recoveryDraft={...draft,persisted:false,reason:'完整返回暂存在本页，未能保存到本机。刷新或关闭页面前请复制或下载；原剧情未修改。'};
+        volatileHtmlRepairDrafts.set(key,recoveryDraft);
+        const failure=new ApiError('E_HTML_AI_DRAFT_SAVE_FAILED',recoveryDraft.reason,{details:String(saveError.message)});
+        failure.partialDraft=draft.content;failure.recoveryDraft=recoveryDraft;throw failure;
+      }
+    };
+    try{returned=await callModelWithConfig([{role:'system',content:sys},{role:'user',content:user}],cfg,0.1,null,{streamOverride:false,onReceivedText:value=>{returned=String(value||'');}});}
+    catch(error){await keepDraft(error);throw error;}
+    try{
+
     // Reopen canonical after the awaited paid request. A concurrent edit is a
     // conflict, even if a model returned perfectly valid HTML.
     const fresh=normalizeState(await window.MimaLocalStore.loadState()),current=fresh.sessions.find(x=>x.id===id);
@@ -3631,11 +3682,35 @@
     catch(e){throw new ApiError('E_HTML_AI_RESULT_UNSAFE','模型未能保留精确正文/结构，旧剧情未修改。',{details:String(e.message||e)});}
     const candidate={version:1,sessionId:id,messageId:msgId,branchId:message.branchId||'main',baseMessageVersion:arr(message.versions).length,
       baseContentDigest:targetDigest,templateMessageId:template.id,templateDigest,contractDigest:await exactDigest(contract),
-      proposedContent:returned,oldContent:message.content,repairActions:['one_paid_reformat_attempt','exact_content_verification'],
+      proposedContent:checkedAi.normalizedContent,oldContent:message.content,repairActions:['one_paid_reformat_attempt','exact_content_verification'],
       confidence:'exact_content_checked',missingFields:checkedAi.missingFields||[],provenance:'ai_reformatted',state:'pending',createdAt:nowIso()};
-    candidate.id=await exactDigest({id,msgId,targetDigest,templateDigest,proposedContent:returned});
+    candidate.id=await exactDigest({id,msgId,targetDigest,templateDigest,proposedContent:candidate.proposedContent});
     await window.MimaLocalStore.putHtmlRepairCandidate(candidate);
+    const emergencyKey=htmlDraftKey(id,msgId),previousEmergency=volatileHtmlRepairDrafts.get(emergencyKey);
+    if(previousEmergency&&previousEmergency.createdAt<=candidate.createdAt)volatileHtmlRepairDrafts.delete(emergencyKey);
     return candidate;
+    }catch(error){await keepDraft(error);throw error;}
+  }
+  async function readHtmlRepairDraft(id,msgId){
+    const emergency=volatileHtmlRepairDrafts.get(htmlDraftKey(id,msgId));
+    if(emergency)return emergency;
+    const [draft,candidate]=await Promise.all([
+      window.MimaLocalStore.getHtmlRepairDraft(id,msgId),
+      window.MimaLocalStore.getHtmlRepairCandidate(id,msgId)
+    ]);
+    // A paid result can finish after its originating view has been closed.
+    // Keep that pending result readable without another model request.
+    if(candidate?.state==='pending'&&candidate.provenance==='ai_reformatted'&&
+       candidate.sessionId===id&&candidate.messageId===msgId&&
+       (!draft||String(candidate.createdAt)>=String(draft.createdAt))){
+      const persisted=await window.MimaLocalStore.loadState();
+      const target=arr(persisted?.sessions).find(s=>s.id===id)?.messages?.find(m=>m.id===msgId);
+      const message=target?normalizeMessage(target):null;
+      if(message&&candidate.baseContentDigest===await exactDigest({content:message.content,rawContent:message.rawContent,versions:message.versions}))
+        return {id:candidate.id,sessionId:id,messageId:msgId,content:candidate.proposedContent,createdAt:candidate.createdAt,accepted:false,
+          reason:'这份重排结果已通过生成时的本地核验，尚未确认保存。可以复制或转入手动编辑；原剧情未修改。'};
+    }
+    return draft;
   }
   async function applyHtmlRepair(id,msgId,candidateId,dynamicValues={}){
     const c=await window.MimaLocalStore.getHtmlRepairCandidate(id,msgId);
@@ -3647,21 +3722,25 @@
       await exactDigest({content:message.content,rawContent:message.rawContent,versions:message.versions})!==c.baseContentDigest)
       throw new ApiError('E_HTML_REPAIR_CAS_STALE','消息或支线已经变化，禁止用过期修复覆盖。');
     const contract=session.promptSettings?.outputContract||{},template=session.messages.find(x=>x.id===c.templateMessageId);
-    if(!template||await exactDigest({content:template.content,contract})!==c.templateDigest||await exactDigest(contract)!==c.contractDigest)
+    if(((c.repairMode!=='tag_closure'||c.templateMessageId)&&(!template||await exactDigest({content:template.content,contract})!==c.templateDigest))||await exactDigest(contract)!==c.contractDigest)
       throw new ApiError('E_HTML_REPAIR_TEMPLATE_STALE','模板或结构合同已变化，拒绝旧候选。');
     const validator=window.MimaHtmlStructure;
     let approvedContent;
-    if(c.provenance==='ai_reformatted'){
+    if(c.repairMode==='tag_closure'){
+      const fresh=validator.repairAttempt(message.content,template?.content,contract);
+      if(fresh.proposedContent!==c.proposedContent||c.missingFields?.length)throw new ApiError('E_HTML_REPAIR_SOURCE_CHANGED','补全候选与当前原文不符。');
+      approvedContent=fresh.proposedContent;
+    }else if(c.provenance==='ai_reformatted'){
       try{
         const verified=validator.verifyReformat(message.content,c.proposedContent,template.content,contract);
         for(const field of verified.missingFields||[]){if(!Object.hasOwn(dynamicValues,field.key)||!String(dynamicValues[field.key]).trim())throw new Error('E_HTML_REPAIR_DYNAMIC_FIELD_MISSING: '+field.key);}
         // AI's output already matches the exact static skeleton. Substitute
         // only owner-verified dynamic values using the shared validator.
         approvedContent=validator.finalizeWithProse(validator.aiAdmission(message.content,template.content,contract).expectedProse,
-          template.content,contract,c.proposedContent,dynamicValues);
+          template.content,contract,c.proposedContent,dynamicValues,message.content);
       }catch(e){throw new ApiError('E_HTML_AI_RESULT_UNSAFE',String(e.message||e));}
     }else{
-      try{approvedContent=validator.finalizeProposal(message.content,template.content,contract,c.proposedContent,dynamicValues);}
+      try{approvedContent=validator.finalizeProposal(message.content,template.content,contract,c.proposedContent,dynamicValues,message.content);}
       catch(error){throw new ApiError('E_HTML_REPAIR_OWNER_CONFIRMATION_REQUIRED',String(error.message||error));}
     }
     archiveVersion(message,'owner_html_code_repair');
@@ -3793,6 +3872,8 @@
       m=path.match(/^\/sessions\/([^/]+)\/recover-reply\/html-repair$/);if(m&&method==='POST')return ok(await prepareRejectedHtmlRepair(m[1],body?.diagnosticId));
       m=path.match(/^\/sessions\/([^/]+)\/prompt-preview$/);if(m&&method==='POST'){state=normalizeState(await window.MimaLocalStore.loadState());return ok(await previewPrompt(m[1],body||{}));}
       m=path.match(/^\/sessions\/([^/]+)\/opening$/);if(m&&method==='POST')return ok(await addOpening(m[1],body?.content||''));
+      m=path.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)\/html-repair\/inspect$/);if(m&&method==='GET')return ok(await inspectHtmlMessage(m[1],m[2]));
+      m=path.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)\/html-repair\/draft$/);if(m&&method==='GET')return ok(await readHtmlRepairDraft(m[1],m[2]));
       m=path.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)\/html-repair$/);if(m&&method==='POST')return ok(await prepareHtmlRepair(m[1],m[2]));
       m=path.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)\/html-repair\/approve$/);if(m&&method==='POST')return ok(await applyHtmlRepair(m[1],m[2],body?.candidateId,body?.dynamicValues||{}));
       m=path.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)\/html-repair\/ai$/);if(m&&method==='POST')return ok(await prepareAiHtmlRepair(m[1],m[2],body||{}));
@@ -3864,7 +3945,7 @@
     }catch(e){
       if(e?.name==='AbortError')return{success:false,aborted:true,code:'E_ABORTED',msg:'生成已停止'};
       const err=e instanceof ApiError?e:asApiError(e,'E_STORY_RUNTIME');
-      return fail(err.message||String(err),{code:err.code||'E_STORY_RUNTIME',status:err.status||0,hint:err.hint||apiErrorHint(err.code,err.status,err.message),details:err.details||'',partialDraft:typeof err.partialDraft==='string'?err.partialDraft.slice(0,24000):''});
+      return fail(err.message||String(err),{repairDraftId:e?.htmlRepairDraftId||'',recoveryDraft:e?.recoveryDraft||null,partialDraftTruncated:typeof err.partialDraft==='string'&&err.partialDraft.length>24000,code:err.code||'E_STORY_RUNTIME',status:err.status||0,hint:err.hint||apiErrorHint(err.code,err.status,err.message),details:err.details||'',partialDraft:typeof err.partialDraft==='string'?err.partialDraft.slice(0,24000):''});
     }
   }
 
