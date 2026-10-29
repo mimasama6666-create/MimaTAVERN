@@ -931,7 +931,7 @@ function setupImmersiveReading(){
 }
 // User-facing release notes: once per distinct production release by default.
 // Avoid touching Store/History or making automatic announcements mandatory.
-const MIMA_RELEASE_NOTES_VERSION='R19-20261030-BATCH8-HTML-REPAIR-V5.10-DEV';
+const MIMA_RELEASE_NOTES_VERSION='R19-20261030-BATCH8-MANUAL-RECOVERY-V5.11-DEV';
 const MIMA_RELEASE_NOTES_SEEN='mima-release-notes-seen:'+MIMA_RELEASE_NOTES_VERSION;
 const MIMA_RELEASE_NOTES_OPTOUT='mima-release-notes-disable-auto-v1';
 function openMimaReleaseNotice(){
@@ -2941,6 +2941,7 @@ function renderPerformanceTab(box){
 
 // Independent diagnostics viewer. No route into canonical History or Memory.
 const diagnosticViewState={scope:'session',kind:'all',selectedId:null};
+let diagnosticViewRefreshSequence=0;
 function renderDiagnosticsTab(box){
     box.innerHTML=`<section class="settings-section"><h3>🧾 生成诊断日志（独立保存）</h3>
     <p class="helper">这里只记录原生正常剧情的真实模型请求、结果和失败证据；不是剧情历史，也不会被模型、预设、记忆或酒馆插件读取。日志保留在当前浏览器的独立 IndexedDB，不随剧情备份导出。Prompt 包含私人剧情，请勿随意分享。</p>
@@ -2976,15 +2977,16 @@ async function recoverDiagnosticReply(diagnosticId){
     diagnosticRecoveryBusy.add(diagnosticId);
     let restored=false;
     try{
-        const record=await MimaDiagnosticJournal.recoveryCandidate(diagnosticId);
-        if(!confirm('请先核对详情里的“未采纳的模型文本”。\n\n手动恢复会采用日志已保存的完整原文，跳过自动 HTML 闭合及结构合同复检；不重新请求模型，也不重跑输出正则。显示仍经过原有安全 HTML 渲染及显示正则。\n发送将补回角色回复；重说将替换原目标并归档旧版本；续写将追加到原回复并保留旧版本。\n\n服务端的拦截或截断标记仍保留，手动恢复不保证内容完整。确定恢复到原剧情吗？'))return;
+        const record=await MimaDiagnosticJournal.recoveryCandidate(diagnosticId,{allowPartial:true});
+        const warning=record.recoveryIsPartial?'当前只保留了 '+record.rawRejectedReply.length+' 字符的片段，后半段可能缺失。将仅恢复这些实际保存的文字，不补写缺失内容。':'已找到 '+record.rawRejectedReply.length+' 字符的完整留存文本。';
+        if(!confirm(warning+'\n\n手动恢复跳过自动 HTML 结构复检，不重新请求模型，也不重跑输出正则。显示仍经过安全渲染及显示正则。\n发送将补回角色回复；重说将替换原目标并归档旧版本；续写将追加到原回复并保留旧版本。\n\n服务端的中断或截断标记仍保留。确定'+(record.recoveryIsPartial?'恢复现有片段':'恢复到原剧情')+'吗？'))return;
         const selectedAtStart=currentSessionId,navigationAtStart=sessionNavigationEpoch;
         let result;
         if(String(record.action||'').startsWith('compat_')){
             if(typeof window.MimaCompatRuntime?.restoreRejectedReply!=='function')throw new Error('酒馆兼容恢复组件未加载，请完整更新本版本。');
-            result=await MimaCompatRuntime.restoreRejectedReply(diagnosticId,{confirmed:true});
+            result=await MimaCompatRuntime.restoreRejectedReply(diagnosticId,{confirmed:true,allowPartial:record.recoveryIsPartial===true});
         }else{
-            const response=await fetchStory('/sessions/'+encodeURIComponent(record.sessionId)+'/recover-reply','POST',{diagnosticId,confirmed:true});
+            const response=await fetchStory('/sessions/'+encodeURIComponent(record.sessionId)+'/recover-reply','POST',{diagnosticId,confirmed:true,allowPartial:record.recoveryIsPartial===true});
             if(!response.success)throw new Error(response.msg||'未恢复，原剧情保持不变。');
             result=response.data;
         }
@@ -3001,7 +3003,7 @@ async function recoverDiagnosticReply(diagnosticId){
                 await refreshSessionSummaryList();
             }
         }catch(e){notice+='；界面刷新失败，请重新打开原剧情';console.error('手动恢复已提交，界面刷新失败',e);}
-        toast((result.alreadyRestored?'这条回复已经手动恢复，没有重复写入':'已手动恢复到原剧情，没有重新请求模型')+notice);
+        toast((result.alreadyRestored?'这条回复已经手动恢复，没有重复写入':record.recoveryIsPartial?'已恢复现有片段，缺失部分未补写，没有请求模型':'已手动恢复到原剧情，没有重新请求模型')+notice);
     }catch(e){toast((restored?'回复已保存，后续操作失败：':'无法恢复：')+e.message);}
     finally{diagnosticRecoveryBusy.delete(diagnosticId);if(settingsTab==='diagnostics')await refreshDiagnosticsView();}
 }
@@ -3049,13 +3051,14 @@ function diagnosticRecoveryButton(record){
     b.onclick=()=>void recoverDiagnosticReply(record.id);return b;
 }
 async function refreshDiagnosticsView(){
+    const refreshId=++diagnosticViewRefreshSequence;
     const epoch=settingsRenderEpoch,sessionId=diagnosticViewState.scope==='session'?currentSessionId:null;
     const root=qs('diag-list'),status=qs('diag-status'),detail=qs('diag-detail');
     if(!root||!status||!detail)return;
     let records;
     try{records=await MimaDiagnosticJournal.list({sessionId,errorsOnly:diagnosticViewState.kind==='errors'});}
-    catch(e){if(settingsTab==='diagnostics'&&epoch===settingsRenderEpoch){status.textContent=`独立日志读取失败：${e.message}。原生剧情数据未修改。`;root.textContent='';detail.textContent='';}console.error('诊断日志读取失败',e);return;}
-    if(settingsTab!=='diagnostics'||epoch!==settingsRenderEpoch||root!==qs('diag-list'))return;
+    catch(e){if(refreshId===diagnosticViewRefreshSequence&&settingsTab==='diagnostics'&&epoch===settingsRenderEpoch&&root===qs('diag-list')){status.textContent=`独立日志读取失败：${e.message}。原生剧情数据未修改。`;root.textContent='';detail.textContent='';}console.error('诊断日志读取失败',e);return;}
+    if(refreshId!==diagnosticViewRefreshSequence||settingsTab!=='diagnostics'||epoch!==settingsRenderEpoch||root!==qs('diag-list'))return;
     const policy=MimaDiagnosticJournal.status(),error=policy.error;
     status.textContent=`${records.length} 条记录 · 自动保留最近 ${policy.limitCount} 条、最长 ${policy.limitDays} 天、约 ${Math.round(policy.limitBytes/1048576)} MB。${error?'最近存储故障：'+error:'日志写入与清理不会修改剧情数据。'}`;
     root.innerHTML='';
@@ -3077,6 +3080,9 @@ async function refreshDiagnosticsView(){
     if(!records.length)root.textContent='当前范围没有诊断记录。正常剧情可继续使用；只有真实生成操作才会产生记录。';
     const record=records.find(x=>x.id===diagnosticViewState.selectedId);
     detail.innerHTML='';if(!record)return;
+    let retained=null,retainedError='';
+    if(record.error)try{retained=await MimaDiagnosticJournal.candidatePreview(record.id);}catch(e){retainedError=e.message;}
+    if(refreshId!==diagnosticViewRefreshSequence||settingsTab!=='diagnostics'||epoch!==settingsRenderEpoch||root!==qs('diag-list')||record.id!==diagnosticViewState.selectedId)return;
     const wrap=document.createElement('div');wrap.className='diag-detail entry-card';
     const request=record.request;
     const responseHttp=Number(record.transport?.httpStatus||record.error?.status||0);
@@ -3089,12 +3095,17 @@ async function refreshDiagnosticsView(){
       ${record.requestSent===false?`<div class="row-sub">本地预检拦截，零出站：当前模型已绑定窗口 ${Number(record.configuredWindow||0).toLocaleString()} Tokens；无 HTTP 请求。</div>`:''}<h4>真实请求内容（不包含 API Key 和请求头）</h4>
       ${record.requestTruncated?'<div class="row-sub">本轮请求超过日志单条上限，未保留完整正文。实际发送不受影响；本条不能作为完整 Prompt 证据。</div>':''}
       ${request?`<div class="row-sub">${request.messages.length} 条消息 · 模型 ${escapeHtml(request.model)} · stream=${request.stream} · max_tokens=${escapeHtml(request.max_tokens??'未设置')}</div><details><summary>展开实际 messages</summary><pre class="prompt-pre">${escapeHtml(fmt)}</pre></details>`:'<div class="row-sub">没有保存完整请求：可能在发送前失败，或超出日志容量上限。</div>'}
-      ${record.error?`<h4>错误与拒绝/截断诊断</h4><pre class="prompt-pre">${escapeHtml(JSON.stringify(record.error,null,2))}</pre><h4>未采纳的模型文本（仅诊断）</h4><pre class="prompt-pre">${escapeHtml(record.rawRejectedReply||'没有可保存的失败正文。')}${record.rejectedReplyTruncated?'\n[诊断副本超过上限，后半段未保存]':''}</pre>`:'<div class="row-sub">本条没有失败正文；成功回复仅存于原有剧情，不在此复制第二份。</div>'}`;
+      ${record.error?`<h4>错误与拒绝/截断诊断</h4><pre class="prompt-pre">${escapeHtml(JSON.stringify(record.error,null,2))}</pre><h4>未采纳的模型文本（可手动恢复）</h4><div class="row-sub">${retainedError?'留存正文读取失败：'+escapeHtml(retainedError):retained?.raw?`${retained.rawChars} 字符 · ${retained.complete?'完整留存；服务端结束标记仍以上方记录为准':'仅有现存片段，后半段可能缺失；可确认后恢复片段'}`:'没有收到可恢复的正文。'}</div><pre class="prompt-pre">${escapeHtml(retained?.raw||record.rawRejectedReply||'没有可保存的失败正文。')}</pre>`:'<div class="row-sub">本条没有失败正文；成功回复仅存于原有剧情，不在此复制第二份。</div>'}`;
+    if(retained?.raw){
+        const copy=document.createElement('button');copy.type='button';copy.className='ghost-btn';copy.textContent='复制留存正文';copy.onclick=async()=>{try{await copyTextPortable(retained.raw);toast('已复制'+retained.rawChars+'字符的留存正文');}catch(e){toast('复制失败：'+e.message);}};
+        const download=document.createElement('button');download.type='button';download.className='ghost-btn';download.textContent='下载留存正文';download.onclick=()=>downloadText('咪嘛馆-未采纳正文.txt',retained.raw);
+        wrap.querySelector('.toolbar').append(copy,download);
+    }
     if(['rejected','aborted','conflict'].includes(record.status)){
         if(record.requestSent!==false)wrap.querySelector('.toolbar').appendChild(diagnosticRecoveryButton(record));
         if(['E_HTML_STRUCTURE_MISSING','E_HTML_REQUIRED_NODE_MISSING','E_STORY_OUTPUT_INCOMPLETE'].includes(record.error?.code))wrap.querySelector('.toolbar').appendChild(diagnosticHtmlCodeRepairButton(record));
         const note=document.createElement('p');note.className='helper';
-        note.textContent=record.requestSent===false?'本轮仅在本地预检中被拦截，没有调用 Provider，也没有可恢复的模型正文；请检查当前 API 身份和窗口配置。':record.manualRecovery?'这条文本已由你手动恢复。上面的原始错误与结束标记仍作为证据保留。':'确认误拦截后可手动恢复，不重新消耗模型额度。没有正文、日志副本已被裁剪，或原任务已被替换时，系统会说明无法恢复的原因。';
+        note.textContent=record.requestSent===false?'本轮仅在本地预检中被拦截，没有调用 Provider，也没有可恢复的模型正文；请检查当前 API 身份和窗口配置。':record.manualRecovery?'这条文本已由你手动恢复。上面的原始错误与结束标记仍作为证据保留。':'可免费恢复已留存正文；只剩片段时会明确提示并再次确认。原失败任务已被新请求替换时不会覆盖新剧情，仍可复制或下载留存文字。';
         wrap.querySelector('.toolbar').after(note);
     }
     detail.appendChild(wrap);
@@ -3104,9 +3115,9 @@ async function refreshDiagnosticsView(){
     };
     qs('diag-copy-one').onclick=async()=>{
         if(!confirm('本记录可能含完整私人 Prompt。确定复制到剪贴板？'))return;
-        try{await navigator.clipboard.writeText(JSON.stringify(record,null,2));toast('诊断记录已复制。')}catch(e){toast(`复制失败：${e.message}`)}
+        try{await copyTextPortable(JSON.stringify({...record,...(retained?{recoveryPreview:retained}:{})},null,2));toast('诊断记录已复制。')}catch(e){toast(`复制失败：${e.message}`)}
     };
-    qs('diag-download-one').onclick=()=>downloadJson(`咪嘛馆_诊断_${String(record.requestId||record.id).replace(/[^\w.-]/g,'_')}.json`,record);
+    qs('diag-download-one').onclick=()=>downloadJson(`咪嘛馆_诊断_${String(record.requestId||record.id).replace(/[^\w.-]/g,'_')}.json`,{...record,...(retained?{recoveryPreview:retained}:{})});
 }
 
 function setupEditorButtons(deleteFn,saveFn){editorInitialForm=editorFormSnapshot();editorInitialDraft=JSON.stringify(editorState?.draft??null);editorDraftStructureChanged=false;qs('editor-save').textContent='保存';const del=qs('editor-delete');if(deleteFn){del.classList.remove('hidden');del.onclick=deleteFn}else{del.classList.add('hidden');del.onclick=null}qs('editor-save').onclick=saveFn}
@@ -3648,16 +3659,15 @@ async function refreshFailedGenerationRecovery(){
    const record=records.find(r=>r.generationId===pending.id&&r.generationAttempt===pending.attempt&&r.action===pending.action&&['rejected','aborted','conflict'].includes(r.status));
    if(!record||currentSessionId!==sessionId)return;
    const candidate=await MimaDiagnosticJournal.candidatePreview(record.id);
-   if(!candidate.raw?.trim()||!candidate.complete)return;
-   r19HudRecoveryDiagnosticId=record.id;preview.classList.remove('hidden');recover.classList.remove('hidden');if(record.action&&!record.action.startsWith('compat_'))repair?.classList.remove('hidden');
+   if(!candidate.raw?.trim())return;
+   r19HudRecoveryDiagnosticId=record.id;preview.classList.remove('hidden');recover.classList.remove('hidden');recover.textContent=candidate.complete?'手动恢复正文':'恢复现有片段';if(candidate.complete&&record.action&&!record.action.startsWith('compat_'))repair?.classList.remove('hidden');
  }catch(e){console.warn('拒收原文现场入口暂不可用，保留诊断与 canonical 数据',{sessionId,error:e});}
 }
 async function previewFailedGenerationRaw(){
  const id=r19HudRecoveryDiagnosticId;if(!id)return toast('当前没有经核实的完整失败正文');
  try{const c=await MimaDiagnosticJournal.candidatePreview(id);const panel=qs('generation-detail');
-   if(!c.complete)throw Error('原文未完整保存，不允许假称可以恢复');
    let details=qs('generation-owner-raw-preview');if(details)details.remove();details=document.createElement('details');details.id='generation-owner-raw-preview';details.open=true;
-   const sum=document.createElement('summary');sum.textContent='完整模型原文 · 纯文本展示（非执行 HTML）';
+   const sum=document.createElement('summary');sum.textContent=(c.complete?'完整留存正文':'现存正文片段 · 后半段可能缺失')+' · 纯文本展示（非执行 HTML）';
    const pre=document.createElement('pre');pre.className='generation-error-diagnostic';pre.style.maxHeight='35vh';pre.style.overflow='auto';pre.textContent=c.raw;
    details.append(sum,pre);panel.append(details);
  }catch(e){toast('无法预览：'+e.message);}

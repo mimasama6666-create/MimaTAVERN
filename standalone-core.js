@@ -1832,11 +1832,12 @@
     if(streamEnabled&&!jsonResponse){
       emitProgress(options.onProgress,{phase:'stream_headers',percent:55,receivedChars:0,detail:`HTTP ${res.status} 响应头已收到；等待第一段模型正文（0 字）…`});
       let firstVisibleMarked=false,lastChars=0;
-      const streamProgress=ev=>{if(ev.streamText!==undefined){lastChars=ev.streamText.length;if(!firstVisibleMarked&&lastChars){firstVisibleMarked=true;timing('first_visible_delta',{receivedChars:lastChars});}}options.onProgress?.(ev.streamText===undefined?ev:{...ev,streamText:prefixResponseText(ev.streamText,body,cfg,true)});};
+      const streamProgress=ev=>{if(ev.streamText!==undefined){lastChars=ev.streamText.length;if(!firstVisibleMarked&&lastChars){firstVisibleMarked=true;timing('first_visible_delta',{receivedChars:lastChars});}const projected=prefixResponseText(ev.streamText,body,cfg,true);options.onReceivedText?.(projected);options.onProgress?.({...ev,streamText:projected});}else options.onProgress?.(ev);};
       streamProgress.resultMeta=options.resultMeta;streamProgress.onTiming=timing;try{
         const received=await readStreamingReply(res,streamProgress,cfg.model,options.allowIncompleteDraft===true);
         timing('stream_finish',{receivedChars:received.length});
         const streamed=text(prefixResponseText(received,body,cfg));
+        options.onReceivedText?.(streamed);
         if(!streamed)throw new ApiError('E_API_EMPTY_REPLY','前缀续写没有返回新的正文，原回复未改动。');
         try{options.onDiagnostic?.({type:'provider_result',finishKind:options.resultMeta?.finishKind||'unknown',finishReason:options.resultMeta?.finishReason||'unknown',responseChars:streamed.length});}catch(e){console.error('诊断事件回调失败',e);}
         return streamed;
@@ -1854,7 +1855,7 @@
     observedFinish=ending;
     if(options.resultMeta){options.resultMeta.finishReason=ending.reason;options.resultMeta.finishKind=ending.kind;options.resultMeta.refused=!!data?.choices?.[0]?.message?.refusal;options.resultMeta.requestId=requestId;}
     try{options.onDiagnostic?.({type:'provider_result',finishKind:ending.kind,finishReason:ending.reason,responseChars:0});}catch(e){console.error('诊断事件回调失败',e);}
-    options.onReceivedText?.(contentPiece(data?.choices?.[0]?.message?.content??data?.choices?.[0]?.text??''));
+    options.onReceivedText?.(prefixResponseText(contentPiece(data?.choices?.[0]?.message?.content??data?.choices?.[0]?.text??''),body,cfg,true));
     if(ending.kind==='blocked'||ending.kind==='abnormal'){
       const evidence=contentPiece(data?.choices?.[0]?.message?.content??data?.choices?.[0]?.text??'');
       try{assertFinishState({finishKind:ending.kind,finishReason:ending.reason},evidence.length);}
@@ -1863,6 +1864,7 @@
     let reply;try{reply=extractReply(data)}catch(e){throw responseFailure(e,'response_shape',{
       responseShape:Object.keys(data||{}).slice(0,20),messageShape:Object.keys(data?.choices?.[0]?.message||{}).slice(0,20)});}
     reply=text(prefixResponseText(reply,body,cfg));
+    options.onReceivedText?.(reply);
     if(options.resultMeta){const returned=extractProviderThought(data);options.resultMeta.thinking={
       kind:'provider_returned',source:returned?.source||null,text:returned?.text||'',reasoningTokens:thinkingUsageTokens(data),
       observedThinkingMs:null,firstContentWaitMs:null,totalResponseMs:Math.max(0,Date.now()-fetchStartedAt),
@@ -3296,6 +3298,7 @@
     try{
     await recoverStore.generationReceipt(identity,'REQUEST_DISPATCH_ATTEMPT',{requestDispatchAttempted:true,ownerId:pending.ownerId});
     const replyRaw=await callModelWithConfig(messages,cfg,temp,signal,{onProgress:generationProgress,resultMeta:storyResultMeta,requestBody,messageSources:snapshot.messageSources,
+      onReceivedText:value=>{diagnosticCandidate=String(value||'');},
       storyContext:{sessionId:id,generationId:pending.id,generationAttempt:pending.attempt,preparationElapsedMs:Date.now()-preparationStartedAt},
       onDiagnostic:event=>{if(diagnosticId)void journal.event(diagnosticId,event);}});
     if(signal?.aborted)throw new DOMException('生成已取消，结果未提交','AbortError');
@@ -3435,9 +3438,13 @@
       }catch(storageError){console.error('生成失败状态无法保存；原始剧情未作为空库覆盖',{sessionId:id,generationId:pending.id,error:storageError});}
       if(diagnosticId){
         const code=e?.code||'E_STORY_RUNTIME';
+        // Keep all received text independently of the bounded error payload.
+        const retained=diagnosticCandidate||lastStream||String(e?.partialDraft||'');
+        const limited=!diagnosticCandidate&&!lastStream&&typeof e?.partialDraft==='string'&&e.partialDraft.length>=24000;
+        if(retained&&!limited)try{await journal.retainCandidate(diagnosticId,retained);}catch(storageError){console.error('完整失败正文保存失败，未伪报保存成功',storageError);}
         try{await journal.event(diagnosticId,{type:'settlement',status:e?.name==='AbortError'?'aborted':code==='E_CANONICAL_CONFLICT'?'conflict':'rejected',
           code,message:e?.message||String(e),details:e?.details||'',httpStatus:e?.status||0,
-          rawRejectedReply:e?.partialDraft||diagnosticCandidate||'',rawLimited:typeof e?.partialDraft==='string'&&e.partialDraft.length>=24000,finishKind:storyResultMeta.finishKind||'',finishReason:storyResultMeta.finishReason||''});}catch(logError){console.error('诊断失败结算持久化失败（不改变剧情错误原因）',logError);}
+          rawRejectedReply:retained,rawLimited:limited,finishKind:storyResultMeta.finishKind||'',finishReason:storyResultMeta.finishReason||''});}catch(logError){console.error('诊断失败结算持久化失败（不改变剧情错误原因）',logError);}
       }
       throw e;
     }
@@ -3510,7 +3517,7 @@
   }
   async function restoreRejectedReply(id,body={}){
     if(body.confirmed!==true)throw new ApiError('E_REPLY_RECOVERY_CONFIRM','请先确认将已收到的文本手动恢复到原剧情。');
-    const record=await window.MimaDiagnosticJournal.recoveryCandidate(body.diagnosticId);
+    const record=await window.MimaDiagnosticJournal.recoveryCandidate(body.diagnosticId,{allowPartial:body.allowPartial===true&&!body.htmlCandidateId});
     if(record.sessionId!==id||String(record.action||'').startsWith('compat_'))throw new ApiError('E_REPLY_RECOVERY_OWNER','诊断不属于这个原生剧情。');
     const persisted=normalizeState(await window.MimaLocalStore.loadState()),sourceSession=persisted.sessions.find(s=>s.id===id),session=sourceSession?normalizeSession(clone(sourceSession)):null;
     if(!session)throw new ApiError('E_STORY_SESSION_MISSING','原剧情已删除，未重建或覆盖存档。');
@@ -3571,7 +3578,7 @@
     }
     target.metadata={...(target.metadata||{}),...(htmlRepair?{htmlCodeRepair:{candidateId:htmlRepair.id,originalRawPreserved:true,approvedAt:nowIso(),recoveryDiagnosticId:record.id}}:{}),generationSnapshot:action==='continue'?target.metadata?.generationSnapshot:pending.snapshot,
       manualRecoveryIds:[...new Set([...arr(target.metadata?.manualRecoveryIds),record.id])],
-      manualRecovery:{diagnosticId:record.id,generationId:pending.id,attempt:pending.attempt,action,restoredAt:nowIso(),providerFinishReason:record.finishReason||'',formatCheckOwnerOverride:!htmlRepair,originalRejectionCode:String(record.error?.code||''),contentFingerprint:manualReplyFingerprint(target)}};
+      manualRecovery:{diagnosticId:record.id,generationId:pending.id,attempt:pending.attempt,action,restoredAt:nowIso(),providerFinishReason:record.finishReason||'',partialCapture:record.recoveryIsPartial===true,recoverySource:record.recoverySource,formatCheckOwnerOverride:!htmlRepair,originalRejectionCode:String(record.error?.code||''),contentFingerprint:manualReplyFingerprint(target)}};
     target.renderedContent=await applyRegexForSessionAsync(session,target.content,'display');target.tokenEstimate=estimateTokens(target.content);
     // Explicit human action only: no Provider, retry or background summary.
     let saved;

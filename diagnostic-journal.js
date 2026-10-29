@@ -155,20 +155,43 @@
  }
  async function discardCandidate(id){return transact(async()=>{const db=await open(),tx=db.transaction(CANDIDATES,'readwrite');tx.objectStore(CANDIDATES).delete(id);await finished(tx);});}
  async function fullCandidate(id){await queue;const db=await open(),tx=db.transaction(CANDIDATES,'readonly');return (await waitRequest(tx.objectStore(CANDIDATES).get(String(id))))||null;}
- async function candidatePreview(id){const record=await get(id),saved=await fullCandidate(id);if(!record)throw Error('诊断记录不存在');
-   if(saved){return {id,raw:saved.raw,rawChars:saved.rawChars,complete:true,digest:saved.rawDigest};}
-   return {id,raw:record.rawRejectedReply||'',rawChars:String(record.rawRejectedReply||'').length,complete:!!record.rawRejectedReply&&!record.rejectedReplyTruncated,digest:null};
+ async function recoverySource(record){
+   const saved=await fullCandidate(record.id);
+   if(saved)return {id:record.id,raw:saved.raw,rawChars:saved.rawChars,complete:true,digest:saved.rawDigest,source:'full_candidate'};
+   const raw=String(record.rawRejectedReply||'');
+   const legacyLimited=String(record.action||'').startsWith('compat_')&&raw.length===24000&&!record.replyCaptureVersion;
+   if((record.rejectedReplyTruncated||!raw)&&!String(record.action||'').startsWith('compat_')&&record.generationId&&Number.isInteger(record.generationAttempt)&&window.MimaLocalStore?.generationRead){
+     const read=await window.MimaLocalStore.generationRead({sessionId:record.sessionId,generationId:record.generationId,attempt:record.generationAttempt});
+     const last=record.request?.messages?.at(-1),prefix=last?.role==='assistant'&&last.prefix===true?String(last.content||''):'';
+     let matches=read.text?.startsWith(raw),prefixObserved=false;
+     if(!matches&&prefix){
+       // Older transport errors retained prefix+suffix, while the ledger
+       // already contains only the projected continuation suffix.
+       if(raw.startsWith(prefix)){matches=read.text?.startsWith(raw.slice(prefix.length));prefixObserved=matches&&raw.length>prefix.length;}
+       else if(prefix.startsWith(raw))matches=true;
+     }
+     // Never borrow another request's fragments or replace a conflicting prefix.
+     if(read.complete&&read.text?.trim()&&matches){
+       // prefix:true does not prove that the gateway echoed the prefix:
+       // prefixReturnsSuffix gateways still use that request flag. Without
+       // observed prefix-inclusive bytes, keep the conservative count.
+       const expected=Math.max(prefixObserved?0:Number(record.responseChars)||0,...(record.timings||[]).map(t=>Math.max(0,(Number(t.receivedChars)||0)-(prefixObserved&&['first_visible_delta','last_delta','stream_finish'].includes(t.phase)?prefix.length:0),Number(t.chars)||0)));
+       return {id:record.id,raw:read.text,rawChars:read.text.length,complete:expected>0&&read.text.length>=expected,digest:null,source:'stream_fragments'};
+     }
+   }
+   return {id:record.id,raw,rawChars:raw.length,complete:!!raw&&!record.rejectedReplyTruncated&&!legacyLimited,digest:null,source:'diagnostic_preview'};
  }
- async function recoveryCandidate(id){
+ async function candidatePreview(id){const record=await get(id);if(!record)throw Error('诊断记录不存在');return recoverySource(record);
+ }
+ async function recoveryCandidate(id,{allowPartial=false}={}){
    const row=await get(id),bad=message=>{throw Object.assign(new Error(message),{code:'E_REPLY_RECOVERY_UNAVAILABLE'});};
    if(!row)bad('诊断记录已清理，无法恢复。');
    if(!['rejected','aborted','conflict'].includes(row.status))bad('本记录不是已结算的坏回复。');
-   const candidate=await fullCandidate(id);
-   if(!candidate&&!String(row.rawRejectedReply||'').trim())bad('这条日志没有收到可恢复的正文；不会重新请求模型。');
-   if(candidate){row.rawRejectedReply=candidate.raw;row.rejectedReplyTruncated=false;row.fullCandidateVerified=true;}
-   else if(row.rejectedReplyTruncated===true)bad('诊断副本已被裁剪，缺少的正文无法恢复；原记录保留。');
-   // Old compat errors did not mark the transport partialDraft's 24k cap.
-   if(String(row.action||'').startsWith('compat_')&&row.rawRejectedReply.length===24000&&!row.replyCaptureVersion)bad('旧日志无法确认正文是否已被裁剪，未改写剧情。');
+   const candidate=await recoverySource(row);
+   if(!candidate.raw.trim())bad('这条日志没有收到可恢复的正文；不会重新请求模型。');
+   if(!candidate.complete&&!allowPartial)bad('当前仅保留了部分正文，可在手动恢复时确认恢复现有片段；不会补造缺失文字。');
+   row.rawRejectedReply=candidate.raw;row.rejectedReplyTruncated=!candidate.complete;
+   row.fullCandidateVerified=candidate.source==='full_candidate';row.recoverySource=candidate.source;row.recoveryIsPartial=!candidate.complete;
    return row;
  }
  async function list({sessionId=null,errorsOnly=false}={}){

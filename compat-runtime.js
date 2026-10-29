@@ -1050,9 +1050,13 @@ function compatDiagnostic(sessionId,turnId,action,options={},attemptId=''){
   emit(data);
  };
  return {resultMeta,bind:value=>{envelope=value;},candidate:value=>{candidate=String(value||'');},
-  modelOptions:continuation=>({resultMeta,onDiagnostic,messageSources:envelope?.messageSources||[],...(continuation?{continuation:true}:{})}),
+  modelOptions:continuation=>({resultMeta,onDiagnostic,onReceivedText:value=>{candidate=String(value||'');},messageSources:envelope?.messageSources||[],...(continuation?{continuation:true}:{})}),
   committed:()=>emit({type:'settlement',status:'committed',finishKind:resultMeta.finishKind,finishReason:resultMeta.finishReason}),
-  rejected:e=>emit({type:'settlement',status:e?.name==='AbortError'||e?.code==='E_TURN_ABORTED'?'aborted':e?.code==='E_CANONICAL_CONFLICT'?'conflict':'rejected',code:e?.code||'E_STORY_RUNTIME',message:e?.message||String(e),details:e?.details||'',httpStatus:e?.status||0,rawRejectedReply:e?.partialDraft||candidate,rawLimited:typeof e?.partialDraft==='string'&&e.partialDraft.length>=24000,finishKind:resultMeta.finishKind,finishReason:resultMeta.finishReason})};
+  rejected:async e=>{
+   const raw=candidate||String(e?.partialDraft||''),limited=!candidate&&raw.length>=24000;
+   if(id&&raw&&!limited)try{await journal.retainCandidate(id,raw);}catch(storageError){root.console?.warn?.('完整兼容失败正文保存失败',storageError);}
+   emit({type:'settlement',status:e?.name==='AbortError'||e?.code==='E_TURN_ABORTED'?'aborted':e?.code==='E_CANONICAL_CONFLICT'?'conflict':'rejected',code:e?.code||'E_STORY_RUNTIME',message:e?.message||String(e),details:e?.details||'',httpStatus:e?.status||0,rawRejectedReply:raw,rawLimited:limited,finishKind:resultMeta.finishKind,finishReason:resultMeta.finishReason});
+  }};
 }
 async function dispatch(sessionId,t,options={}){
   const diagnostic=compatDiagnostic(sessionId,t.turnId,'compat_send',options,t.attemptId);
@@ -1082,7 +1086,7 @@ async function dispatch(sessionId,t,options={}){
     diagnostic.committed();
     return{reply:String(reply),turnId:t.turnId,envelope,result};
   }catch(e){
-    diagnostic.rejected(e);
+    await diagnostic.rejected(e);
     try{const transitionReceipt=await finishTurn(sessionId,t,null,e.code||'E_STORY_RUNTIME');const final=await store().get('events_jobs',t.turnId);if(transitionReceipt.settlement==='failed'&&final?.attemptId===t.attemptId&&final.settlement==='failed'){notifyPlugins(sessionId,'turn.failed',{turnId:t.turnId,attemptId:t.attemptId,code:final.code},'turn.failed:'+t.turnId+':'+t.attemptId);announceSettlement(sessionId,final,'turn');}}catch(settle){e.settlementError=settle.message;}
     throw e;
   }
@@ -1227,7 +1231,7 @@ async function continueAssistantUnfenced(sessionId,options={}){
     notifyPlugins(sessionId,'mvu.changed',{turnId:ticket.parentTurnId,continuationId:ticket.id,operationCount:mvuResult.operations.length},'mvu.changed:'+ticket.id);
   diagnostic.committed();
   return{reply:String(reply),turnId:ticket.parentTurnId,continuationId:ticket.id,envelope,result:settled};
- }catch(e){diagnostic.rejected(e);try{
+ }catch(e){await diagnostic.rejected(e);try{
    const receipt=await settleContinuation(sessionId,ticket,null,e.code||'E_STORY_RUNTIME');
    if(receipt.settlement==='failed'){
      const job=await store().get('events_jobs',ticket.id);
@@ -1235,9 +1239,9 @@ async function continueAssistantUnfenced(sessionId,options={}){
    }
   }catch(settle){e.settlementError=settle.message;}throw e;}
 }
-async function restoreRejectedReply(diagnosticId,{confirmed=false}={}){
+async function restoreRejectedReply(diagnosticId,{confirmed=false,allowPartial=false}={}){
  if(confirmed!==true)throw error('E_REPLY_RECOVERY_CONFIRM','请先确认手动恢复正文。');
- const record=await root.MimaDiagnosticJournal.recoveryCandidate(diagnosticId),sessionId=record.sessionId;
+ const record=await root.MimaDiagnosticJournal.recoveryCandidate(diagnosticId,{allowPartial:allowPartial===true}),sessionId=record.sessionId;
  if(!['compat_send','compat_continue'].includes(record.action))throw error('E_REPLY_RECOVERY_OWNER','本诊断不属于酒馆兼容回合。');
  root.MimaAuthorHost?.stopSession(sessionId,'手动恢复原回复，作者页面已停止；已提交变量保留');
  const records=await readAtomicStores(['compat_sessions','messages','events_jobs'],sessionId),session=records.compat_sessions[0],job=records.events_jobs.find(x=>x.id===record.turnId);
@@ -1263,7 +1267,7 @@ async function restoreRejectedReply(diagnosticId,{confirmed=false}={}){
  const raw=String(record.rawRejectedReply);
  root.MimaStandalone.validateStoryReply(raw,{manualRecovery:true,outputContract:{...(session.outputContract||{}),completeHtml:false,requireHtml:false}});
  const mvuResult=needsMvu?mvu().forReply(initial.state,history,raw):null;
- const recovery={sessionRevision:session.revision,jobRevision:job.revision,receipt:{diagnosticId:record.id,attemptId:job.attemptId,action:record.action,restoredAt:new Date().toISOString(),providerFinishReason:record.finishReason||''}};
+ const recovery={sessionRevision:session.revision,jobRevision:job.revision,receipt:{diagnosticId:record.id,attemptId:job.attemptId,action:record.action,restoredAt:new Date().toISOString(),providerFinishReason:record.finishReason||'',partialCapture:record.recoveryIsPartial===true,recoverySource:record.recoverySource}};
  const old=continuation?records.messages.find(x=>x.id===job.assistantId):null;
  const ticket=continuation?{id:job.id,attemptId:job.attemptId,baseContent:old?.canonicalContent}:{turnId:job.id,attemptId:job.attemptId};
  const result=continuation?await settleContinuation(sessionId,ticket,raw,'',mvuResult,recovery,continuationMode(raw)):await finishTurn(sessionId,ticket,raw,'',mvuResult,recovery);
