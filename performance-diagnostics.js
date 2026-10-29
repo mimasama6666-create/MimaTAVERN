@@ -32,6 +32,24 @@
     if(k==='native_refresh'){entry.created+=Number(extra.created)||0;entry.reused+=Number(extra.reused)||0;entry.messagesMax=Math.max(entry.messagesMax,Number(extra.messages)||0);}
     if(k==='history_update'){entry.hydrated+=Number(extra.hydrated)||0;entry.suspended+=Number(extra.suspended)||0;}
   }
+  const detailKinds=['css_apply_start','css_apply_success','css_apply_failed','css_apply_cancelled','css_apply_skipped','css_style_write',
+    'css_resource_prepare','font_idb_metadata','font_idb_binary','font_face_register','font_face_load_start','font_face_load_success','font_face_load_error'];
+  function detail(kind,duration=0,extra={}){
+    const s=state;if(!s||s.endedISO||!isVisible()||!detailKinds.includes(kind))return;
+    const entry=s.phases[s.phase].events[kind];entry.count++;
+    if(Number.isFinite(duration)&&duration>0){entry.totalMs+=duration;entry.maxMs=Math.max(entry.maxMs,duration);}
+    if(Number.isFinite(extra.bytes))entry.bytes+=Math.max(0,extra.bytes);
+  }
+  function markIdle(){
+    const s=state;if(!s||s.endedISO||s.phase==='idle')return false;
+    s.phases.initialization.endedAtMs=visibleElapsed(s);
+    s.phase='idle';s.phases.idle.startedAtMs=visibleElapsed(s);
+    return true;
+  }
+  function armNextReload(){
+    // Explicit one-shot request. Nothing starts in the background otherwise.
+    try{sessionStorage.setItem('mima-perf-one-shot-start','1');return true;}catch(_){return false;}
+  }
   function observeMutations(root,id){if(!root||typeof MutationObserver!=='function')return;
     const mo=new MutationObserver(records=>{const s=state;if(!s||!isVisible())return;
       const count=records.length;s.mutations[id].batches++;s.mutations[id].records+=count;
@@ -68,7 +86,9 @@
   }
   function create(){const operations={};for(const k of ['native_refresh','history_hydrate','history_suspend','history_update','compat_render','stream_dom_patch'])operations[k]={count:0,measured:0,totalMs:0,maxMs:0,created:0,reused:0,messagesMax:0,hydrated:0,suspended:0};
     const mut=()=>({batches:0,records:0,textChanges:0,added:0,removed:0,omittedRecords:0});
+    const events=()=>Object.fromEntries(detailKinds.map(k=>[k,{count:0,totalMs:0,maxMs:0,bytes:0}]));
     return {startedAt:now(),startedISO:new Date().toISOString(),foregroundAt:isVisible()?now():null,foregroundMs:0,
+      phase:'initialization',phases:{initialization:{startedAtMs:0,endedAtMs:null,events:events()},idle:{startedAtMs:null,endedAtMs:null,events:events()}},
       operations,mutations:{native:mut(),compat:mut()},frames:{measured:0,over50:0,over100:0,maxGapMs:0},
       longTasks:{count:0,totalMs:0,maxMs:0},longFrames:{count:0,totalMs:0,maxMs:0},
       support:{longTasks:false,longAnimationFrames:false,heap:!!performance.memory},endedISO:null,stoppedDurationMs:null};
@@ -81,12 +101,31 @@
   function stop(){if(!state||state.endedISO)return false;const s=state;
     s.stoppedDurationMs=visibleElapsed(s);s.endedISO=new Date().toISOString();
     if(s.foregroundAt!==null){s.foregroundMs=s.stoppedDurationMs;s.foregroundAt=null;}
+    s.phases[s.phase].endedAtMs=s.stoppedDurationMs;
     cleanup();return true;
   }
   function reset(){if(state&&!state.endedISO)stop();state=null;return true;}
   function statsOf(entry){const e={count:entry.count};if(entry.measured)e.duration={totalMs:finite(entry.totalMs),maxMs:finite(entry.maxMs),avgMs:finite(entry.totalMs/entry.measured)};
     if(entry.created||entry.reused)e.nodes={created:entry.created,reused:entry.reused,messagesMax:entry.messagesMax};
     if(entry.hydrated||entry.suspended)e.messages={hydrated:entry.hydrated,suspended:entry.suspended};return e;}
+  function animationSnapshot(){
+    // A user-triggered snapshot, not a polling loop. Never read style geometry
+    // during normal gameplay just to populate a diagnostic.
+    if(typeof document.getAnimations!=='function')return {supported:false};
+    try{
+      const list=document.getAnimations({subtree:true}),sample=list.slice(0,400);
+      let running=0,visibleTargets=0;
+      for(const animation of sample){
+        if(animation.playState!=='running')continue;
+        running++;
+        const el=animation.effect?.target;if(!el||!el.isConnected)continue;
+        try{const style=getComputedStyle(el),rect=el.getBoundingClientRect();
+          if(style.display!=='none'&&style.visibility!=='hidden'&&rect.width>0&&rect.height>0&&rect.bottom>0&&rect.right>0&&rect.top<innerHeight&&rect.left<innerWidth)visibleTargets++;
+        }catch(_){}
+      }
+      return {supported:true,total:list.length,sampled:sample.length,running,visibleTargets,truncated:list.length>400};
+    }catch(_){return {supported:false};}
+  }
   function snapshot(){const s=state;if(!s)return {status:'not_started'};
     const active=!s.endedISO,seconds=Math.max(.001,(active?visibleElapsed(s):s.stoppedDurationMs)/1000);
     const op=Object.fromEntries(Object.entries(s.operations).map(([k,v])=>[k,statsOf(v)]));
@@ -112,7 +151,14 @@
       browserLongTasks:{count:s.longTasks.count,totalMs:finite(s.longTasks.totalMs),maxMs:finite(s.longTasks.maxMs)},
       browserLongAnimationFrames:{count:s.longFrames.count,totalMs:finite(s.longFrames.totalMs),maxMs:finite(s.longFrames.maxMs)},
       pageSnapshot:dom,memory,signals,
+      stages:{current:s.phase,initialization:s.phases.initialization,idle:s.phases.idle,
+        note:'仅记录开启后至人工切换阶段之间的实际操作；初始化阶段不自动推定字体已完成解码'},
+      fonts:window.MimaFontManager?.runtimeMetrics?.()||null,cssAnimations:animationSnapshot(),
       limitations:['不是电量或 CPU 使用率读数，无法归因到具体 CSS GPU 合成','DOM mutation 是内容变化计数，不是实际绘制次数','只观测主页面的原生与兼容剧情容器；iframe 和小手机内部变化不在统计中','记录仅保存在当前页面内存，刷新会清空；不会上传或写入任何剧情数据']};
   }
-  window.MimaPerfDiagnostics=Object.freeze({start,stop,reset,snapshot,mark:tally,isRunning:()=>!!state&&!state.endedISO});
+  window.MimaPerfDiagnostics=Object.freeze({start,stop,reset,snapshot,mark:tally,detail,markIdle,armNextReload,isRunning:()=>!!state&&!state.endedISO});
+  // Only enabled by pressing the explicit 'record next startup' control.
+  try{if(sessionStorage.getItem('mima-perf-one-shot-start')==='1'){
+    sessionStorage.removeItem('mima-perf-one-shot-start');start();
+  }}catch(_){}
 })();

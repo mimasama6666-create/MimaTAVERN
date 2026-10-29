@@ -931,7 +931,7 @@ function setupImmersiveReading(){
 }
 // User-facing release notes: once per distinct production release by default.
 // Avoid touching Store/History or making automatic announcements mandatory.
-const MIMA_RELEASE_NOTES_VERSION='R19-20261029-BATCH8-PERF-DIAG-V5.2-DEV';
+const MIMA_RELEASE_NOTES_VERSION='R19-20261029-BATCH8-FONT-MEDIA-V5.7-DEV';
 const MIMA_RELEASE_NOTES_SEEN='mima-release-notes-seen:'+MIMA_RELEASE_NOTES_VERSION;
 const MIMA_RELEASE_NOTES_OPTOUT='mima-release-notes-disable-auto-v1';
 function openMimaReleaseNotice(){
@@ -2394,7 +2394,15 @@ async function preloadAtelierVisualResources(project,signal){
  if(!project||typeof Image==='undefined')return;
  const sources=new Set();for(const elements of [project.elements,project.variants?.night?.elements])for(const value of Object.values(elements||{}))if(value?.image)sources.add(value.image);
  for(const sticker of project.stickers||[])if(!sticker.hidden&&sticker.src)sources.add(sticker.src);
- for(const src of sources){cssAbort(signal);window.MimaCssResources?.inspectImage?.(src);const pic=new Image();try{let load;if(typeof pic.decode==='function'){pic.src=src;load=pic.decode();}else load=new Promise((resolve,reject)=>{pic.onload=resolve;pic.onerror=()=>reject(Error('图像无法解码'));pic.src=src;});await cssAwait(load,signal,()=>pic.removeAttribute('src'));cssAbort(signal);}finally{pic.onload=null;pic.onerror=null;pic.removeAttribute('src');}}
+ for(const src of sources){cssAbort(signal);window.MimaCssResources?.inspectImage?.(src);const pic=new Image();try{
+  // resolveLibraryCss has already leased Blob URLs for compiled theme assets.
+  // Decode from that same URL instead of constructing a second data: image path
+  // with another complete base64 copy on every theme change. Non-pooled
+  // external/sticker resources keep their original URL and validation behavior.
+  const visualUrl=window.MimaAtelierCore?.previewImageUrl?.(src)||src;
+  let load;if(typeof pic.decode==='function'){pic.src=visualUrl;load=pic.decode();}else load=new Promise((resolve,reject)=>{pic.onload=resolve;pic.onerror=()=>reject(Error('图像无法解码'));pic.src=visualUrl;});
+  await cssAwait(load,signal,()=>pic.removeAttribute('src'));cssAbort(signal);
+ }finally{pic.onload=null;pic.onerror=null;pic.removeAttribute('src');}}
  // Font rules remain lazy; only the browser's actually used font workset loads.
 }
 let emergencyCssVisualBypass=false,cssPaintController=null,cssPaintPromise=null,cssPaintIdentity=null,lastCssThemeSettings=null,cssPaintRollback=null;
@@ -2413,12 +2421,17 @@ function applyCustomCss(options={}){
  const appPreset=!safe&&(Object.hasOwn(options,'globalPreset')||setting.globalCssEnabled!==false)?global:null;
  const selected=currentCssPreset();const sessionPreset=!safe&&currentSessionData?.customCssEnabled!==false&&selected?.scope!=='app'?selected:null;
  const identity=[safe,appPreset?.id,appPreset?.css,appPreset?.atelierReleaseKey,sessionPreset?.id,sessionPreset?.css,sessionPreset?.scope,sessionPreset?.surface];
- if(cssPaintPromise&&cssPaintIdentity?.every((value,i)=>value===identity[i]))return cssPaintPromise;
+ if(cssPaintPromise&&cssPaintIdentity?.every((value,i)=>value===identity[i])){
+  window.MimaPerfDiagnostics?.detail('css_apply_skipped');return cssPaintPromise;
+ }
  cssPaintController?.abort();const rollbackPrevious=cssPaintRollback?.();cssPaintRollback=null;const controller=new AbortController(),signal=controller.signal;cssPaintController=controller;cssPaintIdentity=identity;const generation=++cssPaintEpoch;
  const tag=ensureCustomCssStyle(),globalTag=ensureGlobalCssStyle();
  if(!safe&&setting.globalCssEnabled!==false&&!setting.globalCssPresetId&&!cssPresets.some(p=>p.atelierReleaseKey)&&!atelierMigrationInFlight&&engine?.getActive?.().id){atelierMigrationInFlight=true;engine.migrateLegacyTheme().then(async r=>{if(r?.status==='MIGRATED'){await reloadCssLibrary();await applyCustomCss();}}).catch(e=>toast('旧工坊主题迁移未完成：'+e.message)).finally(()=>atelierMigrationInFlight=false);}
  const plan=[{tag:globalTag,p:appPreset,owner:'library-global'},{tag,p:sessionPreset,owner:'library-session'}];
  const pending=[],old=plan.map(x=>({tag:x.tag,css:x.tag.textContent,mounted:cssMounted.get(x.tag.id)}));const priorProject=engine?.getApplied?.();let mounted=false;
+ const perfCss=window.MimaPerfDiagnostics;
+ const perfCssStart=perfCss?.isRunning()?performance.now():null;
+ perfCss?.detail('css_apply_start');
  const task=(async()=>{try{
   await rollbackPrevious;cssAbort(signal);
   r19Lifecycle('css_prepare',{generation,globalId:appPreset?.id||null,chars:(appPreset?.css?.length||0)+(sessionPreset?.css?.length||0)});
@@ -2427,30 +2440,40 @@ function applyCustomCss(options={}){
    if(!p){pending.push({...item,css:'',source:'',signature});continue;}
    let result;try{
     if(p.atelierReleaseKey){result=await engine.resolveLibraryCss(p,owner,{signal});cssAbort(signal);if(owner==='library-global')await preloadAtelierVisualResources(result.project,signal);}
-    else {if(!window.MimaCssResources)throw Error('CSS 资源准备模块未加载');result=await MimaCssResources.prepare(p.css,{signal});}
+    else {if(!window.MimaCssResources)throw Error('CSS 资源准备模块未加载');
+     const began=perfCssStart!==null?performance.now():null;
+     result=await MimaCssResources.prepare(p.css,{signal});
+     perfCss?.detail('css_resource_prepare',began===null?0:performance.now()-began,{bytes:p.css?.length||0});}
     cssAbort(signal);pending.push({...item,css:compileCustomCss({...p,css:result.css}),source:p.css||'',signature,result});
    }catch(e){result?.discard?.();throw e;}
   }
   cssAbort(signal);
   try{sessionStorage.setItem('mima-css-paint-pending-v1',JSON.stringify({id:appPreset?.id||null,at:Date.now()}));}catch(_){}
   const next=pending[0];const accepted=await engine?.syncGlobalAppearance?.(appPreset,{allowLegacy:false,preparedProject:next.result?.project??(appPreset?.atelierReleaseKey?engine?.getApplied?.():null)});cssAbort(signal);if(accepted===false)throw new DOMException('外观请求已过时','AbortError');
-  cssPaintRollback=()=>{for(const x of old)x.tag.textContent=x.css;MimaThemeEngine?.apply?.(lastCssThemeSettings||{...setting,globalCssEnabled:false});return engine?.syncGlobalAppearance?.(old[0].mounted?.p||null,{allowLegacy:false,preparedProject:priorProject});};
-  for(const x of pending)if(x.tag.textContent!==x.css)x.tag.textContent=x.css;mounted=true;
+  cssPaintRollback=()=>{for(const x of old)if(x.tag.textContent!==x.css)x.tag.textContent=x.css;MimaThemeEngine?.apply?.(lastCssThemeSettings||{...setting,globalCssEnabled:false});MimaFontManager?.refreshUrlFontUsage?.();restoreLegacyFont({syncSelection:false});return engine?.syncGlobalAppearance?.(old[0].mounted?.p||null,{allowLegacy:false,preparedProject:priorProject});};
+  for(const x of pending)if(x.tag.textContent!==x.css){x.tag.textContent=x.css;perfCss?.detail('css_style_write');}mounted=true;
   const nextTheme={...setting,globalCssPresetId:appPreset?.id||null,globalCssEnabled:!!appPreset};MimaThemeEngine?.apply?.(nextTheme);
+  // Old CSS font imports are demand-driven by *mounted* authored CSS, so
+  // revisit those references after a successful theme switch, not at startup
+  // on the basis of every saved URL alone.
+  MimaFontManager?.refreshUrlFontUsage?.();restoreLegacyFont({syncSelection:false});
   await cssPaintFrame();cssAbort(signal);if(!safe)assertCssVisible();
   for(const x of pending){if(!x.unchanged){const before=cssMounted.get(x.tag.id);x.result?.accept?.();before?.result?.release?.();if(!x.p?.atelierReleaseKey)engine?.releaseAssets?.(x.owner);cssMounted.set(x.tag.id,{signature:x.signature,source:x.source,css:x.css,p:x.p,result:x.result});}}
   cssPaintRollback=null;lastCssThemeSettings=nextTheme;lastCssVisualProblem='';engine?.reaffirm?.();window.MimaInteraction?.apply?.(appPreset?.atelierReleaseKey?(next.result?.project?.interactions||engine?.getApplied?.()?.interactions):null);
   try{sessionStorage.removeItem('mima-css-paint-pending-v1');}catch(_){}
-  r19Lifecycle('css_applied',{generation,globalId:appPreset?.id||null});return {status:'APPLIED',canonicalId:appPreset?.id||null};
+  r19Lifecycle('css_applied',{generation,globalId:appPreset?.id||null});
+  perfCss?.detail('css_apply_success',perfCssStart===null?0:performance.now()-perfCssStart);
+  return {status:'APPLIED',canonicalId:appPreset?.id||null};
  }catch(e){
   if(mounted&&generation===cssPaintEpoch){try{await cssPaintRollback?.();}catch(restore){console.error('[CSS rollback]',restore);}cssPaintRollback=null;}
   pending.forEach(x=>{if(!x.unchanged)x.result?.discard?.();});
-  if(e.name==='AbortError'||generation!==cssPaintEpoch){r19Lifecycle('css_cancelled',{generation});return {status:'STALE'};}
+  if(e.name==='AbortError'||generation!==cssPaintEpoch){r19Lifecycle('css_cancelled',{generation});perfCss?.detail('css_apply_cancelled');return {status:'STALE'};}
   lastCssVisualProblem=e.message||String(e);try{sessionStorage.removeItem('mima-css-paint-pending-v1');}catch(_){}
-  r19Lifecycle('css_failed',{generation,message:lastCssVisualProblem.slice(0,250)});console.error('[CSS apply]',e);toast('CSS 原件保留，页面维持上一成功外观：'+lastCssVisualProblem);return {status:'FAILED',error:lastCssVisualProblem};
+  r19Lifecycle('css_failed',{generation,message:lastCssVisualProblem.slice(0,250)});perfCss?.detail('css_apply_failed',perfCssStart===null?0:performance.now()-perfCssStart);console.error('[CSS apply]',e);toast('CSS 原件保留，页面维持上一成功外观：'+lastCssVisualProblem);return {status:'FAILED',error:lastCssVisualProblem};
  }})();
  cssPaintPromise=task;task.finally(()=>{if(cssPaintPromise===task)cssPaintPromise=null;});return task;
 }
+window.addEventListener('mima-font-selection-change',()=>restoreLegacyFont({syncSelection:false}));
 window.addEventListener('mima-atelier-presentation-change',()=>applyCustomCss());
 window.addEventListener('load',()=>{window.MimaAtelierCore?.ready?.then(()=>applyCustomCss()).catch(e=>console.error('[CSS library] Atelier readiness',e));});
 async function selectLegacyCssAppearance(action){return action();}
@@ -2559,12 +2582,17 @@ async function changeFont(kind,family){try{await MimaFontManager.setSelected(kin
 // The font library previews each *visible* font in its own face rather than
 // inheriting the currently selected UI font. Never decode the entire collection.
 let visibleFontPreviewObserver=null,visibleFontPreviewGeneration=0,visibleFontPreviewQueue=Promise.resolve();
-const visibleFontPreviewOwners=new Map();
+const visibleFontPreviewOwners=new Map(),visibleFontPreviewTimers=new Map();
 function stopVisibleFontPreviews(){
   ++visibleFontPreviewGeneration;
   visibleFontPreviewObserver?.disconnect();visibleFontPreviewObserver=null;
+  for(const timer of visibleFontPreviewTimers.values())clearTimeout(timer);
+  visibleFontPreviewTimers.clear();
   for(const owner of visibleFontPreviewOwners.values())MimaFontManager.releaseUsage(owner);
-  visibleFontPreviewOwners.clear();visibleFontPreviewQueue=Promise.resolve();
+  visibleFontPreviewOwners.clear();
+  // Keep the previous serial queue: a browser-native FontFace.load cannot be
+  // cancelled. Resetting its tail let a reopened picker start a second decode
+  // while the first generation still owned an in-flight request.
 }
 function updateFontApplicationStatus(){
   const panel=qs('font-application-status');if(!panel)return;
@@ -2579,7 +2607,7 @@ function updateFontApplicationStatus(){
       row.textContent=`${label}「${wanted}」未能加载：${info.message||'无法解析字体文件'}（已显示替代字体，原文件仍保留）`;
     }else if(info.state==='loaded'&&info.family===wanted){row.textContent=`${label}「${wanted}」：字体已加载`; }
     else if(info.state==='registered'&&info.family===wanted){row.textContent=`${label}「${wanted}」：已注册，浏览器正在按需加载`; }
-    else if(info.state==='external'&&info.family===wanted){row.textContent=`${label}「${wanted}」：本地文件未注册，可能来自网络字体或外部 CSS；请查看诊断确认`;}
+    else if(info.state==='external'&&info.family===wanted){row.textContent=`${label}「${wanted}」：外部 CSS 字体，当前无法验证；请检查链接及字体声明`;}
     else {row.textContent=`${label}「${wanted}」：正在恢复或尚未确认加载成功`;} 
     panel.appendChild(row);
   }
@@ -2597,9 +2625,13 @@ function startVisibleFontPreviews(root,records){
       if(entry.isIntersecting){
         if(visible.has(id))continue;visible.add(id);
         visibleFontPreviewOwners.set(id,owner);
-        // Decode at most one *visible* preview at once to bound the temporary
-        // IDB/FontFace memory peak. Main UI/story loading has its own path.
-        visibleFontPreviewQueue=visibleFontPreviewQueue.catch(()=>{}).then(async()=>{
+        // A swipe across many font rows must not decode every briefly visible
+        // 15-30 MB font. Only schedule a row still visible after scrolling
+        // settles; keep real independent previews for stationary rows.
+        const timer=setTimeout(()=>{
+          visibleFontPreviewTimers.delete(id);
+          if(generation!==visibleFontPreviewGeneration||!visible.has(id))return;
+          visibleFontPreviewQueue=visibleFontPreviewQueue.catch(()=>{}).then(async()=>{
           if(generation!==visibleFontPreviewGeneration||!visible.has(id))return;
           try{
             const face=await MimaFontManager.useFamily(owner,record.family);
@@ -2615,8 +2647,12 @@ function startVisibleFontPreviews(root,records){
             title.style.removeProperty('font-family');
             MimaFontManager.releaseUsage(owner);
           }
-        });
+          });
+        },160);
+        visibleFontPreviewTimers.set(id,timer);
       }else{
+        const pendingTimer=visibleFontPreviewTimers.get(id);
+        if(pendingTimer){clearTimeout(pendingTimer);visibleFontPreviewTimers.delete(id);}
         visible.delete(id);visibleFontPreviewOwners.delete(id);
         MimaFontManager.releaseUsage(owner);
         title.style.removeProperty('font-family');title.dataset.previewStatus='pending';title.removeAttribute('title');
@@ -2665,7 +2701,14 @@ async function mimaInspectFontFailure(){
     if(!found.length)output.conclusion.push(kind+' 选中了本地字体，但浏览器未注册同名字体：注册/解码环节');
     else if(found.every(f=>f.status==='error'))output.conclusion.push(kind+' 浏览器注册的字体均处于 error：解码/格式环节');
     else if(found.some(f=>f.status==='unloaded'||f.status==='loading'))output.conclusion.push(kind+' 字体处于 unloaded/loading：加载尚未确认完成');
-   } else if(!url)output.conclusion.push(kind+' 选中项在本地库和网络字体收藏中均未找到：选择与记录对应关系异常（旧版单 URL 除外）');
+   } else if(url){
+    const status=MimaFontManager.getLoadStatus?.(kind);
+    output.localAssets[kind].externalLoadStatus=status?.state||'unknown';
+    output.localAssets[kind].externalError=status?.message||'';
+    if(status?.state==='error')output.conclusion.push(kind+' 网络字体加载失败：'+(status.message||'请检查地址、字体文件响应和跨域许可'));
+    else if(!found.length)output.conclusion.push(kind+' 浏览器未报告此网络字体的 FontFace；仍需核对外部 CSS 或资源响应');
+    else if(found.every(f=>f.status!=='loaded'))output.conclusion.push(kind+' 网络字体已登记，但尚未完成加载');
+   } else output.conclusion.push(kind+' 选中项在本地库和网络字体收藏中均未找到：选择与记录对应关系异常（旧版单 URL 除外）');
    const rendered=output.usedElements[kind==='ui'?'app':'story'];
    if(rendered?.exists&&!rendered.fontFamily.includes(family))output.conclusion.push(kind+' 实际正文/界面 font-family 没有目标名称：有 CSS 覆盖或作用域未接入');
   }
@@ -2683,7 +2726,7 @@ async function toggleSafeHtml(on){await patchCurrent({renderMode:on?'safe_html':
 function formatBytes(n){if(!Number.isFinite(Number(n)))return'';if(n<1024)return`${n} B`;if(n<1024*1024)return`${(n/1024).toFixed(1)} KB`;return`${(n/1024/1024).toFixed(1)} MB`}
 function fontFormat(url){const c=String(url).split('?')[0].toLowerCase();if(c.endsWith('.woff2'))return'woff2';if(c.endsWith('.woff'))return'woff';if(c.endsWith('.ttf'))return'truetype';if(c.endsWith('.otf'))return'opentype';return''}
 function urlFontItemsHtml(){
-    return MimaFontManager.urlFonts().map(f=>`<div class="font-row"><div class="row-main"><div class="row-title">${escapeHtml(f.name)}</div><div class="row-sub">${escapeHtml(f.css?'CSS · '+f.family:'字体文件')} · ${escapeHtml(f.url.length>90?f.url.slice(0,90)+'…':f.url)}</div></div><button type="button" class="ghost-btn" onclick="activateUrlFont('${f.id}')">应用</button><button type="button" class="danger-btn" onclick="removeUrlFont('${f.id}')">删除</button></div>`).join('')||'<div class="row-sub">还没有收藏字体链接。</div>';
+    return MimaFontManager.urlFonts().map(f=>`<div class="font-row"><div class="row-main"><div class="row-title">${escapeHtml(f.name)}</div><div class="row-sub">${escapeHtml(f.css?'CSS · '+f.family:'字体文件')} · ${escapeHtml(f.url.length>90?f.url.slice(0,90)+'…':f.url)}</div></div><button type="button" class="ghost-btn" onclick="activateUrlFont('${f.id}')">应用</button>${f.css?`<button type="button" class="ghost-btn" title="仅当旧字体 CSS 被主题引用但无法识别时启用；会在未选中时加载外部 CSS" onclick="toggleUrlFontCompatibility('${f.id}')">${f.compatAlwaysLoad===true||(f.lazy===false&&f.compatAlwaysLoad!==false)?'关闭强制加载':'兼容加载'}</button>`:''}<button type="button" class="danger-btn" onclick="removeUrlFont('${f.id}')">删除</button></div>`).join('')||'<div class="row-sub">还没有收藏字体链接。</div>';
 }
 function setUrlFontImportMode(mode){
     const batch=mode==='batch';
@@ -2720,19 +2763,40 @@ async function batchImportUrlFonts(){
     }catch(error){status.textContent='导入未完成：'+(error?.message||String(error));toast('批量导入未完成');}
     finally{button.disabled=false;button.textContent='＋ 批量导入到字体库';}
 }
-function saveUrlFont(){
+async function saveUrlFont(){
     try{
         const f=MimaFontManager.addUrlFont(qs('url-font-name').value,qs('url-font-address').value,qs('url-font-family').value);
-        MimaFontManager.setSelected('story',f.family);
-        renderAppearanceTab(qs('settings-content'));
-        toast('链接字体已收藏并选为剧情字体；可以随时切换');
+        // Re-render the collection without claiming that the remote font loaded.
+        await renderAppearanceTab(qs('settings-content'));
+        try{
+            await MimaFontManager.setSelected('story',f.family);
+            const picker=qs('font-story-select');if(picker)picker.value=f.family;
+            toast('字体链接已收藏，浏览器确认字体加载成功');
+        }catch(error){
+            const picker=qs('font-story-select');if(picker)picker.value=MimaFontManager.getSelected('story');
+            toast('链接已收藏，但字体未能应用：'+(error?.message||String(error)));
+        }
     }catch(e){toast(e?.message||String(e));}
 }
-function activateUrlFont(id){
+async function activateUrlFont(id){
     const f=MimaFontManager.urlFonts().find(x=>x.id===id);if(!f)return toast('字体链接已不存在');
-    MimaFontManager.setSelected('story',f.family);
-    const picker=qs('font-story-select');if(picker)picker.value=f.family;
-    toast('已切换剧情字体：'+f.name);
+    try{
+        await MimaFontManager.setSelected('story',f.family);
+        const picker=qs('font-story-select');if(picker)picker.value=f.family;
+        toast('网络字体已加载：'+f.name);
+    }catch(error){
+        const picker=qs('font-story-select');if(picker)picker.value=MimaFontManager.getSelected('story');
+        toast('网络字体加载失败：'+(error?.message||String(error)));
+    }
+}
+function toggleUrlFontCompatibility(id){
+    const f=MimaFontManager.urlFonts().find(x=>x.id===id&&x.css);if(!f)return;
+    try{
+        const forceEnabled=f.compatAlwaysLoad===true||(f.lazy===false&&f.compatAlwaysLoad!==false);
+        if(!MimaFontManager.setUrlFontCompatibility(id,!forceEnabled))throw Error('记录已失效');
+        const list=qs('url-font-list');if(list)list.innerHTML=urlFontItemsHtml();
+        toast(forceEnabled?'已关闭强制加载，仍会在选中或主题引用时加载':'已启用旧版兼容加载；未选中时也会请求此 CSS');
+    }catch(e){toast('兼容加载设置失败：'+(e.message||String(e)));}
 }
 function removeUrlFont(id){
     const f=MimaFontManager.urlFonts().find(x=>x.id===id);if(!f)return;
@@ -2745,7 +2809,7 @@ function applyLegacyUrlFont(){
     if(url){localStorage.setItem(LEGACY_FONT_URL_KEY,url);localStorage.setItem(LEGACY_FONT_FAMILY_KEY,family)}
     else{localStorage.removeItem(LEGACY_FONT_URL_KEY);localStorage.removeItem(LEGACY_FONT_FAMILY_KEY)}
     restoreLegacyFont();
-    toast(url?(MimaFontManager.getSelected('story')?'URL 字体已加载；当前独立正文字体优先':'URL 正文字体已应用'):'旧 URL 字体已停用');
+    toast(url?(MimaFontManager.getSelected('story')?'URL 字体链接已保存；当前独立正文字体优先':'URL 字体链接已保存并启用；显示情况取决于浏览器加载'):'旧 URL 字体已停用');
 }
 
 function renderApiTab(box){
@@ -2837,8 +2901,9 @@ async function refreshPromptInspector(){
 function renderPerformanceTab(box){
  const meter=window.MimaPerfDiagnostics;
  box.innerHTML=`<section class="settings-section mima-perf-panel"><h3>⚡ 性能检查 · 只读</h3>
- <p class="helper">用于排查正常聊天、流式生成和长剧情阅读时的卡顿与重复工作。手动开始后关闭设置，照常使用咪嘛馆，再回来停止并查看结果。平时完全不采样；本次记录只存在当前页面内存，刷新自动清空。</p>
+ <p class="helper">用于区分启动加载和静置发热。平时完全不采样；普通手动记录只观察点击开始后的行为。「下次启动」会先刷新页面并仅对该次启动自动记录；结束后数据只留在当前页内存，不改剧情与字体数据。</p>
  <div class="toolbar"><button type="button" class="primary-btn" id="mima-perf-start">▶ 开始记录</button><button type="button" class="ghost-btn" id="mima-perf-stop">■ 停止记录</button><button type="button" class="ghost-btn" id="mima-perf-refresh">刷新结果</button></div>
+ <div class="toolbar"><button type="button" class="ghost-btn" id="mima-perf-boot">↻ 记录下次启动</button><button type="button" class="ghost-btn" id="mima-perf-idle">◎ 开始静置阶段</button></div>
  <div class="toolbar"><button type="button" class="ghost-btn" id="mima-perf-copy">复制诊断 JSON</button><button type="button" class="ghost-btn" id="mima-perf-download">导出 JSON</button><button type="button" class="ghost-btn" id="mima-perf-clear">清空本次记录</button></div>
  <p id="mima-perf-status" role="status" class="row-sub"></p>
  <div id="mima-perf-summary" class="prompt-stats"></div>
@@ -2848,16 +2913,20 @@ function renderPerformanceTab(box){
  const status=box.querySelector('#mima-perf-status'),summary=box.querySelector('#mima-perf-summary'),signals=box.querySelector('#mima-perf-signals'),report=box.querySelector('#mima-perf-report');
  function display(){const data=meter?.snapshot()||{status:'unavailable'},running=!!meter?.isRunning();
   box.querySelector('#mima-perf-start').disabled=running;box.querySelector('#mima-perf-start').textContent=(!running&&data.startedAt)?'▶ 开始新一轮记录':'▶ 开始记录';box.querySelector('#mima-perf-stop').disabled=!running;
+  box.querySelector('#mima-perf-idle').disabled=!running||data.stages?.current==='idle';
   const available=!!data.startedAt;box.querySelector('#mima-perf-copy').disabled=!available;box.querySelector('#mima-perf-download').disabled=!available;box.querySelector('#mima-perf-clear').disabled=!available;
-  if(!available){status.textContent='尚未开始记录。点「开始记录」后关闭设置，正常玩一段剧情。';summary.textContent='';signals.textContent='';report.textContent='';return;}
+  if(!available){status.textContent='尚未开始记录。要检查打开就发热，请点击「记录下次启动」，刷新后无需生成剧情；完成加载再点击「开始静置阶段」。';summary.textContent='';signals.textContent='';report.textContent='';return;}
   status.textContent=(running?'● 正在记录（离开设置后继续）':'■ 已停止记录')+' · 前台采样 '+data.foregroundSeconds+' 秒 · '+(data.support.longTasks?'支持长任务监测':'浏览器不支持长任务监测');
-  const rows=[['原生剧情刷新',data.operations.native_refresh.count+' 次'],['流式正文更新',data.operations.stream_dom_patch.count+' 次'],['兼容剧情刷新',data.operations.compat_render.count+' 次'],['刷新最慢耗时',(data.operations.native_refresh.duration?.maxMs??'—')+' ms'],['历史重挂',String(data.operations.history_hydrate.count)+' 条'],['历史卸载',String(data.operations.history_suspend.count)+' 条'],['抽样卡顿帧',data.frameIntervalSample.over100+' / '+data.frameIntervalSample.measured],['浏览器长任务',data.support.longTasks?data.browserLongTasks.count+' 次':'不支持']];
+  const rows=[['记录阶段',data.stages?.current==='idle'?'静置阶段':'启动／操作阶段'],['网络 CSS 加载',String(data.fonts?.activeCssLinks??'—')+' 条'],['字体解码进行中',String(data.fonts?.nativeLoadPending??'—')+' 个'],['CSS 实际样式写入',String((data.stages?.initialization?.events?.css_style_write?.count||0)+(data.stages?.idle?.events?.css_style_write?.count||0))+' 次'],['当前活动动画',data.cssAnimations?.supported?data.cssAnimations.running+' 个':'不支持'],['原生剧情刷新',data.operations.native_refresh.count+' 次'],['流式正文更新',data.operations.stream_dom_patch.count+' 次'],['兼容剧情刷新',data.operations.compat_render.count+' 次'],['刷新最慢耗时',(data.operations.native_refresh.duration?.maxMs??'—')+' ms'],['历史重挂',String(data.operations.history_hydrate.count)+' 条'],['历史卸载',String(data.operations.history_suspend.count)+' 条'],['抽样卡顿帧',data.frameIntervalSample.over100+' / '+data.frameIntervalSample.measured],['浏览器长任务',data.support.longTasks?data.browserLongTasks.count+' 次':'不支持']];
   summary.replaceChildren(...rows.map(([name,num])=>{const card=document.createElement('div');card.className='stat-card';const n=document.createElement('div');n.className='stat-num';n.textContent=num;const l=document.createElement('div');l.className='stat-label';l.textContent=name;card.append(n,l);return card;}));
   signals.replaceChildren(...data.signals.map(t=>{const node=document.createElement('div');node.className='hit-item';node.textContent=t;return node;}));
   report.textContent=JSON.stringify(data,null,2);
  }
  box.querySelector('#mima-perf-start').onclick=()=>{if(meter.snapshot().startedAt&&!meter.isRunning()&&!confirm('重新开始会覆盖本页之前的性能记录。需要保存旧结果请先复制或导出。确定开始新一轮吗？'))return;meter.start();display()};
  box.querySelector('#mima-perf-stop').onclick=()=>{meter.stop();display()};
+ box.querySelector('#mima-perf-idle').onclick=()=>{meter.markIdle();display();};
+ box.querySelector('#mima-perf-boot').onclick=()=>{if(!confirm('将刷新当前页面，并自动记录这一次启动。请先保存正在编辑的内容。是否继续？'))return;
+   if(!meter.armNextReload())return toast('浏览器阻止了本次启动记录，请用普通记录');location.reload();};
  box.querySelector('#mima-perf-refresh').onclick=display;
  box.querySelector('#mima-perf-clear').onclick=()=>{meter.reset();display()};
  box.querySelector('#mima-perf-copy').onclick=async()=>{const result=JSON.stringify(meter.snapshot(),null,2);
@@ -4365,18 +4434,21 @@ function sanitizeAllowedHtml(html,htmlScope=''){
     return template.innerHTML;
 }
 
-function restoreLegacyFont(){
+function restoreLegacyFont({syncSelection=true}={}){
     const url=localStorage.getItem(LEGACY_FONT_URL_KEY);
     const tag=qs('legacy-url-font-style')||document.createElement('style');
     tag.id='legacy-url-font-style';if(!tag.isConnected)document.head.appendChild(tag);
-    if(!url){tag.textContent='';MimaFontManager?.applySelected?.();return;}
+    if(!url){if(tag.textContent)tag.textContent='';if(syncSelection)MimaFontManager?.applySelected?.();return;}
     const family=(localStorage.getItem(LEGACY_FONT_FAMILY_KEY)||'MimaUrlFont').replace(/['"\\;\n\r{}]/g,'');
     const fmt=fontFormat(url);
     // Register the font resource only. FontManager owns both independent
     // variables and chooses an explicit story-library font over this fallback.
     const safeUrl=String(url).replace(/[\n\r"'\\]/g,'');
-    tag.textContent=safeUrl.includes('fonts.googleapis.com')||safeUrl.endsWith('.css')?`@import url('${safeUrl}');`:`@font-face{font-family:'${family}';src:url('${safeUrl}')${fmt?` format('${fmt}')`:''};font-display:swap;}`;
-    MimaFontManager?.applySelected?.();
+    const cssFile=safeUrl.includes('fonts.googleapis.com')||safeUrl.endsWith('.css');
+    const legacyInUse=!MimaFontManager?.getSelected?.('story')||MimaFontManager?.getSelected?.('ui')===family||MimaFontManager?.fontReferencedByAppearance?.(family);
+    const css=cssFile?(legacyInUse?`@import url('${safeUrl}');`:''):`@font-face{font-family:'${family}';src:url('${safeUrl}')${fmt?` format('${fmt}')`:''};font-display:swap;}`;
+    if(tag.textContent!==css)tag.textContent=css;
+    if(syncSelection)MimaFontManager?.applySelected?.();
 }
 
 // Expose inline handlers
@@ -4466,7 +4538,9 @@ async function mimaBoot(){
             const missing=inputIds.filter(id=>!qs(id));
             if(missing.length)throw new Error('E_STARTUP_MISSING_CONTROLS: '+missing.join(','));
             applyStoryTypography();
-            restoreLegacyFont();
+            // The manager's init() owns the selected-font activation. Calling it
+            // here as well used to start the same IDB/FontFace work twice on boot.
+            restoreLegacyFont({syncSelection:false});
             try{fontRecords=await MimaFontManager.init()}catch(e){console.warn('本地字体库启动失败',e)}
             qs('story-input').addEventListener('input',()=>{autoResizeInput();r19ComposerInput();});
     qs('director-note').addEventListener('input',r19ComposerInput);

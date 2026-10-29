@@ -500,9 +500,18 @@ function liveLegacyLayers(){
 
 let canonicalAppearanceId='', canonicalEpoch=0;
 function releaseLegacyPresentation(){
- const oldStyle=ensureStyle();oldStyle.textContent='';oldStyle.media='not all';
- document.documentElement.removeAttribute('data-mima-atelier-active');releaseAssets('atelier');
- for(const [el,prior] of pausedStyles){if(prior===null)el.removeAttribute('media');else el.setAttribute('media',prior);}
+ // Reaffirm is also called after a successfully applied unchanged CSS preset.
+ // Keep its recovery/priority contract, but do not invalidate the live DOM on
+ // every reaffirm when the canonical theme already owns presentation.
+ const oldStyle=ensureStyle();
+ if(oldStyle.textContent)oldStyle.textContent='';
+ if(oldStyle.media!=='not all')oldStyle.media='not all';
+ if(document.documentElement.hasAttribute('data-mima-atelier-active'))document.documentElement.removeAttribute('data-mima-atelier-active');
+ if(assetOwners.get('atelier')?.size)releaseAssets('atelier');
+ for(const [el,prior] of pausedStyles){
+  if(prior===null){if(el.hasAttribute('media'))el.removeAttribute('media');}
+  else if(el.getAttribute('media')!==prior)el.setAttribute('media',prior);
+ }
  pausedStyles.clear();
 }
 async function syncGlobalAppearance(preset,{allowLegacy=false,preparedProject=undefined}={}){

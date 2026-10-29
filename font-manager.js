@@ -63,6 +63,7 @@ window.MimaFontManager = (() => {
     // time, but we drop each value before advancing instead of getAll() keeping
     // every multi-MB buffer alive together. Startup creates no font sources.
     async function readMetadata() {
+        window.MimaPerfDiagnostics?.detail('font_idb_metadata');
         const db=await openDb();
         return new Promise((resolve,reject)=>{
             const records=[];let ended=false,issue,settled=false,tx;
@@ -153,6 +154,13 @@ window.MimaFontManager = (() => {
     }
     function disposeFont(entry) {
         if(!entry)return;
+        // WebKit cannot cancel a FontFace.load() already handed to its decoder.
+        // Retire its ownership now but keep its Blob URL and registration alive
+        // until the native promise settles; otherwise a new picker generation
+        // can revoke the backing bytes under the previous generation.
+        if(entry.loadPending){entry.retired=true;return;}
+        if(entry.disposed)return;
+        entry.disposed=true;
         try{document.fonts.delete(entry.face);}catch(_){}
         if(entry.url){URL.revokeObjectURL(entry.url);entry.url='';}
     }
@@ -191,22 +199,22 @@ window.MimaFontManager = (() => {
         // but do not await it on the tavern startup / settings path.
         // Keep the Blob URL until this entry is actually released; a pending
         // WebKit font request must never see its source revoked underneath it.
-        try {
-            Promise.resolve(entry.face.load()).then(
-                ()=>{
-                    if(loaded.get(id)!==entry)return;
-                    entry.state='loaded';
-                    reportRegisteredFace(entry,'loaded');
-                },error=>{
-                    if(loaded.get(id)!==entry)return;
-                    entry.state='error';
-                    reportRegisteredFace(entry,'error',error);
-                }
-            );
-        } catch(error) {
-            entry.state='error';
+        entry.loadPending=true;
+        const mark=window.MimaPerfDiagnostics;
+        mark?.detail('font_face_register');mark?.detail('font_face_load_start');
+        const task=Promise.resolve().then(()=>entry.face.load());
+        entry.loadTask=task;
+        task.then(()=>{
+            entry.state='loaded';mark?.detail('font_face_load_success');
+            reportRegisteredFace(entry,'loaded');
+        },error=>{
+            entry.state='error';mark?.detail('font_face_load_error');
             reportRegisteredFace(entry,'error',error);
-        }
+        }).finally(()=>{
+            entry.loadPending=false;
+            if(entry.retired)disposeFont(entry);
+            else trimFonts();
+        });
     }
     async function importFile(file) {
         if (!file) throw new Error('没有选择字体文件');
@@ -255,7 +263,13 @@ window.MimaFontManager = (() => {
             previewFamily,previewApplied,extra,
             ...Array.from(usages.values(),x=>x.requested),
             ...Array.from(usages.values(),x=>x.applied)].filter(Boolean));
-        for(const [id,entry] of loaded)if(!keep.has(entry.face.family))releaseFont(id);
+        for(const [id,entry] of loaded)if(!keep.has(entry.face.family)) {
+            // A detached visible preview still has an in-flight native load.
+            // Keep it reusable so reopening settings cannot decode that same
+            // large file again while the first decoder is still running.
+            if(entry.loadPending)entry.retireWhenIdle=true;
+            else releaseFont(id);
+        }
     }
     function wantedFamily(family) {
         return [previewFamily,previewApplied,getSelected('ui'),getSelected('story'),applied.ui,applied.story,
@@ -270,7 +284,7 @@ window.MimaFontManager = (() => {
             const metadata=newestFamilyRecord(await listMetadata(),family);
             if(!metadata)return null; // A URL/CSS/system family has no local binary.
             const current=loaded.get(metadata.id);
-            if(current?.revision===fontRevision && current.state!=='error')return current.face;
+            if(current?.revision===fontRevision && current.state!=='error'){current.retireWhenIdle=false;return current.face;}
             const revision=fontRevision,record=await readFontById(metadata.id);
             if(!record?.buffer)throw new Error('所选字体的本地文件不存在');
             const entry=makeFont(record);if(!entry)throw new Error('当前浏览器无法加载本地字体');
@@ -308,7 +322,11 @@ window.MimaFontManager = (() => {
         const usage={requested:family,applied:previous?.applied||'',revision:fontRevision,task:null};
         usages.set(owner,usage);
         const task=acquireFamily(family).then(async face=>{
-            if(face)await face.load();
+            if(face){
+                const registered=Array.from(loaded.values()).find(entry=>entry.face===face);
+                if(registered?.loadTask)await registered.loadTask;
+                else await face.load();
+            }
             if(usages.get(owner)===usage && face?.status==='loaded')usage.applied=family;
             return face;
         })
@@ -339,10 +357,17 @@ window.MimaFontManager = (() => {
         const task=applySelected(kind).catch(error=>{
             // Another pending request is not a verified fallback. Roll back to
             // the family whose decoded face/CSS was actually committed.
-            if(selectionWrites[kind]===write&&getSelected(kind)===requested)localStorage.setItem(key,applied[kind]);
+            if(selectionWrites[kind]===write&&getSelected(kind)===requested){
+                localStorage.setItem(key,applied[kind]);
+                // Remove a failed network face and restore the last effective CSS.
+                urlFontStyle();setFontCss(kind,applied[kind]);
+            }
             throw error;
         });
         // Legacy callers need not await; explicit callers can observe failure.
+        // The legacy single-URL fallback is owned by app.js. Notify it after
+        // success/rollback so an unused old CSS @import can be detached.
+        task.finally(()=>{try{window.dispatchEvent(new Event('mima-font-selection-change'));}catch(_){}}).catch(()=>{});
         task.catch(error=>console.warn('字体切换失败，保留上次有效字体',error));return task;
     }
     // URL fonts share the same UI/story selectors as local fonts, but keep an
@@ -352,23 +377,180 @@ window.MimaFontManager = (() => {
         try { value=JSON.parse(localStorage.getItem(URL_LIBRARY_KEY)||'[]'); } catch(_) { return []; }
         return Array.isArray(value)?value.filter(x=>x && /^[a-zA-Z0-9_-]{1,90}$/.test(x.id) && /^https:\/\//i.test(x.url) && typeof x.family==='string').slice(0,100):[];
     }
+    // Old CSS links remain available, but idle third-party stylesheets should
+    // not be fetched solely because they were imported years ago. Referenced
+    // families and explicit compatibility loading retain their prior behavior.
+    const activeCssLinks = new Map();
+    function activeFontDeclarations(style) {
+        // Read the browser's *effective* rule tree rather than scanning raw
+        // CSS text. Inner @media/@supports conditions can be false even when
+        // the outer <style> itself is enabled. Merely finding a family name in
+        // such an inactive branch must not start a third-party font download.
+        const collected=[];
+        const matchesMedia = query => {
+            if(!query)return true;
+            if(typeof matchMedia!=='function')return !/^(?:not\s+all|none)$/i.test(String(query).trim());
+            try{return matchMedia(query).matches;}catch(_){return false;}
+        };
+        const matchesSupports = condition => {
+            if(!condition)return true;
+            // Old browsers lacking CSS.supports retain the previous
+            // conservative inclusion rather than silently losing fonts.
+            if(typeof CSS==='undefined'||typeof CSS.supports!=='function')return true;
+            try{return CSS.supports(condition);}catch(_){return false;}
+        };
+        function walk(rules) {
+            for(const rule of rules) {
+                if(rule.type===1){ // CSSStyleRule, including nested selectors
+                    if(rule.style?.cssText)collected.push(rule.style.cssText);
+                    if(rule.cssRules)walk(rule.cssRules);
+                } else if(rule.type===4){ // CSSMediaRule
+                    if(matchesMedia(rule.conditionText||rule.media?.mediaText))walk(rule.cssRules||[]);
+                } else if(rule.type===12){ // CSSSupportsRule
+                    if(matchesSupports(rule.conditionText))walk(rule.cssRules||[]);
+                } else if(rule.type===5||rule.type===7){
+                    // @font-face declares a font; @keyframes describes an
+                    // animation. Neither proves the page is using a family.
+                    continue;
+                } else if(rule.cssRules){
+                    // @layer/@scope and future grouping rules: keep their
+                    // nested declarations without fetching external sheets.
+                    walk(rule.cssRules);
+                }
+            }
+        }
+        try {
+            if(!style.sheet)return '';
+            walk(style.sheet.cssRules);
+            return collected.join(';');
+        } catch(error) {
+            // For inaccessible CSSOM (e.g. old @import behavior), preserve
+            // the legacy compatibility scan instead of breaking old records.
+            // The normal same-origin inline CSS path always uses rule guards.
+            return style.textContent||'';
+        }
+    }
+    function enabledFontStyles() {
+        const sources=[];
+        for(const style of document.querySelectorAll('style')) {
+            if(style.id==='mima-url-font-library-style'||style.id==='legacy-url-font-style')continue;
+            if(style.disabled || style.sheet?.disabled)continue;
+            if(style.media && typeof matchMedia==='function') {
+                try{if(!matchMedia(style.media).matches)continue;}catch(_){continue;}
+            }else if(/^(?:not\s+all|none)$/i.test(String(style.media||'').trim()))continue;
+            const declarations=activeFontDeclarations(style);
+            if(declarations)sources.push(declarations);
+        }
+        return sources;
+    }
+    function fontReferenceContext() {
+        // Inspect only mounted, active CSS, plus computed font families of
+        // visible app surfaces. Do not match arbitrary comments or other font
+        // names that happen to contain the requested name as a substring.
+        const sources=enabledFontStyles().map(css=>({type:'css',value:css}));
+        for(const selector of ['body','#story-chat-box','.msg-content','.c-status-panel','.app-shell']) {
+            const element=document.querySelector(selector);if(!element)continue;
+            try{sources.push({type:'family',value:getComputedStyle(element).fontFamily});}catch(_){}
+        }
+        return sources;
+    }
+    function unquoteFamily(text){return String(text||'').trim().replace(/^(['"])([\s\S]*)\1$/,'$2').trim().toLocaleLowerCase();}
+    function fontListUses(value,family){
+        return String(value||'').split(',').some(item=>unquoteFamily(item)===family);
+    }
+    function authoredFontUses(css,family){
+        // A declaration in @font-face registers a font; it does not mean that
+        // the page uses that font. Ignore it and CSS comments before matching.
+        const source=String(css||'').replace(/\/\*[\s\S]*?\*\//g,'').replace(/@font-face\s*\{[^}]*\}/gi,'');
+        const declarations=/(?:^|[;{])\s*(font-family|font|--[\w-]+)\s*:\s*([^;{}]+)/gi;
+        let match;
+        while((match=declarations.exec(source))){
+            const prop=match[1].toLowerCase(),value=match[2].replace(/!important\s*$/i,'').trim();
+            if(prop==='font-family'&&fontListUses(value,family))return true;
+            if(prop==='font'||prop.startsWith('--')){
+                // A font shorthand has a size/weight prefix; the family is
+                // the trailing token, or a quoted member of a comma list.
+                if(value.split(',').some(item=>{
+                    const segment=unquoteFamily(item),quoted=segment.match(/["']([^"']+)["']/g)||[];
+                    return segment===family || segment.endsWith(' '+family) ||
+                        quoted.some(part=>unquoteFamily(part)===family);
+                }))return true;
+            }
+        }
+        return false;
+    }
+    function fontReferencedByAppearance(family,context) {
+        const name=unquoteFamily(family);if(!name)return false;
+        const sources=context===undefined?fontReferenceContext():context;
+        if(typeof sources==='string')return authoredFontUses(sources,name)||fontListUses(sources,name);
+        return Array.isArray(sources)&&sources.some(item=>item.type==='family'?
+            fontListUses(item.value,name):authoredFontUses(item.value,name));
+    }
     function urlFontStyle() {
         let tag=document.getElementById('mima-url-font-library-style');
-        if(!tag){tag=document.createElement('style');tag.id='mima-url-font-library-style';document.head.appendChild(tag);}
-        const imports=[],faces=[];
+        const active=new Set([getSelected('ui'),getSelected('story')].filter(Boolean));
+        const selectedCss=new Map(),imports=[],faces=[];
+        let referenceContext;
         for(const f of urlFonts()) {
-            const url=f.url.replace(/[\"'\\()\s]/g,'');
-            const fam=f.family.replace(/[\"'\\;{}\n\r]/g,'');
-            if(!url||!fam)continue;
+            const fam=f.family.replace(/["'\\;{}\n\r]/g,'');
+            if(!fam)continue;
             if(f.css===true){
-                // Batch-added CSS stays inactive until chosen; older manual CSS links retain their behavior.
-                if(f.lazy===true && getSelected('ui')!==f.family && getSelected('story')!==f.family)continue;
-                imports.push(`@import url("${url}");`);continue;
+                if(active.has(f.family))selectedCss.set(f.id,f);
+                else if(f.compatAlwaysLoad===true||
+                    (f.lazy===false&&f.compatAlwaysLoad!==false)||
+                    fontReferencedByAppearance(f.family,referenceContext??(referenceContext=fontReferenceContext())))
+                    imports.push(`@import url(${JSON.stringify(f.url)});`);
+            }else if(active.has(f.family)) {
+                faces.push(`@font-face{font-family:${JSON.stringify(fam)};src:url(${JSON.stringify(f.url)});font-display:swap;}`);
             }
-            faces.push(`@font-face{font-family:"${fam}";src:url("${url}");font-display:swap;}`);
         }
         const css=imports.join('\n')+faces.join('\n');
-        if(tag.textContent!==css)tag.textContent=css;
+        if(!tag && css){tag=document.createElement('style');tag.id='mima-url-font-library-style';document.head.appendChild(tag);}
+        if(tag && tag.textContent!==css)tag.textContent=css;
+        // CSS URL sources are stylesheets, not font files. Wait for the actual
+        // stylesheet load event before asking the FontFaceSet to resolve its
+        // declared family. It also avoids guessing when @import has completed.
+        for(const [id,entry] of activeCssLinks){
+            if(selectedCss.get(id)?.url===entry.url)continue;
+            entry.link.remove();activeCssLinks.delete(id);
+        }
+        for(const [id,f] of selectedCss){
+            if(activeCssLinks.has(id))continue;
+            const link=document.createElement('link');link.rel='stylesheet';link.href=f.url;
+            const state={link,url:f.url,promise:null};
+            state.promise=new Promise((resolve,reject)=>{
+                link.onload=()=>resolve();
+                link.onerror=()=>reject(new Error('网络字体 CSS 无法加载，请检查链接及网络权限'));
+            });
+            // If the user switches away while the stylesheet is loading, the
+            // rejected promise still needs an observer to avoid console noise.
+            state.promise.catch(()=>{});
+            activeCssLinks.set(id,state);document.head.appendChild(link);
+        }
+    }
+    const externalFontLoads=new Map();
+    function loadExternalFamily(family) {
+        const record=urlFonts().find(f=>f.family===family);
+        if(!record)return Promise.resolve(null);
+        const key=record.id+':'+record.url;
+        if(externalFontLoads.has(key))return externalFontLoads.get(key);
+        const task=(async()=>{
+            if(!document.fonts?.load)throw new Error('当前浏览器不支持网络字体状态检查');
+            if(record.css){
+                const entry=activeCssLinks.get(record.id);
+                if(!entry)throw new Error('网络字体 CSS 未激活');
+                await entry.promise;
+            }
+            const declaration='normal 16px '+JSON.stringify(family);
+            // Test both Latin and CJK coverage; a CSS font may use unicode-range.
+            const faces=await document.fonts.load(declaration,'Aa咪嘛日本語');
+            if(!faces?.length||!faces.some(face=>face.status==='loaded'))
+                throw new Error('浏览器未加载到此字体：请检查链接是否为真实字体文件、HTTPS 跨域许可及 CSS 字体族名');
+            return faces;
+        })();
+        externalFontLoads.set(key,task);
+        task.finally(()=>{if(externalFontLoads.get(key)===task)externalFontLoads.delete(key);}).catch(()=>{});
+        return task;
     }
     function addUrlFont(name,url,family){
         name=String(name||family||'链接字体').trim().slice(0,75);
@@ -508,6 +690,15 @@ window.MimaFontManager = (() => {
         }
         return {added,rejected};
     }
+    function setUrlFontCompatibility(id,enabled) {
+        const records=urlFonts(),index=records.findIndex(f=>f.id===id&&f.css===true);
+        if(index<0)return false;
+        const value=enabled===true;
+        if(records[index].compatAlwaysLoad===value)return true;
+        records[index]={...records[index],compatAlwaysLoad:value};
+        localStorage.setItem(URL_LIBRARY_KEY,JSON.stringify(records));
+        urlFontStyle();return true;
+    }
     function deleteUrlFont(id){
         const records=urlFonts(),found=records.find(x=>x.id===id);
         if(!found)return false;
@@ -518,15 +709,20 @@ window.MimaFontManager = (() => {
     }
     function setFontCss(kind,family) {
         const root=document.documentElement;
-        if(kind==='ui')root.style.setProperty('--font-ui',family
-            ? `'${String(family).replace(/'/g,'')}', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`
-            : '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif');
-        else {
+        let property,value;
+        if(kind==='ui'){
+            property='--font-ui';
+            value=family ? `'${String(family).replace(/'/g,'')}', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`
+                : '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+        } else {
             const legacy=localStorage.getItem('storyFontUrl') ? localStorage.getItem('storyFontFamily')||'MimaUrlFont' : '';
             const story=family||legacy;
-            root.style.setProperty('--font-story',story
-                ? `'${String(story).replace(/'/g,'')}', var(--font-ui)` : 'var(--font-ui)');
+            property='--font-story';
+            value=story ? `'${String(story).replace(/'/g,'')}', var(--font-ui)` : 'var(--font-ui)';
         }
+        // A redundant root custom-property write can invalidate styling for
+        // every chat item, status widget and settings control on iOS WebKit.
+        if(root.style.getPropertyValue(property)!==value)root.style.setProperty(property,value);
     }
     async function applySelected(kind=null) {
         urlFontStyle();
@@ -539,11 +735,13 @@ window.MimaFontManager = (() => {
             reportLoad(kind,family,family?'loading':'default');
             try {
                 const face=await acquireFamily(family);
+                const external=family && !face && urlFonts().some(f=>f.family===family);
+                if(external)await loadExternalFamily(family);
                 if(epoch!==selectionEpoch[kind]||family!==getSelected(kind)){trimFonts();return;}
                 applied[kind]=family;
-                // URL/CSS families have no local FontFace in this registry; do not
-                // misreport a saved name as a verified loaded local font.
-                reportLoad(kind,family,face?(face.status==='loaded'?'loaded':(face.status==='error'?'error':'registered')):(family?'external':'default'));
+                // The local registry cannot validate URL fonts. Report loaded
+                // only after the browser's FontFaceSet actually loaded them.
+                reportLoad(kind,family,external?'loaded':face?(face.status==='loaded'?'loaded':(face.status==='error'?'error':'registered')):(family?'external':'default'));
                 if(face?.status==='error')reportLoad(kind,family,'error','浏览器未能解码此字体，原记录仍保留');
                 trimFonts();
             } catch(error) {
@@ -639,6 +837,7 @@ window.MimaFontManager = (() => {
     // pre-existing ID; the rollback owns only records it inserted. All newly
     // added fonts are written in one IDB transaction, not a per-font loop.
     async function readFontById(id) {
+        window.MimaPerfDiagnostics?.detail('font_idb_binary');
         const db=await openDb();
         return new Promise((resolve,reject)=>{
             const tx=db.transaction(STORE,'readonly'),req=tx.objectStore(STORE).get(id);
@@ -715,5 +914,12 @@ window.MimaFontManager = (() => {
         if (record && getSelected('ui') === record.family) setSelected('ui','');
         if (record && getSelected('story') === record.family) setSelected('story','');
     }
-    return { init, all, listMetadata, getByFamily, ensureFamily, useFamily, releaseUsage, importFile, deleteFont, getSelected, getLoadStatus, setSelected, applySelected, urlFonts, addUrlFont, addUrlFontsBatch, deleteUrlFont, exportPortable, importPortable, planPortableImport, commitPortablePlan, rollbackPortablePlan };
+    function runtimeMetrics(){
+        const entries=Array.from(loaded.values());
+        return {registered:entries.length,nativeLoadPending:entries.filter(x=>x.loadPending).length,
+            unusedPending:entries.filter(x=>x.loadPending&&x.retireWhenIdle).length,
+            binaryReadPending:pendingFonts.size,activePreviewOwners:usages.size,
+            activeCssLinks:activeCssLinks.size};
+    }
+    return { runtimeMetrics, init, all, listMetadata, getByFamily, ensureFamily, useFamily, releaseUsage, importFile, deleteFont, getSelected, getLoadStatus, setSelected, applySelected, urlFonts, refreshUrlFontUsage:urlFontStyle, fontReferencedByAppearance, setUrlFontCompatibility, addUrlFont, addUrlFontsBatch, deleteUrlFont, exportPortable, importPortable, planPortableImport, commitPortablePlan, rollbackPortablePlan };
 })();
