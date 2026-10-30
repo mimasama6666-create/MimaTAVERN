@@ -931,7 +931,7 @@ function setupImmersiveReading(){
 }
 // User-facing release notes: once per distinct production release by default.
 // Avoid touching Store/History or making automatic announcements mandatory.
-const MIMA_RELEASE_NOTES_VERSION='R19-20261030-BATCH8-MANUAL-RECOVERY-V5.11-DEV';
+const MIMA_RELEASE_NOTES_VERSION='R19-20261030-BATCH8-PERFORMANCE-V5.13-DEV';
 const MIMA_RELEASE_NOTES_SEEN='mima-release-notes-seen:'+MIMA_RELEASE_NOTES_VERSION;
 const MIMA_RELEASE_NOTES_OPTOUT='mima-release-notes-disable-auto-v1';
 function openMimaReleaseNotice(){

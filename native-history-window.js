@@ -4,6 +4,46 @@
  'use strict';
  const recordsByNode=new WeakMap();
  let active=null;
+ const motionAttribute='data-mima-motion-paused';
+ function motionStyles(){
+  if(document.getElementById('mima-history-motion-lifecycle'))return;
+  const style=document.createElement('style');style.id='mima-history-motion-lifecycle';
+  const root='#story-chat-box#story-chat-box ['+motionAttribute+']';
+  style.textContent=[root,root+'::before',root+'::after'].join(',')+'{animation-play-state:paused!important}';
+  document.head.appendChild(style);
+ }
+ function restoreMotion(motion){
+  if(!motion.saved)return;
+  // Respect a deliberate inline play-state edit made while the node was away.
+  if(motion.el.style.getPropertyValue('animation-play-state')==='paused'&&motion.el.style.getPropertyPriority('animation-play-state')==='important'){
+   const {value,priority}=motion.saved;
+   if(value)motion.el.style.setProperty('animation-play-state',value,priority);else motion.el.style.removeProperty('animation-play-state');
+  }
+  motion.saved=null;motion.el.removeAttribute(motionAttribute);
+ }
+ function syncMotion(motion,focused=document.activeElement){
+  const paused=document.hidden||!motion.visible&&!motion.el.contains(focused)&&!motion.fixedPseudo;
+  if(paused){
+   if(!motion.saved)motion.saved={value:motion.el.style.getPropertyValue('animation-play-state'),priority:motion.el.style.getPropertyPriority('animation-play-state')};
+   if(motion.el.style.getPropertyValue('animation-play-state')!=='paused'||motion.el.style.getPropertyPriority('animation-play-state')!=='important')motion.el.style.setProperty('animation-play-state','paused','important');
+   if(!motion.el.hasAttribute(motionAttribute))motion.el.setAttribute(motionAttribute,'');
+  }else restoreMotion(motion);
+ }
+ function discoverMotion(state,record){
+  if(!state.motionIntersection||!record.el.isConnected)return;
+  // Observe animated elements themselves: a fixed/overflow status can remain
+  // visible even when the article containing it is far outside the viewport.
+  for(const animation of record.el.getAnimations?.({subtree:true})||[]){
+   if(typeof animation.animationName!=='string')continue;
+   const el=animation.effect?.target;if(!el?.style)continue;
+   let motion=state.motions.get(el);
+   if(!motion){motion={el,visible:false,saved:null,fixedPseudo:false};state.motions.set(el,motion);state.motionIntersection.observe(el);}
+   const pseudo=animation.effect?.pseudoElement;
+   if(pseudo&&getComputedStyle(el,pseudo).position==='fixed')motion.fixedPseudo=true;
+   syncMotion(motion);
+  }
+ }
+ function cleanMotions(state){for(const [el,motion]of state.motions)if(!el.isConnected||!state.box.contains(el)){state.motionIntersection?.unobserve(el);restoreMotion(motion);state.motions.delete(el);}}
  const controlSelector='details,input,textarea,select,[contenteditable]:not([contenteditable="false"])';
  function captureControls(el){return [...el.querySelectorAll(controlSelector)].map(node=>{
   const value={tag:node.localName,top:node.scrollTop,left:node.scrollLeft};
@@ -37,7 +77,7 @@
  function createShell(msg){const el=document.createElement('article');el.className='message '+(msg?.role||'system')+'-msg';el.dataset.msgId=msg?.id||'';
   const record={el,msg,live:false,controls:[],text:null,height:180,pins:0};recordsByNode.set(el,record);placeholder(record,180);return el;
  }
- function reset(){if(!active)return;active.controller.abort();active.intersection?.disconnect();active.resize?.disconnect();if(active.raf)cancelAnimationFrame(active.raf);active=null;}
+ function reset(){if(!active)return;active.controller.abort();active.intersection?.disconnect();active.motionIntersection?.disconnect();active.motionMutation?.disconnect();active.motionStylesMutation?.disconnect();for(const m of active.motions.values())restoreMotion(m);active.resize?.disconnect();if(active.raf)cancelAnimationFrame(active.raf);active=null;}
  function schedule(){const state=active;if(!state||state.raf)return;state.raf=requestAnimationFrame(()=>{state.raf=0;if(active===state)update(state);});}
  function textOf(record){const content=record.el.querySelector(':scope > .msg-content');if(!content||record.el.dataset.mimaDisplayRegex==='pending')return null;return content.innerText;}
  function hydrate(record,state){
@@ -109,6 +149,28 @@
   if(!active){const controller=new AbortController();active={box,controller,sessionId:options.sessionId,entries:[],byId:new Map(),live:new Set(),intersecting:new Set(),observed:new Set(),raf:0,maxLive:80};
    const state=active;box.addEventListener('scroll',schedule,{passive:true,signal:controller.signal});
    box.addEventListener('focusout',schedule,{signal:controller.signal});window.addEventListener('resize',schedule,{passive:true,signal:controller.signal});
+   motionStyles();state.motions=new Map();
+   if(typeof IntersectionObserver!=='undefined')state.motionIntersection=new IntersectionObserver(items=>{
+    if(active!==state)return;
+    for(const item of items){const motion=state.motions.get(item.target);if(!motion)continue;motion.visible=item.isIntersecting;syncMotion(motion);}
+   },{root:null,rootMargin:'100px 0px'});
+   if(state.motionIntersection&&typeof MutationObserver!=='undefined'){
+    state.motionMutation=new MutationObserver(changes=>{
+     if(active!==state)return;
+     const records=new Set();
+     for(const change of changes){
+      const owned=state.motions.get(change.target);
+      if(change.type==='attributes'&&change.attributeName==='style'&&owned?.saved&&change.target.style.getPropertyValue('animation-play-state')==='paused'&&change.target.style.getPropertyPriority('animation-play-state')==='important')continue;
+      if(owned?.saved&&change.type==='attributes'&&change.attributeName==='style'){owned.saved={value:owned.el.style.getPropertyValue('animation-play-state'),priority:owned.el.style.getPropertyPriority('animation-play-state')};}
+      const el=change.target.closest?.('article.message'),record=el&&recordsByNode.get(el);if(record)records.add(record);
+     }
+     cleanMotions(state);for(const record of records)discoverMotion(state,record);
+    });state.motionMutation.observe(box,{childList:true,subtree:true,attributes:true,attributeFilter:['class','style','open']});
+    state.motionStylesMutation=new MutationObserver(()=>{if(active===state)for(const record of state.entries)discoverMotion(state,record);});
+    state.motionStylesMutation.observe(document.head,{childList:true,subtree:true,attributes:true,attributeFilter:['href','media','disabled']});
+   }
+   document.addEventListener('visibilitychange',()=>{if(active===state)for(const motion of state.motions.values())syncMotion(motion);},{signal:controller.signal});
+   for(const event of ['focusin','focusout'])box.addEventListener(event,e=>{for(const motion of state.motions.values())if(motion.el.contains(e.target))syncMotion(motion,event==='focusout'?e.relatedTarget:document.activeElement);},{signal:controller.signal});
    if(typeof IntersectionObserver!=='undefined')state.intersection=new IntersectionObserver(items=>{if(active!==state)return;for(const item of items){const record=recordsByNode.get(item.target);if(!record)continue;if(item.isIntersecting)state.intersecting.add(record);else state.intersecting.delete(record);}schedule();},{root:box,rootMargin:'1200px 0px'});
    if(typeof ResizeObserver!=='undefined'){state.resize=new ResizeObserver(schedule);state.resize.observe(box);}
   }
@@ -126,8 +188,10 @@
    state.intersection?.unobserve(node);
    const previous=recordsByNode.get(node);if(previous)state.intersecting.delete(previous);
   }
-  for(const node of observedNow)if(!state.observed.has(node))state.intersection?.observe(node);
-  state.observed=observedNow;
+  for(const node of observedNow)if(!state.observed.has(node)){
+   state.intersection?.observe(node);discoverMotion(state,recordsByNode.get(node));
+  }
+  state.observed=observedNow;cleanMotions(state);
   if(list.length<=120){for(const record of entries)hydrate(record,state);}else update(state);
   schedule();
  }

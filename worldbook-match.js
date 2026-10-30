@@ -12,7 +12,7 @@
    let worker,timer,finished=false;
    const cleanup=()=>{if(finished)return false;finished=true;clearTimeout(timer);signal?.removeEventListener?.('abort',abort);worker?.terminate();return true;};
    const abort=()=>{if(cleanup())reject(fail('E_WORLDBOOK_ABORTED','世界书匹配已取消'))};
-   try{worker=new Worker(new URL('./worldbook-match-worker.js?wb=20261025-r4',document.baseURI),{name:'mima-worldbook-match'});}
+   try{worker=new Worker(new URL('./worldbook-match-worker.js?wb=20261030-v513',document.baseURI),{name:'mima-worldbook-match'});}
    catch(e){reject(fail('E_WORLDBOOK_ISOLATION_UNAVAILABLE','世界书线程加载失败：'+String(e.message||e)));return;}
    worker.onmessage=e=>{if(!cleanup())return;const packet=e.data;if(packet?.ok&&Array.isArray(packet.results)&&packet.results.length===entries.length)resolve(packet.results);else reject(fail('E_WORLDBOOK_MATCH_FAILED',packet?.error||'匹配结果无效'));};
    worker.onerror=e=>{if(cleanup())reject(fail('E_WORLDBOOK_MATCH_FAILED','世界书隔离执行失败：'+String(e?.message||e)));};
