@@ -1325,3 +1325,48 @@ html.mima-settings-paint-guard .app-shell *::after{animation-play-state:paused!i
 #settings-modal .mima-url-font-preview-error{color:#c85c67}
 #settings-modal .mima-url-font-preview-frame{display:block;width:100%;height:86px;margin-top:5px;border:0;background:transparent;pointer-events:none}
 @media(max-width:620px){#settings-modal .mima-url-font-row button{min-height:42px}}
+
+/* V5.19: the active-generation capsule has its own NORMAL state layout.
+   The old (more specific) media rule absolutely positioned the controls on
+   top of the detail line, obscuring stop/log actions on narrow iPhones. */
+@media (max-width:700px) {
+  /* Backup mobile navigation rule: UX sheet is also loaded independently. */
+  .topbar .nav-desktop { display:none; }
+  .app-shell > .composer-shell > .generation-panel:not(.hidden):not(.error) {
+    width:min(430px,calc(100vw - 26px));
+    max-height:min(30dvh,194px);
+    padding:9px 12px 10px;
+    gap:5px;
+    overflow-x:hidden;
+    overflow-y:auto;
+    bottom:calc(100% + 7px);
+  }
+  .app-shell > .composer-shell > .generation-panel:not(.error) .generation-actions {
+    position:static;
+    inset:auto;
+    flex:none;
+    width:100%;min-width:0;
+    margin:0;padding:0;
+    display:flex;
+    align-items:center;
+    justify-content:flex-end;
+    gap:8px;
+    overflow-x:auto;overflow-y:hidden;
+  }
+  .app-shell > .composer-shell > .generation-panel:not(.error) .generation-detail {
+    padding:0;
+    min-width:0;
+    width:100%;
+    flex:none;
+  }
+  .app-shell > .composer-shell > .generation-panel:not(.error) .generation-actions > button:not(.hidden) {
+    position:static;
+    min-width:0;
+    flex:0 0 auto;
+  }
+  .app-shell > .composer-shell > .generation-panel:not(.error) #generation-diagnostic-link {
+    width:auto;min-width:38px;height:34px;min-height:34px;
+    padding:4px 10px;border:1px solid var(--line);
+    background:color-mix(in srgb,var(--panel) 76%,transparent);
+  }
+}

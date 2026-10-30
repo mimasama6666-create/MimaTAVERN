@@ -3299,6 +3299,8 @@ async function openGenerationTaskViewer(){
    const recordLength=Number(receipt?.persistedChars)||draft.length;
    status.textContent=`${stage} · ${entry.action||'生成'} · ${entry.attempt||1} 次尝试`+
      (receipt?`\n本机已核实接收 ${recordLength} 字符 · 记录阶段 ${receipt.stage||'未知'}`:'\n没有独立流式接收记录')+
+     (hasSavedReply?`\n正式保存正文 ${reply.length} 字符`: '')+
+     (receipt?.finishKind?`\n模型结束状态：${receipt.finishKind} · ${receipt.finishReason||'旧版本未记录具体原因'}`:'')+
      (localActive?'\n当前页面仍在生成，可在剧情中查看流式输出。':'')+
      (entry.status==='prepared'?'\n刷新后的原网络请求不能重新连接；这里仅展示本地真实收到的内容，不会调用或取消 API。':'')+
      (draftProblem?'\n'+draftProblem:'');
@@ -3487,7 +3489,14 @@ function setGenerationProgress(payload={}){const panel=qs('generation-panel'),ba
     }
     if(payload.label)label.textContent=payload.label;if(payload.detail)detail.textContent=payload.detail}
 function setGenerationRetryVisible(visible){for(const id of ['generation-retry','generation-retry-current'])qs(id)?.classList.toggle('hidden',!visible);}
-function beginGenerationProgress(action){hideFailedStreamControls();qs('generation-recovery-draft')?.classList.add('hidden');qs('generation-copy-failed-stream')?.classList.add('hidden');deferredGenerationProgress=null;currentGenerationAction=action;lastGenerationFailure=null;contextRecoveryReceipt=null;setGenerationRetryVisible(false);setGenerationPanelMinimized(false);qs('generation-capacity-recovery')?.classList.add('hidden');qs('generation-resume-unanswered')?.classList.add('hidden');const panel=qs('generation-panel');panel?.classList.remove('hidden','error','done');setGenerationProgress({percent:4,label:`🤍 ${generationActionLabel(action)}`,detail:'正在准备本轮剧情…'})}
+function beginGenerationProgress(action){
+ // Old failure recovery controls belong to the PREVIOUS task.  Never expose
+ // them as actions for the newly generating turn; the journal remains intact.
+ r19HudRecoveryDiagnosticId=null;
+ for(const id of ['generation-owner-preview','generation-owner-recover','generation-owner-html-repair','generation-view-draft','generation-copy-draft'])qs(id)?.classList.add('hidden');
+ qs('generation-owner-raw-preview')?.remove();
+ toggleUnknownGenerationActions(false);
+ hideFailedStreamControls();qs('generation-recovery-draft')?.classList.add('hidden');qs('generation-copy-failed-stream')?.classList.add('hidden');deferredGenerationProgress=null;currentGenerationAction=action;lastGenerationFailure=null;contextRecoveryReceipt=null;setGenerationRetryVisible(false);setGenerationPanelMinimized(false);qs('generation-capacity-recovery')?.classList.add('hidden');qs('generation-resume-unanswered')?.classList.add('hidden');const panel=qs('generation-panel');panel?.classList.remove('hidden','error','done');setGenerationProgress({percent:4,label:`🤍 ${generationActionLabel(action)}`,detail:'正在准备本轮剧情…'})}
 function isStoryNearBottom(box,threshold=96){return !box||((box.scrollHeight-box.scrollTop-box.clientHeight)<=threshold)}
 function updateStoryFollowButton(){const b=qs('story-follow-stream');if(!b)return;b.classList.toggle('hidden',!liveStreamState||liveStreamState.followTail!==false)}
 function resumeStoryStreamFollow(){

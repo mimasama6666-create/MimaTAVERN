@@ -1347,7 +1347,7 @@
         outcome={...identity,stage:String(stage),ownerId:String(extra.ownerId||old?.ownerId||''),
           startedAt:old?.startedAt||Date.now(),lastSeenAt:Date.now(),
           fragmentCount:old?.fragmentCount||0,persistedChars:old?.persistedChars||0,
-          ...Object.fromEntries(Object.entries(extra).filter(([k])=>['sourceFingerprint','recordRevision','ownerId','finishKind','errorCode','requestDispatchAttempted'].includes(k)))};
+          ...Object.fromEntries(Object.entries(extra).filter(([k])=>['sourceFingerprint','recordRevision','ownerId','finishKind','finishReason','errorCode','requestDispatchAttempted'].includes(k)))};
         store.put(outcome,key);
       };
       request.onerror=()=>{issue=request.error;tx.abort()};

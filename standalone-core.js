@@ -3406,7 +3406,7 @@
       catch(e){if(!String(e?.message||'').includes('E_CANONICAL_CONFLICT')||commitAttempt===2)throw e;}
     }
     storyMark('canonical_committed',{messageCount:saved.messages.length});
-    void recoverStore.generationReceipt(identity,'CANONICAL_COMMITTED',{finishKind:storyResultMeta.finishKind||''}).catch(err=>console.error('完成回执独立日志保存失败；canonical 已成功',{sessionId:id,generationId:pending.id,error:err}));
+    void recoverStore.generationReceipt(identity,'CANONICAL_COMMITTED',{finishKind:storyResultMeta.finishKind||'',finishReason:storyResultMeta.finishReason||'unknown'}).catch(err=>console.error('完成回执独立日志保存失败；canonical 已成功',{sessionId:id,generationId:pending.id,error:err}));
     // Auto summary is a lower-priority independent job; never block Direct Reply.
     queueRollingSummary(id,temp);
     emitProgress(progress,{phase:'done',percent:100,detail:'剧情生成完成。'});
