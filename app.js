@@ -286,12 +286,19 @@ function closeDrawer(){qs('session-drawer').classList.remove('open');qs('drawer-
 function isSettingsOpen(){const modal=qs('settings-modal');return !!modal&&!modal.classList.contains('hidden')}
 function openSettings(tab='roles'){
  r19Lifecycle('settings_open',{tab,visibility:document.visibilityState});
+ // Opening settings from the library drawer must retire its own glass scrim.
+ // Otherwise Safari composites overlapping full-screen backdrops.
+ if(qs('session-drawer')?.classList.contains('open'))closeDrawer();
+ window.MimaR6Nav?.close?.();
  settingsNavigationTouched=true;settingsTab=tab;
+ // The dialog covers the reader. Keep its original animations, but stop painting
+ // them behind two large compositing surfaces while API/settings are visible.
+ document.documentElement.classList.add('mima-settings-paint-guard');
  qs('settings-modal').classList.remove('hidden');
  try{return Promise.resolve(renderSettings()).then(ok=>{if(ok!==false)r19Lifecycle('settings_rendered',{tab});return ok;});}
  catch(error){r19Lifecycle('settings_render_error',{tab,name:error?.name||'Error',message:String(error?.message||error).slice(0,250)});console.error('设置面板渲染失败，保留当前页面和剧情',error);toast('设置显示失败：'+(error?.message||String(error)));}
 }
-function closeSettings(){stopVisibleFontPreviews();if(settingsTab==='templates'&&templateEditorDirty&&!confirm('设置模板有尚未保存的修改，确定关闭并放弃吗？'))return;templateEditorDirty=false;settingsNavigationTouched=true;++settingsRenderEpoch;qs('settings-modal').classList.add('hidden');++fontPreviewEpoch;void MimaFontManager.ensureFamily?.('').catch(e=>console.warn('[Font preview]',e));if(deferredGenerationProgress){if(ownsVisibleGeneration(deferredGenerationProgress.owner))setGenerationProgress(deferredGenerationProgress.payload);deferredGenerationProgress=null}if(liveStreamState){liveStreamState.visualPaused=false;pumpLiveStream();}queueMicrotask(maybeShowMimaReleaseNotice);}
+function closeSettings(){stopVisibleFontPreviews();if(settingsTab==='templates'&&templateEditorDirty&&!confirm('设置模板有尚未保存的修改，确定关闭并放弃吗？'))return;templateEditorDirty=false;settingsNavigationTouched=true;++settingsRenderEpoch;qs('settings-modal').classList.add('hidden');document.documentElement.classList.remove('mima-settings-paint-guard');++fontPreviewEpoch;void MimaFontManager.ensureFamily?.('').catch(e=>console.warn('[Font preview]',e));if(deferredGenerationProgress){if(ownsVisibleGeneration(deferredGenerationProgress.owner))setGenerationProgress(deferredGenerationProgress.payload);deferredGenerationProgress=null}if(liveStreamState){liveStreamState.visualPaused=false;pumpLiveStream();}queueMicrotask(maybeShowMimaReleaseNotice);}
 function switchSettingsTab(tab){if(tab!=='appearance')stopVisibleFontPreviews();if(tab!==settingsTab&&settingsTab==='templates'&&templateEditorDirty&&!confirm('模板修改尚未保存，确定离开并放弃吗？'))return;templateEditorDirty=false;settingsNavigationTouched=true;settingsTab=tab;renderSettings()}
 function maybeOpenInitialApiSettings(){
     // This delayed first-run invitation must never override a user's tab selection.
@@ -315,7 +322,7 @@ function syncAppearancePreviewMode(on){
         renderAppearancePreview();
     }else{
         panel.classList.remove('appearance-preview-mode');
-        if(stage)stage.remove();++fontPreviewEpoch;void MimaFontManager.ensureFamily?.('').catch(e=>console.warn('[Font preview]',e));
+        if(stage){stage.remove();++fontPreviewEpoch;void MimaFontManager.ensureFamily?.('').catch(e=>console.warn('[Font preview]',e));}
     }
 }
 function rootHeightForPreview(){return window.visualViewport?.height||window.innerHeight}
@@ -931,7 +938,7 @@ function setupImmersiveReading(){
 }
 // User-facing release notes: once per distinct production release by default.
 // Avoid touching Store/History or making automatic announcements mandatory.
-const MIMA_RELEASE_NOTES_VERSION='R19-20261030-BATCH8-PERFORMANCE-V5.15-MERGE-DEV';
+const MIMA_RELEASE_NOTES_VERSION='R19-20261030-V5.17-URL-FONT-PREVIEW-DEV';
 const MIMA_RELEASE_NOTES_SEEN='mima-release-notes-seen:'+MIMA_RELEASE_NOTES_VERSION;
 const MIMA_RELEASE_NOTES_OPTOUT='mima-release-notes-disable-auto-v1';
 function openMimaReleaseNotice(){
@@ -2586,6 +2593,7 @@ async function changeFont(kind,family){try{await MimaFontManager.setSelected(kin
 let visibleFontPreviewObserver=null,visibleFontPreviewGeneration=0,visibleFontPreviewQueue=Promise.resolve();
 const visibleFontPreviewOwners=new Map(),visibleFontPreviewTimers=new Map();
 function stopVisibleFontPreviews(){
+  stopUrlFontPreview();
   ++visibleFontPreviewGeneration;
   visibleFontPreviewObserver?.disconnect();visibleFontPreviewObserver=null;
   for(const timer of visibleFontPreviewTimers.values())clearTimeout(timer);
@@ -2727,9 +2735,89 @@ async function deleteLocalFont(id){if(!confirm('从这个浏览器删除字体�
 async function toggleSafeHtml(on){await patchCurrent({renderMode:on?'safe_html':'text'},true);refreshChatBox();renderAppearancePreview()}
 function formatBytes(n){if(!Number.isFinite(Number(n)))return'';if(n<1024)return`${n} B`;if(n<1024*1024)return`${(n/1024).toFixed(1)} KB`;return`${(n/1024/1024).toFixed(1)} MB`}
 function fontFormat(url){const c=String(url).split('?')[0].toLowerCase();if(c.endsWith('.woff2'))return'woff2';if(c.endsWith('.woff'))return'woff';if(c.endsWith('.ttf'))return'truetype';if(c.endsWith('.otf'))return'opentype';return''}
-function urlFontItemsHtml(){
-    return MimaFontManager.urlFonts().map(f=>`<div class="font-row"><div class="row-main"><div class="row-title">${escapeHtml(f.name)}</div><div class="row-sub">${escapeHtml(f.css?'CSS · '+f.family:'字体文件')} · ${escapeHtml(f.url.length>90?f.url.slice(0,90)+'…':f.url)}</div></div><button type="button" class="ghost-btn" onclick="activateUrlFont('${f.id}')">应用</button>${f.css?`<button type="button" class="ghost-btn" title="仅当旧字体 CSS 被主题引用但无法识别时启用；会在未选中时加载外部 CSS" onclick="toggleUrlFontCompatibility('${f.id}')">${f.compatAlwaysLoad===true||(f.lazy===false&&f.compatAlwaysLoad!==false)?'关闭强制加载':'兼容加载'}</button>`:''}<button type="button" class="danger-btn" onclick="removeUrlFont('${f.id}')">删除</button></div>`).join('')||'<div class="row-sub">还没有收藏字体链接。</div>';
+// URL fonts deliberately have a separate, click-to-preview lifecycle. A
+// collection of 100 links must never start 100 network/decode jobs merely
+// because the settings page was opened.
+let urlFontPreviewFrame=null,urlFontPreviewId='',urlFontPreviewEpoch=0;
+function stopUrlFontPreview(){
+    ++urlFontPreviewEpoch;
+    urlFontPreviewFrame?.remove();
+    urlFontPreviewFrame=null;
+    urlFontPreviewId='';
+    document.querySelectorAll('#url-font-list [data-url-preview-button]').forEach(button=>{
+        button.setAttribute('aria-expanded','false');button.textContent='预览';
+    });
+    document.querySelectorAll('#url-font-list .mima-url-font-preview').forEach(panel=>panel.remove());
 }
+function urlFontItemsHtml(){
+    return MimaFontManager.urlFonts().map(f=>`<div class="font-row mima-url-font-row" data-url-font-id="${f.id}"><div class="row-main"><div class="row-title">${escapeHtml(f.name)}</div><div class="row-sub">${escapeHtml(f.css?'CSS · '+f.family:'字体文件')} · ${escapeHtml(f.url.length>90?f.url.slice(0,90)+'…':f.url)}</div></div><button type="button" class="ghost-btn" data-url-preview-button aria-expanded="false" aria-label="预览 ${escapeHtml(f.name)}" onclick="previewUrlFont('${f.id}')">预览</button><button type="button" class="ghost-btn" onclick="activateUrlFont('${f.id}')">应用</button>${f.css?`<button type="button" class="ghost-btn" title="仅当旧字体 CSS 被主题引用但无法识别时启用；会在未选中时加载外部 CSS" onclick="toggleUrlFontCompatibility('${f.id}')">${f.compatAlwaysLoad===true||(f.lazy===false&&f.compatAlwaysLoad!==false)?'关闭强制加载':'兼容加载'}</button>`:''}<button type="button" class="danger-btn" onclick="removeUrlFont('${f.id}')">删除</button></div>`).join('')||'<div class="row-sub">还没有收藏字体链接。</div>';
+}
+async function previewUrlFont(id){
+    const font=MimaFontManager.urlFonts().find(f=>f.id===id);
+    if(!font)return toast('字体链接已不存在');
+    if(urlFontPreviewId===id){stopUrlFontPreview();return;}
+    stopUrlFontPreview();
+    const row=Array.from(document.querySelectorAll('#url-font-list [data-url-font-id]')).find(el=>el.dataset.urlFontId===id);
+    if(!row)return;
+    const epoch=urlFontPreviewEpoch;
+    urlFontPreviewId=id;
+    const button=row.querySelector('[data-url-preview-button]');
+    if(button){button.setAttribute('aria-expanded','true');button.textContent='收起预览';}
+    const panel=document.createElement('div');panel.className='mima-url-font-preview';
+    const state=document.createElement('div');state.className='mima-url-font-preview-state';
+    state.setAttribute('role','status');state.textContent='正在加载字体预览…';
+    const frame=document.createElement('iframe');
+    frame.className='mima-url-font-preview-frame';
+    frame.setAttribute('title','字体「'+font.name+'」效果预览');
+    frame.setAttribute('sandbox','allow-same-origin'); // No scripts or navigation.
+    // A CSS URL may contain arbitrary site styles: it must NOT be mounted into
+    // the main page just to preview a font. Isolate it in a disposable frame.
+    frame.srcdoc='<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><style>html,body{margin:0;padding:0;background:transparent}body{padding:5px 2px;font-size:19px;line-height:1.55}p{margin:0;overflow-wrap:anywhere}</style></head><body><p id="sample">Aa 123 · 咪嘛馆字体预览 · 春日花开 日本語</p></body></html>';
+    panel.append(state,frame);row.after(panel);
+    urlFontPreviewFrame=frame;
+    const current=()=>urlFontPreviewEpoch===epoch&&urlFontPreviewFrame===frame&&frame.isConnected;
+    frame.addEventListener('load',async()=>{
+        if(!current())return;
+        try{
+            const doc=frame.contentDocument,view=frame.contentWindow;
+            if(!doc?.fonts||!view)throw Error('当前浏览器不支持隔离字体预览');
+            const sample=doc.getElementById('sample');
+            const previewTextColor=getComputedStyle(row).color;
+            doc.documentElement.style.setProperty('background','transparent','important');
+            doc.body.style.setProperty('background','transparent','important');
+            doc.body.style.setProperty('color',previewTextColor,'important');
+            sample.style.setProperty('background','transparent','important');
+            sample.style.setProperty('color',previewTextColor,'important');
+            const declaration=JSON.stringify(font.family);
+            if(font.css){
+                await new Promise((resolve,reject)=>{
+                    const link=doc.createElement('link');link.rel='stylesheet';link.href=font.url;
+                    link.onload=resolve;
+                    link.onerror=()=>reject(Error('外部字体 CSS 加载失败，请检查链接和网络'));
+                    doc.head.appendChild(link);
+                });
+                if(!current())return;
+                const faces=await doc.fonts.load('normal 19px '+declaration,sample.textContent);
+                if(!faces?.some(face=>face.status==='loaded'))
+                    throw Error('CSS 没有加载到对应字体，请检查字体族名和字体跨域权限');
+            }else{
+                if(!view.FontFace)throw Error('当前浏览器不支持字体文件预览');
+                const face=new view.FontFace(font.family,`url(${JSON.stringify(font.url)})`,{display:'swap'});
+                doc.fonts.add(face);
+                await face.load();
+            }
+            if(!current())return;
+            sample.style.setProperty('font-family',declaration+', sans-serif','important');
+            sample.style.setProperty('display','block','important');
+            state.textContent='字体预览已加载 · 仅预览，不更改当前字体';
+        }catch(error){
+            if(!current())return;
+            state.textContent='预览失败：'+(error?.message||String(error));
+            state.classList.add('mima-url-font-preview-error');
+        }
+    },{once:true});
+}
+window.previewUrlFont=previewUrlFont;
 function setUrlFontImportMode(mode){
     const batch=mode==='batch';
     const singlePanel=qs('url-font-single-panel'),batchPanel=qs('url-font-batch-panel');
@@ -2755,7 +2843,7 @@ async function batchImportUrlFonts(){
             if(!picker)continue;
             for(const font of added){const option=document.createElement('option');option.value=font.family;option.textContent='链接 · '+font.name;picker.appendChild(option);}
         }
-        const list=qs('url-font-list');if(list)list.innerHTML=urlFontItemsHtml();
+        const list=qs('url-font-list');if(list){stopUrlFontPreview();list.innerHTML=urlFontItemsHtml();}
         status.textContent=`成功收藏 ${added.length} 个字体链接${rejected.length?'；跳过 '+rejected.length+' 个：\n'+rejected.map(r=>r.url+'：'+r.reason).join('\n'):''}。`;
         if(added.length){
             // If some entries were rejected, retain their URLs for easy repair.
@@ -2796,14 +2884,14 @@ function toggleUrlFontCompatibility(id){
     try{
         const forceEnabled=f.compatAlwaysLoad===true||(f.lazy===false&&f.compatAlwaysLoad!==false);
         if(!MimaFontManager.setUrlFontCompatibility(id,!forceEnabled))throw Error('记录已失效');
-        const list=qs('url-font-list');if(list)list.innerHTML=urlFontItemsHtml();
+        const list=qs('url-font-list');if(list){stopUrlFontPreview();list.innerHTML=urlFontItemsHtml();}
         toast(forceEnabled?'已关闭强制加载，仍会在选中或主题引用时加载':'已启用旧版兼容加载；未选中时也会请求此 CSS');
     }catch(e){toast('兼容加载设置失败：'+(e.message||String(e)));}
 }
 function removeUrlFont(id){
     const f=MimaFontManager.urlFonts().find(x=>x.id===id);if(!f)return;
     if(!confirm('从字体收藏库删除「'+f.name+'」？不会影响已导入字体或剧情。'))return;
-    MimaFontManager.deleteUrlFont(id);renderAppearanceTab(qs('settings-content'));
+    stopUrlFontPreview();MimaFontManager.deleteUrlFont(id);renderAppearanceTab(qs('settings-content'));
 }
 function applyLegacyUrlFont(){
     const url=qs('legacy-font-url').value.trim().replace(/[\n\r\t'"()\\]/g,'');
