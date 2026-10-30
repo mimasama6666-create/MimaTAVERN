@@ -33,7 +33,10 @@ window.MimaFontManager = (() => {
         if(initialized)init(true).catch(e=>console.warn('字体库同步失败，原字体保留',e));
     };
     const notifyFontChange = () => { metadataCache=null;fontRevision++;try{fontChanges?.postMessage('changed');}catch(_){} };
-    const metadataOf = ({id,name,family,format,size,createdAt}) => ({id,name,family,format,size,createdAt});
+    const metadataOf = ({id,name,family,format,size,createdAt,sourceUrlFontId,sourceUrl}) => ({
+        id,name,family,format,size,createdAt,
+        ...(sourceUrlFontId?{sourceUrlFontId,sourceUrl}:{} )
+    });
     const rememberMetadata = records => { metadataCache = records.map(metadataOf); };
     async function listMetadata() {
         while(metadataCache===null){
@@ -108,7 +111,7 @@ window.MimaFontManager = (() => {
             } catch (e) { finish(e); }
         });
     }
-    async function put(record) {
+    async function put(record, {addOnly=false}={}) {
         const db = await openDb();
         return new Promise((resolve, reject) => {
             let settled = false;
@@ -121,7 +124,7 @@ window.MimaFontManager = (() => {
             };
             try {
                 const tx = db.transaction(STORE, 'readwrite');
-                tx.objectStore(STORE).put(record);
+                tx.objectStore(STORE)[addOnly?'add':'put'](record);
                 tx.oncomplete = () => finish(null);
                 tx.onabort = () => finish(tx.error || new Error('E_FONT_WRITE_ABORTED'));
                 tx.onerror = () => finish(tx.error || new Error('E_FONT_WRITE_FAILED'));
@@ -567,6 +570,67 @@ window.MimaFontManager = (() => {
         localStorage.setItem(URL_LIBRARY_KEY,JSON.stringify([...fonts,record]));
         urlFontStyle();return record;
     }
+    // Offline copies use the EXISTING local font database and backup format.
+    // An explicit user click is the only trigger: no network downloads during
+    // startup/settings render, and no HTTP Cache/Service Worker dependency.
+    // The source URL remains available, but offline faces have a distinct family
+    // so URL @font-face styles can never fight the selected offline copy.
+    async function cacheUrlFont(id) {
+        const source=urlFonts().find(item=>item.id===id);
+        if(!source)throw new Error('字体链接不存在，未修改字体库');
+        if(source.css)throw new Error('CSS 字体可能包含多套字形文件，请先取得完整 TTF／OTF／WOFF 文件再离线导入；原链接仍保留');
+        const recordId='font_offline_'+source.id;
+        const existing=await readFontById(recordId);
+        if(existing){
+            if(existing.sourceUrlFontId!==source.id||existing.sourceUrl!==source.url||!existing.buffer?.byteLength)
+                throw new Error('离线字体 ID 与已有资料冲突，已保护原数据');
+            return metadataOf(existing);
+        }
+        const maxBytes=64*1024*1024;
+        let response;
+        try { response=await fetch(source.url,{mode:'cors',credentials:'omit',cache:'no-store'}); }
+        catch(error){ throw new Error('字体网站拒绝读取或网络不可用；原链接未更改：'+(error?.message||String(error))); }
+        if(!response.ok)throw new Error('下载字体失败（HTTP '+response.status+'），原链接未更改');
+        const sizeHint=Number(response.headers.get('content-length')||0);
+        if(sizeHint>maxBytes){try{await response.body?.cancel();}catch(_){}throw new Error('字体文件超过 64 MB，未下载到本机');}
+        // A real font must have a supported signature; do not persist an HTML
+        // error page, CSS stylesheet, or an unrelated binary as a fake font.
+        let bytes;
+        if(response.body?.getReader){
+            // Bound memory even when the server omits Content-Length or lies.
+            const reader=response.body.getReader(),chunks=[];let total=0;
+            try{
+                while(true){
+                    const {done,value}=await reader.read();if(done)break;
+                    total+=value.byteLength;
+                    if(total>maxBytes)throw new Error('字体下载超过 64 MB，已停止，原链接未更改');
+                    chunks.push(value);
+                }
+                const merged=new Uint8Array(total);let offset=0;
+                for(const chunk of chunks){merged.set(chunk,offset);offset+=chunk.byteLength;}
+                bytes=merged.buffer;
+            }catch(error){try{await reader.cancel();}catch(_){}throw error;}
+            finally{try{reader.releaseLock();}catch(_){} }
+        }else bytes=await response.arrayBuffer();
+        if(!bytes.byteLength||bytes.byteLength>maxBytes)throw new Error('字体文件为空或超过 64 MB，原链接未更改');
+        const head=new Uint8Array(bytes,0,Math.min(4,bytes.byteLength));
+        const signature=Array.from(head).map(n=>String.fromCharCode(n)).join('');
+        const format=signature==='wOF2'?'woff2':signature==='wOFF'?'woff':signature==='OTTO'?'otf':
+            (head[0]===0&&head[1]===1&&head[2]===0&&head[3]===0||signature==='true'||signature==='typ1')?'ttf':'';
+        if(!format)throw new Error('下载的内容不是支持的字体文件（可能是 CSS 或网页），未保存');
+        const record={id:recordId,name:'离线 · '+source.name+'.'+format,
+            family:'MimaOffline_'+source.id,format,size:bytes.byteLength,buffer:bytes,
+            createdAt:new Date().toISOString(),sourceUrlFontId:source.id,sourceUrl:source.url};
+        const entry=makeFont(record);
+        if(!entry)throw new Error('当前浏览器不支持校验离线字体');
+        try {await entry.face.load();}
+        catch(error){throw new Error('字体无法解码，未保存离线副本：'+(error?.message||String(error)));}
+        finally{disposeFont(entry);}
+        // Save only after verified decode and a successful complete IndexedDB
+        // transaction. Existing local fonts and URL records are untouched.
+        await put(record,{addOnly:true});
+        return metadataOf(record);
+    }
     // Import a pasted set of font links in one localStorage transaction. Existing
     // URL entries, saved binaries, and current UI/story choices are never changed.
     function batchFontCandidates(raw){
@@ -786,7 +850,7 @@ window.MimaFontManager = (() => {
                     const cursor=req.result;if(!cursor)return;
                     try{
                         const r=cursor.value;
-                        records.push({id:r.id,name:r.name,family:r.family,format:r.format,size:r.size,createdAt:r.createdAt,bufferBase64:bufferToBase64(r.buffer)});
+                        records.push({id:r.id,name:r.name,family:r.family,format:r.format,size:r.size,createdAt:r.createdAt,sourceUrlFontId:r.sourceUrlFontId,sourceUrl:r.sourceUrl,bufferBase64:bufferToBase64(r.buffer)});
                         cursor.continue();
                     }catch(e){issue=e;try{tx.abort();}catch(_){} }
                 };
@@ -811,6 +875,7 @@ window.MimaFontManager = (() => {
                 format: raw.format || extension(raw.name) || 'woff2',
                 size: Number(raw.size || 0),
                 createdAt: raw.createdAt || new Date().toISOString(),
+                ...(raw.sourceUrlFontId?{sourceUrlFontId:String(raw.sourceUrlFontId),sourceUrl:String(raw.sourceUrl||'')}:{}),
                 buffer: base64ToBuffer(raw.bufferBase64)
             };
             if(!record.buffer.byteLength)throw new Error('E_FONT_BACKUP_SIZE');
@@ -863,7 +928,8 @@ window.MimaFontManager = (() => {
             const buffer = base64ToBuffer(raw.bufferBase64);
             if (!buffer.byteLength) throw new Error('E_FONT_BACKUP_SIZE');
             if (Number(raw.size)>0 && Number(raw.size)!==buffer.byteLength) throw new Error('E_FONT_BACKUP_SIZE_MISMATCH');
-            const record = {id,name:String(raw.name||'imported.'+format),family:String(raw.family||safeFamily(raw.name)),format,size:buffer.byteLength,createdAt:raw.createdAt||new Date().toISOString(),buffer};
+            const record = {id,name:String(raw.name||'imported.'+format),family:String(raw.family||safeFamily(raw.name)),format,size:buffer.byteLength,createdAt:raw.createdAt||new Date().toISOString(),
+                ...(raw.sourceUrlFontId?{sourceUrlFontId:String(raw.sourceUrlFontId),sourceUrl:String(raw.sourceUrl||'')}:{}),buffer};
             const previous=await readFontById(id);
             if(previous){
                 const a=new Uint8Array(previous.buffer||new ArrayBuffer(0)),b=new Uint8Array(buffer);
@@ -921,5 +987,5 @@ window.MimaFontManager = (() => {
             binaryReadPending:pendingFonts.size,activePreviewOwners:usages.size,
             activeCssLinks:activeCssLinks.size};
     }
-    return { runtimeMetrics, init, all, listMetadata, getByFamily, ensureFamily, useFamily, releaseUsage, importFile, deleteFont, getSelected, getLoadStatus, setSelected, applySelected, urlFonts, refreshUrlFontUsage:urlFontStyle, fontReferencedByAppearance, setUrlFontCompatibility, addUrlFont, addUrlFontsBatch, deleteUrlFont, exportPortable, importPortable, planPortableImport, commitPortablePlan, rollbackPortablePlan };
+    return { runtimeMetrics, init, all, listMetadata, getByFamily, ensureFamily, useFamily, releaseUsage, importFile, cacheUrlFont, deleteFont, getSelected, getLoadStatus, setSelected, applySelected, urlFonts, refreshUrlFontUsage:urlFontStyle, fontReferencedByAppearance, setUrlFontCompatibility, addUrlFont, addUrlFontsBatch, deleteUrlFont, exportPortable, importPortable, planPortableImport, commitPortablePlan, rollbackPortablePlan };
 })();
