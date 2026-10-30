@@ -3991,7 +3991,9 @@ function r19RenderDisplayFailure(task,error){
 }
 function r19RenderDisplayResult(task,transformed){
  const {content,node,allowHtml,source}=task;
- if(allowHtml&&currentSessionData?.promptSettings?.outputContract?.requireHtml&&window.MimaHtmlStructure?.inspect){
+ // An unchanged display-regex result cannot break a structure that the
+ // original content satisfied. Avoid parsing the same HTML twice on render.
+ if(source!==transformed&&allowHtml&&currentSessionData?.promptSettings?.outputContract?.requireHtml&&window.MimaHtmlStructure?.inspect){
   const contract=currentSessionData.promptSettings.outputContract;
   if(window.MimaHtmlStructure.inspect(source,contract).ok&&!window.MimaHtmlStructure.inspect(transformed,contract).ok)
    throw Object.assign(new Error('过滤结果不符合当前 HTML 结构要求；请调整显示规则或 HTML 设置'),{code:'E_REGEX_HTML_CONTRACT'});
