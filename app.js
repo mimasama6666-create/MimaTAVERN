@@ -3468,7 +3468,7 @@ function toggleUIState(generating){
     const verification=generationReconcileStates.get(currentSessionId);
     const visible=!!currentGenerationOwner()||r19DraftReadBlocked.has(currentSessionId)||verification?.status==='checking'||verification?.status==='degraded';
     qs('send-btn').disabled=visible;
-    qsa('.quick-actions .chip-btn').forEach(b=>{if(!['stop-btn','generation-reconcile-footer','generation-task-viewer-open'].includes(b.id))b.disabled=visible});
+    qsa('.quick-actions .chip-btn').forEach(b=>{if(!['stop-btn','generation-reconcile-footer','generation-task-viewer-open','mima-reading-toggle'].includes(b.id))b.disabled=visible});
     const footerRecovery=qs('generation-reconcile-footer');
     if(footerRecovery){const blocked=!!visible&&!currentGenerationOwner();footerRecovery.classList.toggle('hidden',!blocked);footerRecovery.disabled=!blocked;footerRecovery.textContent=verification?.status==='checking'?'↻ 核对中':r19DraftReadBlocked.has(currentSessionId)?'↻ 免费核对草稿':'↻ 免费核对失败轮';footerRecovery.title='仅核对本机旧任务和剧情，不调用模型';}
     qs('stop-btn').classList.toggle('hidden',!currentGenerationOwner());qs('generation-stop-inline')?.classList.toggle('hidden',!currentGenerationOwner());
@@ -3574,23 +3574,28 @@ function patchLiveRenderedChildren(oldParent,newParent){
 async function renderLiveStreamText(){
     const st=liveStreamState;
     if(!st?.contentNode||!ownsVisibleGeneration(st.owner))return;
-    // SSE can update faster than a safe RegExp Worker can respond. Keep one
-    // active worker per stream, and coalesce intermediate visual snapshots.
+    // One in-flight sanitized snapshot. Later SSE updates may arrive while a
+    // Regex Worker is running; queue the newest snapshot without blocking paint.
     if(st.regexProcessing){st.regexDirty=true;return;}
     st.regexProcessing=true;
+    st.regexDirty=false;
+    const raw=st.displayText||'',token=r19RegexRenderToken(),renderMode=currentSessionData?.renderMode,started=performance.now();
     try{
-      do{
-        st.regexDirty=false;
-        if(liveStreamState!==st||!ownsVisibleGeneration(st.owner))break;
-        const raw=st.displayText||'',token=r19RegexRenderToken(),renderMode=currentSessionData?.renderMode,started=performance.now();let rendered;
         st.regexController=new AbortController();
+        let rendered;
         try{rendered=await MimaStandalone.applyRegexForSessionAsync(st.owner.sessionId,raw,'display',null,{signal:st.regexController.signal});}
         catch(e){
           if(liveStreamState===st&&ownsVisibleGeneration(st.owner)&&token===r19RegexRenderToken()&&!st.regexDirty&&st.displayText===raw)st.contentNode.textContent=`正则未执行（${e.code||'E_REGEX_WORKER_FAILED'}）：${e.message}。本轮原始流仍保留。`;
-          continue;
+          if(st.displayText!==raw||token!==r19RegexRenderToken()||renderMode!==currentSessionData?.renderMode)st.regexDirty=true;
+          return;
         }
-        if(liveStreamState!==st||!ownsVisibleGeneration(st.owner))break;
-        if(st.displayText!==raw||token!==r19RegexRenderToken()||renderMode!==currentSessionData?.renderMode){st.regexDirty=true;continue;}
+        if(liveStreamState!==st||!ownsVisibleGeneration(st.owner))return;
+        // A new cumulative prefix does not invalidate an older, already
+        // sanitized prefix. Paint that safe prefix now instead of throwing
+        // away every frame while streaming is faster than Regex processing.
+        // Non-prefix replacement, rule changes and mode changes still discard.
+        if(token!==r19RegexRenderToken()||renderMode!==currentSessionData?.renderMode||
+           (st.displayText!==raw&&!st.displayText.startsWith(raw))){st.regexDirty=true;return;}
         const allowHtml=currentSessionData?.renderMode==='safe_html';
         st.contentNode.className=`msg-content tavern-story-content live-stream-content${allowHtml?' safe-html-content':''}`;
         const perfDomAt=window.MimaPerfDiagnostics?.isRunning()?performance.now():0;
@@ -3602,9 +3607,17 @@ async function renderLiveStreamText(){
         st.paints=(st.paints||0)+1;
         if(st.paints===1)persistStoryUiTiming(st.owner,'ui_first_visible',st);
         updateStoryFollowButton();
-      }while(st.regexDirty&&liveStreamState===st);
-    }finally{st.regexProcessing=false;}
+        if(st.displayText!==raw)st.regexDirty=true;
+    }finally{
+        st.regexProcessing=false;
+        // Yield to the browser between full-text sanitization passes. Never
+        // spin through an unbounded do/while while the SSE transport is active.
+        if(st.regexDirty&&liveStreamState===st&&ownsVisibleGeneration(st.owner)&&!isSettingsOpen()&&!st.visualPaused&&!st.renderTimer){
+          st.renderTimer=requestAnimationFrame(()=>{st.renderTimer=null;if(liveStreamState===st&&ownsVisibleGeneration(st.owner)&&!isSettingsOpen()&&!st.visualPaused)void renderLiveStreamText();});
+        }
+    }
 }
+
 // Preserve user-operated HTML panels between streamed snapshots and the final
 // canonical renderer. This touches only presentation state, never Story/History.
 function r19CaptureStreamView(st,box){
@@ -3724,6 +3737,7 @@ function handleGenerationProgress(payload,owner=currentGenerationOwner()){
 function clearLiveStream(){
     liveStreamState?.regexController?.abort();
     if(liveStreamState?.timer)cancelAnimationFrame(liveStreamState.timer);
+    if(liveStreamState?.renderTimer)cancelAnimationFrame(liveStreamState.renderTimer);
     if(liveStreamState?.paints)persistStoryUiTiming(liveStreamState.owner,'ui_last_visible',liveStreamState);
     if(liveStreamState?.node?.isConnected)liveStreamState.node.remove();
     liveStreamState=null;updateStoryFollowButton();
