@@ -931,7 +931,7 @@ function setupImmersiveReading(){
 }
 // User-facing release notes: once per distinct production release by default.
 // Avoid touching Store/History or making automatic announcements mandatory.
-const MIMA_RELEASE_NOTES_VERSION='R19-20261030-BATCH8-PERFORMANCE-V5.13-DEV';
+const MIMA_RELEASE_NOTES_VERSION='R19-20261030-BATCH8-PERFORMANCE-V5.15-MERGE-DEV';
 const MIMA_RELEASE_NOTES_SEEN='mima-release-notes-seen:'+MIMA_RELEASE_NOTES_VERSION;
 const MIMA_RELEASE_NOTES_OPTOUT='mima-release-notes-disable-auto-v1';
 function openMimaReleaseNotice(){
@@ -4400,7 +4400,7 @@ function hydrateSafeHtmlDynamicMeters(root){
 function appendSafeHtmlWithProse(node,text,inlineMarkdown=false){
     const template=document.createElement('template');
     if(!node.dataset.mimaHtmlScope)node.dataset.mimaHtmlScope='mima_'+Math.random().toString(36).slice(2,12);
-    template.innerHTML=sanitizeAllowedHtml(text||'',node.dataset.mimaHtmlScope);
+    template.content.appendChild(sanitizeAllowedHtml(text||'',node.dataset.mimaHtmlScope,true));
     hydrateSafeHtmlDynamicMeters(template.content);
     let prose='';
     const flush=()=>{if(prose.trim())appendProseText(node,prose,inlineMarkdown);prose=''};
@@ -4471,7 +4471,7 @@ function scopedStoryCss(raw,scope){
     }).filter(Boolean).join('\n');
     return convert(sheet.cssRules);
 }
-function sanitizeAllowedHtml(html,htmlScope=''){
+function sanitizeAllowedHtml(html,htmlScope='',asFragment=false){
     const template=document.createElement('template');template.innerHTML=cleanCorruptText(html);
     const allowedTags=new Set(['SYSTEM','DIV','SPAN','P','BR','STRONG','B','EM','I','SMALL','MARK','S','U','SUB','SUP','KBD','SECTION','ARTICLE','HEADER','FOOTER','MAIN','ASIDE','NAV','DETAILS','SUMMARY','BLOCKQUOTE','PRE','CODE','H1','H2','H3','H4','H5','H6','UL','OL','LI','DL','DT','DD','TABLE','CAPTION','COLGROUP','COL','THEAD','TBODY','TFOOT','TR','TD','TH','HR','PROGRESS','METER','STYLE']);
     const blockedTags=new Set(['SCRIPT','IFRAME','OBJECT','EMBED','FORM','INPUT','BUTTON','SELECT','TEXTAREA','OPTION','META','LINK','BASE','SVG','MATH','VIDEO','AUDIO','SOURCE','TRACK','CANVAS','NOSCRIPT']);
@@ -4498,7 +4498,9 @@ function sanitizeAllowedHtml(html,htmlScope=''){
             if(!ok||/^on/i.test(n)||/javascript:|data:text\/html/i.test(v))el.removeAttribute(a.name);
         }
     }
-    return template.innerHTML;
+    // Existing validation/scoping is unchanged; return parsed nodes to the
+    // caller without a redundant serialize + reparse cycle.
+    return asFragment?template.content:template.innerHTML;
 }
 
 function restoreLegacyFont({syncSelection=true}={}){
