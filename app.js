@@ -3202,7 +3202,7 @@ async function refreshDiagnosticsView(){
     const record=records.find(x=>x.id===diagnosticViewState.selectedId);
     detail.innerHTML='';if(!record)return;
     let retained=null,retainedError='';
-    if(record.error)try{retained=await MimaDiagnosticJournal.candidatePreview(record.id);}catch(e){retainedError=e.message;}
+    if(record.error||['provider_returned','requesting'].includes(record.status))try{retained=await MimaDiagnosticJournal.candidatePreview(record.id);}catch(e){retainedError=e.message;}
     if(refreshId!==diagnosticViewRefreshSequence||settingsTab!=='diagnostics'||epoch!==settingsRenderEpoch||root!==qs('diag-list')||record.id!==diagnosticViewState.selectedId)return;
     const wrap=document.createElement('div');wrap.className='diag-detail entry-card';
     const request=record.request;
@@ -3216,7 +3216,7 @@ async function refreshDiagnosticsView(){
       ${record.requestSent===false?`<div class="row-sub">本地预检拦截，零出站：当前模型已绑定窗口 ${Number(record.configuredWindow||0).toLocaleString()} Tokens；无 HTTP 请求。</div>`:''}<h4>真实请求内容（不包含 API Key 和请求头）</h4>
       ${record.requestTruncated?'<div class="row-sub">本轮请求超过日志单条上限，未保留完整正文。实际发送不受影响；本条不能作为完整 Prompt 证据。</div>':''}
       ${request?`<div class="row-sub">${request.messages.length} 条消息 · 模型 ${escapeHtml(request.model)} · stream=${request.stream} · max_tokens=${escapeHtml(request.max_tokens??'未设置')}</div><details><summary>展开实际 messages</summary><pre class="prompt-pre">${escapeHtml(fmt)}</pre></details>`:'<div class="row-sub">没有保存完整请求：可能在发送前失败，或超出日志容量上限。</div>'}
-      ${record.error?`<h4>错误与拒绝/截断诊断</h4><pre class="prompt-pre">${escapeHtml(JSON.stringify(record.error,null,2))}</pre><h4>未采纳的模型文本（可手动恢复）</h4><div class="row-sub">${retainedError?'留存正文读取失败：'+escapeHtml(retainedError):retained?.raw?`${retained.rawChars} 字符 · ${retained.complete?'完整留存；服务端结束标记仍以上方记录为准':'仅有现存片段，后半段可能缺失；可确认后恢复片段'}`:'没有收到可恢复的正文。'}</div><pre class="prompt-pre">${escapeHtml(retained?.raw||record.rawRejectedReply||'没有可保存的失败正文。')}</pre>`:'<div class="row-sub">本条没有失败正文；成功回复仅存于原有剧情，不在此复制第二份。</div>'}`;
+      ${record.error?`<h4>错误与拒绝/截断诊断</h4><pre class="prompt-pre">${escapeHtml(JSON.stringify(record.error,null,2))}</pre><h4>未采纳的模型文本（可手动恢复）</h4><div class="row-sub">${retainedError?'留存正文读取失败：'+escapeHtml(retainedError):retained?.raw?`${retained.rawChars} 字符 · ${retained.complete?'完整留存；服务端结束标记仍以上方记录为准':'仅有现存片段，后半段可能缺失；可确认后恢复片段'}`:'没有收到可恢复的正文。'}</div><pre class="prompt-pre">${escapeHtml(retained?.raw||record.rawRejectedReply||'没有可保存的失败正文。')}</pre>`:`<div class="row-sub">${retainedError?'本机留存读取失败：'+escapeHtml(retainedError):retained?.raw?`本机已保存 ${retained.rawChars} 字符（${retained.complete?'当前可核实为完整接收':'仅为现存片段'}），可复制或下载；未确认提交到剧情。`:'本条未找到可核实的留存正文；请打开当前剧情的「上轮状态」核对。'}</div>${retained?.raw?`<pre class="prompt-pre">${escapeHtml(retained.raw)}</pre>`:''}`}`;
     if(retained?.raw){
         const copy=document.createElement('button');copy.type='button';copy.className='ghost-btn';copy.textContent='复制留存正文';copy.onclick=async()=>{try{await copyTextPortable(retained.raw);toast('已复制'+retained.rawChars+'字符的留存正文');}catch(e){toast('复制失败：'+e.message);}};
         const download=document.createElement('button');download.type='button';download.className='ghost-btn';download.textContent='下载留存正文';download.onclick=()=>downloadText('咪嘛馆-未采纳正文.txt',retained.raw);
@@ -3272,11 +3272,12 @@ function updateGenerationTaskViewerShortcut(session=currentSessionData){
  const last=latestGenerationInfo(session);btn.classList.toggle('hidden',!currentSessionId||!last);
  if(last){btn.textContent=last.status==='prepared'?'◷ 上轮状态':last.status==='completed'?'✓ 上轮结果':'◷ 上轮记录';}
 }
-function closeGenerationTaskViewer(){r19TaskViewerReadToken++;qs('generation-task-viewer')?.classList.add('hidden');r19TaskViewerCopiedText='';}
+let r19UnsettledRecovery=null;
+function closeGenerationTaskViewer(){r19TaskViewerReadToken++;r19UnsettledRecovery=null;qs('generation-task-manual-recover')?.classList.add('hidden');qs('generation-task-viewer')?.classList.add('hidden');r19TaskViewerCopiedText='';}
 async function openGenerationTaskViewer(){
  const viewer=qs('generation-task-viewer'),status=qs('generation-task-status'),body=qs('generation-task-text');
  if(!viewer||!currentSessionId)return;
- viewer.classList.remove('hidden');status.textContent='正在读取本地记录…';body.textContent='';
+ viewer.classList.remove('hidden');status.textContent='正在读取本地记录…';body.textContent='';r19UnsettledRecovery=null;qs('generation-task-manual-recover')?.classList.add('hidden');
  const sessionId=currentSessionId,nav=sessionNavigationEpoch,readToken=++r19TaskViewerReadToken;
  try{
    const res=await fetchStory(`/sessions/${encodeURIComponent(sessionId)}/canonical-view`);
@@ -3306,7 +3307,58 @@ async function openGenerationTaskViewer(){
      (draftProblem?'\n'+draftProblem:'');
    r19TaskViewerCopiedText=reply||draft;
    body.textContent=reply||draft||(hasSavedReply?'回复已保存到剧情，但无法通过记录定位到原消息。请在剧情中查看。':'这轮没有在本机留下可核实的正文。非流式请求在页面关闭前未收到的响应无法恢复。');
+   // The saved fragment ledger is independent of History. Offer explicit
+   // Owner restoration for a lost prepared attempt, never for a live owner.
+   if(entry.status==='prepared'&&!localActive&&!draftProblem){
+     const identity={sessionId,generationId:entry.id,attempt:entry.attempt};
+     const records=await MimaDiagnosticJournal.list({sessionId});
+     const record=records.find(r=>r.generationId===entry.id&&r.generationAttempt===entry.attempt&&r.action===entry.action&&['requesting','provider_returned'].includes(r.status));
+     if(record&&currentSessionId===sessionId&&nav===sessionNavigationEpoch&&readToken===r19TaskViewerReadToken&&!viewer.classList.contains('hidden')){
+       const candidate=await MimaDiagnosticJournal.candidatePreview(record.id);
+       if(currentSessionId!==sessionId||nav!==sessionNavigationEpoch||readToken!==r19TaskViewerReadToken||viewer.classList.contains('hidden'))return;
+       if(candidate.raw.trim()&&(candidate.source==='full_candidate'||candidate.raw===draft)){
+         r19UnsettledRecovery={...identity,diagnosticId:record.id,rawChars:candidate.raw.length,complete:candidate.complete};
+         r19TaskViewerCopiedText=candidate.raw;body.textContent=candidate.raw;
+         qs('generation-task-manual-recover')?.classList.remove('hidden');
+         status.textContent+='\n本机留存可申请手动恢复；操作前会再次核对原任务身份和其他窗口。';
+       }
+     }
+   }
  }catch(error){if(currentSessionId===sessionId&&nav===sessionNavigationEpoch&&readToken===r19TaskViewerReadToken&&!viewer.classList.contains('hidden')){status.textContent='本地读取失败，历史未被更改：'+error.message;body.textContent='';r19TaskViewerCopiedText='';}}
+}
+async function recoverUnsettledGeneration(){
+ const identity=r19UnsettledRecovery;
+ const navigationAtStart=sessionNavigationEpoch;
+ if(!identity||diagnosticRecoveryBusy.has(identity.diagnosticId)||currentSessionId!==identity.sessionId)return toast('原任务身份已经变化，请重新打开上轮状态');
+ if(generationOwners.has(identity.sessionId))return toast('本窗口的生成仍在进行，不能提前恢复');
+ diagnosticRecoveryBusy.add(identity.diagnosticId);
+ let restored=false;
+ try{
+   const response=await fetchStory(`/sessions/${encodeURIComponent(identity.sessionId)}/canonical-view`);
+   const pending=response.data?.pendingGeneration;
+   if(!response.success||pending?.status!=='prepared'||pending.id!==identity.generationId||pending.attempt!==identity.attempt)throw Error('原任务不再处于待结算状态，请重新查看剧情');
+   const read=await MimaLocalStore.generationRead(identity);
+   if(!read.complete)throw Error('原任务的本机流式账本不完整');
+   const stillRunning=await r19ProbeOtherWindow(identity,read.receipt?.ownerId||pending.ownerId);
+   if(stillRunning)throw Error('另一个窗口仍在执行原任务，请先回到原窗口查看，不会覆盖正在生成的回复');
+   const record=await MimaDiagnosticJournal.get(identity.diagnosticId);
+   const candidate=await MimaDiagnosticJournal.candidatePreview(identity.diagnosticId);
+   if(!record||record.sessionId!==identity.sessionId||record.generationId!==identity.generationId||record.generationAttempt!==identity.attempt||!['requesting','provider_returned'].includes(record.status)||!candidate.raw.trim()||(candidate.source!=='full_candidate'&&candidate.raw!==read.text))throw Error('诊断与临时正文不再匹配；未改动剧情');
+   const kind=candidate.complete?'已保留的完整正文':'目前实际保存的片段（后半段可能缺失）';
+   if(!confirm(`本机找到 ${candidate.raw.length} 字符${kind}。\n\n其他窗口未回应不代表原请求已经结束。若原请求仍在运行，本次手动提交可能使它无法再自动结算。\n\n确定按原发送／重说／续写位置恢复吗？不会重发模型请求，也不会补造文字。`))return;
+   const result=await fetchStory(`/sessions/${encodeURIComponent(identity.sessionId)}/recover-reply`,'POST',{diagnosticId:record.id,confirmed:true,allowPartial:!candidate.complete,allowUnsettled:true});
+   if(!result.success)throw Error(result.msg||'恢复失败，未改动剧情');
+   restored=true;
+   let notice='';
+   try{await MimaDiagnosticJournal.event(record.id,{type:'manual_recovery',messageId:result.data.messageId,action:result.data.action});}
+   catch(error){notice='；诊断标记保存失败';console.error('正文已恢复，诊断标记未能保存',error);}
+   try{
+     if(currentSessionId===identity.sessionId&&sessionNavigationEpoch===navigationAtStart){currentSessionData=result.data.session;refreshChatBox({scrollToBottom:false});}
+     closeGenerationTaskViewer();await refreshSessionSummaryList();updateGenerationTaskViewerShortcut();
+   }catch(error){notice+='；页面刷新失败，请重新打开该剧情';console.error('正文已保存，界面后处理失败',error);}
+   toast((result.data.alreadyRestored?'该回复已经恢复，没有重复写入':'已手动恢复本机留存正文，没有重发模型请求')+notice);
+ }catch(error){toast((restored?'正文已保存，但后续操作失败：':'未恢复：')+error.message);console.error('原任务恢复流程异常',error);}
+ finally{diagnosticRecoveryBusy.delete(identity.diagnosticId);}
 }
 async function copyGenerationTaskViewerText(){
  if(!r19TaskViewerCopiedText)return toast('没有已核实的文字可复制');

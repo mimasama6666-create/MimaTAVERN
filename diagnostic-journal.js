@@ -160,7 +160,7 @@
    if(saved)return {id:record.id,raw:saved.raw,rawChars:saved.rawChars,complete:true,digest:saved.rawDigest,source:'full_candidate'};
    const raw=String(record.rawRejectedReply||'');
    const legacyLimited=String(record.action||'').startsWith('compat_')&&raw.length===24000&&!record.replyCaptureVersion;
-   if((record.rejectedReplyTruncated||!raw)&&!String(record.action||'').startsWith('compat_')&&record.generationId&&Number.isInteger(record.generationAttempt)&&window.MimaLocalStore?.generationRead){
+   if((record.rejectedReplyTruncated||!raw)&&record.status!=='committed'&&!String(record.action||'').startsWith('compat_')&&record.generationId&&Number.isInteger(record.generationAttempt)&&window.MimaLocalStore?.generationRead){
      const read=await window.MimaLocalStore.generationRead({sessionId:record.sessionId,generationId:record.generationId,attempt:record.generationAttempt});
      const last=record.request?.messages?.at(-1),prefix=last?.role==='assistant'&&last.prefix===true?String(last.content||''):'';
      let matches=read.text?.startsWith(raw),prefixObserved=false;
@@ -183,10 +183,10 @@
  }
  async function candidatePreview(id){const record=await get(id);if(!record)throw Error('诊断记录不存在');return recoverySource(record);
  }
- async function recoveryCandidate(id,{allowPartial=false}={}){
+ async function recoveryCandidate(id,{allowPartial=false,allowUnsettled=false}={}){
    const row=await get(id),bad=message=>{throw Object.assign(new Error(message),{code:'E_REPLY_RECOVERY_UNAVAILABLE'});};
    if(!row)bad('诊断记录已清理，无法恢复。');
-   if(!['rejected','aborted','conflict'].includes(row.status))bad('本记录不是已结算的坏回复。');
+   if(!['rejected','aborted','conflict'].includes(row.status)&&!(allowUnsettled===true&&['requesting','provider_returned'].includes(row.status)&&row.generationId&&Number.isInteger(row.generationAttempt)))bad('本记录不是已结算的坏回复，也不是经主人确认的原生未结算请求。');
    const candidate=await recoverySource(row);
    if(!candidate.raw.trim())bad('这条日志没有收到可恢复的正文；不会重新请求模型。');
    if(!candidate.complete&&!allowPartial)bad('当前仅保留了部分正文，可在手动恢复时确认恢复现有片段；不会补造缺失文字。');

@@ -9,6 +9,9 @@
   const API_CONFIG_KEY = 'MIMAMAO_TAVERN_STANDALONE_API_V1';
   let state = { storeRevision: 0, schemaVersion: 4, sessions: [], masks: [], presets: [], worldbooks: [], cssPresets: [], regexPacks: [], theaterCards: [], quickCommands: [], settingTemplates: [], novelProjects: [], themeSettings:{theme:'default',updatedAt:''} };
   let lastUsage = null; // v1.1.4: upstream usage/cache telemetry only; never treated as canonical story data.
+  // A live attempt in this JS realm must never be settled by recovery while its
+  // own model call or canonical commit is still in progress.
+  const inFlightStoryAttempts=new Set();
   // Emergency copies survive view changes when IndexedDB cannot save a return.
   // They are deliberately page-local, and the draft UI explains the limitation.
   const volatileHtmlRepairDrafts = new Map();
@@ -3295,6 +3298,8 @@
     const storyClock=()=>typeof performance!=='undefined'&&performance.now?performance.now():Date.now(),storyTimelineStart=storyClock();
     const storyMark=(phase,extra={})=>{if(diagnosticId)void journal.event(diagnosticId,{type:'timing',phase,generationId:pending.id,attempt:pending.attempt,elapsedAfterPreparedMs:Math.round((storyClock()-storyTimelineStart)*100)/100,preparationElapsedMs:Date.now()-preparationStartedAt,...extra});};
     storyMark('canonical_snapshot_persisted',{messageCount:messages.length});
+    const liveAttemptKey=JSON.stringify(identity);
+    inFlightStoryAttempts.add(liveAttemptKey);
     try{
     await recoverStore.generationReceipt(identity,'REQUEST_DISPATCH_ATTEMPT',{requestDispatchAttempted:true,ownerId:pending.ownerId});
     const replyRaw=await callModelWithConfig(messages,cfg,temp,signal,{onProgress:generationProgress,resultMeta:storyResultMeta,requestBody,messageSources:snapshot.messageSources,
@@ -3447,7 +3452,7 @@
           rawRejectedReply:retained,rawLimited:limited,finishKind:storyResultMeta.finishKind||'',finishReason:storyResultMeta.finishReason||''});}catch(logError){console.error('诊断失败结算持久化失败（不改变剧情错误原因）',logError);}
       }
       throw e;
-    }
+    }finally{inFlightStoryAttempts.delete(liveAttemptKey);}
   }
   // Explicit recovery from a lost UI owner. The upstream request can remain
   // billable: this settles ONLY the local canonical lock, never reports API cancel.
@@ -3517,15 +3522,25 @@
   }
   async function restoreRejectedReply(id,body={}){
     if(body.confirmed!==true)throw new ApiError('E_REPLY_RECOVERY_CONFIRM','请先确认将已收到的文本手动恢复到原剧情。');
-    const record=await window.MimaDiagnosticJournal.recoveryCandidate(body.diagnosticId,{allowPartial:body.allowPartial===true&&!body.htmlCandidateId});
+    const record=await window.MimaDiagnosticJournal.recoveryCandidate(body.diagnosticId,{allowPartial:body.allowPartial===true&&!body.htmlCandidateId,allowUnsettled:body.allowUnsettled===true&&!body.htmlCandidateId});
     if(record.sessionId!==id||String(record.action||'').startsWith('compat_'))throw new ApiError('E_REPLY_RECOVERY_OWNER','诊断不属于这个原生剧情。');
     const persisted=normalizeState(await window.MimaLocalStore.loadState()),sourceSession=persisted.sessions.find(s=>s.id===id),session=sourceSession?normalizeSession(clone(sourceSession)):null;
     if(!session)throw new ApiError('E_STORY_SESSION_MISSING','原剧情已删除，未重建或覆盖存档。');
     const previous=session.messages.find(m=>m.metadata?.manualRecovery?.diagnosticId===record.id||arr(m.metadata?.manualRecoveryIds).includes(record.id));
     if(previous)return {session,messageId:previous.id,alreadyRestored:true,action:record.action};
     const pending=session.pendingGeneration;
-    if(!record.generationId||!pending||pending.id!==record.generationId||pending.attempt!==record.generationAttempt||pending.status!=='failed'||pending.action!==record.action)
+    if(!record.generationId||!pending||pending.id!==record.generationId||pending.attempt!==record.generationAttempt||!(pending.status==='failed'||(body.allowUnsettled===true&&pending.status==='prepared'&&['requesting','provider_returned'].includes(record.status)))||pending.action!==record.action)
       throw new ApiError('E_REPLY_RECOVERY_STALE','原失败任务已被重试、替换或清理，未将旧回复写入新剧情。');
+    if(body.allowUnsettled===true&&pending.status==='prepared'){
+      const identity={sessionId:id,generationId:pending.id,attempt:pending.attempt};
+      if(inFlightStoryAttempts.has(JSON.stringify(identity)))
+        throw new ApiError('E_GENERATION_STILL_ACTIVE','原任务在当前页面仍在生成或结算，禁止手动抢先恢复。');
+      const retained=await window.MimaLocalStore.generationRead(identity);
+      if(!retained.complete||(!retained.text&&record.recoverySource!=='full_candidate'))
+        throw new ApiError('E_GENERATION_RECEIPT_INCOMPLETE','本机账本不完整，不能将未知请求当作成功恢复。');
+      if(record.recoverySource!=='full_candidate'&&record.rawRejectedReply!==retained.text)
+        throw new ApiError('E_GENERATION_RECOVERY_SOURCE_MISMATCH','恢复文本与原流式账本不一致，已阻止错写剧情。');
+    }
     if(pending.canonicalFingerprint!==memorySourceFingerprint(session.messages,session.messages.length))
       throw new ApiError('E_CANONICAL_CONFLICT','失败后剧情正文或版本已变化，未覆盖当前时间线。');
     const raw=String(record.rawRejectedReply),action=pending.action;
@@ -3583,7 +3598,7 @@
     // Explicit human action only: no Provider, retry or background summary.
     let saved;
     if(htmlRepair){
-      const normalized=normalizeSession({...session,pendingGeneration:null,legacyMemoryQuarantined:true,updatedAt:nowIso()});
+      const normalized=normalizeSession({...session,pendingGeneration:null,lastGeneration:{id:pending.id,attempt:pending.attempt,action,preparedAt:pending.preparedAt,settledAt:nowIso(),status:'completed',resultMessageId:target.id,manualRecovery:true},legacyMemoryQuarantined:true,updatedAt:nowIso()});
       const initialRecordRevision=Number(session.recordRevision)||0;
       normalized.recordRevision=initialRecordRevision+1;
       const nextState=clone(persisted),idx=nextState.sessions.findIndex(x=>x.id===id);
@@ -3591,7 +3606,7 @@
       nextState.sessions[idx]=normalized;
       const committed=await window.MimaLocalStore.commitHtmlRepair(nextState,Number(persisted.storeRevision)||0,id,htmlRepair.messageId,htmlRepair.id,initialRecordRevision);
       state=normalizeState(committed);saved=normalized;
-    }else saved=await saveSession({...session,pendingGeneration:null,legacyMemoryQuarantined:true});
+    }else saved=await saveSession({...session,pendingGeneration:null,lastGeneration:{id:pending.id,attempt:pending.attempt,action,preparedAt:pending.preparedAt,settledAt:nowIso(),status:'completed',resultMessageId:target.id,manualRecovery:true},legacyMemoryQuarantined:true});
     return {session:saved,messageId:target.id,alreadyRestored:false,action};
   }
   async function inspectHtmlMessage(id,msgId){
