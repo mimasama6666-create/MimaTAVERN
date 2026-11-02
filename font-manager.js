@@ -195,27 +195,15 @@ window.MimaFontManager = (() => {
                 // an array of copies or hold up the application's input binding.
                 await new Promise(resolve=>setTimeout(resolve,0));
             }
-            // Reconcile v1 deletions too. An old tab may have removed a key
-            // without writing a v2 tombstone. Never delete a v1 binary here.
-            // Compare current metadata inside the same v2 write transaction so
-            // a concurrent v2 replacement never gets hidden by this scan.
+            // CRITICAL DATA-SAFETY: never infer an intentional deletion from an
+            // absent key in another database. A temporarily unavailable/empty
+            // legacy store (including an origin/storage recovery) must NOT
+            // delete its only remaining v2 metadata. Explicit deleteFont()
+            // creates a tombstone in the same transaction as deleting metadata.
+            // Legacy binaries are never removed by migration.
             const existing=await readMetadata(),v1Present=new Set(ids);
             const absent=existing.filter(r=>r.storage==='legacy'&&!v1Present.has(r.id));
-            if(absent.length){
-                const db=await openFontDb();
-                await new Promise((resolve,reject)=>{
-                    let tx;
-                    try{
-                        tx=db.transaction(META_STORE,'readwrite');const store=tx.objectStore(META_STORE);
-                        for(const old of absent){const req=store.get(old.id);req.onsuccess=()=>{
-                            const current=req.result;
-                            if(current?.storage==='legacy' && versionOf(current)===versionOf(old))store.delete(old.id);
-                        };}
-                        tx.oncomplete=()=>{db.close();resolve()};
-                        tx.onabort=()=>{db.close();reject(tx.error||new Error('E_FONT_LEGACY_RECONCILE'))};
-                    }catch(e){try{tx?.abort()}catch(_){}db.close();reject(e)}
-                });
-            }
+            if(absent.length)console.warn('旧字体库有未能定位的原件，已保留索引与选择；请使用外观页只读数据检查',absent.length);
             // Completion means the key inventory was indexed, NOT that every
             // binary is healthy. Corrupt entries are preserved with diagnosis.
             const db=await openFontDb();await new Promise((resolve,reject)=>{
@@ -256,7 +244,9 @@ window.MimaFontManager = (() => {
             return migrateLegacy(true);
         }
         const ids=await legacyKeys(),present=new Set(oldRecords.map(r=>r.id)),v1Present=new Set(ids);
-        let missing=oldRecords.some(r=>r.storage==='legacy'&&!v1Present.has(r.id));
+        // Missing legacy bytes do not authorize removing an index.
+        // Only detect NEW legacy IDs that may safely be added.
+        let missing=false;
         for(const id of ids){
             if(present.has(id))continue;
             if(!await storeRead('v2',STATE_STORE,'deleted:'+id)){missing=true;break;}
@@ -281,6 +271,81 @@ window.MimaFontManager = (() => {
                 tx.onabort=()=>{db.close();reject(issue||tx.error||new Error('E_FONT_METADATA_ABORTED'))};
             }catch(e){db.close();reject(e)}
         });
+    }
+    // Read-only forensic inventory. Never call openDb/openFontDb here: those
+    // helpers can CREATE an empty database and hide the distinction between
+    // an absent DB and an existing empty DB. Only metadata/keys are read;
+    // no font bytes are copied and no IndexedDB or localStorage write occurs.
+    async function openExistingForAudit(name){
+        return new Promise((resolve,reject)=>{
+            let missing=false;const request=indexedDB.open(name);
+            request.onupgradeneeded=()=>{missing=true;try{request.transaction.abort();}catch(_){}};
+            request.onsuccess=()=>{if(missing){request.result.close();resolve(null);}else resolve(request.result);};
+            request.onerror=()=>missing?resolve(null):reject(request.error||new Error('E_FONT_AUDIT_DB'));
+            request.onblocked=()=>reject(new Error('字体数据库正在被其他页面占用'));
+        });
+    }
+    async function auditKeyStores(db,stores){
+        return new Promise((resolve,reject)=>{
+            let tx,issue;const values={};
+            try{
+                for(const store of stores)if(!db.objectStoreNames.contains(store))throw new Error('E_FONT_AUDIT_STORE:'+store);
+                tx=db.transaction(stores,'readonly');
+                for(const name of stores){
+                    const req=name===META_STORE?tx.objectStore(name).getAll():tx.objectStore(name).getAllKeys();
+                    req.onsuccess=()=>{values[name]=req.result};
+                    req.onerror=()=>{issue=req.error};
+                }
+                tx.oncomplete=()=>resolve(values);
+                tx.onabort=()=>reject(issue||tx.error||new Error('E_FONT_AUDIT_ABORT'));
+            }catch(e){try{tx?.abort()}catch(_){}reject(e)}
+        });
+    }
+    async function auditStoredFonts(){
+        const result={version:1,readonly:true,selected:{ui:getSelected('ui'),story:getSelected('story')},
+            legacy:{exists:false,count:0,ids:[]},modern:{exists:false,metadataCount:0,binaryCount:0,binaryIds:[],metadata:[],orphanBinaryIds:[],missingBinaryIds:[],legacyIndexesWithoutSource:[],tombstoneIds:[]},warnings:[]};
+        const v1=await openExistingForAudit(DB_NAME);
+        if(v1){try{const rows=await auditKeyStores(v1,[STORE]);
+            result.legacy={exists:true,count:rows[STORE].length,ids:rows[STORE].map(String)};
+        }finally{v1.close()}}
+        const v2=await openExistingForAudit(INDEX_DB);
+        if(v2){try{
+            const stores=await auditKeyStores(v2,[META_STORE,BINARY_STORE,STATE_STORE]);
+            const meta=stores[META_STORE],ids=stores[BINARY_STORE].map(String);
+            const refs=new Set(meta.filter(m=>m.storage!=='legacy').map(m=>String(m.id))),bytes=new Set(ids),old=new Set(result.legacy.ids);
+            result.modern={exists:true,metadataCount:meta.length,binaryCount:ids.length,binaryIds:ids.slice(),
+                metadata:meta.map(m=>({id:String(m.id),name:String(m.name||''),storage:String(m.storage||''),size:Number(m.size||0),health:String(m.health||'')})),
+                orphanBinaryIds:ids.filter(id=>!refs.has(id)),
+                missingBinaryIds:[...refs].filter(id=>!bytes.has(id)),
+                legacyIndexesWithoutSource:meta.filter(m=>m.storage==='legacy'&&!old.has(String(m.id))).map(m=>String(m.id)),
+                tombstoneIds:stores[STATE_STORE].map(String).filter(id=>id.startsWith('deleted:')).map(id=>id.slice(8))};
+        }finally{v2.close()}}
+        if(result.modern.legacyIndexesWithoutSource.length)result.warnings.push('旧库原件当前不可定位；索引已保留，不代表字体已被安全删除');
+        if(result.modern.orphanBinaryIds.length)result.warnings.push('找到无索引的本地字体二进制；不要清除网站数据，可单独导出原件');
+        if(!result.legacy.count&&!result.modern.binaryCount)result.warnings.push('当前站点来源下两个字体库存储均未发现原件；可检查是否更换域名或从既有备份恢复');
+        return result;
+    }
+    async function recoverLegacyIndex(){
+        const before=await auditStoredFonts();
+        if(!before.legacy.count)throw new Error('旧字体库没有可重建的原件，未更改数据库');
+        await migrateLegacy(true);
+        await init(true);
+        return auditStoredFonts();
+    }
+    // Export a surviving binary exactly as stored. No metadata creation,
+    // modification, migration or automatic import. Only explicit user click.
+    async function readOrphanBinary(id){
+        id=String(id||'');if(!id||id.length>256)throw new Error('无效原件 ID');
+        const db=await openExistingForAudit(INDEX_DB);if(!db)throw new Error('新字体数据库不存在');
+        try{
+            const data=await new Promise((resolve,reject)=>{
+                let value,issue;const tx=db.transaction(BINARY_STORE,'readonly');const req=tx.objectStore(BINARY_STORE).get(id);
+                req.onsuccess=()=>{value=req.result};req.onerror=()=>{issue=req.error};
+                tx.oncomplete=()=>resolve(value);tx.onabort=()=>reject(issue||tx.error||new Error('E_FONT_RESCUE_READ'));
+            });
+            if(!data)throw new Error('此原件已不存在，未修改任何数据');
+            return data;
+        }finally{db.close()}
     }
     // Compatibility API for callers that explicitly request all raw records.
     // The settings list never uses this API. Backup/export reads per ID.
@@ -662,18 +727,19 @@ window.MimaFontManager = (() => {
     }
     function setSelected(kind, family) {
         kind=kind==='ui'?'ui':'story';const key=kind==='ui'?UI_KEY:STORY_KEY;
-        const requested=String(family||''),write=++selectionWrites[kind],previous=applied[kind];
+        const requested=String(family||''),write=++selectionWrites[kind];
+        // Only an explicit user selection changes this preference. A temporary
+        // native font/IDB error must not erase it (especially on a cold start).
         localStorage.setItem(key,requested);
         const task=(async()=>{
             await applySelected(kind);
             if(requested)await verifyAppliedLocalFamily(requested);
         })().catch(error=>{
             if(selectionWrites[kind]===write&&getSelected(kind)===requested){
-                localStorage.setItem(key,previous);
-                // Failed explicit selection must not claim that registration is
-                // a successful switch. Restore last successfully decoded face.
-                urlFontStyle();setFontCss(kind,previous);
-                reportLoad(kind,previous,previous?'loaded':'default');
+                // Verification errors must remain visible; do not report the
+                // previously applied face as a successful new selection.
+                setFontCss(kind,requested);
+                reportLoad(kind,requested,'error',error);
             }
             throw error;
         });
@@ -686,7 +752,26 @@ window.MimaFontManager = (() => {
         kind=kind==='ui'?'ui':'story';
         const family=getSelected(kind);
         let metadata=family?newestFamilyRecord(await listMetadata(),family):null;
-        if(!metadata)throw new Error('当前选择不是本地字体');
+        if(!metadata){
+            const remote=urlFonts().find(item=>item.family===family);
+            if(!remote)throw new Error('当前选择未在字体库中找到');
+            // Explicit user retry: a failed CSS <link> retains a rejected
+            // promise in activeCssLinks. Reusing that promise makes recovery
+            // impossible even after the network becomes available again.
+            // Do not restart every idle/failed link automatically on render.
+            const old=activeCssLinks.get(remote.id);
+            if(old){old.link.remove();activeCssLinks.delete(remote.id);}
+            externalFontLoads.delete(remote.id+':'+remote.url);
+            if(!remote.css){
+                // Recreate the file-font @font-face only on this explicit
+                // request, so a failed native CSS font load may retry.
+                const rules=document.getElementById('mima-url-font-library-style');
+                if(rules)rules.textContent='';
+            }
+            await applySelected(kind);
+            if(getLoadStatus(kind).state!=='loaded')throw new Error('浏览器尚未确认网络字体加载完成');
+            return true;
+        }
         if(metadata.storage==='legacy' && metadata.health==='corrupt'){
             // The user may have repaired this file from an old-version tab.
             // Explicit retry is the only path that rechecks an isolated record.
@@ -899,7 +984,7 @@ window.MimaFontManager = (() => {
         if(parsed.protocol!=='https:'||parsed.username||parsed.password||/[\s"'()\\]/.test(url)||url.length>2048)throw Error('请使用不含账号密码的 HTTPS 字体文件或 CSS 链接');
         if(!family||/["'\\;{}\n\r]/.test(family))throw Error('字体名称不能包含特殊 CSS 符号');
         const css=/fonts\.googleapis\.com$/i.test(parsed.hostname)||/\.css(?:$|[?#])/i.test(parsed.pathname);
-        const fonts=urlFonts();if(fonts.length>=100)throw Error('链接字体库最多保存 100 个');
+        const fonts=urlFontsForBatchWrite();if(fonts.length>=100)throw Error('链接字体库最多保存 100 个');
         const id='urlfont_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,9);
         // File links use a unique internal family; imported CSS must retain
         // the author-defined family name declared inside its stylesheet.
@@ -1018,6 +1103,15 @@ window.MimaFontManager = (() => {
         }
         throw Error('CSS 未找到 @font-face 字体族名；请用上方单条导入');
     }
+    function exportRawUrlFontLibrary(){
+        const raw=localStorage.getItem(URL_LIBRARY_KEY);
+        if(raw===null)throw Error('当前没有链接字体收藏原件');
+        const blob=new Blob([raw],{type:'text/plain;charset=utf-8'}),url=URL.createObjectURL(blob);
+        const a=document.createElement('a');a.href=url;a.download='咪嘛馆_链接字体收藏原始数据.txt';
+        document.body.append(a);a.click();a.remove();
+        setTimeout(()=>URL.revokeObjectURL(url),30000);
+        return true;
+    }
     function urlFontsForBatchWrite(){
         const saved=localStorage.getItem(URL_LIBRARY_KEY);
         if(saved===null)return [];
@@ -1092,7 +1186,7 @@ window.MimaFontManager = (() => {
         return {added,rejected};
     }
     function setUrlFontCompatibility(id,enabled) {
-        const records=urlFonts(),index=records.findIndex(f=>f.id===id&&f.css===true);
+        const records=urlFontsForBatchWrite(),index=records.findIndex(f=>f.id===id&&f.css===true);
         if(index<0)return false;
         const value=enabled===true;
         if(records[index].compatAlwaysLoad===value)return true;
@@ -1101,7 +1195,7 @@ window.MimaFontManager = (() => {
         urlFontStyle();return true;
     }
     function deleteUrlFont(id){
-        const records=urlFonts(),found=records.find(x=>x.id===id);
+        const records=urlFontsForBatchWrite(),found=records.find(x=>x.id===id);
         if(!found)return false;
         localStorage.setItem(URL_LIBRARY_KEY,JSON.stringify(records.filter(x=>x.id!==id)));
         if(getSelected('ui')===found.family)setSelected('ui','');
@@ -1128,7 +1222,7 @@ window.MimaFontManager = (() => {
     async function applySelected(kind=null) {
         urlFontStyle();
         const applyKind=async kind=>{
-            const epoch=++selectionEpoch[kind],family=getSelected(kind),previous=applied[kind];
+            const epoch=++selectionEpoch[kind],family=getSelected(kind);
             // This CSS assignment must NOT wait for the IndexedDB read or
             // FontFace.load(). Previously an unresolved/rejected load left the
             // entire page on its default font, even when selection was saved.
@@ -1146,10 +1240,13 @@ window.MimaFontManager = (() => {
                 if(face?.status==='error')reportLoad(kind,family,'error','浏览器未能解码此字体，原记录仍保留');
                 trimFonts();
             } catch(error) {
-                // Only the request that still owns the selection may roll back
-                // its CSS. An older failure must not overwrite a newer choice.
+                // A failed IndexedDB read or native FontFace decode is a load
+                // failure, not a user request to deselect the font. Keep the
+                // persisted choice AND its CSS declaration, so retry/reload can
+                // recover without asking the user to find and choose it again.
+                // An obsolete request must never change the next choice's state.
                 if(epoch===selectionEpoch[kind]&&family===getSelected(kind)){
-                    setFontCss(kind,previous);
+                    setFontCss(kind,family);
                     reportLoad(kind,family,'error',error);
                 }
                 throw error;
@@ -1397,5 +1494,5 @@ window.MimaFontManager = (() => {
             binaryReadPending:pendingFonts.size,activePreviewOwners:usages.size,
             activeCssLinks:activeCssLinks.size};
     }
-    return { runtimeMetrics, init, all, listMetadata, getByFamily, ensureFamily, ensureFont, cancelPreview, useFamily, useFont, releaseUsage, importFile, cacheUrlFont, deleteFont, getSelected, getLoadStatus, setSelected, applySelected, reloadSelected, urlFonts, refreshUrlFontUsage:urlFontStyle, fontReferencedByAppearance, setUrlFontCompatibility, addUrlFont, addUrlFontsBatch, deleteUrlFont, exportPortable, importPortable, planPortableImport, commitPortablePlan, rollbackPortablePlan, backupBinaryById, planBinaryFontRestore, refreshAfterBinaryRestore };
+    return { runtimeMetrics, init, all, listMetadata, auditStoredFonts, recoverLegacyIndex, readOrphanBinary, getByFamily, ensureFamily, ensureFont, cancelPreview, useFamily, useFont, releaseUsage, importFile, cacheUrlFont, deleteFont, getSelected, getLoadStatus, setSelected, applySelected, reloadSelected, urlFonts, refreshUrlFontUsage:urlFontStyle, fontReferencedByAppearance, exportRawUrlFontLibrary, setUrlFontCompatibility, addUrlFont, addUrlFontsBatch, deleteUrlFont, exportPortable, importPortable, planPortableImport, commitPortablePlan, rollbackPortablePlan, backupBinaryById, planBinaryFontRestore, refreshAfterBinaryRestore };
 })();

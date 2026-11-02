@@ -1066,14 +1066,14 @@
           if(!isCanonicalStateRecord(state)){fail('E_MEMORY_STORE_UNVERIFIED');return;}
           const index=state.sessions.findIndex(s=>s?.id===sessionId);
           if(index<0){fail('E_STORY_SESSION_MISSING');return;}
-          const session=state.sessions[index],archive=Array.isArray(session.rollingArchive)?session.rollingArchive.slice(-8):[];
+          const session=state.sessions[index],archive=Array.isArray(session.rollingArchive)?session.rollingArchive.slice():[];
           const keys=['summary','rollingSummary','longSummary','lastSummarizedIndex','rollingSourceCount','rollingSourceFingerprint','rollingVerification'];
           const patch={};
           if(action==='revoke'){
             if(session.rollingSummary||session.summary||session.longSummary||session.lastSummarizedIndex){
               const saved={savedAt:new Date().toISOString()};for(const key of keys)saved[key]=session[key];archive.push(saved);
             }
-            Object.assign(patch,{summary:'',rollingSummary:'',longSummary:'',lastSummarizedIndex:0,rollingSourceCount:0,rollingSourceFingerprint:'',rollingVerification:{status:'legacy_unverified',stage:'revoked',citations:[]},rollingArchive:archive.slice(-8)});
+            Object.assign(patch,{summary:'',rollingSummary:'',longSummary:'',lastSummarizedIndex:0,rollingSourceCount:0,rollingSourceFingerprint:'',rollingVerification:{status:'legacy_unverified',stage:'revoked',citations:[]},rollingArchive:archive});
           }else{
             if(session.rollingSummary||session.summary||session.longSummary||session.lastSummarizedIndex){fail('E_MEMORY_RESTORE_TARGET_NOT_EMPTY');return;}
             const saved=archive[archive.length-1];if(!saved){fail('E_MEMORY_RESTORE_NOT_FOUND');return;}

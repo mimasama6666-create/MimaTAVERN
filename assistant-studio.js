@@ -7,6 +7,8 @@
   'use strict';
 
   const STORAGE_KEY='MIMAMAO_TAVERN_ASSISTANT_STUDIO_V1';
+  const SAVE_GUARD_DB='mimamao_tavern_assistant_write_guard_v1';
+  let saveQueue=Promise.resolve(),saveGuardDBPromise=null;
   const TYPES=['regex','preset','css'];
   const META={
     regex:{title:'正则助手',icon:'🧬',quick:'HTML 状态栏 → 正则省 Token',placeholder:'把输出规范 / HTML 状态栏 / 正则需求贴给我……'},
@@ -18,6 +20,7 @@
     preset:{model:'',temperature:.65,stream:true,maxTokens:0,persona:'你是高级 AIRP 提示词 / 预设设计师，擅长把模糊审美要求写成可执行的模型约束。',style:'高信息密度、少废话、规则结构清晰；不擅自删减用户已有要求。'},
     css:{model:'',temperature:.7,stream:true,maxTokens:0,persona:'你是移动端视觉设计师与 CSS 专家，擅长轻盈玻璃、二次元与小说阅读界面的精细美化。',style:'优先兼容 iOS Safari；只写 CSS；避免破坏布局、按钮可点击性和 Safe HTML。'}
   };
+  let storedOriginal=null,storageProblem=null,damagedRaw=null,storedEnvelope={};
   let state=loadState();
   let activeType='regex';
   let controller=null;
@@ -35,12 +38,96 @@
   function esc(v){return String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch]));}
   function clampTemp(v,fallback=.5){const n=Number(v);return Number.isFinite(n)?Math.max(.1,Math.min(2,n)):fallback;}
   function loadState(){
-    let raw={};try{raw=JSON.parse(localStorage.getItem(STORAGE_KEY)||'{}')}catch(_){}
+    let raw={},original=null;storageProblem=null;damagedRaw=null;
+    try{
+      original=localStorage.getItem(STORAGE_KEY);
+      if(original!==null){
+        raw=JSON.parse(original);
+        // Earlier legitimate saves always include both sections. A partly
+        // written/truncated document cannot safely be interpreted as empty.
+        if(!raw||typeof raw!=='object'||Array.isArray(raw)||!raw.profiles||typeof raw.profiles!=='object'||Array.isArray(raw.profiles)||!raw.threads||typeof raw.threads!=='object'||Array.isArray(raw.threads)||TYPES.some(type=>!Array.isArray(raw.threads[type])))
+          throw Error('助手历史内容不完整');
+      }
+      storedOriginal=original;storedEnvelope=raw;
+    }catch(error){
+      // Never transform corrupt JSON (or storage access failure) into a new
+      // empty history. Keep the byte-for-byte original available for rescue.
+      storageProblem=error?.message||String(error);damagedRaw=original;
+      storedOriginal=original;storedEnvelope={};raw={};
+    }
     const profiles={},threads={};
     for(const type of TYPES){profiles[type]={...DEFAULTS[type],...(raw.profiles?.[type]||{})};profiles[type].temperature=clampTemp(profiles[type].temperature,DEFAULTS[type].temperature);profiles[type].maxTokens=Math.max(0,Math.min(131072,Math.floor(Number(profiles[type].maxTokens)||0)));profiles[type].stream=profiles[type].stream!==false;profiles[type].sendTemperature=profiles[type].sendTemperature!==false;threads[type]=Array.isArray(raw.threads?.[type])?raw.threads[type]:[];}
     return {profiles,threads,ui:{configOpen:!!raw.ui?.configOpen}};
   }
-  function saveState(){localStorage.setItem(STORAGE_KEY,JSON.stringify(state));}
+  // IndexedDB readwrite transactions serialize this entire synchronous
+  // localStorage compare/write window across tabs, including on iOS Safari
+  // without navigator.locks. The existing V1 key remains authoritative and
+  // readable by legacy versions; a failed guard never authorizes a write.
+  function openSaveGuard(){
+    if(saveGuardDBPromise)return saveGuardDBPromise;
+    saveGuardDBPromise=new Promise((resolve,reject)=>{
+      if(typeof indexedDB==='undefined'){reject(Error('E_ASSISTANT_GUARD_UNAVAILABLE'));return;}
+      const request=indexedDB.open(SAVE_GUARD_DB,1);
+      request.onupgradeneeded=()=>{if(!request.result.objectStoreNames.contains('guard'))request.result.createObjectStore('guard');};
+      request.onsuccess=()=>{request.result.onversionchange=()=>{request.result.close();storageProblem='助手存储事务版本已改变，请重新打开页面';};resolve(request.result);};
+      request.onerror=()=>reject(request.error||Error('E_ASSISTANT_GUARD_OPEN'));
+      request.onblocked=()=>reject(Error('E_ASSISTANT_GUARD_BLOCKED'));
+    });
+    return saveGuardDBPromise;
+  }
+  async function lockedSave(snapshot){
+    if(storageProblem)throw Error('E_ASSISTANT_STORAGE_FROZEN: '+storageProblem);
+    let db;
+    try{db=await openSaveGuard();}
+    catch(error){storageProblem='助手存储事务不可用：'+(error?.message||error);notify('助手存储保护无法建立，已停止保存');throw error;}
+    try{
+      return await new Promise((resolve,reject)=>{
+        const tx=db.transaction('guard','readwrite'),store=tx.objectStore('guard');
+        let committed=null,problem=null;
+        // Request acquires the origin-wide readwrite transaction lock. Another
+        // cooperating tab cannot enter its getItem/setItem section until this
+        // transaction completes. Never await a promise inside onsuccess.
+        const request=store.get('writer');
+        request.onsuccess=()=>{
+          try{
+            if(storageProblem)throw Error('E_ASSISTANT_STORAGE_FROZEN: '+storageProblem);
+            const latest=localStorage.getItem(STORAGE_KEY);
+            if(latest!==storedOriginal)throw Error('E_ASSISTANT_STALE_STATE');
+            const merged={...storedEnvelope,profiles:{...storedEnvelope.profiles,...snapshot.profiles},threads:{...storedEnvelope.threads,...snapshot.threads},ui:{...storedEnvelope.ui,...snapshot.ui}};
+            const encoded=JSON.stringify(merged);
+            localStorage.setItem(STORAGE_KEY,encoded);
+            committed={encoded,merged};
+          }catch(error){problem=error;try{tx.abort()}catch(_){}}
+        };
+        tx.oncomplete=()=>{
+          if(!committed){reject(Error('E_ASSISTANT_SAVE_NOT_COMMITTED'));return;}
+          storedOriginal=committed.encoded;storedEnvelope=committed.merged;resolve();
+        };
+        tx.onabort=()=>reject(problem||tx.error||Error('E_ASSISTANT_GUARD_ABORT'));
+        tx.onerror=()=>{};
+      });
+    }catch(error){
+      if(!storageProblem){
+        storageProblem=error?.message==='E_ASSISTANT_STALE_STATE'?'其他标签页修改了助手历史':('助手保存失败：'+(error?.message||error));
+        try{damagedRaw=localStorage.getItem(STORAGE_KEY)}catch(_){/* Original remains in storage. */}
+      }
+      notify('助手记录未保存，已冻结后续写入；请保全原始记录并重新打开助手');
+      throw error;
+    }
+  }
+  function saveState(){
+    if(storageProblem){notify('助手历史读取异常，已禁止写入');return Promise.reject(Error('E_ASSISTANT_STORAGE_FROZEN: '+storageProblem));}
+    const snapshot=clone(state); // Capture this exact edit, not a later UI state.
+    const job=saveQueue.then(()=>lockedSave(snapshot));
+    saveQueue=job.catch(()=>{}); // Subsequent queued jobs still check frozen state.
+    return job;
+  }
+  function exportRawState(){
+    let raw;try{raw=localStorage.getItem(STORAGE_KEY);}catch(error){throw Error('浏览器拒绝读取助手原始存储：'+(error.message||error));}
+    if(raw===null){if(damagedRaw===null)throw Error('没有可导出的助手记录');raw=damagedRaw;}
+    const url=URL.createObjectURL(new Blob([raw],{type:'text/plain;charset=utf-8'}));
+    const a=document.createElement('a');a.href=url;a.download='咪嘛馆_助手历史原始记录.txt';document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);
+  }
   function profile(){return state.profiles[activeType];}
   function thread(){return state.threads[activeType];}
   function notify(msg){if(typeof window.toast==='function')window.toast(msg);else console.log(msg);}
@@ -322,22 +409,22 @@
     const meta=META[activeType];document.getElementById('assistant-studio-title').textContent=meta.title;
     const lastAi=lastAssistantIndex();
     root.classList.toggle('assistant-config-open',!!state.ui.configOpen);
-    root.innerHTML=`<aside class="assistant-sidebar"><div class="assistant-type-tabs">${TYPES.map(t=>`<button class="assistant-type-btn ${t===activeType?'active':''}" onclick="MimaAssistantStudio.switchType('${t}')">${META[t].icon} ${META[t].title}</button>`).join('')}</div>${profileFormHtml()}<button class="assistant-clear-btn" onclick="MimaAssistantStudio.clearThread()" ${generating?'disabled':''}>清空聊天</button></aside><section class="assistant-main"><div class="assistant-chat-scroll" id="assistant-chat-scroll">${messagesHtml()}</div><button id="assistant-follow-stream" class="assistant-follow-stream hidden" onclick="MimaAssistantStudio.followLatest()">↓ 跟随输出</button><div class="assistant-composer"><div class="assistant-quick-row"><button class="chip-btn ${nextQuickMode===activeType?'active':''}" onclick="MimaAssistantStudio.setQuickMode()" ${generating?'disabled':''}>⚡ ${meta.quick}</button><button class="chip-btn" onclick="MimaAssistantStudio.regenerate(${lastAi})" ${generating||lastAi<0?'disabled':''}>↻ 重说上一条</button>${generating?'<button class="chip-btn danger" onclick="MimaAssistantStudio.stop()">■ 停止</button>':''}</div>${nextQuickMode===activeType?'<div class="assistant-mode-banner">下一条会以快捷任务模式发送；原文不会被改写后再存。</div>':''}<div class="assistant-input-row"><textarea id="assistant-input" rows="3" placeholder="${esc(meta.placeholder)}" ${generating?'disabled':''}></textarea><button class="send-btn assistant-send-btn" onclick="MimaAssistantStudio.send()" ${generating?'disabled':''}>➤</button></div><div class="row-sub assistant-enter-hint">Enter 只换行；点击发送才调用助手模型。</div></div></section>`;
+    root.innerHTML=`<aside class="assistant-sidebar"><div class="assistant-type-tabs">${TYPES.map(t=>`<button class="assistant-type-btn ${t===activeType?'active':''}" onclick="MimaAssistantStudio.switchType('${t}')">${META[t].icon} ${META[t].title}</button>`).join('')}</div>${profileFormHtml()}${storageProblem?`<div class="row-sub" role="alert">助手本地历史读取异常，已暂停所有保存，以保护原记录。<button class="ghost-btn" onclick="MimaAssistantStudio.exportRawState()">导出原始助手记录</button></div>`:''}<button class="assistant-clear-btn" onclick="MimaAssistantStudio.clearThread()" ${generating?'disabled':''}>清空聊天</button></aside><section class="assistant-main"><div class="assistant-chat-scroll" id="assistant-chat-scroll">${messagesHtml()}</div><button id="assistant-follow-stream" class="assistant-follow-stream hidden" onclick="MimaAssistantStudio.followLatest()">↓ 跟随输出</button><div class="assistant-composer"><div class="assistant-quick-row"><button class="chip-btn ${nextQuickMode===activeType?'active':''}" onclick="MimaAssistantStudio.setQuickMode()" ${generating?'disabled':''}>⚡ ${meta.quick}</button><button class="chip-btn" onclick="MimaAssistantStudio.regenerate(${lastAi})" ${generating||lastAi<0?'disabled':''}>↻ 重说上一条</button>${generating?'<button class="chip-btn danger" onclick="MimaAssistantStudio.stop()">■ 停止</button>':''}</div>${nextQuickMode===activeType?'<div class="assistant-mode-banner">下一条会以快捷任务模式发送；原文不会被改写后再存。</div>':''}<div class="assistant-input-row"><textarea id="assistant-input" rows="3" placeholder="${esc(meta.placeholder)}" ${generating?'disabled':''}></textarea><button class="send-btn assistant-send-btn" onclick="MimaAssistantStudio.send()" ${generating?'disabled':''}>➤</button></div><div class="row-sub assistant-enter-hint">Enter 只换行；点击发送才调用助手模型。</div></div></section>`;
     requestAnimationFrame(()=>{const sc=document.getElementById('assistant-chat-scroll');if(sc){if(preserveReading)sc.scrollTop=oldScrollTop;else if(assistantFollowTail)sc.scrollTop=sc.scrollHeight;}bindAssistantScroll();updateAssistantFollowButton();});
   }
-  function setConfigOpen(open){state.ui.configOpen=!!open;saveState();const root=document.getElementById('assistant-studio-root');root?.classList.toggle('assistant-config-open',!!open);}
+  async function setConfigOpen(open){const prev=state.ui.configOpen;state.ui.configOpen=!!open;try{await saveState()}catch(_){state.ui.configOpen=prev;render();return}const root=document.getElementById('assistant-studio-root');root?.classList.toggle('assistant-config-open',!!open);}
 
-  function setProfileField(key,value,rerender=false){const p=profile();if(key==='temperature')p.temperature=clampTemp(value,p.temperature);else if(key==='maxTokens')p.maxTokens=Math.max(0,Math.min(131072,Math.floor(Number(value)||0)));else if(key==='stream'||key==='sendTemperature')p[key]=!!value;else p[key]=String(value??'');saveState();if(rerender)render();}
-  function selectModel(value){if(value)setProfileField('model',value,true);}
+  async function setProfileField(key,value,rerender=false){const before=clone(state);const p=profile();if(key==='temperature')p.temperature=clampTemp(value,p.temperature);else if(key==='maxTokens')p.maxTokens=Math.max(0,Math.min(131072,Math.floor(Number(value)||0)));else if(key==='stream'||key==='sendTemperature')p[key]=!!value;else p[key]=String(value??'');try{await saveState()}catch(_){state=before;render();return}if(rerender)render();}
+  async function selectModel(value){if(value)await setProfileField('model',value,true);}
   async function loadModels(){
-    try{cachedModels=await window.MimaStandalone.listModels();const p=profile();if(!p.model&&cachedModels.length){p.model=cachedModels[0];saveState()}render();notify(`助手可选模型已拉取：${cachedModels.length} 个`);}catch(e){notify(`拉取助手模型失败：${e.message||e}`)}
+    try{cachedModels=await window.MimaStandalone.listModels();const p=profile();if(!p.model&&cachedModels.length){p.model=cachedModels[0];await saveState()}render();notify(`助手可选模型已拉取：${cachedModels.length} 个`);}catch(e){notify(`拉取助手模型失败：${e.message||e}`)}
   }
-  function clearThread(){if(!confirm(`清空${META[activeType].title}的本地聊天记录？不会删除已保存的预设/正则/CSS。`))return;state.threads[activeType]=[];editingIndex=-1;saveState();render();}
+  async function clearThread(){if(!confirm(`清空${META[activeType].title}的本地聊天记录？不会删除已保存的预设/正则/CSS。`))return;const before=clone(state);state.threads[activeType]=[];editingIndex=-1;try{await saveState()}catch(_){state=before}render();}
   function lastAssistantIndex(){for(let i=thread().length-1;i>=0;i--)if(thread()[i]?.role==='assistant')return i;return-1;}
   function startEdit(index){if(generating||!thread()[index])return;editingIndex=index;render();requestAnimationFrame(()=>{const el=document.getElementById(`assistant-edit-${index}`);if(el){el.focus();el.setSelectionRange?.(el.value.length,el.value.length);el.scrollIntoView?.({block:'center'})}});}
   function cancelEdit(){editingIndex=-1;render();}
-  function saveEdit(index){if(generating)return;const msg=thread()[index],el=document.getElementById(`assistant-edit-${index}`);if(!msg||!el)return;const content=String(el.value??'');if(!content.trim())return notify('历史消息不能保存为空；如果不要这条，请直接点“删除”。');if(msg.content!==content){delete msg.savedArtifactIds;}msg.content=content;if(msg.role==='user')msg.requestContent=msg.quickMode?`${quickInstruction(activeType)}\n\n【用户素材】\n${content}`:content;msg.editedAt=new Date().toISOString();saveState();editingIndex=-1;render();notify('历史消息已编辑');}
-  function deleteMessage(index){if(generating||!thread()[index])return;if(!confirm('删除这一条助手历史消息？只删除本地聊天记录，不会删除已经保存的预设 / 正则 / CSS。'))return;thread().splice(index,1);editingIndex=-1;saveState();render();notify('这条历史消息已删除');}
+  async function saveEdit(index){if(generating)return;const msg=thread()[index],el=document.getElementById(`assistant-edit-${index}`);if(!msg||!el)return;const content=String(el.value??'');if(!content.trim())return notify('历史消息不能保存为空；如果不要这条，请直接点“删除”。');const before=clone(state);if(msg.content!==content){delete msg.savedArtifactIds;}msg.content=content;if(msg.role==='user')msg.requestContent=msg.quickMode?`${quickInstruction(activeType)}\n\n【用户素材】\n${content}`:content;msg.editedAt=new Date().toISOString();try{await saveState()}catch(_){state=before;render();return}editingIndex=-1;render();notify('历史消息已编辑');}
+  async function deleteMessage(index){if(generating||!thread()[index])return;if(!confirm('删除这一条助手历史消息？只删除本地聊天记录，不会删除已经保存的预设 / 正则 / CSS。'))return;const before=clone(state);thread().splice(index,1);editingIndex=-1;try{await saveState()}catch(_){state=before;render();return}render();notify('这条历史消息已删除');}
   function stop(){generationEpoch++;if(controller)controller.abort();controller=null;generating=false;draftAssistantText='';generationMode='send';regeneratingIndex=-1;render();}
 
   async function send(){
@@ -345,15 +432,29 @@
     const input=document.getElementById('assistant-input');const raw=input?.value||'';if(!raw.trim())return;
     const p=profile(),storyCfg=window.MimaStandalone.getApiConfig();const model=(p.model||storyCfg.model||'').trim();if(!storyCfg.apiBase||!model){notify('先去 🔌 API 设置配置连接，并给助手选择一个模型猫。');return;}
     const quickMode=nextQuickMode===activeType;const userContent=(quickMode?`${quickInstruction(activeType)}\n\n【用户素材】\n${raw}`:raw);
-    thread().push({role:'user',content:raw,requestContent:userContent,quickMode,time:new Date().toISOString()});saveState();nextQuickMode='';generating=true;generationMode='send';regeneratingIndex=-1;editingIndex=-1;draftAssistantText='';assistantFollowTail=true;render();
+    // Acquire the turn synchronously: IndexedDB save may take arbitrarily long.
+    // No second send, type switch, or regeneration can enter before persistence.
+    const turnThread=thread(),turnMessage={role:'user',content:raw,requestContent:userContent,quickMode,time:new Date().toISOString()};
+    generating=true;generationMode='send';regeneratingIndex=-1;editingIndex=-1;draftAssistantText='';assistantFollowTail=true;
+    const runEpoch=++generationEpoch;
+    controller=new AbortController();const turnSignal=controller.signal;
+    turnThread.push(turnMessage);render();
+    try{await saveState()}catch(_){
+      // Remove exactly this unsaved turn, never the current thread's last item.
+      const at=turnThread.indexOf(turnMessage);if(at!==-1)turnThread.splice(at,1);
+      if(runEpoch===generationEpoch){generating=false;controller=null;generationMode='send';render();const draft=document.getElementById('assistant-input');if(draft)draft.value=raw;}
+      return;
+    }
+    if(runEpoch!==generationEpoch||turnSignal.aborted)return; // Stopped/closed while saving: no billable request.
+    nextQuickMode='';render();
     const history=thread().slice(-30).map(m=>({role:m.role,content:m.role==='user'?(m.requestContent||m.content):m.content}));
     const messages=[{role:'system',content:systemPrompt(activeType)},...history];
-    const cfg=window.MimaStandalone.effectiveRequestConfig({...storyCfg,model,temperature:p.temperature,stream:p.stream,sendTemperature:p.sendTemperature!==false,maxTokens:Number(p.maxTokens)||0});controller=new AbortController();const runEpoch=++generationEpoch;
+    const cfg=window.MimaStandalone.effectiveRequestConfig({...storyCfg,model,temperature:p.temperature,stream:p.stream,sendTemperature:p.sendTemperature!==false,maxTokens:Number(p.maxTokens)||0});
     try{
-      const reply=await window.MimaStandalone.callModelWithConfig(messages,cfg,p.temperature,controller.signal,{streamOverride:p.stream,onProgress:payload=>{if(runEpoch===generationEpoch&&payload?.streamText!==undefined){draftAssistantText=String(payload.streamText||'');const textEl=document.querySelector('.assistant-chat-streaming .assistant-chat-text');if(textEl)textEl.innerHTML=esc(visibleAssistantText(draftAssistantText)||'…').replace(/\n/g,'<br>');const sc=document.getElementById('assistant-chat-scroll');if(sc&&assistantFollowTail)sc.scrollTop=sc.scrollHeight;updateAssistantFollowButton();}}});
+      const reply=await window.MimaStandalone.callModelWithConfig(messages,cfg,p.temperature,turnSignal,{streamOverride:p.stream,onProgress:payload=>{if(runEpoch===generationEpoch&&payload?.streamText!==undefined){draftAssistantText=String(payload.streamText||'');const textEl=document.querySelector('.assistant-chat-streaming .assistant-chat-text');if(textEl)textEl.innerHTML=esc(visibleAssistantText(draftAssistantText)||'…').replace(/\n/g,'<br>');const sc=document.getElementById('assistant-chat-scroll');if(sc&&assistantFollowTail)sc.scrollTop=sc.scrollHeight;updateAssistantFollowButton();}}});
       if(runEpoch!==generationEpoch)return;
-      thread().push({role:'assistant',content:reply,time:new Date().toISOString()});saveState();generating=false;generationMode='send';regeneratingIndex=-1;draftAssistantText='';controller=null;render();
-    }catch(e){if(runEpoch!==generationEpoch)return;generating=false;generationMode='send';regeneratingIndex=-1;draftAssistantText='';controller=null;if(e?.name==='AbortError'){notify('助手生成已停止');render();return}const status=Number(e?.status)||0;const billing=/余额|insufficient|balance|quota|credit|billing/i.test(String(e?.message||''));const extra=billing?'；这是上游/中转站计费拒绝，不代表本地数据丢失。已确保助手不再继承正文 Max Tokens，可保持助手 Max Tokens=0 后重试。':(e?.hint?`；${e.hint}`:'');notify(`助手调用失败${status?` · HTTP ${status}`:''}：${e.message||e}${extra}`);render();}
+      thread().push({role:'assistant',content:reply,time:new Date().toISOString()});await saveState();generating=false;generationMode='send';regeneratingIndex=-1;draftAssistantText='';controller=null;render();
+    }catch(e){if(runEpoch!==generationEpoch)return;generating=false;generationMode='send';regeneratingIndex=-1;draftAssistantText='';controller=null;if(e?.name==='AbortError'){notify('助手生成已停止');render();return}if(storageProblem){notify('助手回复已经生成，但保存历史失败。当前页面保留回复，请先复制需要保全的内容；不会假称已保存。');render();return}const status=Number(e?.status)||0;const billing=/余额|insufficient|balance|quota|credit|billing/i.test(String(e?.message||''));const extra=billing?'；这是上游/中转站计费拒绝，不代表本地数据丢失。已确保助手不再继承正文 Max Tokens，可保持助手 Max Tokens=0 后重试。':(e?.hint?`；${e.hint}`:'');notify(`助手调用失败${status?` · HTTP ${status}`:''}：${e.message||e}${extra}`);render();}
   }
 
   async function regenerate(index){
@@ -368,8 +469,8 @@
     try{
       const reply=await window.MimaStandalone.callModelWithConfig(messages,cfg,p.temperature,controller.signal,{streamOverride:p.stream,onProgress:payload=>{if(runEpoch===generationEpoch&&payload?.streamText!==undefined){draftAssistantText=String(payload.streamText||'');const streamCards=document.querySelectorAll?.('.assistant-chat-streaming .assistant-chat-text');const textEl=streamCards?.[streamCards.length-1];if(textEl)textEl.innerHTML=esc(visibleAssistantText(draftAssistantText)||'…').replace(/\n/g,'<br>');const sc=document.getElementById('assistant-chat-scroll');if(sc&&assistantFollowTail)sc.scrollTop=sc.scrollHeight;updateAssistantFollowButton();}}});
       if(runEpoch!==generationEpoch)return;
-      const current=thread()[index];if(!current||current.role!=='assistant')throw new Error('历史位置已经变化，为避免覆盖错误消息，本次重说未写入。');rotateSavedArtifactIdentity(current,reply,'regenerate');current.content=reply;current.time=new Date().toISOString();current.regeneratedAt=current.time;saveState();generating=false;generationMode='send';regeneratingIndex=-1;draftAssistantText='';controller=null;render();notify('助手已经重说这一条 ✨');
-    }catch(e){if(runEpoch!==generationEpoch)return;generating=false;generationMode='send';regeneratingIndex=-1;draftAssistantText='';controller=null;if(e?.name==='AbortError'){notify('助手重说已停止，原回复保留');render();return}const status=Number(e?.status)||0;const billing=/余额|insufficient|balance|quota|credit|billing/i.test(String(e?.message||''));const extra=billing?'；这是上游/中转站计费拒绝，原回复仍然保留。':(e?.hint?`；${e.hint}`:'');notify(`助手重说失败${status?` · HTTP ${status}`:''}：${e.message||e}${extra}`);render();}
+      const current=thread()[index];if(!current||current.role!=='assistant')throw new Error('历史位置已经变化，为避免覆盖错误消息，本次重说未写入。');rotateSavedArtifactIdentity(current,reply,'regenerate');current.content=reply;current.time=new Date().toISOString();current.regeneratedAt=current.time;await saveState();generating=false;generationMode='send';regeneratingIndex=-1;draftAssistantText='';controller=null;render();notify('助手已经重说这一条 ✨');
+    }catch(e){if(runEpoch!==generationEpoch)return;generating=false;generationMode='send';regeneratingIndex=-1;draftAssistantText='';controller=null;if(e?.name==='AbortError'){notify('助手重说已停止，原回复保留');render();return}if(storageProblem){notify('助手已经生成重说内容，但历史没有保存；当前页面保留文字供复制。');render();return}const status=Number(e?.status)||0;const billing=/余额|insufficient|balance|quota|credit|billing/i.test(String(e?.message||''));const extra=billing?'；这是上游/中转站计费拒绝，原回复仍然保留。':(e?.hint?`；${e.hint}`:'');notify(`助手重说失败${status?` · HTTP ${status}`:''}：${e.message||e}${extra}`);render();}
   }
 
   async function repairArtifact(index){
@@ -396,15 +497,15 @@
       const repairError=repairAccepted?'':(parsed.artifact?'AI 返回了 Legacy V1，而不是要求的 V2 Zero-Escape 工件':(parsed.error||'AI 返回的 V2 工件仍无法解析'));
       const attempt={time:new Date().toISOString(),model,content:reply,success:repairAccepted,error:repairError};
       current.repairAttempts.push(attempt);if(current.repairAttempts.length>5)current.repairAttempts=current.repairAttempts.slice(-5);
-      if(!repairAccepted){saveState();throw new Error(`AI 已返回内容并完成计费，但本地验收未通过：${repairError}。修复结果已保存，可展开查看；不会自动再次调用模型。`)}
+      if(!repairAccepted){await saveState();throw new Error(`AI 已返回内容并完成计费，但本地验收未通过：${repairError}。修复结果已保存，可展开查看；不会自动再次调用模型。`)}
       const repairedV2=extractArtifactV2(reply);if(!repairedV2.found)throw new Error('AI 修复结果通过解析，但没有可保存的 V2 原始块。');
       current.versions=Array.isArray(current.versions)?current.versions:[];current.versions.push({content:current.content,time:new Date().toISOString(),reason:'artifact_v2_ai_rescue'});
       const repairedContent=String(current.content||'').replace(originalBlock,repairedV2.full);rotateSavedArtifactIdentity(current,repairedContent,'repair');current.content=repairedContent;current.editedAt=new Date().toISOString();current.artifactRepairedAt=current.editedAt;current.artifactProtocol='v2';
-      saveState();generating=false;generationMode='send';regeneratingIndex=-1;draftAssistantText='';controller=null;render();notify('工件已转换为 V2 Zero-Escape，并通过本地校验 ✨');
+      await saveState();generating=false;generationMode='send';regeneratingIndex=-1;draftAssistantText='';controller=null;render();notify('工件已转换为 V2 Zero-Escape，并通过本地校验 ✨');
     }catch(e){
       if(runEpoch!==generationEpoch)return;
       const current=thread()[index];if(reply&&current&&current.role==='assistant'&&!(current.repairAttempts||[]).some(a=>a.content===reply)){
-        current.repairAttempts=Array.isArray(current.repairAttempts)?current.repairAttempts:[];current.repairAttempts.push({time:new Date().toISOString(),model,content:reply,success:false,error:e?.message||String(e)});current.repairAttempts=current.repairAttempts.slice(-5);saveState();
+        current.repairAttempts=Array.isArray(current.repairAttempts)?current.repairAttempts:[];current.repairAttempts.push({time:new Date().toISOString(),model,content:reply,success:false,error:e?.message||String(e)});current.repairAttempts=current.repairAttempts.slice(-5);try{await saveState()}catch(_){/* Frozen; retain result in memory for copying. */}
       }
       generating=false;generationMode='send';regeneratingIndex=-1;draftAssistantText='';controller=null;if(e?.name==='AbortError'){notify('AI 救援修复已停止，原工件完整保留');render();return}notify(`修复工件失败：${e.message||e}；原工件完整保留。`);render();
     }
@@ -422,9 +523,9 @@
     const prior=(msg.savedArtifactVersions||[]).find(v=>v.content===after&&v.ids);
     if(prior)msg.savedArtifactIds={...prior.ids};else delete msg.savedArtifactIds;
   }
-  function stableArtifactId(msg,key,prefix){
+  async function stableArtifactId(msg,key,prefix){
     if(!msg.savedArtifactIds)msg.savedArtifactIds={};
-    if(!msg.savedArtifactIds[key]){msg.savedArtifactIds[key]=`${prefix}-${globalThis.crypto?.randomUUID?.()||`${Date.now()}-${Math.random().toString(36).slice(2)}`}`;saveState();}
+    if(!msg.savedArtifactIds[key]){msg.savedArtifactIds[key]=`${prefix}-${globalThis.crypto?.randomUUID?.()||`${Date.now()}-${Math.random().toString(36).slice(2)}`}`;await saveState();}
     return msg.savedArtifactIds[key];
   }
   async function saveArtifact(index,mode){
@@ -434,8 +535,8 @@
     try{
       if(artifact.kind==='regex_bundle'&&mode==='all'){
         if(!artifact.preset?.content)throw Error('Bundle 缺少配套预设');
-        const bundleId=stableArtifactId(msg,'regex','regex-asst');
-        const pack={...artifact.regexPack,id:bundleId,rules:(artifact.regexPack.rules||[]).map((r,i)=>({...r,id:r.id||`${bundleId}-rule-${i}`}))},preset={...artifact.preset,id:stableArtifactId(msg,'preset','preset-asst')};
+        const bundleId=await stableArtifactId(msg,'regex','regex-asst');
+        const pack={...artifact.regexPack,id:bundleId,rules:(artifact.regexPack.rules||[]).map((r,i)=>({...r,id:r.id||`${bundleId}-rule-${i}`}))},preset={...artifact.preset,id:await stableArtifactId(msg,'preset','preset-asst')};
         const r=await window.MimaStandalone.handle('/assistant/regex-bundle','POST',{regexPack:pack,preset,sessionId:session?.id||null});
         if(!r.success)throw Error(r.msg||'Bundle 事务提交失败');phase='两份资源已原子提交';
         await bridge?.reload?.();
@@ -443,23 +544,23 @@
       }
       if(artifact.kind==='regex_bundle'&&(mode==='regex'||mode==='preset')){
         if(mode==='regex'){
-          const bundleId=stableArtifactId(msg,'regex','regex-asst');
+          const bundleId=await stableArtifactId(msg,'regex','regex-asst');
           const checked=window.MimaRegexEngine.validatePack({...artifact.regexPack,id:bundleId,rules:(artifact.regexPack.rules||[]).map((r,i)=>({...r,id:r.id||`${bundleId}-rule-${i}`}))});
           if(!checked.ok)throw Error('正则无效：'+checked.invalid.map(x=>x.error).join('；'));
           const r=await window.MimaStandalone.handle('/regex-packs','POST',checked.pack);if(!r.success)throw Error(r.msg||'正则保存失败');savedRegex=r.data;
         }else{
           if(!artifact.preset?.content)throw Error('缺少预设内容');
-          const r=await window.MimaStandalone.handle('/presets','POST',{...artifact.preset,id:stableArtifactId(msg,'preset','preset-asst')});if(!r.success)throw Error(r.msg||'预设保存失败');savedPreset=r.data;
+          const r=await window.MimaStandalone.handle('/presets','POST',{...artifact.preset,id:await stableArtifactId(msg,'preset','preset-asst')});if(!r.success)throw Error(r.msg||'预设保存失败');savedPreset=r.data;
         }
       }else if(artifact.kind==='preset'&&mode==='preset'){
         if(!artifact.preset?.content)throw Error('缺少预设内容');
-        const r=await window.MimaStandalone.handle('/presets','POST',{...artifact.preset,id:stableArtifactId(msg,'preset','preset-asst')});if(!r.success)throw Error(r.msg||'预设保存失败');savedPreset=r.data;
+        const r=await window.MimaStandalone.handle('/presets','POST',{...artifact.preset,id:await stableArtifactId(msg,'preset','preset-asst')});if(!r.success)throw Error(r.msg||'预设保存失败');savedPreset=r.data;
       }
       if(artifact.kind==='css_preset'&&mode==='css'){
         const css=artifact.cssPreset;
         if(!String(css?.css||'').trim())throw Error('CSS 内容为空');
         if(!['app','global','story','novel','assistant'].includes(css.scope))throw Error('CSS 作用域未知，未写入数据');
-        const input={...css,id:stableArtifactId(msg,'css','css-asst'),atelierReleaseKey:''};
+        const input={...css,id:await stableArtifactId(msg,'css','css-asst'),atelierReleaseKey:''};
         if(css.scope==='app'){
           if(/[?&]noCss=1(?:&|$)/.test(window.location?.search||''))throw Error('当前是 CSS 紧急禁用模式，未提交新全局主题；请退出安全模式再应用');
           input.surface='global';
@@ -496,6 +597,6 @@
     }catch(e){notify(`${phase==='尚未提交'?'保存失败':phase+'，后续操作未完成'}：${e.message||e}。可再次执行同一工件以安全补完。`)}
   }
 
-  function reloadState(){generationEpoch++;if(generating){controller?.abort();controller=null;generating=false;}state=loadState();editingIndex=-1;regeneratingIndex=-1;draftAssistantText='';nextQuickMode='';generationMode='send';render();return clone(state);}
-  window.MimaAssistantStudio={reloadState,open,close,switchType,setQuickMode,setConfigOpen,setProfileField,selectModel,loadModels,clearThread,startEdit,cancelEdit,saveEdit,deleteMessage,stop,send,regenerate,repairArtifact,followLatest,saveArtifact,inspectArtifact:raw=>clone(parseArtifactDetailed(raw)),getState:()=>clone(state)};
+  async function reloadState(){await saveQueue;generationEpoch++;if(generating){controller?.abort();controller=null;generating=false;}state=loadState();editingIndex=-1;regeneratingIndex=-1;draftAssistantText='';nextQuickMode='';generationMode='send';render();return clone(state);}
+  window.MimaAssistantStudio={reloadState,exportRawState,open,close,switchType,setQuickMode,setConfigOpen,setProfileField,selectModel,loadModels,clearThread,startEdit,cancelEdit,saveEdit,deleteMessage,stop,send,regenerate,repairArtifact,followLatest,saveArtifact,inspectArtifact:raw=>clone(parseArtifactDetailed(raw)),getState:()=>clone(state)};
 })();

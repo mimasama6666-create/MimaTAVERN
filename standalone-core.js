@@ -180,7 +180,7 @@
       summary: text(s.summary), rollingSummary: text(s.rollingSummary || s.summary), longSummary: text(s.longSummary),
       sceneSummary: text(s.sceneSummary), characterPsychSummary: text(s.characterPsychSummary), relationshipSummary: text(s.relationshipSummary),
       unresolvedHooks: list(s.unresolvedHooks), pinnedFacts: list(s.pinnedFacts),
-      rollingArchive:arr(s.rollingArchive).slice(-8).map(a=>({savedAt:String(a.savedAt||''),summary:String(a.summary||''),rollingSummary:String(a.rollingSummary||''),longSummary:String(a.longSummary||''),lastSummarizedIndex:Math.max(0,Number(a.lastSummarizedIndex)||0),rollingSourceCount:Math.max(0,Number(a.rollingSourceCount)||0),rollingSourceFingerprint:String(a.rollingSourceFingerprint||''),rollingVerification:normalizeMemoryVerification(a.rollingVerification)})),
+      rollingArchive:arr(s.rollingArchive).map(a=>clone(a)),
       lastSummarizedIndex: Number.isFinite(Number(s.lastSummarizedIndex)) ? Number(s.lastSummarizedIndex) : 0,rollingSourceCount:Math.max(0,Number(s.rollingSourceCount)||0),rollingSourceFingerprint:String(s.rollingSourceFingerprint||''),rollingVerification:normalizeMemoryVerification(s.rollingVerification),
       tags: list(s.tags), lastScene: text(s.lastScene), userNotes: text(s.userNotes), aiNotes: text(s.aiNotes),
       directorNote: text(s.directorNote), storyState: s.storyState && typeof s.storyState === 'object' ? s.storyState : {},
