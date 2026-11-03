@@ -2113,29 +2113,85 @@ async function buildFullSettingsBackup({includeApiKey=false,includeFonts=true}={
         data:{library,atelier,wallpapers,personalSounds,api,localPrefs:collectPortableLocalPrefs(),fonts,selectedFonts:{ui:MimaFontManager.getSelected('ui'),story:MimaFontManager.getSelected('story')}}
     };
 }
+function assertSettingsFontInventory(inventory){
+    const broken=Object.entries(inventory?.defects||{}).filter(([,rows])=>Array.isArray(rows)&&rows.length);
+    if(broken.length)throw Error('字体库存在未索引、孤立或缺失的原件（'+broken.map(([key,rows])=>key+':'+rows.length).join('，')+'），已阻止不完整的设置备份。请先到外观页查看只读检查结果');
+}
+async function snapshotHash(source){
+    if(source instanceof Blob){
+        const sha=window.MimaSHA256.create();
+        const block=192*1024;
+        for(let off=0;off<source.size;off+=block)sha.update(new Uint8Array(await source.slice(off,off+block).arrayBuffer()));
+        return sha.hex();
+    }
+    const raw=await crypto.subtle.digest('SHA-256',source);
+    return Array.from(new Uint8Array(raw),b=>b.toString(16).padStart(2,'0')).join('');
+}
+async function withSettingsSnapshotOwner(work){
+    if(navigator.locks?.request)return navigator.locks.request('mima-settings-snapshot-write',{mode:'exclusive',ifAvailable:true},lock=>{
+        if(!lock)throw Error('另一个标签正在保存本机快照');return work();
+    });
+    return work(); // Atomic IDB stage ownership also protects browsers without Web Locks.
+}
 async function saveFullSettingsSnapshot(){
     try{
         const includeApiKey=!!qs('backup-api-key')?.checked;
         const includeFonts=qs('backup-fonts')?.checked!==false;
-        const backup=await buildFullSettingsBackup({includeApiKey,includeFonts});
-        await MimaLocalStore.saveSettingsSnapshot(backup);
-        const el=qs('data-backup-status');if(el)el.textContent=`✅ 已保存本机快照 · ${new Date().toLocaleString('zh-CN')}。注意：清除“网站数据”会连这个快照一起删除。`;
-        toast('设置快照已保存；不含小手机和兼容独立库');
+        const backup=await buildFullSettingsBackup({includeApiKey,includeFonts:false});
+        const inventory=includeFonts?await MimaFontManager.listBackupInventory():null;
+        if(inventory)assertSettingsFontInventory(inventory);
+        await withSettingsSnapshotOwner(async()=>{
+            const token=await MimaLocalStore.beginSettingsSnapshotV2(inventory?.records.length||0);
+            let saved=false;
+            try{
+                for(const meta of inventory?.records||[]){
+                    const source=await MimaFontManager.openBackupSource(meta.id);
+                    try{
+                        if(source.size!==meta.size)throw Error('快照字体长度已变化：'+meta.id);
+                        const blob=source.snapshotBlob();
+                        const sha256=await snapshotHash(blob); // ONE font at a time, not whole library
+                        await MimaLocalStore.stageSettingsSnapshotFontV2(token,{...meta,size:blob.size,sha256},blob);
+                        await source.confirm();
+                    }finally{source.close();}
+                }
+                if(inventory)await MimaFontManager.assertBackupInventory(inventory);
+                await MimaLocalStore.completeSettingsSnapshotV2(token,backup);saved=true;
+            }finally{
+                if(!saved){try{await MimaLocalStore.discardFailedSettingsSnapshotV2(token);}catch(error){
+                    console.error('本机快照保存失败后暂存回收未完成',error);
+                    throw Error('快照保存失败且暂存无法安全回收：'+error.message+'。请关闭其他标签后使用“清理失败快照”；原快照保留');
+                }}
+            }
+            try{while(await MimaLocalStore.pruneOldSettingsSnapshotsV2()){} }catch(e){console.warn('新快照已提交；旧快照延后清理',e)}
+        });
+        const el=qs('data-backup-status');if(el)el.textContent=`✅ 本机设置与独立字体原件快照已保存 · ${new Date().toLocaleString('zh-CN')}。清除网站数据仍会删除本机快照。`;
+        toast('设置及字体快照已单独保存；仍需导出设备外备份');
     }catch(e){const el=qs('data-backup-status');if(el)el.textContent=`❌ 保存失败：${e.message}`;toast(`保存失败：${e.message}`)}
 }
+async function cleanupSettingsSnapshotStaging(){
+    if(!confirm('确认所有其他咪嘛馆标签页已关闭、没有正在保存快照？只清理未完成快照的临时字体副本，不删除已保存快照和原数据。'))return;
+    try{const result=await withSettingsSnapshotOwner(()=>MimaLocalStore.discardFailedSettingsSnapshotV2());toast(result?'未完成快照的暂存已清理':'没有未完成的快照暂存');}
+    catch(e){toast('清理失败：'+e.message)}
+}
+async function cleanupSettingsJsonTemp(){try{toast(await MimaSettingsJsonStream.cleanup());}catch(e){toast('临时 JSON 清理失败：'+e.message)}}
+async function resumeSettingsJsonTemp(){try{toast(await MimaSettingsJsonStream.resume());}catch(e){toast('重新打开临时 JSON 失败：'+e.message)}}
 async function exportFullSettingsBackup(){
+    const includeApiKey=!!qs('backup-api-key')?.checked;
+    const includeFonts=qs('backup-fonts')?.checked!==false;
+    if(includeApiKey&&!confirm('这份备份会包含 API Key（接口密钥）。请只保存在你自己的设备，不要上传到公开仓库或发给别人。继续导出吗？'))return;
     try{
-        const includeApiKey=!!qs('backup-api-key')?.checked;
-        const includeFonts=qs('backup-fonts')?.checked!==false;
-        if(includeApiKey&&!confirm('这份备份会包含 API Key（接口密钥）。请只保存在你自己的设备，不要上传到公开仓库或发给别人。继续导出吗？'))return;
-        const backup=await buildFullSettingsBackup({includeApiKey,includeFonts});
-        const stamp=new Date().toISOString().slice(0,10);
-        downloadJson(`mimamao-tavern-settings-${stamp}.json`,backup);
-        toast('剧情、设置与工坊素材已导出；小手机和兼容独立库需要另行备份');
-    }catch(e){toast(`导出失败：${e.message}`)}
+        // File-picker permission must be acquired during the original click;
+        // the writer then collects metadata and streams one font at a time.
+        const name=`mimamao-tavern-settings-${new Date().toISOString().slice(0,10)}.json`;
+        const mode=await MimaSettingsJsonStream.write({name,onProgress:message=>{const el=qs('data-backup-status');if(el)el.textContent=message;},loadData:async()=>{
+            const base=await buildFullSettingsBackup({includeApiKey,includeFonts:false});
+            return {data:base.data,warning:base.warning};
+        },includeFonts});
+        toast(mode==='opfs'?'设置 JSON 已准备；请点击弹出的“保存到文件”完成设备外备份':mode==='compat_pending'?'兼容 JSON 尚未保存，请从文件保存面板重试':mode==='compat'?'兼容 JSON 已请求下载或分享，请确认设备上存在文件；小手机和兼容库需独立备份':'设置 JSON 写入完毕；小手机和兼容独立库需另外备份');
+    }catch(e){toast(`设置 JSON 导出失败：${e.message}`)}
 }
 function chooseFullSettingsImport(){const input=qs('full-settings-file-input');input.value='';input.click()}
-async function applyFullSettingsBackup(raw,{fromSnapshot=false,templatePolicy='replace'}={}){
+async function applyFullSettingsBackup(raw,{fromSnapshot=false,templatePolicy='replace',portableFontSource=null}={}){
     if(!raw||raw.format!==FULL_SETTINGS_FORMAT||Number(raw.version)>FULL_SETTINGS_VERSION)throw new Error('不是受支持的咪嘛馆完整设置备份');
     const src=raw.data;
     if(!src||typeof src!=='object'||!src.library)throw new Error('备份里缺少剧情资料 library（资料库）');
@@ -2153,13 +2209,46 @@ async function applyFullSettingsBackup(raw,{fromSnapshot=false,templatePolicy='r
     await MimaStandalone.previewLibraryImport(src.library,{templatePolicy});
     const fontPlan=Array.isArray(src.fonts)&&src.fonts.length
       ? await MimaFontManager.planPortableImport(src.fonts) : null;
+    if(portableFontSource)await portableFontSource.preflight((index,total)=>{const el=qs('data-backup-status');if(el)el.textContent=`正在校验备份字体 ${index}/${total}；尚未修改资料`;});
+    const independentFontRecords=fromSnapshot&&raw.snapshotId&&Array.isArray(raw.snapshotFontRecords)?raw.snapshotFontRecords:null;
+    if(independentFontRecords){
+        const seen=new Set();
+        // Preflight every immutable source before touching canonical or sidecar data.
+        for(const row of independentFontRecords){
+            if(!row||typeof row.id!=='string'||seen.has(row.id)||!Number.isSafeInteger(row.size)||!(/^[0-9a-f]{64}$/i).test(row.sha256||''))
+                throw Error('快照字体清单无效，原数据未改动');
+            seen.add(row.id);
+            const blob=await MimaLocalStore.loadSettingsSnapshotFontV2(raw.snapshotId,row.id);
+            if(blob.size!==row.size||await snapshotHash(blob)!==row.sha256)
+                throw Error('快照字体原件或 SHA-256 校验失败：'+row.id);
+            // Release each preflight buffer immediately; never accumulate plans.
+            await MimaFontManager.planBinaryFontRestore({...row,buffer:blob});
+        }
+    }
     const previousApi=MimaStandalone.getApiConfig(),previousPrefs=collectPortableLocalPrefs();
-    let fontReceipt=null,atelierReceipt=null,canonicalCommitted=false,restoreWarnings=[];
+    let fontReceipts=[],atelierReceipt=null,canonicalCommitted=false,restoreWarnings=[];
     const selected={ui:MimaFontManager.getSelected('ui'),story:MimaFontManager.getSelected('story')};
     try{
         // Prepare external assets before the final canonical commit. Font imports only add assets;
         // they must never trigger an empty library write on partial import failure.
-        if(fontPlan)fontReceipt=await MimaFontManager.commitPortablePlan(fontPlan);
+        if(fontPlan)fontReceipts.push(await MimaFontManager.commitPortablePlan(fontPlan));
+        if(portableFontSource){
+            for await(const record of portableFontSource.records()){
+                const plan=await MimaFontManager.planPortableImport([record]);
+                if(plan.records.length)fontReceipts.push(await MimaFontManager.commitPortablePlan(plan,{deferRefresh:true}));
+            }
+            if(fontReceipts.length)await MimaFontManager.refreshAfterBinaryRestore();
+        }
+        if(independentFontRecords){
+            for(const row of independentFontRecords){
+                const blob=await MimaLocalStore.loadSettingsSnapshotFontV2(raw.snapshotId,row.id);
+                if(blob.size!==row.size||await snapshotHash(blob)!==row.sha256)
+                    throw Error('恢复期间快照字体原件发生变化：'+row.id);
+                const plan=await MimaFontManager.planBinaryFontRestore({...row,buffer:blob});
+                if(plan.records.length)fontReceipts.push(await MimaFontManager.commitPortablePlan(plan,{deferRefresh:true}));
+            }
+            if(fontReceipts.length)await MimaFontManager.refreshAfterBinaryRestore();
+        }
         if(src.atelier)atelierReceipt=await MimaAtelierCore.importRecords(src.atelier);
         if(src.wallpapers)await MimaChatWallpaper.importRecords(src.wallpapers);
         if(src.api&&typeof src.api==='object'){
@@ -2186,7 +2275,7 @@ async function applyFullSettingsBackup(raw,{fromSnapshot=false,templatePolicy='r
             return {canonicalCommitted:true,uiRefreshed:false,warnings:['已提交，后续刷新失败：'+(e?.message||String(e))]};
         }
         let rollbackError=null;
-        if(fontReceipt)try{await MimaFontManager.rollbackPortablePlan(fontReceipt);}catch(issue){rollbackError=issue;}
+        for(const receipt of fontReceipts.reverse())try{await MimaFontManager.rollbackPortablePlan(receipt);}catch(issue){rollbackError=issue;}
         MimaStandalone.saveApiConfig(previousApi);
         for(const key of FULL_SETTINGS_KEYS){if(Object.prototype.hasOwnProperty.call(previousPrefs,key))localStorage.setItem(key,previousPrefs[key]);else localStorage.removeItem(key)}
         MimaFontManager.setSelected('ui',selected.ui||'');MimaFontManager.setSelected('story',selected.story||'');
@@ -2230,7 +2319,14 @@ function showFullSettingsRestoreReceipt(result,{fromSnapshot=false}={}){
 async function importFullSettingsFile(file){
     if(!file)return;
     if(!confirm('导入完整设置会用备份中的剧情/角色卡/世界书/预设/CSS 数据覆盖当前资料库，并恢复外观与 API 配置。继续吗？'))return;
-    try{const raw=JSON.parse(await file.text());const policy=chooseTemplateRestorePolicy(await MimaStandalone.exportLibrary(),raw?.data?.library);if(!policy)return;const result=await applyFullSettingsBackup(raw,{templatePolicy:policy});showFullSettingsRestoreReceipt(result);}catch(e){toast(`完整设置导入失败：${e.message}`)}
+    try{
+        const source=await MimaSettingsJsonImport.prepare(file);
+        const raw=source.raw;
+        const policy=chooseTemplateRestorePolicy(await MimaStandalone.exportLibrary(),raw?.data?.library);
+        if(!policy)return;
+        const result=await applyFullSettingsBackup(raw,{templatePolicy:policy,portableFontSource:source.count?source:null});
+        showFullSettingsRestoreReceipt(result);
+    }catch(e){toast(`完整设置导入失败：${e.message}`)}
 }
 async function restoreSavedSettingsSnapshot(){
     try{
@@ -2243,14 +2339,14 @@ async function restoreSavedSettingsSnapshot(){
     }catch(e){toast(`恢复快照失败：${e.message}`)}
 }
 async function renderDataTab(box,renderEpoch=++settingsRenderEpoch){
-    let snap=null;try{snap=await MimaLocalStore.loadSettingsSnapshot()}catch(_){ }
+    let snap=null;try{snap=await MimaLocalStore.loadSettingsSnapshotSummary()}catch(error){console.warn('本机快照概览读取失败',error)}
     if(!settingsRenderIsCurrent('data',renderEpoch,box))return;
     const cfg=MimaStandalone.getApiConfig();
     const receipt=lastFullSettingsRestoreReceipt;
     const backupRestoreResult=receipt?`<div class="data-backup-card" role="${receipt.warnings.length||!receipt.uiRefreshed?'alert':'status'}" style="white-space:pre-wrap"><strong>${receipt.warnings.length||!receipt.uiRefreshed?'⚠️ 本次恢复：部分完成':'✅ 本次恢复：完成'}</strong><div class="row-sub">${!receipt.uiRefreshed?'主资料库已提交，但页面刷新失败；请检查后手动刷新，不要重复导入。':receipt.warnings.length?'主资料库已经恢复，但下列设置未能全部恢复：':'主资料库和本次设置均已恢复。'}</div>${receipt.warnings.map(item=>`<div class="row-sub">• ${escapeHtml(String(item).slice(0,650))}</div>`).join('')}</div>`:'';
     box.innerHTML=`<section class="settings-section"><h3>💾 Data Backup（数据备份）</h3><p class="helper">这里备份的不只是剧情，还包括角色卡、世界书、预设、正则包、CSS Preset（CSS 预设）、API（接口）参数、温度/流式设置、字体选择；可选把本地字体文件也一起装进备份。普通“刷新 / 强制刷新”不会删除这些数据，但 Safari 的“清除历史记录与网站数据”或删除网站数据会清掉 IndexedDB（本地数据库）和 localStorage（本地存储），所以真正保险的是导出 JSON（数据文件）到“文件”App。</p>
-    ${window.MimaTavernBackup?.markup?.()||''}<div class="data-backup-card"><div class="row-title">本机设置快照</div><div class="row-sub">${snap?`最近保存：${escapeHtml(snap.savedAt||snap.exportedAt||'已保存')}`:'尚未保存本机快照'}</div><div class="toolbar"><button class="primary-btn" onclick="saveFullSettingsSnapshot()">保存咪嘛馆设置数据</button><button class="ghost-btn" onclick="restoreSavedSettingsSnapshot()">恢复本机快照</button></div></div>
-    <div class="data-backup-card"><div class="row-title">剧情与设置备份（不含小手机）</div><div class="row-sub"><strong>重要：这不是整馆迁移。</strong>只包含原生剧情、资源、工坊、壁纸及可选字体／接口设置；不包含小手机独立数据库或酒馆兼容库。清除网站数据或换设备前，还必须分别在小手机备份页、酒馆兼容管理页导出各自存档。尚不支持多库一键原子恢复。</div><label class="check-row"><input id="backup-fonts" type="checkbox" checked> 把本地字体文件也加入备份（文件可能变大）</label><label class="check-row"><input id="backup-api-key" type="checkbox"> 把 API Key（接口密钥）加入导出/快照 <strong>（敏感）</strong></label><div class="toolbar"><button class="primary-btn" onclick="exportFullSettingsBackup()">⇩ 导出剧情与设置</button><button class="ghost-btn" onclick="chooseFullSettingsImport()">⇧ 恢复剧情与设置</button></div><div class="row-sub">当前 API（接口）：${cfg.apiBase?escapeHtml(cfg.apiBase):'未配置'} · Model（模型）：${cfg.model?escapeHtml(cfg.model):'未选择'}</div></div>
+    ${window.MimaTavernBackup?.markup?.()||''}<div class="data-backup-card"><div class="row-title">本机设置快照</div><div class="row-sub">${snap?`最近保存：${escapeHtml(snap.savedAt||snap.exportedAt||'已保存')}`:'尚未保存本机快照'}</div><div class="toolbar"><button class="primary-btn" onclick="saveFullSettingsSnapshot()">保存咪嘛馆设置数据</button><button class="ghost-btn" onclick="restoreSavedSettingsSnapshot()">恢复本机快照</button><button class="ghost-btn" onclick="cleanupSettingsSnapshotStaging()">清理失败快照暂存</button></div><div class="row-sub">新版快照将字体原件独立保存。它仍位于本网站数据库，不能替代设备外备份。</div></div>
+    <div class="data-backup-card"><div class="row-title">剧情与设置备份（不含小手机）</div><div class="row-sub"><strong>重要：这不是整馆迁移。</strong>只包含原生剧情、资源、工坊、壁纸及可选字体／接口设置；不包含小手机独立数据库或酒馆兼容库。清除网站数据或换设备前，还必须分别在小手机备份页、酒馆兼容管理页导出各自存档。尚不支持多库一键原子恢复。</div><label class="check-row"><input id="backup-fonts" type="checkbox" checked> 把本地字体文件也加入备份（文件可能变大）</label><label class="check-row"><input id="backup-api-key" type="checkbox"> 把 API Key（接口密钥）加入导出/快照 <strong>（敏感）</strong></label><div class="toolbar"><button class="primary-btn" onclick="exportFullSettingsBackup()">⇩ 导出剧情与设置</button><button class="ghost-btn" onclick="chooseFullSettingsImport()">⇧ 恢复剧情与设置</button><button class="ghost-btn" onclick="resumeSettingsJsonTemp()">继续保存临时 JSON</button><button class="ghost-btn" onclick="cleanupSettingsJsonTemp()">清理导出临时文件</button></div><div class="row-sub">当前 API（接口）：${cfg.apiBase?escapeHtml(cfg.apiBase):'未配置'} · Model（模型）：${cfg.model?escapeHtml(cfg.model):'未选择'}</div></div>
     <div id="data-backup-status" class="api-status">${snap?'✅ 当前浏览器已有本机快照。':'建议先保存一次本机快照，再导出一份文件备份。'}</div>${backupRestoreResult}</section>
     <section class="settings-section"><h3>🧹 Cache（缓存）说明</h3><p class="helper"><strong>只想让 GitHub Pages 加载新代码时，不需要先清除网站数据。</strong>本版已经给 CSS / JS 资源加入版本号 <code>?v=1.1.0</code>，部署后浏览器会把它们当成新资源重新拉取。若仍显示旧页面，先关闭该标签页再重新打开，或做一次强制刷新；不要直接使用会删除网站数据的清理方式，除非你已经导出了完整设置备份。</p></section>`;
     if(window.MimaTavernBackup)void MimaTavernBackup.mount().catch(error=>console.error('迁移收据读取失败',error));
@@ -4983,7 +5079,7 @@ function restoreLegacyFont({syncSelection=true}={}){
 }
 
 // Expose inline handlers
-Object.assign(window,{setMimaFeedbackPreference,chooseMimaFeedbackSound,previewMimaFeedbackSound,resetMimaFeedbackSound,openMimaReleaseNotice,closeMimaReleaseNotice,setMimaReleaseNoticeOptOut,openGenerationTaskViewer,closeGenerationTaskViewer,copyGenerationTaskViewerText,importCurrentSessionAsSettingTemplate,chooseIndependentTemplate,saveIndependentTemplate,copyIndependentTemplate,setIndependentTemplateDefault,deleteIndependentTemplate,setImmersiveReading,saveCurrentSettingTemplate,duplicateSettingTemplate,setDefaultSettingTemplate,deleteSettingTemplate,exportSettingTemplate,importSettingTemplate,refreshSettingTemplateChoices,renderSettingTemplatePreview,manualRollingSummary,mimaFilterLibrary,mimaToggleFavorite,goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,choosePngResourceInspection,playInspectedPngInCompat,savePngSelectedResources,exportPngInspection,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,exportStoryTranscript,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,loadMemoryModels,selectMemoryModel,startFactMemoryEdit,cancelFactMemoryEdit,saveFactMemoryEdit,toggleMergeFactSelection,previewFactMemoryMerge,cancelFactMemoryMerge,confirmFactMemoryMerge,undoFactMemoryMerge,clearCoreMemory,deleteFactMemory,clearAllFactMemories,revokeRollingMemory,restoreRollingMemory,discardMemoryCandidate,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,saveUrlFont,activateUrlFont,removeUrlFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,mimaLoadLargeCssForEdit,stopAtelierAndRestoreCss,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,apiIdentityDraftChanged,syncTemperature,updateStoryTypography,resetStoryTypography,setAppearancePreviewSurface,setBuiltInTheme,dismissGenerationPanel,previewFailedGenerationRaw,recoverFailedGenerationRaw,repairFailedGenerationHtml,retryFailedGeneration,retryGenerationReconciliation,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,regenerateCurrentMsg,continueMsg,autoAdvance,restoreMessageVersion,stopGeneration,abandonUnknownGeneration,toggleGenerationPanelMinimize,restoreGenerationPanel,saveGenerationContextAndPreview,resumeGenerationAfterCapacityPreview});
+Object.assign(window,{setMimaFeedbackPreference,chooseMimaFeedbackSound,previewMimaFeedbackSound,resetMimaFeedbackSound,openMimaReleaseNotice,closeMimaReleaseNotice,setMimaReleaseNoticeOptOut,openGenerationTaskViewer,closeGenerationTaskViewer,copyGenerationTaskViewerText,importCurrentSessionAsSettingTemplate,chooseIndependentTemplate,saveIndependentTemplate,copyIndependentTemplate,setIndependentTemplateDefault,deleteIndependentTemplate,setImmersiveReading,saveCurrentSettingTemplate,duplicateSettingTemplate,setDefaultSettingTemplate,deleteSettingTemplate,exportSettingTemplate,importSettingTemplate,refreshSettingTemplateChoices,renderSettingTemplatePreview,manualRollingSummary,mimaFilterLibrary,mimaToggleFavorite,goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,choosePngResourceInspection,playInspectedPngInCompat,savePngSelectedResources,exportPngInspection,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,exportStoryTranscript,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,loadMemoryModels,selectMemoryModel,startFactMemoryEdit,cancelFactMemoryEdit,saveFactMemoryEdit,toggleMergeFactSelection,previewFactMemoryMerge,cancelFactMemoryMerge,confirmFactMemoryMerge,undoFactMemoryMerge,clearCoreMemory,deleteFactMemory,clearAllFactMemories,revokeRollingMemory,restoreRollingMemory,discardMemoryCandidate,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,cleanupSettingsSnapshotStaging,cleanupSettingsJsonTemp,resumeSettingsJsonTemp,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,saveUrlFont,activateUrlFont,removeUrlFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,mimaLoadLargeCssForEdit,stopAtelierAndRestoreCss,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,apiIdentityDraftChanged,syncTemperature,updateStoryTypography,resetStoryTypography,setAppearancePreviewSurface,setBuiltInTheme,dismissGenerationPanel,previewFailedGenerationRaw,recoverFailedGenerationRaw,repairFailedGenerationHtml,retryFailedGeneration,retryGenerationReconciliation,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,regenerateCurrentMsg,continueMsg,autoAdvance,restoreMessageVersion,stopGeneration,abandonUnknownGeneration,toggleGenerationPanelMinimize,restoreGenerationPanel,saveGenerationContextAndPreview,resumeGenerationAfterCapacityPreview});
 
 
 window.MimaPlayTools?.register('native',{

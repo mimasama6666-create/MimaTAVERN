@@ -521,12 +521,146 @@
     const current=await loadState();return saveState(next, Number(current.storeRevision)||0);
   }
   async function saveSettingsSnapshot(snapshot){ return set(SETTINGS_SNAPSHOT_KEY,{...(snapshot||{}),savedAt:new Date().toISOString()}); }
-  async function loadSettingsSnapshot(){ const existing=await get(SETTINGS_SNAPSHOT_KEY); return existing&&typeof existing==='object'?existing:null; }
+  async function loadSettingsSnapshot(){ const current=await loadSettingsSnapshotV2();if(current)return current;const existing=await get(SETTINGS_SNAPSHOT_KEY);return existing&&typeof existing==='object'?existing:null; }
+  async function loadSettingsSnapshotSummary(){
+    const head=await get('settings_snapshot_v2_head');
+    if(head){const summary=await get('settings_snapshot_v2_summary');
+      if(!summary||summary.snapshotId!==head)throw Error('快照概览与当前记录不一致；原数据未修改');
+      return summary;
+    }
+    return loadSettingsSnapshot(); // Unmodified old v1 snapshots remain readable.
+  }
   async function clearSettingsSnapshot(){
-    const db=await openDb();
-    return new Promise((resolve,reject)=>{const tx=db.transaction(STORE,'readwrite');tx.objectStore(STORE).delete(SETTINGS_SNAPSHOT_KEY);tx.oncomplete=()=>{db.close();resolve(true)};tx.onerror=()=>{db.close();reject(tx.error)}});
+    // Keep the historical clear API functional for both versions. This is an
+    // explicit delete, not a failed-load migration or background cleanup.
+    return snapshotWrite((kv,setResult,fail)=>{
+      const stage=kv.get(SNAP_V2_STAGE);
+      stage.onsuccess=()=>{
+        if(stage.result){fail(Error('本机快照正在保存，拒绝清空'));return;}
+        const cursor=kv.openCursor();
+        cursor.onsuccess=()=>{const c=cursor.result;
+          if(!c)return;
+          const k=String(c.key);
+          if(k===SETTINGS_SNAPSHOT_KEY||k.startsWith('settings_snapshot_v2_'))kv.delete(c.key);
+          c.continue();
+        };
+        cursor.onerror=()=>fail(cursor.error||Error('快照删除列表读取失败'));
+        setResult(true);
+      };
+    });
   }
 
+  // V5.51: versioned, immutable local settings snapshots. The previous head
+  // remains intact until every font Blob and the new manifest have committed.
+  // Each staged font and its ledger entry commit in ONE IDB transaction.
+  const SNAP_V2_HEAD='settings_snapshot_v2_head', SNAP_V2_STAGE='settings_snapshot_v2_stage';
+  const snapshotManifestKey=id=>'settings_snapshot_v2_manifest:'+id;
+  const snapshotBinaryKey=(id,fontId)=>'settings_snapshot_v2_blob:'+id+':'+fontId;
+  async function snapshotWrite(fn){
+    const db=await openDb();return new Promise((resolve,reject)=>{
+      let answer,reason;const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE);
+      const fail=e=>{reason=e instanceof Error?e:Error(String(e));try{tx.abort()}catch(_){}};
+      try{fn(kv,x=>{answer=x},fail)}catch(e){fail(e)}
+      tx.oncomplete=()=>{db.close();resolve(answer)};
+      tx.onabort=()=>{db.close();reject(reason||tx.error||Error('E_SETTINGS_SNAPSHOT_ABORTED'))};
+    });
+  }
+  function snapshotToken(){return 's'+(crypto.randomUUID?.()||Date.now()+'-'+Math.random().toString(36).slice(2));}
+  async function beginSettingsSnapshotV2(expectedFonts){
+    if(!Number.isSafeInteger(expectedFonts)||expectedFonts<0)throw Error('快照字体数量不合法');
+    const token=snapshotToken();
+    await snapshotWrite((kv,setResult,fail)=>{
+      const req=kv.get(SNAP_V2_STAGE);
+      req.onsuccess=()=>{
+        if(req.result){fail(Error('有未结束的本机快照保存。请确认没有其他标签正在写入，再清理未完成快照'));return;}
+        kv.put({token,expectedFonts,fonts:[],createdAt:new Date().toISOString()},SNAP_V2_STAGE);setResult(token);
+      };
+    });return token;
+  }
+  async function stageSettingsSnapshotFontV2(token,row,blob){
+    if(!row||typeof row.id!=='string'||!row.id||!Number.isSafeInteger(row.size)||row.size<=0||
+       !(blob instanceof Blob)||blob.size!==row.size||!(/^[0-9a-f]{64}$/i).test(row.sha256||''))throw Error('本机快照字体原件/指纹无效');
+    await snapshotWrite((kv,setResult,fail)=>{
+      const req=kv.get(SNAP_V2_STAGE);
+      req.onsuccess=()=>{
+        const stage=req.result;
+        if(!stage||stage.token!==token||stage.fonts.length>=stage.expectedFonts||stage.fonts.some(x=>x.id===row.id)){
+          fail(Error('快照保存所有权或字体索引冲突'));return;
+        }
+        kv.put(blob,snapshotBinaryKey(token,row.id));
+        kv.put({...stage,fonts:[...stage.fonts,row]},SNAP_V2_STAGE);setResult(true);
+      };
+    });
+  }
+  async function completeSettingsSnapshotV2(token,snapshot){
+    if(!snapshot?.data?.library||!Array.isArray(snapshot.data.fonts)||snapshot.data.fonts.length)
+      throw Error('快照清单格式无效');
+    return snapshotWrite((kv,setResult,fail)=>{
+      const stageReq=kv.get(SNAP_V2_STAGE),headReq=kv.get(SNAP_V2_HEAD);
+      let stage,head,done=0;
+      const finish=()=>{if(++done!==2)return;
+        if(!stage||stage.token!==token||stage.fonts.length!==stage.expectedFonts){fail(Error('快照字体尚未全部保存，拒绝提交'));return;}
+        const value={...snapshot,snapshotId:token,snapshotFontRecords:stage.fonts,savedAt:new Date().toISOString(),previousSnapshotId:head||null};
+        kv.put(value,snapshotManifestKey(token));kv.put(token,SNAP_V2_HEAD);
+        kv.put({snapshotId:token,savedAt:value.savedAt,fontCount:stage.fonts.length},'settings_snapshot_v2_summary');
+        kv.delete(SNAP_V2_STAGE);setResult(value);
+      };
+      stageReq.onsuccess=()=>{stage=stageReq.result;finish()};headReq.onsuccess=()=>{head=headReq.result;finish()};
+    });
+  }
+  async function discardFailedSettingsSnapshotV2(token=null){
+    return snapshotWrite((kv,setResult,fail)=>{
+      const req=kv.get(SNAP_V2_STAGE);
+      req.onsuccess=()=>{
+        const stage=req.result;
+        if(!stage){setResult(false);return;}
+        if(token&&stage.token!==token){fail(Error('另一标签的快照所有权发生变化，拒绝清理'));return;}
+        for(const row of stage.fonts||[])kv.delete(snapshotBinaryKey(stage.token,row.id));
+        kv.delete(SNAP_V2_STAGE);setResult(true);
+      };
+    });
+  }
+  async function hasIncompleteSettingsSnapshotV2(){return !!await get(SNAP_V2_STAGE)};
+  async function loadSettingsSnapshotV2(){
+    const head=await get(SNAP_V2_HEAD);if(!head)return null;
+    const record=await get(snapshotManifestKey(head));
+    if(!record||record.snapshotId!==head)throw Error('本机快照索引与清单不一致，保留现有资料');
+    return record;
+  }
+  async function loadSettingsSnapshotFontV2(token,id){
+    const db=await openDb();return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readonly'),kv=tx.objectStore(STORE);
+      let head,manifest,blob,received=0,issue;
+      const validate=()=>{if(++received!==3)return;
+        if(head!==token||manifest?.snapshotId!==token||!manifest.snapshotFontRecords?.some(x=>x.id===id)||!(blob instanceof Blob)){
+          issue=Error('本机快照字体原件已缺失或版本变化：'+id);try{tx.abort()}catch(_){}
+        }
+      };
+      for(const [key,assign] of [[SNAP_V2_HEAD,x=>head=x],[snapshotManifestKey(token),x=>manifest=x],[snapshotBinaryKey(token,id),x=>blob=x]]){
+        const req=kv.get(key);req.onsuccess=()=>{assign(req.result);validate()};req.onerror=()=>{issue=req.error;try{tx.abort()}catch(_){}};
+      }
+      tx.oncomplete=()=>{db.close();resolve(blob)};
+      tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_SETTINGS_SNAPSHOT_READ'))};
+    });
+  }
+  async function pruneOldSettingsSnapshotsV2(){
+    const head=await get(SNAP_V2_HEAD),latest=head?await get(snapshotManifestKey(head)):null;
+    if(!head||!latest?.previousSnapshotId)return false;
+    // Prune only the predecessor of the current head, not any active snapshot.
+    return snapshotWrite((kv,setResult,fail)=>{
+      const h=kv.get(SNAP_V2_HEAD),m=kv.get(snapshotManifestKey(head)),old=kv.get(snapshotManifestKey(latest.previousSnapshotId));
+      let current,entry,previous,n=0;
+      const finish=()=>{if(++n!==3)return;
+        if(current!==head||entry?.previousSnapshotId!==latest.previousSnapshotId){fail(Error('快照已被其他标签替换，停止回收旧版本'));return;}
+        if(previous?.snapshotId===latest.previousSnapshotId){
+          for(const row of previous.snapshotFontRecords||[])kv.delete(snapshotBinaryKey(previous.snapshotId,row.id));
+          kv.delete(snapshotManifestKey(previous.snapshotId));
+        }
+        kv.put({...entry,previousSnapshotId:previous?.previousSnapshotId||null},snapshotManifestKey(head));setResult(true);
+      };
+      h.onsuccess=()=>{current=h.result;finish()};m.onsuccess=()=>{entry=m.result;finish()};old.onsuccess=()=>{previous=old.result;finish()};
+    });
+  }
   // Durable per-session memory journal is stored next to, but independent from,
   // the canonical state record. No new database/version or destructive migration.
   const jobKey=(sessionId,kind)=>`memory_job:${sessionId}:${kind}`;
@@ -1387,5 +1521,5 @@
     if(text.length!==receipt.persistedChars)throw new Error('E_GENERATION_FRAGMENT_INCOMPLETE');
     return {receipt,text,complete:true};
   }
-  window.MimaLocalStore={putHtmlRepairDraft,getHtmlRepairDraft,loadAppearance,commitAppearance,mergeAppearance,exportPlayToolRecords,importPlayToolRecords,listPlayToolLocal,getPlayToolLocal:key=>get('play_tools_v1:'+key),putPlayToolLocal:(key,value)=>set('play_tools_v1:'+key,value),generationReceipt,generationAppendFragment,generationRead,getRollingPreflight,putRollingPreflight,clearRollingPreflight,commitHtmlRepair,putHtmlRepairCandidate,getHtmlRepairCandidate,setHtmlRepairCandidateState,listMemoryStages,inspectLegacyMemoryStages,putMemoryRejectedDraft,listMemoryRejectedDrafts,memoryReferenceContract,putFactRangeCandidate,listFactRangeCandidates,commitVerifiedFactRanges,getMergeStage,putMergeStage,getMergeDraft,createMergeDraft,updateMergeDraft,commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,clearSettingsSnapshot,getMemoryJob,getMemoryStage,putMemoryStage,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
+  window.MimaLocalStore={putHtmlRepairDraft,getHtmlRepairDraft,loadAppearance,commitAppearance,mergeAppearance,exportPlayToolRecords,importPlayToolRecords,listPlayToolLocal,getPlayToolLocal:key=>get('play_tools_v1:'+key),putPlayToolLocal:(key,value)=>set('play_tools_v1:'+key,value),generationReceipt,generationAppendFragment,generationRead,getRollingPreflight,putRollingPreflight,clearRollingPreflight,commitHtmlRepair,putHtmlRepairCandidate,getHtmlRepairCandidate,setHtmlRepairCandidateState,listMemoryStages,inspectLegacyMemoryStages,putMemoryRejectedDraft,listMemoryRejectedDrafts,memoryReferenceContract,putFactRangeCandidate,listFactRangeCandidates,commitVerifiedFactRanges,getMergeStage,putMergeStage,getMergeDraft,createMergeDraft,updateMergeDraft,commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,loadSettingsSnapshotSummary,clearSettingsSnapshot,beginSettingsSnapshotV2,stageSettingsSnapshotFontV2,completeSettingsSnapshotV2,discardFailedSettingsSnapshotV2,hasIncompleteSettingsSnapshotV2,loadSettingsSnapshotFontV2,pruneOldSettingsSnapshotsV2,getMemoryJob,getMemoryStage,putMemoryStage,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
 })();

@@ -373,8 +373,20 @@
  async function prepareVolumes(inputFiles){
   const parsed=await MimaBackupVolumes.readManifest(inputFiles),id=parsed.manifest.sha256;
   const existing=await journal('receipt:'+id);
-  if(existing){const source=await loadV3Source(id);const plans=await preflightV3Stream(source);
+  if(existing){
    if(existing.archiveFormat!=='v3')throw Error('此归档已有另一种格式的恢复收据');
+   // A completed receipt survives cleanup of site-local staged volumes. When
+   // the user selects the original external files again, verify those files
+   // instead of assuming the (intentionally deleted) staging source exists.
+   if(existing.status==='complete' && existing.stagingReleased){
+    const source=await MimaBackupVolumes.open(inputFiles);
+    if(source.id!==id)throw Error('外部归档与历史恢复收据不一致');
+    const current=await journal('receipt:'+id);
+    if(current?._restoreRevision!==existing._restoreRevision||current?.status!=='complete')
+     throw Error('恢复收据已在另一窗口改变，请重新核对');
+    return current; // Read-only verification; no new receipt, staging, or restore.
+   }
+   const source=await loadV3Source(id);const plans=await preflightV3Stream(source);
    return existing.status==='complete'?existing:saveReceipt({...existing,status:'prepared',plans});
   }
   const execute=async()=>{
@@ -627,7 +639,7 @@
  function chooseVolumesUI(){const input=document.createElement('input');input.type='file';input.multiple=true;input.accept='.mimavol,.json';
   input.onchange=()=>guarded(async()=>{if(!input.files?.length)return;
    status('正在逐卷核对大小、SHA、章节和原件；通过后才开始预检');
-   const r=await prepareVolumes(input.files);activeId=r.id;paintReceipt(r);status('整馆分卷全部预检通过，可以执行逐库恢复。');});input.click();}
+   const r=await prepareVolumes(input.files);activeId=r.id;paintReceipt(r);status(r.status==='complete'?'设备外归档已重新完整校验，历史恢复收据有效；无需重复恢复。':'整馆分卷全部预检通过，可以执行逐库恢复。');});input.click();}
  function status(text){const node=document.getElementById('tavern-migration-status');if(node)node.textContent=text}
  function paintReceipt(r){const node=document.getElementById('tavern-migration-receipt');if(!node)return;node.textContent=(r.status==='complete'?'全部项目已恢复；请刷新页面加载结果。':r.status==='prepared'?'全部项目预检通过，尚未开始本次恢复。':r.status==='running'?'正在按项目恢复…':'恢复已中断，可以核对后继续。')+'\n'+NAMES.map(n=>LABELS[n]+'：'+({pending:'尚未开始',running:'正在恢复',committed:'已恢复',unconfirmed:'结果待核对'}[r.stages[n]?.status]||'尚未开始')).join('\n')+(r.error?'\n停止原因：'+r.error:'')+'\n已恢复的内容会保留，继续时会核对并补齐缺失资料，不会重复添加。';const resumeButton=document.getElementById('tavern-migration-resume');if(resumeButton)resumeButton.hidden=r.status==='complete';}
  async function guarded(fn){if(busy)return;busy=true;try{await fn()}catch(e){status('未完成：'+e.message);console.error('[Tavern migration]',e)}finally{busy=false}}

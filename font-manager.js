@@ -454,6 +454,9 @@ window.MimaFontManager = (() => {
         if(!current||versionOf(current)!==versionOf(meta))throw Error('字体备份读入时版本变化：'+id);
         let closed=false;
         return {id,metadata:metadataOf(meta),version:versionOf(meta),size,
+            // A snapshot must own immutable bytes, not a pointer to the live
+            // font DB. The caller writes this Blob to its versioned IDB store.
+            snapshotBlob(){if(closed)throw Error('字体备份句柄已关闭');return original instanceof Blob?original:new Blob([original]);},
             async readRange(start,length){
                 if(closed)throw Error('字体备份读取句柄已关闭');
                 if(!Number.isSafeInteger(start)||!Number.isSafeInteger(length)||length<0||start<0||start+length>size||length>1024*1024)
@@ -1503,6 +1506,7 @@ window.MimaFontManager = (() => {
     }
     function bufferToBase64(buffer) {
         const bytes = new Uint8Array(buffer || new ArrayBuffer(0));
+        if(typeof bytes.toBase64==='function')return bytes.toBase64();
         let binary = '';
         const chunk = 0x8000;
         for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode(...bytes.subarray(i, i + chunk));

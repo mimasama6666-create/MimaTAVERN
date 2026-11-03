@@ -44,5 +44,49 @@
   }
   return h.map(n=>n.toString(16).padStart(8,'0')).join('');
  }
- return Object.freeze({digest});
+ // Incremental hashing for immutable Blob snapshots. The original one-shot
+ // digest remains intact for all existing callers and its 32 MiB safety cap.
+ function create(){
+  const h=initial.slice(),w=new Uint32Array(64),pending=new Uint8Array(64);
+  let used=0,total=0,finalized=false;
+  function compress(block){
+   for(let i=0;i<16;i++){const j=i*4;w[i]=((block[j]<<24)|(block[j+1]<<16)|(block[j+2]<<8)|block[j+3])>>>0;}
+   for(let i=16;i<64;i++){
+    const x=w[i-15],y=w[i-2],s0=r(x,7)^r(x,18)^(x>>>3),s1=r(y,17)^r(y,19)^(y>>>10);
+    w[i]=(w[i-16]+s0+w[i-7]+s1)>>>0;
+   }
+   let [a,b,c,d,e,f,g,hh]=h;
+   for(let i=0;i<64;i++){
+    const s1=r(e,6)^r(e,11)^r(e,25),ch=(e&f)^(~e&g),t1=(hh+s1+ch+K[i]+w[i])>>>0;
+    const s0=r(a,2)^r(a,13)^r(a,22),maj=(a&b)^(a&c)^(b&c),t2=(s0+maj)>>>0;
+    hh=g;g=f;f=e;e=(d+t1)>>>0;d=c;c=b;b=a;a=(t1+t2)>>>0;
+   }
+   h[0]=(h[0]+a)>>>0;h[1]=(h[1]+b)>>>0;h[2]=(h[2]+c)>>>0;h[3]=(h[3]+d)>>>0;
+   h[4]=(h[4]+e)>>>0;h[5]=(h[5]+f)>>>0;h[6]=(h[6]+g)>>>0;h[7]=(h[7]+hh)>>>0;
+  }
+  return {
+   update(bytes){
+    if(finalized)throw Error('SHA-256 is already finalized');
+    if(!(bytes instanceof Uint8Array))throw TypeError('SHA-256 update requires Uint8Array');
+    if(!Number.isSafeInteger(total+bytes.byteLength))throw RangeError('SHA-256 byte length exceeds safe integer');
+    total+=bytes.byteLength;
+    let off=0;
+    if(used){const n=Math.min(64-used,bytes.length);pending.set(bytes.subarray(0,n),used);used+=n;off=n;if(used===64){compress(pending);used=0;}}
+    while(off+64<=bytes.length){compress(bytes.subarray(off,off+64));off+=64;}
+    if(off<bytes.length){pending.set(bytes.subarray(off),0);used=bytes.length-off;}
+    return this;
+   },
+   hex(){
+    if(finalized)throw Error('SHA-256 is already finalized');finalized=true;
+    const last=new Uint8Array(64);last.set(pending.subarray(0,used));last[used]=0x80;
+    if(used>=56){compress(last);last.fill(0);}
+    const hi=Math.floor(total/0x20000000),lo=(total*8)>>>0;
+    last[56]=(hi>>>24)&255;last[57]=(hi>>>16)&255;last[58]=(hi>>>8)&255;last[59]=hi&255;
+    last[60]=(lo>>>24)&255;last[61]=(lo>>>16)&255;last[62]=(lo>>>8)&255;last[63]=lo&255;
+    compress(last);
+    return h.map(n=>n.toString(16).padStart(8,'0')).join('');
+   }
+  };
+ }
+ return Object.freeze({digest,create});
 });
