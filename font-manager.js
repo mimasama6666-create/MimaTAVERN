@@ -59,9 +59,10 @@ window.MimaFontManager = (() => {
         try{
             // Only retire the old scope alias; a shared unbundled family
             // might still be the other scope's active face.
-            if(previousRender!==family)for(const entry of [...loaded.values()])
-                if(entry.face.family===previousRender)releaseFontFamily(entry.id,previousRender);
-            else if(clean.length){
+            if(previousRender!==family){
+                for(const entry of [...loaded.values()])
+                    if(entry.face.family===previousRender)releaseFontFamily(entry.id,previousRender);
+            }else if(clean.length){
                 const nextRender=scopedFamily(kind,family);
                 for(const entry of [...loaded.values()])if(entry.face.family===nextRender)
                     releaseFontFamily(entry.id,nextRender);
@@ -413,6 +414,61 @@ window.MimaFontManager = (() => {
     }
     // Compatibility API for callers that explicitly request all raw records.
     // The settings list never uses this API. Backup/export reads per ID.
+    // V5.49: inventory never clones originals; read-only handles hold at most
+    // one v1 ArrayBuffer or one v2 Blob while caller emits bounded chunks.
+    async function listBackupInventory(){
+        const audit=await auditStoredFonts();
+        const records=await readMetadata();
+        const indexed=new Set(records.map(r=>String(r.id)));
+        const tombstones=new Set(audit.modern.tombstoneIds);
+        const orphanV1=audit.legacy.ids.filter(id=>!indexed.has(id)&&!tombstones.has(id));
+        const defects={orphanV1,orphanV2:audit.modern.orphanBinaryIds.slice(),
+            missingV1:audit.modern.legacyIndexesWithoutSource.slice(),missingV2:audit.modern.missingBinaryIds.slice(),
+            tombstoneConflicts:records.filter(r=>tombstones.has(String(r.id))).map(r=>r.id)};
+        return {records:records.map(metadataOf),audit,defects,
+            identity:JSON.stringify({records:records.map(r=>[r.id,versionOf(r),r.storage,r.size,r.fingerprint||'',r.health||'']).sort((a,b)=>String(a[0]).localeCompare(String(b[0]))),
+                v1:audit.legacy.ids.slice().sort(),v2:audit.modern.binaryIds.slice().sort(),tombstones:[...tombstones].sort()})};
+    }
+    async function assertBackupInventory(snapshot){
+        if(!snapshot?.identity)throw Error('未提供有效字体库存快照');
+        const now=await listBackupInventory();
+        if(now.identity!==snapshot.identity)throw Error('导出期间字体库内容或索引发生变化，请重做备份；原件未修改');
+        return true;
+    }
+    async function openBackupSource(id,{expectedVersion}={}){
+        const meta=await storeRead('v2',META_STORE,id);
+        if(!meta)throw Error('字体备份源不存在：'+id);
+        if(expectedVersion && versionOf(meta)!==expectedVersion)throw Error('字体备份源版本发生变化：'+id);
+        let original;
+        if(meta.storage==='legacy'){
+            const record=await storeRead('legacy',STORE,id);
+            original=record?.buffer;
+            if(!original)throw Error('旧字体原件无法读取：'+id);
+        }else original=await storeRead('v2',BINARY_STORE,id);
+        if(!(original instanceof Blob)&&!(original instanceof ArrayBuffer)&&!ArrayBuffer.isView(original))
+            throw Error('字体原始字节不可读取：'+id);
+        const size=original instanceof Blob?original.size:original.byteLength;
+        if(!(size>0)||Number(meta.size)>0&&size!==Number(meta.size))
+            throw Error('字体备份源字节长度不符：'+id);
+        const current=await storeRead('v2',META_STORE,id);
+        if(!current||versionOf(current)!==versionOf(meta))throw Error('字体备份读入时版本变化：'+id);
+        let closed=false;
+        return {id,metadata:metadataOf(meta),version:versionOf(meta),size,
+            async readRange(start,length){
+                if(closed)throw Error('字体备份读取句柄已关闭');
+                if(!Number.isSafeInteger(start)||!Number.isSafeInteger(length)||length<0||start<0||start+length>size||length>1024*1024)
+                    throw Error('字体备份只允许每次读取不超过 1MiB 的有效范围');
+                if(original instanceof Blob)return new Uint8Array(await original.slice(start,start+length).arrayBuffer());
+                const bytes=original instanceof ArrayBuffer?new Uint8Array(original):new Uint8Array(original.buffer,original.byteOffset,original.byteLength);
+                return bytes.slice(start,start+length);
+            },
+            async confirm(){if(closed)throw Error('字体备份句柄已关闭');
+                const fresh=await storeRead('v2',META_STORE,id);
+                if(!fresh||versionOf(fresh)!==versionOf(meta))throw Error('字体在备份期间被其他标签修改：'+id);
+                return true;},
+            close(){closed=true;original=null;}
+        };
+    }
     async function all({allowPartial=false}={}){
         const records=[],failed=[];
         for(const meta of await listMetadata()){
@@ -526,21 +582,56 @@ window.MimaFontManager = (() => {
             return {face,url,contentVersion:versionOf(record),renderSignature:JSON.stringify(descriptors),state:'registered'};
         }catch(error){if(url)URL.revokeObjectURL(url);throw error;}
     }
-    function reportRegisteredFace(entry,state,error='') {
-        // An older async callback cannot change the status of a replacement.
+    // One authoritative scope-specific list: redundant supplements never become
+    // fake missing faces, and the other scope cannot settle this one's status.
+    const effectiveParts={ui:null,story:null};
+    function activeParts(kind,family=getSelected(kind)){
+        const plan=effectiveParts[kind];
+        if(!plan||plan.family!==family||plan.render!==scopedFamily(kind,family))return null;
+        return plan;
+    }
+    function settleLocalScope(kind,family=getSelected(kind),detail=''){
+        const plan=activeParts(kind,family);
+        if(!plan)return null;
+        const refs=[plan.primaryId,...plan.supplementIds];
+        const faces=refs.map(id=>findLoaded(id,plan.render));
+        const failures=refs.filter((id,i)=>faces[i]?.state==='error'||getDecodeFailure(plan.metadata[i]));
+        if(failures.length){
+            const message='字体原生解码失败：'+failures.join('、')+'；原件已保留';
+            reportLoad(kind,family,'error',message);return {state:'error',message,faces,refs};
+        }
+        if(faces.every(e=>e?.face.status==='loaded')){
+            applied[kind]=plan.render;
+            reportLoad(kind,family,'loaded');return {state:'loaded',faces,refs};
+        }
+        const state=faces.some(e=>!e)?'partial':'registered';
+        reportLoad(kind,family,state,detail);
+        return {state,faces,refs};
+    }
+    async function waitScopeLoaded(kind,family){
+        const plan=activeParts(kind,family);
+        if(!plan)throw new Error('字体组合在加载期间发生变化，请重新验证');
+        const status=settleLocalScope(kind,family);
+        if(status.state==='error')throw new Error(status.message);
+        if(status.faces.some(e=>!e))throw new Error('当前组合仍有未注册的字体原件');
+        const tasks=status.faces.map(e=>e.loadTask||e.face.load());
+        const results=await Promise.allSettled(tasks);
+        if(family!==getSelected(kind)||activeParts(kind,family)!==plan)throw new Error('字体选择已改变，请确认新的选择');
+        const failed=results.findIndex((r,i)=>r.status==='rejected'||status.faces[i].face.status!=='loaded');
+        if(failed>=0){
+            const id=status.refs[failed];
+            const cause=results[failed].status==='rejected'?results[failed].reason?.message||results[failed].reason:'原生字体未就绪';
+            const msg='字体或补字 '+id+' 未能加载：'+String(cause);
+            reportLoad(kind,family,'error',msg);throw new Error(msg);
+        }
+        settleLocalScope(kind,family);
+    }
+    function reportRegisteredFace(entry,state,error=''){
         if(loaded.get(entry.registryKey)!==entry)return;
-        for(const kind of ['ui','story']) {
-            if(scopedFamily(kind)!==entry.face.family)continue;
-            const primary=primaryByKind[kind]?findLoaded(primaryByKind[kind],scopedFamily(kind)):null;
-            if(state==='loaded'&&entry.id===primaryByKind[kind])applied[kind]=entry.face.family;
-            const companions=bundleFor(kind);
-            if(companions.length){
-                const entries=companions.map(id=>findLoaded(id,scopedFamily(kind)));
-                const broken=entries.find(e=>e?.state==='error');
-                if(entry.state==='error'||primary?.state==='error'||broken)
-                    reportLoad(kind,getSelected(kind),'error','字体或补字文件解码失败，原件仍保留');
-                else reportLoad(kind,getSelected(kind),!primary||entries.some(e=>!e)?'partial':primary.state==='loaded'&&entries.every(e=>e.state==='loaded')?'loaded':'registered',error);
-            }else reportLoad(kind,getSelected(kind),state,error);
+        for(const kind of ['ui','story']){
+            const plan=activeParts(kind);
+            if(plan?.render===entry.face.family&&[plan.primaryId,...plan.supplementIds].includes(entry.id))
+                settleLocalScope(kind,plan.family,error);
         }
     }
     function attachFont(id,entry) {
@@ -749,7 +840,7 @@ window.MimaFontManager = (() => {
             const ready=[];
             for(const id of members){
                 const sub=records.find(m=>m.id===id);
-                if(!sub){console.warn('补字原件已不可见，原组合记录保留',id);continue;}
+                if(!sub)throw Error('补字文件 '+id+' 已不可见；组合设置与原件保持不变');
                 const report=await inspectFont(id);if(!report.supported)throw Error('补字文件无法检查 cmap');
                 const exclusive=window.MimaFontInspector.minus(report.ranges,used);
                 used=window.MimaFontInspector.normalize([...used,...exclusive]);
@@ -760,11 +851,14 @@ window.MimaFontManager = (() => {
             const desiredIds=new Set([primary.id,...ready.map(item=>item.sub.id)]);
             for(const entry of [...loaded.values()])if(entry.face.family===render&&!desiredIds.has(entry.id))
                 releaseFontFamily(entry.id,render);
+            effectiveParts[kind]={family,render,primaryId:primary.id,
+                supplementIds:ready.map(item=>item.sub.id),metadata:[primary,...ready.map(item=>item.sub)]};
             const face=await acquireRecord(primary,render,window.MimaFontInspector.cssRange(primaryProfile.ranges));
             await Promise.all(ready.map(({sub,exclusive})=>
                 acquireRecord(sub,render,window.MimaFontInspector.cssRange(exclusive))));
             return face;
         }
+        if(kind)effectiveParts[kind]={family,render:family,primaryId:primary.id,supplementIds:[],metadata:[primary]};
         return acquireRecord(primary,family);
     }
     async function acquireById(id){
@@ -865,16 +959,10 @@ window.MimaFontManager = (() => {
     function getSelected(kind) { return localStorage.getItem(kind === 'ui' ? UI_KEY : STORY_KEY) || ''; }
     // A click on a font selector is a confirmed application request, not just
     // an IndexedDB/FontFace registration request. Startup stays non-blocking.
-    async function verifyAppliedLocalFamily(family) {
+    async function verifyAppliedLocalFamily(kind,family){
         const metadata=newestFamilyRecord(await listMetadata(),family);
-        if(!metadata)return; // CSS URL and system font have their own path.
-        // Do not call acquireFamily again here: a rejected first native load
-        // must be surfaced, not silently replaced by a second decoder request.
-        const entry=findLoaded(metadata.id,scopedFamily(kind,family));
-        if(!entry)throw new Error('所选字体尚未注册成功');
-        if(entry.loadTask)await entry.loadTask;
-        else await entry.face.load();
-        if(entry.face.status!=='loaded')throw new Error('浏览器未能解码此字体');
+        if(!metadata)return; // CSS URL and system fonts use their own path.
+        await waitScopeLoaded(kind,family);
     }
     function setSelected(kind, family) {
         kind=kind==='ui'?'ui':'story';const key=kind==='ui'?UI_KEY:STORY_KEY;
@@ -884,7 +972,7 @@ window.MimaFontManager = (() => {
         localStorage.setItem(key,requested);
         const task=(async()=>{
             await applySelected(kind);
-            if(requested)await verifyAppliedLocalFamily(requested);
+            if(requested)await verifyAppliedLocalFamily(kind,requested);
         })().catch(error=>{
             if(selectionWrites[kind]===write&&getSelected(kind)===requested){
                 // Verification errors must remain visible; do not report the
@@ -943,11 +1031,8 @@ window.MimaFontManager = (() => {
             if(previous?.state==='error')releaseFont(metadata.id);
             const face=await acquireFamily(family,kind);
             if(!face)throw new Error('未能注册本地字体');
-            const active=findLoaded(metadata.id,scopedFamily(kind,family));
-            if(active?.loadTask)await active.loadTask;
-            else await face.load();
-            if(face.status!=='loaded')throw new Error('浏览器未能解码此字体');
-            if(getSelected(kind)===family){applied[kind]=scopedFamily(kind,family);setFontCss(kind,family);reportLoad(kind,family,'loaded');}
+            await waitScopeLoaded(kind,family);
+            if(getSelected(kind)===family)setFontCss(kind,family);
             return true;
         }catch(error){if(getSelected(kind)===family)reportLoad(kind,family,'error',error);throw error;}
     }
@@ -1380,6 +1465,7 @@ window.MimaFontManager = (() => {
         urlFontStyle();
         const applyKind=async kind=>{
             const epoch=++selectionEpoch[kind],family=getSelected(kind);
+            if(!family)effectiveParts[kind]=null;
             // This CSS assignment must NOT wait for the IndexedDB read or
             // FontFace.load(). Previously an unresolved/rejected load left the
             // entire page on its default font, even when selection was saved.
@@ -1393,10 +1479,8 @@ window.MimaFontManager = (() => {
                 // Registration is not decoding success. Keep last verified
                 // family until the native promise actually resolves.
                 if(!face || face.status==='loaded')applied[kind]=scopedFamily(kind,family);
-                const companionStates=bundleFor(kind).map(id=>findLoaded(id,scopedFamily(kind,family)));
-                const allReady=companionStates.every(e=>e?.state==='loaded');
-                reportLoad(kind,family,external?'loaded':face?(companionStates.some(e=>!e)?'partial':face.status==='loaded'&&allReady?'loaded':(face.status==='error'?'error':'registered')):(family?'external':'default'));
-                if(face?.status==='error')reportLoad(kind,family,'error','浏览器未能解码此字体，原记录仍保留');
+                if(face)settleLocalScope(kind,family);
+                else reportLoad(kind,family,external?'loaded':(family?'external':'default'));
                 trimFonts();
             } catch(error) {
                 // A failed IndexedDB read or native FontFace decode is a load
@@ -1653,5 +1737,5 @@ window.MimaFontManager = (() => {
             binaryReadPending:pendingFonts.size,activePreviewOwners:usages.size,
             activeCssLinks:activeCssLinks.size};
     }
-    return { runtimeMetrics, scopedFamily, getDecodeFailure, stageOf, inspectFont, bundleFor, setBundle, init, all, listMetadata, auditStoredFonts, recoverLegacyIndex, readOrphanBinary, getByFamily, ensureFamily, ensureFont, cancelPreview, useFamily, useFont, releaseUsage, importFile, cacheUrlFont, deleteFont, getSelected, getLoadStatus, setSelected, applySelected, reloadSelected, urlFonts, refreshUrlFontUsage:urlFontStyle, fontReferencedByAppearance, exportRawUrlFontLibrary, setUrlFontCompatibility, addUrlFont, addUrlFontsBatch, deleteUrlFont, exportPortable, importPortable, planPortableImport, commitPortablePlan, rollbackPortablePlan, backupBinaryById, planBinaryFontRestore, refreshAfterBinaryRestore };
+    return { runtimeMetrics, scopedFamily, getDecodeFailure, stageOf, inspectFont, bundleFor, setBundle, init, all, listMetadata, listBackupInventory, assertBackupInventory, openBackupSource, auditStoredFonts, recoverLegacyIndex, readOrphanBinary, getByFamily, ensureFamily, ensureFont, cancelPreview, useFamily, useFont, releaseUsage, importFile, cacheUrlFont, deleteFont, getSelected, getLoadStatus, setSelected, applySelected, reloadSelected, urlFonts, refreshUrlFontUsage:urlFontStyle, fontReferencedByAppearance, exportRawUrlFontLibrary, setUrlFontCompatibility, addUrlFont, addUrlFontsBatch, deleteUrlFont, exportPortable, importPortable, planPortableImport, commitPortablePlan, rollbackPortablePlan, backupBinaryById, planBinaryFontRestore, refreshAfterBinaryRestore };
 })();
