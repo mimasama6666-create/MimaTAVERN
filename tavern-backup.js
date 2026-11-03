@@ -3,7 +3,7 @@
  const FORMAT='MIMA_TAVERN_MIGRATION',VERSION=2,CHUNK=192*1024;
  const NAMES=['native','compat','phone','atelier','wallpapers','fonts','sounds','prefs','playtools'];
  const LABELS={native:'原生剧情、记忆与角色面具',compat:'酒馆兼容库与来源',phone:'小手机全部表与原始媒体',atelier:'工坊项目与素材',wallpapers:'已保存壁纸',fonts:'本地字体原件',sounds:'个人点击音效原件',prefs:'接口与界面偏好',playtools:'工具草稿与清理记录'};
- const PREFS=['mimamao_tavern_url_fonts_v1','MIMATAVERN_UI_DENSITY_V1','MIMAMAO_TAVERN_TEMP','storyFontUrl','storyFontFamily','MIMAMAO_TAVERN_STORY_TYPO_V1','mimamao_tavern_ui_font','mimamao_tavern_story_font','MIMAMAO_TAVERN_ASSISTANT_STUDIO_V1','mima-r19-ui-feedback-prefs-v1','mima-r19-last-session-v1'];
+ const PREFS=['mimamao_tavern_url_fonts_v1','MIMATAVERN_UI_DENSITY_V1','MIMAMAO_TAVERN_TEMP','storyFontUrl','storyFontFamily','MIMAMAO_TAVERN_STORY_TYPO_V1','mimamao_tavern_ui_font','mimamao_tavern_story_font','mimamao_tavern_font_weight_v1','mimamao_tavern_font_subsets_v1','MIMAMAO_TAVERN_ASSISTANT_STUDIO_V1','mima-r19-ui-feedback-prefs-v1','mima-r19-last-session-v1'];
  const SESSION_PREFS=['mima-r19-unsent-v1:','mima-r19-reader-v1:'];
  const prefKeys=library=>[...PREFS,...(library.sessions||[]).flatMap(session=>SESSION_PREFS.map(prefix=>prefix+session.id))];
  const sha=async value=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',typeof value==='string'?new TextEncoder().encode(value):value))].map(n=>n.toString(16).padStart(2,'0')).join('');
@@ -167,7 +167,17 @@
  async function portableSounds(records){if(!Array.isArray(records))throw Error('个人音效迁移格式无效');const raw=[];for(const r of records){if(!(r?.blob instanceof Blob))throw Error('个人音效缺少原始媒体');raw.push({kind:r.kind,name:r.name,data:'data:'+r.blob.type+';base64,'+b64(new Uint8Array(await r.blob.arrayBuffer()))})}return MimaInteraction.validateSounds(raw)}
  function prefsPlan(src,library){
   if(!src||!src.values||typeof src.values!=='object'||Array.isArray(src.values)||!src.api||typeof src.api!=='object'||Array.isArray(src.api))throw Error('偏好备份结构无效');
-  const additions=[],preserved=[];for(const[k,v]of Object.entries(src.values)){if(!prefKeys(library).includes(k)||typeof v!=='string')throw Error('偏好键或值无效');const old=localStorage.getItem(k);if(old===null)additions.push([k,v]);else if(old!==v)preserved.push(k)}
+  const additions=[],preserved=[];for(const[k,v]of Object.entries(src.values)){
+   if(!prefKeys(library).includes(k)||typeof v!=='string')throw Error('偏好键或值无效');
+   if(k==='mimamao_tavern_font_weight_v1'||k==='mimamao_tavern_font_subsets_v1'){
+    let cfg;try{cfg=JSON.parse(v)}catch(_){throw Error('字体外观偏好归档无效：'+k)}
+    const valid=k==='mimamao_tavern_font_weight_v1'
+      ?cfg?.version===1&&['ui','story'].every(t=>cfg[t]&&typeof cfg[t].enabled==='boolean'&&typeof cfg[t].synthesis==='boolean'&&Number.isFinite(cfg[t].value)&&cfg[t].value>=1&&cfg[t].value<=1000)
+      :cfg?.version===1&&['ui','story'].every(t=>cfg[t]===null||(cfg[t]&&typeof cfg[t].family==='string'&&Array.isArray(cfg[t].ids)&&cfg[t].ids.length<=32&&cfg[t].ids.every(id=>typeof id==='string'&&id.length<150)&&new Set(cfg[t].ids).size===cfg[t].ids.length));
+    if(!valid)throw Error('字体外观偏好归档无效：'+k);
+   }
+   const old=localStorage.getItem(k);if(old===null)additions.push([k,v]);else if(old!==v)preserved.push(k)
+  }
   return {additions,preserved};
  }
  async function preflight(data){

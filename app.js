@@ -330,6 +330,7 @@ function toggleAppearancePreview(){qs('appearance-preview-stage')?.classList.tog
 function setAppearancePreviewSurface(surface){appearancePreviewSurface=['chat','novel','assistant'].includes(surface)?surface:'chat';renderAppearancePreview()}
 function renderAppearancePreview(){
     const stage=qs('appearance-preview-stage');if(!stage)return;
+    stage.dataset.surface=appearancePreviewSurface;
     const safeOn=currentSessionData?.renderMode==='safe_html';
     const tabs=`<div class="appearance-preview-tabs"><button class="${appearancePreviewSurface==='chat'?'active':''}" onclick="setAppearancePreviewSurface('chat')">聊天</button><button class="${appearancePreviewSurface==='novel'?'active':''}" onclick="setAppearancePreviewSurface('novel')">小说</button><button class="${appearancePreviewSurface==='assistant'?'active':''}" onclick="setAppearancePreviewSurface('assistant')">助手</button></div>`;
     if(appearancePreviewSurface==='novel'){stage.innerHTML='<button class="appearance-preview-toggle" type="button" onclick="toggleAppearancePreview()">展开 / 收起预览</button>'+tabs+`<div class="appearance-preview-novel"><div class="eyebrow">NOVEL STUDIO PREVIEW</div><h2>第十二章　午夜钟声</h2><p>雨声落在窗沿上，纸页在灯下泛着柔和的灰。她没有立刻拆开那封信，只把它压在掌心。</p><p>第二段用来确认段距、行高和首行缩进。长篇阅读的舒适度比炫目的特效更重要。</p><div class="novel-memory-card"><h4>剧情档案</h4><p>红色信封的来源仍未揭示；钟楼线正在推进。</p></div><div class="novel-director-box"><label>续写要求</label><div class="field">暂时不要揭露寄信人身份。</div></div><section class="novel-draft"><strong>AI CONTINUATION · Draft</strong><p>新的正文草稿会显示在这里。</p></section><button class="primary-btn">✒ 续写</button></div>`;return}
@@ -2066,12 +2067,25 @@ async function importWholeLibrary(file){
 
 const FULL_SETTINGS_FORMAT = 'mimamao-tavern-full-settings';
 const FULL_SETTINGS_VERSION = 4; // Personal audio records are an optional, backward-compatible sidecar.
-const FULL_SETTINGS_KEYS = ['mima-r19-ui-feedback-prefs-v1', 'mimamao_tavern_url_fonts_v1', MIMA_UI_DENSITY_KEY, TEMP_KEY, LEGACY_FONT_URL_KEY, LEGACY_FONT_FAMILY_KEY, STORY_TYPO_KEY, 'mimamao_tavern_ui_font', 'mimamao_tavern_story_font', 'MIMAMAO_TAVERN_ASSISTANT_STUDIO_V1'];
+const FULL_SETTINGS_KEYS = ['mima-r19-ui-feedback-prefs-v1', 'mimamao_tavern_url_fonts_v1', MIMA_UI_DENSITY_KEY, TEMP_KEY, LEGACY_FONT_URL_KEY, LEGACY_FONT_FAMILY_KEY, STORY_TYPO_KEY, 'mimamao_tavern_ui_font', 'mimamao_tavern_story_font', 'mimamao_tavern_font_weight_v1', 'mimamao_tavern_font_subsets_v1', 'MIMAMAO_TAVERN_ASSISTANT_STUDIO_V1'];
 
 function collectPortableLocalPrefs(){
     const out={};
     for(const key of FULL_SETTINGS_KEYS){const v=localStorage.getItem(key);if(v!==null)out[key]=v}
     return out;
+}
+function validateFontAppearanceBackupPrefs(prefs){
+    if(!prefs||typeof prefs!=='object')return;
+    if(Object.prototype.hasOwnProperty.call(prefs,'mimamao_tavern_font_weight_v1')){
+        let cfg;try{cfg=JSON.parse(prefs.mimamao_tavern_font_weight_v1)}catch(_){throw Error('备份字重设置 JSON 损坏，未修改任何资料');}
+        if(cfg?.version!==1||!['ui','story'].every(k=>cfg[k]&&typeof cfg[k].enabled==='boolean'&&typeof cfg[k].synthesis==='boolean'&&Number.isFinite(cfg[k].value)&&cfg[k].value>=1&&cfg[k].value<=1000))
+            throw Error('备份字重设置不合法，未修改任何资料');
+    }
+    if(Object.prototype.hasOwnProperty.call(prefs,'mimamao_tavern_font_subsets_v1')){
+        let cfg;try{cfg=JSON.parse(prefs.mimamao_tavern_font_subsets_v1)}catch(_){throw Error('备份补字设置 JSON 损坏，未修改任何资料');}
+        if(cfg?.version!==1||!['ui','story'].every(k=>cfg[k]===null||(cfg[k]&&typeof cfg[k].family==='string'&&Array.isArray(cfg[k].ids)&&cfg[k].ids.length<=32&&cfg[k].ids.every(id=>typeof id==='string'&&id.length<150)&&new Set(cfg[k].ids).size===cfg[k].ids.length)))
+            throw Error('备份补字设置不合法，未修改任何资料');
+    }
 }
 function restorePortableLocalPrefs(prefs={}){
     for(const key of FULL_SETTINGS_KEYS){
@@ -2128,6 +2142,7 @@ async function applyFullSettingsBackup(raw,{fromSnapshot=false,templatePolicy='r
     // Before changing fonts, preferences or API keys, verify the entire canonical data shape.
     MimaStandalone.validateLibrary(src.library);
     if(src.localPrefs!==undefined&&(!src.localPrefs||typeof src.localPrefs!=='object'||Array.isArray(src.localPrefs)))throw new Error('localPrefs 结构无效');
+    validateFontAppearanceBackupPrefs(src.localPrefs||{});
     if(src.fonts!==undefined&&!Array.isArray(src.fonts))throw new Error('fonts 结构无效');
     if(src.personalSounds!==undefined)MimaInteraction.validateSounds(src.personalSounds);
     const atelierPlan=src.atelier?await MimaAtelierCore.previewRecordImport(src.atelier):null;
@@ -2175,7 +2190,7 @@ async function applyFullSettingsBackup(raw,{fromSnapshot=false,templatePolicy='r
         MimaStandalone.saveApiConfig(previousApi);
         for(const key of FULL_SETTINGS_KEYS){if(Object.prototype.hasOwnProperty.call(previousPrefs,key))localStorage.setItem(key,previousPrefs[key]);else localStorage.removeItem(key)}
         MimaFontManager.setSelected('ui',selected.ui||'');MimaFontManager.setSelected('story',selected.story||'');
-        applyStoryTypography();applyMimaUiDensity();restoreLegacyFont();window.MimaInteraction?.reloadPreferences?.();window.MimaAssistantStudio?.reloadState?.();
+        applyStoryTypography();applyFontWeightPrefs();applyMimaUiDensity();restoreLegacyFont();window.MimaInteraction?.reloadPreferences?.();window.MimaAssistantStudio?.reloadState?.();
         const partialInfo='主资料库尚未提交，工坊素材新增 '+(atelierReceipt?.imported||0)+' 项（原记录保留），可重新导入继续；';
         console.error('[Backup] staged assets recovery receipt',{canonicalCommitted:false,atelierImported:atelierReceipt?.imported||0,atelierAlreadyPresent:atelierPlan?.alreadyPresent||0},e);
         if(rollbackError){const partial=new Error('E_FULL_RESTORE_PARTIAL: '+partialInfo+'字体回滚失败，请保留网站数据：'+rollbackError.message);partial.cause=e;throw partial;}
@@ -2184,7 +2199,7 @@ async function applyFullSettingsBackup(raw,{fromSnapshot=false,templatePolicy='r
     // Canonical is already durable. Appearance and UI refresh cannot retroactively
     // turn this into a failed import (which would tempt a second destructive restore).
     try{
-        applyStoryTypography();applyMimaUiDensity();restoreLegacyFont();window.MimaInteraction?.reloadPreferences?.();
+        applyStoryTypography();applyFontWeightPrefs();applyMimaUiDensity();restoreLegacyFont();window.MimaInteraction?.reloadPreferences?.();
         currentSessionId=null;currentSessionData=null;
         await loadAll();
         window.MimaAssistantStudio?.reloadState?.();
@@ -2305,6 +2320,89 @@ function setMimaFeedbackPreference(key,value,control){
 }
 // Both initial appearance rendering and background v1 sync share one safe
 // option/row builder. Font IDs are data, never executable inline handlers.
+// Weight preferences have their own versioned storage, independent of the
+// five existing story-typography values and font family selections.
+const FONT_WEIGHT_KEY='mimamao_tavern_font_weight_v1';
+const fontWeightKnownAxes=new Map();
+const FONT_WEIGHT_DEFAULT={version:1,ui:{enabled:false,value:400,synthesis:true},story:{enabled:false,value:400,synthesis:true}};
+function fontWeightPrefs(){
+ const raw=localStorage.getItem(FONT_WEIGHT_KEY);if(!raw)return structuredClone(FONT_WEIGHT_DEFAULT);
+ const cfg=JSON.parse(raw);
+ if(cfg?.version!==1||!['ui','story'].every(k=>cfg[k]&&typeof cfg[k].enabled==='boolean'&&
+    typeof cfg[k].synthesis==='boolean'&&Number.isFinite(cfg[k].value)&&cfg[k].value>=1&&cfg[k].value<=1000))
+    throw Error('字重偏好格式无效，未修改原保存值');
+ return cfg;
+}
+function fontWeightSafe(){try{return fontWeightPrefs()}catch(e){console.warn('字重偏好无法读取，已保留原始值',e);return structuredClone(FONT_WEIGHT_DEFAULT);}}
+function applyFontWeightPrefs(){
+ const cfg=fontWeightSafe(),root=document.documentElement;
+ for(const k of ['ui','story']){
+  root.style.setProperty('--mima-'+k+'-weight',cfg[k].enabled?String(cfg[k].value):(k==='story'&&cfg.ui.enabled?'400':'inherit'));
+  root.style.setProperty('--mima-'+k+'-synthesis',cfg[k].synthesis?'auto':'none');
+ }
+}
+function fontWeightControlsHtml(kind){
+ const c=fontWeightSafe()[kind],name=kind==='ui'?'界面':'剧情正文';
+ return `<fieldset class="mima-weight-control"><legend>${name}字重</legend><label class="check-row"><input type="checkbox" ${c.enabled?'checked':''} onchange="updateFontWeightPref('${kind}','enabled',this.checked)"> 自定义字重（关闭则跟随原样 CSS）</label><div class="mima-weight-fields" ${c.enabled?'':'hidden'}><label class="form-label">字重档位</label><select class="field" onchange="updateFontWeightPref('${kind}','value',Number(this.value))" id="font-weight-${kind}-select">${[300,400,500,600,700,800,900].map(n=>`<option value="${n}" ${n===c.value?'selected':''}>${n} · ${{300:'轻',400:'标准',500:'中',600:'半粗',700:'加粗',800:'特粗',900:'黑体'}[n]}</option>`).join('')}</select><label class="form-label">可变字体细调（检查字重范围后使用）</label><input class="field" type="number" inputmode="numeric" id="font-weight-${kind}-value" min="1" max="1000" step="1" value="${c.value}" onchange="updateFontWeightPref('${kind}','value',Number(this.value))"><button class="ghost-btn" type="button" onclick="checkFontWeightSupport('${kind}')">检查真实字重／可变轴</button><label class="check-row"><input type="checkbox" ${c.synthesis?'checked':''} onchange="updateFontWeightPref('${kind}','synthesis',this.checked)"> 允许浏览器模拟加粗</label></div><div class="row-sub" id="font-weight-${kind}-hint">静态字体未必包含选择的粗细；模拟加粗并不等于原生粗体。</div></fieldset>`;
+}
+function updateFontWeightPref(kind,field,value){
+ if(!['ui','story'].includes(kind)||!['enabled','value','synthesis'].includes(field))return;
+ try{
+  const cfg=fontWeightPrefs();
+  if(field==='value'){
+   if(!Number.isFinite(value)||value<1||value>1000)throw Error('字重必须在 1–1000 之间');
+   const known=fontWeightKnownAxes.get(kind);if(known?.id===selectedLocalFontRecord(kind)?.id&&known.axis&&
+       (value<known.axis.min||value>known.axis.max))throw Error('该可变字体支持 '+known.axis.min+'–'+known.axis.max+'，请在真实轴范围内调整');
+   cfg[kind].value=value;
+  }else cfg[kind][field]=!!value;
+  localStorage.setItem(FONT_WEIGHT_KEY,JSON.stringify(cfg));applyFontWeightPrefs();
+  const fields=qs('font-weight-'+kind+'-select')?.closest('.mima-weight-fields');if(fields)fields.hidden=!cfg[kind].enabled;
+  const select=qs('font-weight-'+kind+'-select');if(select)select.value=String(cfg[kind].value);
+  const number=qs('font-weight-'+kind+'-value');if(number)number.value=String(cfg[kind].value);
+  updateFontApplicationStatus();
+ }catch(e){toast('字重没有保存，原设置保留：'+(e?.message||e));if(settingsTab==='appearance')void renderAppearanceTab(qs('settings-content'));}
+}
+function selectedLocalFontRecord(kind){
+ const family=MimaFontManager.getSelected(kind);
+ return fontRecords.filter(m=>m.family===family).sort((a,b)=>String(a.createdAt||'').localeCompare(String(b.createdAt||''))||String(a.id).localeCompare(String(b.id))).at(-1)||null;
+}
+async function checkFontWeightSupport(kind){
+ const family=MimaFontManager.getSelected(kind),item=selectedLocalFontRecord(kind),out=qs('font-weight-'+kind+'-hint');
+ if(!out)return;
+ if(!item){out.textContent='链接字体需要检查 CSS 作者提供的权重声明；不能把单个文件当成全部字重。';return;}
+ out.textContent='正在只读检查原始字重表…';
+ try{const p=await MimaFontManager.inspectFont(item.id);
+  out.textContent=p.axis?`真实可变 wght 轴：${p.axis.min}–${p.axis.max}（默认 ${p.axis.default}）。可以在上方输入范围内任意整数。`:
+    p.weight?`静态字体原生字重：${p.weight}。选用其它档位可能由浏览器匹配或模拟，不能保证原生加粗。`:'该格式无法可靠识别字重；不宣称有真实粗体。';
+  fontWeightKnownAxes.set(kind,{family,id:item.id,axis:p.axis||null});
+  const number=qs('font-weight-'+kind+'-value');if(number&&p.axis){number.min=String(p.axis.min);number.max=String(p.axis.max);}
+ }catch(e){out.textContent='字重检查失败，原设置不变：'+(e?.message||e);}
+}
+async function mimaCheckFontCoverage(id){
+ const out=qs('mima-font-coverage-output');if(!out)return;
+ out.hidden=false;out.textContent='正在只读检查 cmap 映射，不修改原字体…';
+ try{const sentence=qs('mima-font-test-text')?.value||'',p=await MimaFontManager.inspectFont(id,sentence);
+  const row=fontRecords.find(f=>f.id===id);
+  const lines=[`文件：${row?.name||id} · ${p.kind||'未知格式'}`,p.supported?'已从文件 cmap 读取码位映射；编码覆盖不等于简繁/日中字形形状相同。':'无法可靠分析覆盖范围；预览仍保留。',p.weight?`静态字重 ${p.weight}`:'未确认静态字重',p.axis?`可变 wght: ${p.axis.min}–${p.axis.max}`:'',p.warning||'',...(p.samples||[]).map(x=>`${x.name}：${x.status==='unknown'?'无法确定':`${x.matched}/${x.total} 字符有映射`}${x.missing?'；缺字 '+x.missing:''}`),p.custom?`自定义：${p.custom.status==='unknown'?'无法确定':`${p.custom.matched}/${p.custom.total} 字符有映射，缺字：${p.custom.missing||'无'}`}`:''];
+  out.textContent=lines.filter(Boolean).join('\n');
+ }catch(e){out.textContent='检查失败：'+(e?.message||e)+'；原字节和选择均保留。';}
+}
+async function addFontSupplement(kind,id,remove=false){
+ try{
+  const current=MimaFontManager.bundleFor(kind),next=remove?current.filter(x=>x!==id):[...new Set([...current,id])];
+  await MimaFontManager.setBundle(kind,next);
+  renderFontBundleStatus();updateFontApplicationStatus();toast(remove?'已移出补字组合':'已加入补字组合，原字体文件未修改');
+ }catch(e){toast('字体组合操作未全部完成，请核对当前状态：'+(e?.message||e));renderFontBundleStatus();updateFontApplicationStatus();}
+}
+function renderFontBundleStatus(){
+ const el=qs('font-bundle-status');if(!el)return;el.replaceChildren();
+ for(const kind of ['ui','story']){
+  const names=MimaFontManager.bundleFor(kind),item=document.createElement('div');item.className='mima-bundle-line';
+  const header=document.createElement('span');header.textContent=(kind==='ui'?'界面':'正文')+'补字文件：'+(names.length?'':'未组合');item.append(header);
+  for(const id of names){const metadata=fontRecords.find(r=>r.id===id),button=document.createElement('button');button.type='button';button.className='ghost-btn';button.textContent=(metadata?.name||id)+' × 移除';button.onclick=()=>addFontSupplement(kind,id,true);item.append(button);}
+  el.append(item);
+ }
+}
 function localFontOptions(records){
     // The legacy selector persists the family name. Do not offer two identical
     // values that appear to select different binaries; rows preview each ID.
@@ -2332,12 +2430,17 @@ function renderLocalFontRows(root,records){
         const row=document.createElement('div');row.className='font-row';row.dataset.mimaFontPreviewId=f.id;
         const main=document.createElement('div');main.className='row-main';
         const title=document.createElement('div');title.className='row-title mima-local-font-preview';title.dataset.previewStatus='pending';title.textContent='Aa　'+f.family;
+        const priorFailure=MimaFontManager.getDecodeFailure?.(f);
+        if(priorFailure){title.dataset.previewStatus='error';title.title='解析失败，已暂停自动重试：'+priorFailure;}
         const sub=document.createElement('div');sub.className='row-sub';
         sub.textContent=f.name+' · '+formatBytes(f.size)+' · ID: '+f.id.slice(-12)+(f.health==='corrupt'?' · ⚠️ '+(f.diagnostic||'原文件需检查'):'');
         main.append(title,sub);row.append(main);
-        const preview=document.createElement('button');preview.type='button';preview.className='ghost-btn';preview.textContent='预览';preview.onclick=()=>previewLocalFont(f.id);
+        const preview=document.createElement('button');preview.type='button';preview.className='ghost-btn';preview.textContent=priorFailure?'重新验证':'预览';preview.onclick=()=>previewLocalFont(f.id);
         const remove=document.createElement('button');remove.type='button';remove.className='danger-btn';remove.textContent='删除';remove.onclick=()=>deleteLocalFont(f.id);
-        row.append(preview,remove);root.append(row);
+        const inspect=document.createElement('button');inspect.type='button';inspect.className='ghost-btn';inspect.textContent='检查字形';inspect.onclick=()=>mimaCheckFontCoverage(f.id);
+        const addUi=document.createElement('button');addUi.type='button';addUi.className='ghost-btn';addUi.textContent='＋ 界面补字';addUi.onclick=()=>addFontSupplement('ui',f.id);
+        const addStory=document.createElement('button');addStory.type='button';addStory.className='ghost-btn';addStory.textContent='＋ 正文补字';addStory.onclick=()=>addFontSupplement('story',f.id);
+        row.append(preview,inspect,addUi,addStory,remove);root.append(row);
     }
     startVisibleFontPreviews(root,records);
 }
@@ -2347,7 +2450,7 @@ async function renderAppearanceTab(box,renderEpoch=++settingsRenderEpoch){
     if(!settingsRenderIsCurrent('appearance',renderEpoch,box))return;
     window.MimaInteraction?.ready?.then(updateAppearanceSoundRows).catch(error=>console.warn('[Appearance] 个人音效读取失败，原始数据未修改',error));
     if(!fontReadError)fontRecords=records;
-    const ui=MimaFontManager.getSelected('ui'),story=MimaFontManager.getSelected('story'),typo=getStoryTypography();const opts=localFontOptions(fontReadError?[]:fontRecords);const themeState=MimaStandalone.getThemeSettings?.()||{theme:'default'},themeCards=(MimaThemeEngine?.getBuiltins?.()||[]).map(t=>`<button class="novel-theme-card ${themeState.theme===t.id?'active':''}" data-theme-choice="${t.id}" onclick="setBuiltInTheme('${t.id}')"><strong>${escapeHtml(t.name)}</strong><span>${escapeHtml(t.description)}</span></button>`).join('');box.innerHTML=`${appearanceFeedbackHtml()}<section class="settings-section"><h3>🌓 Built-in Theme（内置主题）</h3><p class="helper">Default 保留原始外观；深色、电子墨水、暖纸与韩系柔色主题覆盖聊天、设置、小说及助手的常用组件。启用全局 CSS 时内置皮肤暂停；停用全局 CSS 后恢复这里选择的主题。基础布局始终保留。</p><div class="novel-theme-grid">${themeCards}</div></section><section class="settings-section"><h3>📐 界面显示大小</h3><p class="helper">单独控制咪嘛馆的按钮、面板和小手机尺寸，不改变剧情正文字号设置，也不删除你现有的主题 CSS。默认 80%，相当于之前觉得舒服的紧凑尺寸；浏览器缩放建议恢复 100% 使用。</p><label class="form-label" for="mima-ui-density">界面显示比例</label><select id="mima-ui-density" class="field" style="max-width:240px" onchange="changeMimaUiDensity(this.value)"><option value="70">70% · 更紧凑</option><option value="80">80% · 推荐</option><option value="90">90%</option><option value="100">100% · 原始大小</option><option value="110">110% · 较大</option></select></section><section class="settings-section"><h3>🎨 本地字体库</h3><p class="helper">直接导入 TTF / OTF / WOFF / WOFF2（字体文件格式）。文件保存在当前浏览器 IndexedDB，不需要转 URL（链接），也不会上传到服务器。剧情正文字体会作用于普通小说正文；开启 Safe HTML（安全 HTML）后，未自行指定字体的 HTML 正文也会继承它。状态栏若有自己的 CSS 字体设置，仍以状态栏自己的设置为准。</p><div class="toolbar"><button class="primary-btn" onclick="chooseFontImport()">＋ 导入字体文件</button><button class="ghost-btn" type="button" onclick="exportReadableFonts()">⇩ 分卷备份本地字体</button><button class="ghost-btn" type="button" onclick="exportReadableFontsToFolder()" ${typeof window.showDirectoryPicker==='function'?'':'hidden'}>⇩ 一键保存到文件夹</button><button class="ghost-btn" type="button" onclick="importLocalFontBackup()">⇧ 导入本地字体备份</button></div><div id="font-volume-export-status" class="row-sub" role="status" style="margin:8px 0;display:flex;flex-wrap:wrap;align-items:center;gap:8px"></div><p class="helper">单独字体备份每卷最多 16 MiB；支持的浏览器可以一键保存到选定文件夹，手机上可逐卷保存并在刷新后继续；恢复时一次选择同轮清单和所有分卷。旧版 JSON 仍可导入。未完成全部卷不能视为完整备份。异常字体若保留了原始字节，也会正常备份。若存在真正无法读取的文件，单独备份会明确列出缺失记录；这不是完整字体备份。旧版导入字体移除后原始字节暂时保留，不会立即腾出旧库存储。</p><div class="form-grid"><div><label class="form-label">UI（界面）字体</label><select id="font-ui-select" class="field" onchange="changeFont('ui',this.value)">${opts}</select></div><div><label class="form-label">剧情正文字体</label><select id="font-story-select" class="field" onchange="changeFont('story',this.value)">${opts}</select></div></div><div id="font-application-status" class="mima-font-load-status" role="status" aria-live="polite"></div><div id="font-list" style="margin-top:14px"></div><div id="font-preview-sample" class="row-sub" aria-live="polite">每一行在滚动到可见区域时使用对应字体预览；离开视野后释放预览资源，选择不会改变。</div><div style="margin-top:10px"><button type="button" class="ghost-btn" onclick="mimaAuditFontData()">🛟 本地字体紧急检查（只读）</button><button type="button" class="ghost-btn" onclick="mimaInspectFontFailure()">🔎 检查字体为什么没生效（只读）</button><button type="button" class="ghost-btn" onclick="mimaCopyFontReport()">复制字体诊断</button><pre id="mima-font-diagnostic-output" hidden style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:42vh;overflow:auto;padding:10px;margin-top:8px;border:1px solid var(--line);border-radius:12px;font:12px/1.55 ui-monospace,monospace;background:var(--surface,white)"></pre></div></section>
+    const ui=MimaFontManager.getSelected('ui'),story=MimaFontManager.getSelected('story'),typo=getStoryTypography();const opts=localFontOptions(fontReadError?[]:fontRecords);const themeState=MimaStandalone.getThemeSettings?.()||{theme:'default'},themeCards=(MimaThemeEngine?.getBuiltins?.()||[]).map(t=>`<button class="novel-theme-card ${themeState.theme===t.id?'active':''}" data-theme-choice="${t.id}" onclick="setBuiltInTheme('${t.id}')"><strong>${escapeHtml(t.name)}</strong><span>${escapeHtml(t.description)}</span></button>`).join('');box.innerHTML=`${appearanceFeedbackHtml()}<section class="settings-section"><h3>🌓 Built-in Theme（内置主题）</h3><p class="helper">Default 保留原始外观；深色、电子墨水、暖纸与韩系柔色主题覆盖聊天、设置、小说及助手的常用组件。启用全局 CSS 时内置皮肤暂停；停用全局 CSS 后恢复这里选择的主题。基础布局始终保留。</p><div class="novel-theme-grid">${themeCards}</div></section><section class="settings-section"><h3>📐 界面显示大小</h3><p class="helper">单独控制咪嘛馆的按钮、面板和小手机尺寸，不改变剧情正文字号设置，也不删除你现有的主题 CSS。默认 80%，相当于之前觉得舒服的紧凑尺寸；浏览器缩放建议恢复 100% 使用。</p><label class="form-label" for="mima-ui-density">界面显示比例</label><select id="mima-ui-density" class="field" style="max-width:240px" onchange="changeMimaUiDensity(this.value)"><option value="70">70% · 更紧凑</option><option value="80">80% · 推荐</option><option value="90">90%</option><option value="100">100% · 原始大小</option><option value="110">110% · 较大</option></select></section><section class="settings-section"><h3>🎨 本地字体库</h3><p class="helper">直接导入 TTF / OTF / WOFF / WOFF2（字体文件格式）。文件保存在当前浏览器 IndexedDB，不需要转 URL（链接），也不会上传到服务器。剧情正文字体会作用于普通小说正文；开启 Safe HTML（安全 HTML）后，未自行指定字体的 HTML 正文也会继承它。状态栏若有自己的 CSS 字体设置，仍以状态栏自己的设置为准。</p><div class="toolbar"><button class="primary-btn" onclick="chooseFontImport()">＋ 导入字体文件</button><button class="ghost-btn" type="button" onclick="exportReadableFonts()">⇩ 分卷备份本地字体</button><button class="ghost-btn" type="button" onclick="exportReadableFontsToFolder()" ${typeof window.showDirectoryPicker==='function'?'':'hidden'}>⇩ 一键保存到文件夹</button><button class="ghost-btn" type="button" onclick="importLocalFontBackup()">⇧ 导入本地字体备份</button></div><div id="font-volume-export-status" class="row-sub" role="status" style="margin:8px 0;display:flex;flex-wrap:wrap;align-items:center;gap:8px"></div><p class="helper">单独字体备份每卷最多 16 MiB；支持的浏览器可以一键保存到选定文件夹，手机上可逐卷保存并在刷新后继续；恢复时一次选择同轮清单和所有分卷。旧版 JSON 仍可导入。未完成全部卷不能视为完整备份。异常字体若保留了原始字节，也会正常备份。若存在真正无法读取的文件，单独备份会明确列出缺失记录；这不是完整字体备份。旧版导入字体移除后原始字节暂时保留，不会立即腾出旧库存储。</p><div class="form-grid"><div><label class="form-label">UI（界面）字体</label><select id="font-ui-select" class="field" onchange="changeFont('ui',this.value)">${opts}</select></div><div><label class="form-label">剧情正文字体</label><select id="font-story-select" class="field" onchange="changeFont('story',this.value)">${opts}</select></div></div><div class="mima-weight-grid">${fontWeightControlsHtml('ui')}${fontWeightControlsHtml('story')}</div><div id="font-bundle-status" class="mima-bundle-status"></div><label class="form-label" for="mima-font-test-text">自定义字形测试句（按需检查，不会扫描全部字体）</label><input id="mima-font-test-text" class="field" value="咪嘛馆 中文简体 你好 天束影 日本語 あいうえお 漢字 Aa 0123"><pre id="mima-font-coverage-output" class="mima-font-coverage" hidden aria-live="polite"></pre><div id="font-application-status" class="mima-font-load-status" role="status" aria-live="polite"></div><div id="font-list" style="margin-top:14px"></div><div id="font-preview-sample" class="row-sub" aria-live="polite">每一行在滚动到可见区域时使用对应字体预览；离开视野后释放预览资源，选择不会改变。</div><div style="margin-top:10px"><button type="button" class="ghost-btn" onclick="mimaAuditFontData()">🛟 本地字体紧急检查（只读）</button><button type="button" class="ghost-btn" onclick="mimaInspectFontFailure()">🔎 检查字体为什么没生效（只读）</button><button type="button" class="ghost-btn" onclick="mimaCopyFontReport()">复制字体诊断</button><pre id="mima-font-diagnostic-output" hidden style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:42vh;overflow:auto;padding:10px;margin-top:8px;border:1px solid var(--line);border-radius:12px;font:12px/1.55 ui-monospace,monospace;background:var(--surface,white)"></pre></div></section>
 <section class="settings-section"><h3>📖 Novel Typography（小说正文排版）</h3><p class="helper">进入本页会自动打开上方实时预览。字号、正文字体、行高与字间距也会作为 Safe HTML 的基础继承值；段间距与首行缩进仍只作用于咪嘛馆识别出的普通小说段落，不会强行挤压 &lt;system&gt; / &lt;details&gt; / 表格等状态栏结构。</p>
 <div class="typography-grid">
 ${typographyControlHtml('字号','fontSize',12,26,.5,typo.fontSize,'px')}
@@ -2358,7 +2461,7 @@ ${typographyControlHtml('首行缩进','firstLineIndent',0,4,.25,typo.firstLineI
 </div><div class="typography-indent-hint"><span>中文小说推荐：<strong>2em</strong>（约两个汉字宽）</span><div class="typography-quick-buttons"><button class="tool-mini" onclick="updateStoryTypography('firstLineIndent',0)">0</button><button class="tool-mini" onclick="updateStoryTypography('firstLineIndent',1)">1em</button><button class="tool-mini" onclick="updateStoryTypography('firstLineIndent',2)">2em</button><button class="tool-mini" onclick="updateStoryTypography('firstLineIndent',3)">3em</button></div></div><div class="toolbar typography-actions"><button class="ghost-btn" onclick="resetStoryTypography()">恢复默认排版</button></div></section>
 <section class="settings-section"><h3>🔗 网络字体收藏库 <span class="row-sub" style="font-size:.7em;font-weight:500">支持批量导入</span></h3><p class="helper">字体文件链接可点「下载离线」，校验成功后保存到本机字体库；CSS（例如 Google Fonts）链接仍在线加载，想离线使用请导入完整字体文件。离线副本不占用临时 HTTP 缓存，普通清理缓存通常不影响它；但清除网站数据仍可能删除 IndexedDB。为了真正防丢，请到「数据备份」勾选字体文件，导出完整备份 JSON 到「文件」App。</p><div class="toolbar" role="group" aria-label="网络字体添加方式" style="display:flex;flex-wrap:wrap;gap:9px;margin:12px 0 14px"><button type="button" id="url-font-mode-single" class="primary-btn" aria-pressed="true" style="min-height:44px" onclick="setUrlFontImportMode('single')">单条添加</button><button type="button" id="url-font-mode-batch" class="ghost-btn" aria-pressed="false" style="min-height:44px" onclick="setUrlFontImportMode('batch')">＋ 批量导入字体链接</button></div><div id="url-font-single-panel" class="form-grid"><div><label class="form-label">收藏名称</label><input id="url-font-name" class="field" placeholder="例如：我的日文字体"></div><div><label class="form-label">字体族名（Google Fonts CSS 需要与其声明一致）</label><input id="url-font-family" class="field" placeholder="例如：Noto Sans JP"></div><div class="form-full"><label class="form-label">HTTPS 字体文件或 CSS 地址</label><input id="url-font-address" type="url" class="field" inputmode="url" placeholder="https://…/font.woff2"></div><div class="form-full"><button type="button" class="ghost-btn" onclick="saveUrlFont()">＋ 保存到字体库并选为正文字体</button></div></div><div id="url-font-batch-panel" class="mima-font-batch" style="display:none;margin:13px 0;padding:12px;border:1px solid var(--line);border-radius:13px"><p class="helper">一次粘贴多条 HTTPS 链接（每行一条，也支持空格分隔）。字体文件自动命名为「自定义字体1、2……」并生成 CSS；Google Fonts 的 CSS 会自动识别字体族名，其他 CSS 地址需允许跨站读取才能识别。链接只收藏，选择时才加载，不更改当前字体。最多收藏 100 个。</p><label class="form-label" for="url-font-batch-links">字体链接（可一次粘贴多条）</label><textarea id="url-font-batch-links" class="field textarea mono" rows="5" style="min-height:110px" spellcheck="false" placeholder="https://example.com/font1.woff2&#10;https://example.com/font2.ttf&#10;https://fonts.googleapis.com/css2?family=Noto+Sans+JP&amp;display=swap"></textarea><div class="toolbar" style="margin-top:9px"><button id="url-font-batch-import" type="button" class="primary-btn" style="min-height:56px" onclick="batchImportUrlFonts()">＋ 批量导入到字体库</button></div><div id="url-font-batch-status" class="row-sub" role="status" aria-live="polite" style="white-space:pre-wrap;overflow-wrap:anywhere;margin-top:8px"></div></div><div class="toolbar"><button type="button" class="ghost-btn" onclick="exportUrlFontRaw()">⇩ 导出链接字体收藏原始数据（救援）</button></div><div id="url-font-list" class="mima-url-font-list">${urlFontItemsHtml()}</div><details class="mima-legacy-font"><summary>旧版单链接字体（兼容保留）</summary><div class="form-grid"><div><label class="form-label">旧 URL</label><input id="legacy-font-url" class="field" value="${escapeHtml(localStorage.getItem(LEGACY_FONT_URL_KEY)||'')}"></div><div><label class="form-label">字体族名</label><input id="legacy-font-family" class="field" value="${escapeHtml(localStorage.getItem(LEGACY_FONT_FAMILY_KEY)||'')}"></div><div class="form-full"><button type="button" class="ghost-btn" onclick="applyLegacyUrlFont()">应用旧版链接</button></div></div></details></section>
 ${window.MimaChatWallpaper?.markup?.()||''}<section class="settings-section"><h3>🪄 CSS Preset Library（CSS 预设库）</h3><p class="helper">支持直接粘贴或导入<strong>纯 CSS</strong>，不需要手动包 &lt;style&gt;。CSS 可以只美化模型输出的自定义 HTML，也可以覆盖剧情区域，或选择“咪嘛馆全局”直接二改整个 UI（界面）。模型输出本身仍经过 Safe HTML sanitizer（安全 HTML 清洗器），不会执行 &lt;script&gt; / &lt;style&gt;。</p><div class="toolbar css-default-tools"><button class="primary-btn" onclick="openCssPresetEditor()">＋ 新建 CSS（样式）</button><button class="ghost-btn" onclick="chooseCssImport()">⇧ 导入 .css（样式文件）</button><button class="ghost-btn" onclick="copyDefaultCss()">⧉ 一键复制默认 CSS（样式）</button><button class="ghost-btn" onclick="exportDefaultCss()">⇩ 导出默认 CSS（样式）</button><button class="ghost-btn" onclick="forkDefaultCss()">✦ 默认 CSS 二改</button><button class="ghost-btn" onclick="MimaAssistantStudio.open('css')">✦ CSS 美化助手</button><button class="danger-btn" onclick="emergencyDisableCss()">🚑 临时禁用自定义 CSS（样式）</button></div><div class="toolbar"><button class="ghost-btn" onclick="stopAtelierAndRestoreCss()">停用工坊全局主题（保留旧 CSS）</button></div><div class="row-sub css-scope-note">Scope（作用域）：自定义 HTML / Chat / Novel / Assistant / 咪嘛馆全局。Novel 与 Assistant 使用稳定公开 selector；全局 CSS 仍拥有最高覆盖能力。</div><div class="row-sub" style="margin:8px 0 12px">当前聊天：${currentCssPreset()?escapeHtml(currentCssPreset().name):'未挂载'} · ${currentSessionData?.customCssEnabled===false?'已禁用':'已启用'}</div><div class="toolbar">${currentSessionData?.customCssId?'<button class="ghost-btn" onclick="unapplyCss()">取消应用</button>':''}${currentSessionData?.customCssId&&currentSessionData?.customCssEnabled===false?'<button class="ghost-btn" onclick="reenableCss()">重新启用</button>':''}</div><button class="ghost-btn" onclick="unapplyGlobalCssPreset()">取消全局 CSS</button>${mimaLibraryToolbar('css',cssPresets)}<div id="css-preset-list" class="card-grid css-preset-grid" style="margin-top:12px"></div></section>
-<section class="settings-section"><h3>显示</h3><label class="check-row"><input id="render-html-setting" type="checkbox" ${currentSessionData?.renderMode==='safe_html'?'checked':''} onchange="toggleSafeHtml(this.checked)"> 允许 Safe HTML（安全 HTML）状态栏渲染</label><p class="helper">开启后会保留正文原有换行与空格，并支持 &lt;system&gt;、&lt;details&gt;、&lt;summary&gt;、区块、表格等安全结构，方便 CSS 状态栏直接生效。</p></section>`;applyMimaUiDensity();qs('font-ui-select').value=ui;qs('font-story-select').value=story;stopUrlFontPreview();stopVisibleFontPreviews();updateFontApplicationStatus();const root=qs('font-list');if(fontReadError){stopVisibleFontPreviews();root.textContent='字体库读取失败，原字体和选择均未更改：'+(fontReadError.message||String(fontReadError));}else renderLocalFontRows(root,fontRecords);renderCssPresetLibrary(qs('css-preset-list'));syncStoryTypographyControls(typo);window.MimaFontBackup?.refresh?.()}
+<section class="settings-section"><h3>显示</h3><label class="check-row"><input id="render-html-setting" type="checkbox" ${currentSessionData?.renderMode==='safe_html'?'checked':''} onchange="toggleSafeHtml(this.checked)"> 允许 Safe HTML（安全 HTML）状态栏渲染</label><p class="helper">开启后会保留正文原有换行与空格，并支持 &lt;system&gt;、&lt;details&gt;、&lt;summary&gt;、区块、表格等安全结构，方便 CSS 状态栏直接生效。</p></section>`;applyMimaUiDensity();qs('font-ui-select').value=ui;qs('font-story-select').value=story;stopUrlFontPreview();stopVisibleFontPreviews();applyFontWeightPrefs();updateFontApplicationStatus();renderFontBundleStatus();const root=qs('font-list');if(fontReadError){stopVisibleFontPreviews();root.textContent='字体库读取失败，原字体和选择均未更改：'+(fontReadError.message||String(fontReadError));}else renderLocalFontRows(root,fontRecords);renderCssPresetLibrary(qs('css-preset-list'));syncStoryTypographyControls(typo);window.MimaFontBackup?.refresh?.()}
 
 // Legacy font indexing can finish after the settings sheet is opened. Refresh
 // ONLY the font-picker rows and choices; never discard in-progress CSS edits.
@@ -2676,106 +2779,113 @@ function importLocalFontBackup(){
  };
  input.click();
 }
-async function changeFont(kind,family){try{await MimaFontManager.setSelected(kind,family);}catch(e){toast('已保留字体选择，但本次加载失败：'+(e?.message||String(e))+'。可在下方点击重新加载。');const control=qs(kind==='ui'?'font-ui-select':'font-story-select');if(control)control.value=MimaFontManager.getSelected(kind);updateFontApplicationStatus();}}
+async function changeFont(kind,family){try{await MimaFontManager.setSelected(kind,family);renderFontBundleStatus();}catch(e){toast('已保留字体选择，但本次加载失败：'+(e?.message||String(e))+'。可在下方点击重新加载。');const control=qs(kind==='ui'?'font-ui-select':'font-story-select');if(control)control.value=MimaFontManager.getSelected(kind);updateFontApplicationStatus();}}
 // The font library previews each *visible* font in its own face rather than
 // inheriting the currently selected UI font. Never decode the entire collection.
-let visibleFontPreviewObserver=null,visibleFontPreviewGeneration=0,visibleFontPreviewQueue=Promise.resolve();
+let visibleFontPreviewObserver=null,visibleFontPreviewGeneration=0;
 const visibleFontPreviewOwners=new Map(),visibleFontPreviewTimers=new Map();
+const previewJobs=[],previewJobIds=new Set();let previewDecodes=0;
+const PREVIEW_DECODE_BUDGET=3;
+function pumpFontPreviewJobs(){
+ while(previewDecodes<PREVIEW_DECODE_BUDGET&&previewJobs.length){
+  const task=previewJobs.shift();previewJobIds.delete(task.id);
+  if(!task.active())continue;
+  previewDecodes++;
+  // Native FontFace.load cannot be cancelled. Unsettled tasks retain their
+  // budget and backing bytes; other independent tasks may continue.
+  Promise.resolve().then(task.run).catch(e=>console.warn('字体行预览失败',e)).finally(()=>{previewDecodes--;pumpFontPreviewJobs();});
+ }
+}
 function stopVisibleFontPreviews(){
-  ++visibleFontPreviewGeneration;
-  visibleFontPreviewObserver?.disconnect();visibleFontPreviewObserver=null;
-  for(const timer of visibleFontPreviewTimers.values())clearTimeout(timer);
-  visibleFontPreviewTimers.clear();
-  for(const owner of visibleFontPreviewOwners.values())MimaFontManager.releaseUsage(owner);
-  visibleFontPreviewOwners.clear();
-  // Keep the previous serial queue: a browser-native FontFace.load cannot be
-  // cancelled. Resetting its tail let a reopened picker start a second decode
-  // while the first generation still owned an in-flight request.
+ ++visibleFontPreviewGeneration;
+ visibleFontPreviewObserver?.disconnect();visibleFontPreviewObserver=null;
+ for(const timer of visibleFontPreviewTimers.values())clearTimeout(timer);
+ visibleFontPreviewTimers.clear();previewJobs.length=0;previewJobIds.clear();
+ for(const owner of visibleFontPreviewOwners.values())MimaFontManager.releaseUsage(owner);
+ visibleFontPreviewOwners.clear();
 }
 function updateFontApplicationStatus(){
-  const panel=qs('font-application-status');if(!panel)return;
-  panel.replaceChildren();
-  for(const [kind,label] of [['ui','界面'],['story','剧情正文']]){
-    const info=MimaFontManager.getLoadStatus?.(kind)||{state:'idle'};
-    const wanted=MimaFontManager.getSelected(kind);
-    const row=document.createElement('div');row.className='mima-font-load-row';
-    if(!wanted){row.textContent=`${label}：系统默认字体`;}
-    else if(info.state==='error'&&info.family===wanted){
-      row.classList.add('mima-font-load-error');
-      const message=document.createElement('span');
-      message.textContent=`${label}「${wanted}」未能加载：${info.message||'无法解析字体文件'}（当前显示替代字体，原文件仍保留）`;
-      row.appendChild(message);
-      if(fontRecords.some(f=>f.family===wanted)||MimaFontManager.urlFonts().some(f=>f.family===wanted)){
-        const retry=document.createElement('button');retry.type='button';retry.className='ghost-btn';
-        retry.textContent='重新加载';retry.style.marginLeft='10px';
-        retry.onclick=async()=>{
-          retry.disabled=true;retry.textContent='验证中…';
-          try{
-            await MimaFontManager.reloadSelected(kind);
-            toast(`字体「${wanted}」已重新加载`);
-          }catch(e){toast(`字体仍未能加载：${e.message||e}`);}
-          finally{updateFontApplicationStatus();}
-        };
-        row.appendChild(retry);
-      }
-    }else if(info.state==='loaded'&&info.family===wanted){row.textContent=`${label}「${wanted}」：字体已加载`; }
-    else if(info.state==='registered'&&info.family===wanted){row.textContent=`${label}「${wanted}」：已注册，浏览器正在按需加载`; }
-    else if(info.state==='external'&&info.family===wanted){row.textContent=`${label}「${wanted}」：外部 CSS 字体，当前无法验证；请检查链接及字体声明`;}
-    else {row.textContent=`${label}「${wanted}」：正在恢复或尚未确认加载成功`;} 
-    panel.appendChild(row);
+ const panel=qs('font-application-status');if(!panel)return;
+ panel.replaceChildren();
+ for(const [kind,label] of [['ui','界面'],['story','剧情正文']]){
+  const info=MimaFontManager.getLoadStatus?.(kind)||{state:'idle'};
+  const wanted=MimaFontManager.getSelected(kind);
+  const row=document.createElement('div');row.className='mima-font-load-row';
+  if(!wanted){row.textContent=`${label}：系统默认字体`;}
+  else if(info.state==='error'&&info.family===wanted){
+   row.classList.add('mima-font-load-error');
+   const message=document.createElement('span');message.textContent=`${label}「${wanted}」加载失败：${info.message||'原始字节或原生解析出错'}（原文件保留）`;
+   row.appendChild(message);
+   const retry=document.createElement('button');retry.type='button';retry.className='ghost-btn';retry.textContent='重新验证';
+   retry.onclick=async()=>{retry.disabled=true;retry.textContent='验证中…';try{await MimaFontManager.reloadSelected(kind);toast('字体重新验证成功');}catch(e){toast('验证未成功：'+(e?.message||e));}finally{updateFontApplicationStatus();}};
+   row.appendChild(retry);
+  }else if(info.state==='loaded'&&info.family===wanted){row.textContent=`${label}「${wanted}」：原生解码已完成并注册`;}
+  else if(info.state==='partial'&&info.family===wanted){row.textContent=`${label}「${wanted}」：主字体可用，但部分补字文件尚不可用；原组合记录保留，请检查补字列表`; }
+  else if(info.state==='registered'&&info.family===wanted){row.textContent=`${label}「${wanted}」：已注册，浏览器解码仍在进行`;}
+  else if(info.state==='external'&&info.family===wanted){row.textContent=`${label}「${wanted}」：外部 CSS 字体，需要核实原 CSS 的多子集声明`;}
+  else row.textContent=`${label}「${wanted}」：正在恢复或原生解码尚未结算`;
+  if(wanted){
+   const target=kind==='ui'?(document.querySelector('.app-shell')||document.body):
+     (document.querySelector('.typography-preview-assistant .msg-content')||document.querySelector('.assistant-msg .msg-content')||document.querySelector('.msg-content'));
+   const css=target?getComputedStyle(target):null;
+   const families=String(css?.fontFamily||'').replace(/["']/g,'').split(',').map(x=>x.trim());
+   const hint=document.createElement('div');hint.className='row-sub';
+   hint.textContent=css?`目标 CSS：${families.includes(MimaFontManager.scopedFamily?.(kind,wanted)||wanted)?'选中的家族已命中':'当前样式没有选中此家族'}；实际 CSS 字重 ${css.fontWeight}。字符是否真正使用该字体请单独检查 cmap。`:'当前没有可用的正文节点检测 CSS';
+   row.append(hint);
   }
+  panel.append(row);
+ }
 }
 window.addEventListener('mima-font-load-state',updateFontApplicationStatus);
 function startVisibleFontPreviews(root,records){
-  if(!('IntersectionObserver' in window))return;
-  const generation=visibleFontPreviewGeneration, byId=new Map(records.map(record=>[record.id,record]));
-  const visible=new Set();
-  const observer=new IntersectionObserver(entries=>{
-    for(const entry of entries){
-      const row=entry.target,id=row.dataset.mimaFontPreviewId,record=byId.get(id);
-      if(!record)continue;
-      const title=row.querySelector('.mima-local-font-preview'),owner=`font-picker-${id}`;
-      if(entry.isIntersecting){
-        if(visible.has(id))continue;visible.add(id);
-        visibleFontPreviewOwners.set(id,owner);
-        // A swipe across many font rows must not decode every briefly visible
-        // 15-30 MB font. Only schedule a row still visible after scrolling
-        // settles; keep real independent previews for stationary rows.
-        const timer=setTimeout(()=>{
-          visibleFontPreviewTimers.delete(id);
-          if(generation!==visibleFontPreviewGeneration||!visible.has(id))return;
-          visibleFontPreviewQueue=visibleFontPreviewQueue.catch(()=>{}).then(async()=>{
-          if(generation!==visibleFontPreviewGeneration||!visible.has(id))return;
-          try{
-            const face=await MimaFontManager.useFont(owner,record.id);
-            if(generation!==visibleFontPreviewGeneration||!visible.has(id))return;
-            if(!face||face.status!=='loaded')throw new Error('字体尚未完成加载');
-            title.style.setProperty('font-family',`"${face.family.replace(/["\\]/g,'')}", system-ui`);
-            title.dataset.previewStatus='loaded';
-            title.title=`当前预览：${record.name}`;
-          }catch(error){
-            if(generation!==visibleFontPreviewGeneration||!visible.has(id))return;
-            title.dataset.previewStatus='error';
-            title.title=`无法预览：${error.message||String(error)}`;
-            title.style.removeProperty('font-family');
-            MimaFontManager.releaseUsage(owner);
-          }
-          });
-        },160);
-        visibleFontPreviewTimers.set(id,timer);
-      }else{
-        const pendingTimer=visibleFontPreviewTimers.get(id);
-        if(pendingTimer){clearTimeout(pendingTimer);visibleFontPreviewTimers.delete(id);}
-        visible.delete(id);visibleFontPreviewOwners.delete(id);
-        MimaFontManager.releaseUsage(owner);
-        title.style.removeProperty('font-family');title.dataset.previewStatus='pending';title.removeAttribute('title');
+ if(!('IntersectionObserver' in window))return;
+ const generation=visibleFontPreviewGeneration,byId=new Map(records.map(f=>[f.id,f]));const visible=new Set();
+ const observer=new IntersectionObserver(entries=>{
+  for(const entry of entries){
+   const row=entry.target,id=row.dataset.mimaFontPreviewId,record=byId.get(id);
+   if(!record)continue;
+   const title=row.querySelector('.mima-local-font-preview'),owner=`font-picker-${generation}-${id}`;
+   if(entry.isIntersecting){
+    if(visible.has(id))continue;visible.add(id);
+    const fail=MimaFontManager.getDecodeFailure?.(record);
+    if(fail){title.dataset.previewStatus='error';title.title='已暂停自动解析：'+fail;const b=row.querySelector('.ghost-btn');if(b)b.textContent='重新验证';continue;}
+    visibleFontPreviewOwners.set(id,owner);
+    const timer=setTimeout(()=>{
+     visibleFontPreviewTimers.delete(id);
+     const active=()=>generation===visibleFontPreviewGeneration&&visible.has(id)&&visibleFontPreviewOwners.get(id)===owner;
+     if(!active()||previewJobIds.has(id))return;
+     previewJobIds.add(id);title.dataset.previewStatus='waiting';title.title='预览排队中；其它设置仍可操作';
+     previewJobs.push({id,active,run:async()=>{
+      if(!active())return;
+      title.dataset.previewStatus='decoding';title.title='原生字体解码中（已启动的解码无法取消）';
+      try{
+       const face=await MimaFontManager.useFont(owner,id);
+       if(!active())return;
+       if(!face||face.status!=='loaded')throw Error('原生字体尚未完成解码');
+       title.style.fontFamily=`"${face.family.replace(/["\\]/g,'')}" ,system-ui`;
+       title.dataset.previewStatus='loaded';title.title='正在预览 '+record.name;
+      }catch(e){if(!active())return;title.dataset.previewStatus='error';title.title='预览失败：'+(e?.message||e);title.style.removeProperty('font-family');
+       if(MimaFontManager.getDecodeFailure?.(record)){const b=row.querySelector('.ghost-btn');if(b)b.textContent='重新验证';}
+       MimaFontManager.releaseUsage(owner);
       }
-    }
-  },{root:qs('settings-content'),rootMargin:'0px',threshold:0.01});
-  visibleFontPreviewObserver=observer;
-  root.querySelectorAll('[data-mima-font-preview-id]').forEach(row=>observer.observe(row));
+     }});pumpFontPreviewJobs();
+    },160);visibleFontPreviewTimers.set(id,timer);
+   }else{
+    const timer=visibleFontPreviewTimers.get(id);if(timer){clearTimeout(timer);visibleFontPreviewTimers.delete(id);}
+    visible.delete(id);visibleFontPreviewOwners.delete(id);MimaFontManager.releaseUsage(owner);
+    title.style.removeProperty('font-family');
+    const fail=MimaFontManager.getDecodeFailure?.(record);title.dataset.previewStatus=fail?'error':'pending';
+    if(fail)title.title='已暂停自动预览：'+fail;else title.removeAttribute('title');
+   }
+  }
+ },{root:qs('settings-content'),rootMargin:'0px',threshold:.01});
+ visibleFontPreviewObserver=observer;
+ root.querySelectorAll('[data-mima-font-preview-id]').forEach(row=>observer.observe(row));
 }
-let fontPreviewEpoch=0;async function previewLocalFont(id){const epoch=++fontPreviewEpoch,record=fontRecords.find(f=>f.id===id);if(!record)return;try{const face=await MimaFontManager.ensureFont(id);if(epoch!==fontPreviewEpoch||settingsTab!=='appearance'||!isSettingsOpen())return;if(!face||face.status!=='loaded')throw new Error('所选字体未能完成加载');const el=qs('font-preview-sample');if(el){el.style.fontFamily=face?.family||'';el.textContent='Aa 咪嘛馆字体预览 · '+record.family;}}catch(e){if(epoch===fontPreviewEpoch&&settingsTab==='appearance'&&isSettingsOpen())toast('字体预览失败：'+e.message);}}
+let fontPreviewEpoch=0;async function previewLocalFont(id){const epoch=++fontPreviewEpoch,record=fontRecords.find(f=>f.id===id);if(!record)return;try{const face=await MimaFontManager.ensureFont(id);if(epoch!==fontPreviewEpoch||settingsTab!=='appearance'||!isSettingsOpen())return;if(!face||face.status!=='loaded')throw new Error('所选字体未能完成加载');const el=qs('font-preview-sample');if(el){el.style.fontFamily=face?.family||'';el.textContent='Aa 咪嘛馆字体预览 · '+record.family;}
+    const row=Array.from(document.querySelectorAll('[data-mima-font-preview-id]')).find(item=>item.dataset.mimaFontPreviewId===id);
+    const label=row?.querySelector('.mima-local-font-preview');if(label){label.dataset.previewStatus='loaded';label.title='已验证：'+record.name;label.style.fontFamily=face.family;}
+    const button=row?.querySelector('.ghost-btn');if(button)button.textContent='预览';}catch(e){if(epoch===fontPreviewEpoch&&settingsTab==='appearance'&&isSettingsOpen())toast('字体预览失败：'+e.message);}}
 window.previewLocalFont=previewLocalFont;window.exportReadableFonts=exportReadableFonts;window.importLocalFontBackup=importLocalFontBackup;
 
 // Read-only, on-device evidence for font regressions: no database writes,
@@ -2851,9 +2961,10 @@ async function mimaInspectFontFailure(){
   let metadata=[];try{metadata=await MimaFontManager.listMetadata();output.localAssets.libraryCount=metadata.length;}catch(e){output.localAssets.readError=errorText(e);output.conclusion.push('字体库元数据读取失败：本机数据库读取环节');}
   for(const kind of ['ui','story']){
    const family=selected[kind];if(!family){output.localAssets[kind]={type:'system/default'};continue;}
+   const renderFamily=MimaFontManager.scopedFamily?.(kind,family)||family;
    const list=metadata.filter(f=>f.family===family),url=urls.find(f=>f.family===family);
-   const found=allFaces.filter(f=>f.family===family);
-   output.localAssets[kind]={family,localRecordCount:list.length,storedSizes:list.map(x=>x.size),registeredFaces:found.map(x=>x.status),urlFont:!!url,urlCss:url?.css===true};
+   const found=allFaces.filter(f=>f.family===renderFamily);
+   output.localAssets[kind]={family,renderFamily,subsets:MimaFontManager.bundleFor?.(kind)||[],localRecordCount:list.length,storedSizes:list.map(x=>x.size),registeredFaces:found.map(x=>x.status),urlFont:!!url,urlCss:url?.css===true};
    if(list.length){
     // Do not materialize the font binary during diagnosis: a second multi-MB
     // ArrayBuffer copy can itself trigger the original iOS low-memory problem.
@@ -2870,7 +2981,7 @@ async function mimaInspectFontFailure(){
     else if(found.every(f=>f.status!=='loaded'))output.conclusion.push(kind+' 网络字体已登记，但尚未完成加载');
    } else output.conclusion.push(kind+' 选中项在本地库和网络字体收藏中均未找到：选择与记录对应关系异常（旧版单 URL 除外）');
    const rendered=output.usedElements[kind==='ui'?'app':'story'];
-   if(rendered?.exists&&!rendered.fontFamily.includes(family))output.conclusion.push(kind+' 实际正文/界面 font-family 没有目标名称：有 CSS 覆盖或作用域未接入');
+   if(rendered?.exists&&!rendered.fontFamily.includes(renderFamily))output.conclusion.push(kind+' 实际正文/界面 font-family 没有目标名称：有 CSS 覆盖或作用域未接入');
   }
   if(!output.conclusion.length)output.conclusion.push('选中、文件和 CSS 链尚未查出确定性缺失。若字形仍不对，需核对字体字符覆盖范围、主题更具体的子元素和浏览器字体解码结果。');
   mimaLastFontReport=JSON.stringify(output,null,2);out.textContent=mimaLastFontReport;
@@ -4957,7 +5068,7 @@ async function mimaBoot(){
             const inputIds=['story-input','session-file-input','png-inspector-input','persona-file-input','worldbook-file-input','regex-file-input','font-file-input','css-file-input','api-config-file-input','library-file-input','full-settings-file-input'];
             const missing=inputIds.filter(id=>!qs(id));
             if(missing.length)throw new Error('E_STARTUP_MISSING_CONTROLS: '+missing.join(','));
-            applyStoryTypography();
+            applyStoryTypography();applyFontWeightPrefs();
             // The manager's init() owns the selected-font activation. Calling it
             // here as well used to start the same IDB/FontFace work twice on boot.
             restoreLegacyFont({syncSelection:false});
@@ -4999,3 +5110,19 @@ async function mimaBoot(){
 // wait for full image/asset load (the prior `load` listener delayed startup).
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',mimaBoot,{once:true});
 else queueMicrotask(mimaBoot);
+
+window.addEventListener('storage',e=>{
+ if(e.key===FONT_WEIGHT_KEY){applyFontWeightPrefs();updateFontApplicationStatus();}
+ if(['mimamao_tavern_font_subsets_v1','mimamao_tavern_ui_font','mimamao_tavern_story_font'].includes(e.key)){
+  // Cross-tab changes must recompute both the effective CSS family and
+  // its scope-specific registered faces, without rewriting any preferences.
+  void MimaFontManager.applySelected().then(()=>{
+   if(settingsTab==='appearance'&&isSettingsOpen()){
+    const u=qs('font-ui-select'),st=qs('font-story-select');
+    if(u)u.value=MimaFontManager.getSelected('ui');if(st)st.value=MimaFontManager.getSelected('story');
+    renderFontBundleStatus();
+   }
+   updateFontApplicationStatus();
+  }).catch(error=>console.warn('跨标签字体设置刷新失败，原配置保留',error));
+ }
+});

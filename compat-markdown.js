@@ -114,16 +114,16 @@ function renderStoryInline(target,value){
   // slice. Recognize a path anchor anywhere inside the current word, including
   // after Chinese text with no separating space. Bare \_ remains Markdown.
   const tail=before.slice(-512).split(/[\s<>'"“”‘’「」(){}\[\]]/).pop()||'';
-  return /[a-z]:[\\/]/i.test(tail)||/\\\\[^\\/]+[\\/]/.test(tail)||
+  return /[a-z]:(?:[\\/]|$)/i.test(tail)||/\\\\[^\\/]+[\\/]/.test(tail)||
    /(?:^|[\\/])\.{1,2}[\\/]/.test(tail)||/(?:^|[\\/])[a-z0-9_.-]+[\\/]/i.test(tail)||/[\\/][a-z0-9][a-z0-9_.-]*$/i.test(tail);
  }
  const htmlStack=[];
- function trackLiteralHtml(raw){
+ function trackLiteralHtml(raw,stack=htmlStack){
   const tag=/^<\s*(\/)?([a-z][\w:-]*)\b[^>]*>$/i.exec(raw);
   if(!tag)return;
   const closing=!!tag[1],name=tag[2].toLowerCase();
-  if(closing){const i=htmlStack.lastIndexOf(name);if(i!==-1)htmlStack.splice(i);}
-  else if(!/\/\s*>$/.test(raw)&&!voidStoryTags.has(name))htmlStack.push(name);
+  if(closing){const i=stack.lastIndexOf(name);if(i!==-1)stack.splice(i);}
+  else if(!/\/\s*>$/.test(raw)&&!voidStoryTags.has(name))stack.push(name);
  }
  function appendTokens(items,parent,scope=''){
   let preceding='';
@@ -150,10 +150,23 @@ function renderStoryInline(target,value){
   }
  }
 
+ // Quoted emphasis is split before Marked can cross-pair neighboring quotes,
+ // but its inner punctuation escapes must obey the same display-only rules.
+ // Keep everything else literal (code, HTML and links are not interpreted).
+ function appendQuotedBody(body,parent){
+  let preceding='';const literalHtml=[];
+  for(const token of root.marked.Lexer.lexInline(body)){
+   const raw=token.raw??token.text??'';
+   if(token.type==='html')trackLiteralHtml(raw,literalHtml);
+   const shown=token.type==='escape'&&!literalHtml.length&&!isPathEscape(preceding)?(token.text??raw):raw;
+   parent.appendChild(document.createTextNode(shown));
+   preceding+=raw;
+  }
+ }
  for(const piece of splitProse()){
   if(piece.quote){
    const node=document.createElement(piece.quote.marks==='**'?'strong':'em');
-   node.textContent=piece.quote.body;fragment.appendChild(node);
+   appendQuotedBody(piece.quote.body,node);fragment.appendChild(node);
   }else appendTokens(root.marked.Lexer.lexInline(piece.text),fragment,piece.text);
  }
  target.replaceChildren(fragment);

@@ -709,7 +709,9 @@ html[data-mima-theme="eink"] .novel-text-unit[open]>summary,html[data-mima-theme
 .modal-head h2{overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.3}
 .settings-content,.editor-body{min-height:0;min-width:0;overflow:auto;overscroll-behavior:contain;overflow-wrap:anywhere}.editor-actions{flex:none;flex-wrap:wrap}
 .settings-panel.appearance-preview-mode{grid-template-rows:auto auto auto minmax(0,1fr)}
-.appearance-preview-stage{height:min(280px,34dvh);grid-template-rows:auto auto minmax(0,1fr)}
+.appearance-preview-stage{height:min(280px,34dvh);grid-template-rows:auto auto auto minmax(0,1fr)}
+.appearance-preview-stage[data-surface="novel"],.appearance-preview-stage[data-surface="assistant"]{grid-template-rows:auto auto minmax(0,1fr)}
+.appearance-preview-stage .appearance-preview-novel,.appearance-preview-stage .appearance-preview-assistant{min-height:0;overflow:auto}
 .appearance-preview-toggle{justify-self:start;border:0;background:transparent;color:inherit;padding:8px 16px;cursor:pointer;font:inherit;font-size:.78rem}
 .appearance-preview-stage.is-collapsed{height:36px;display:block}.appearance-preview-stage.is-collapsed>:not(.appearance-preview-toggle){display:none}
 #resume-editor{position:fixed;right:14px;bottom:max(14px,env(safe-area-inset-bottom));z-index:1300;padding:10px 16px;border-radius:20px;background:var(--panel-solid);color:var(--text);border:1px solid var(--line);box-shadow:var(--shadow)}
@@ -1370,3 +1372,29 @@ html.mima-settings-paint-guard .app-shell *::after{animation-play-state:paused!i
     background:color-mix(in srgb,var(--panel) 76%,transparent);
   }
 }
+
+/* V5.47: isolated native weight controls, with original theme CSS retaining
+   the higher-priority unlayered cascade and author-specified strong headings. */
+@layer mima-builtins {
+ body {font-weight:var(--mima-ui-weight,inherit);font-synthesis-weight:var(--mima-ui-synthesis,auto)}
+ .msg-content,.assistant-msg .msg-content.safe-html-content,.assistant-msg .story-prose,
+ .user-msg .story-prose,.typography-preview-message .msg-content,
+ .typography-preview-user .msg-content,.novel-prose-view,.novel-draft-prose,
+ .novel-editor {font-weight:var(--mima-story-weight,inherit);font-synthesis-weight:var(--mima-story-synthesis,auto)}
+ .msg-content strong,.story-prose strong,.novel-prose-view strong,.novel-draft-prose strong {font-weight:bolder}
+}
+.mima-weight-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:10px}
+.mima-weight-control{min-width:0;padding:12px 13px;border:1px solid var(--line);border-radius:15px;background:color-mix(in srgb,var(--panel) 78%,transparent)}
+.mima-weight-control legend{font-weight:700;font-size:.82rem;padding:0 5px}
+.mima-weight-control .check-row{min-height:42px;line-height:1.5}
+.mima-weight-fields{display:grid;gap:8px;margin:8px 0}
+.mima-weight-fields[hidden],.mima-font-coverage[hidden]{display:none!important}
+.mima-weight-control .field{min-height:44px;max-width:100%}
+.mima-bundle-status{margin:10px 0;display:grid;gap:8px;font-size:.75rem}
+.mima-bundle-line{display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+.mima-bundle-line button{min-height:40px;overflow-wrap:anywhere}
+.mima-font-coverage{white-space:pre-wrap;overflow-wrap:anywhere;padding:12px;border:1px solid var(--line);border-radius:12px;max-height:32dvh;overflow:auto;font-size:.76rem;line-height:1.65;background:var(--panel)}
+.font-row .ghost-btn,.font-row .danger-btn{min-height:40px}
+.font-row [data-preview-status="decoding"]{opacity:.7}
+.font-row [data-preview-status="error"]{text-decoration:underline dotted}
+@media(max-width:620px){.mima-weight-grid{grid-template-columns:1fr}.mima-weight-control{padding:11px}.font-row button{flex:1 1 auto}}
