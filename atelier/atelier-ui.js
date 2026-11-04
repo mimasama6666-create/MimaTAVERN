@@ -107,7 +107,7 @@ async function saveCssToLibrary(source=project,{updateDraft=true,publish=false}=
  // Legacy records with the same releaseKey remain untouched. New releases always
  // create a distinct ID; a concurrent identical POST can only write same content.
  let result=publish
-   ?await window.MimaStandalone.handle('/atelier/publish','POST',{preset:body})
+   ?await window.MimaStandalone.handle('/atelier/publish','POST',{preset:body,prepareOnly:true})
    :existing?{success:true,data:existing}:await window.MimaStandalone.handle('/css-presets','POST',body);
  if(publish&&result?.success&&result.data?.preset)result={success:true,data:result.data.preset};
  if(!result?.success||!result.data?.id)throw new Error(result?.msg||result?.code||'CSS 预设提交失败');
@@ -519,7 +519,6 @@ async function publishCurrentTheme(){
   clearTimeout(saveTimer);await queueDraft();
   const publishingId=project.id,publishingTime=project.updatedAt;
   const saved=await saveCssToLibrary(project,{updateDraft:false,publish:true});
-  canonicalCommitted=true;
   let associationProblem='';
   if(project?.id===publishingId&&project.updatedAt===publishingTime){
    project.linkedCssId=saved.id;
@@ -527,17 +526,16 @@ async function publishCurrentTheme(){
   }else{
    associationProblem='编辑期间已切换或修改草稿，旧发布不会覆盖当前草稿关联';
   }
-  // Even if the mutable draft link could not be stored, the canonical global
-  // pointer was committed. Always finish the independent visual settlement.
-  // The global pointer was committed together with the immutable CSS record.
-  // Only a repaint can fail now; never describe the publication as rolled back.
+  // The immutable resource is saved first. Selecting it still requires the
+  // shared visual check and canonical CAS; a draft-link failure is independent.
   try{
-   const visual=await window.MimaTavernBridge?.reload?.();
+   const visual=await window.MimaTavernBridge?.applyCssPreset?.(saved.id,{surface:'global'});
    if(visual?.status!=='APPLIED'){
-     note('全局主题已经保存，但当前画面尚未切换成功；旧外观保留。'+(visual?.error||'请重新进入工坊查看同步状态'),true);
+     note(visual?.status==='SAVED_VISUAL_UNCERTAIN'?'全局主题已保存，显示安全待确认；可在外观页主动重试。':'发布快照已存入 CSS 库，本次应用尚未确认。'+(visual?.error||'请重试应用'),true);
      return;
    }
-  }catch(e){console.error('[Atelier] post-publish repaint pending',e);note('全局主题已保存；当前页面刷新外观失败，可重新进入页面：'+e.message,true);return;}
+   canonicalCommitted=true;
+  }catch(e){console.error('[Atelier] CSS selection incomplete',e);note('发布快照已保留，应用未确认：'+e.message,true);return;}
   try{if(C.getActive().id)await C.unapply();}catch(e){console.warn('[Atelier] old active pointer preserved; canonical theme has priority',e);}
   note(associationProblem?'全局主题已经应用，但'+associationProblem+'；发布快照仍在正式 CSS 库。':'已一键应用到咪嘛馆全局主题：'+saved.name+'。原来的 CSS 和工程均已保留。',!!associationProblem);
  }catch(e){

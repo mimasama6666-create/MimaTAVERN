@@ -295,13 +295,16 @@
   });}finally{db.close()}
  }
  function stagingToken(){return 'stage-'+[...crypto.getRandomValues(new Uint8Array(24))].map(n=>n.toString(16).padStart(2,'0')).join('');}
- async function startV3Staging(manifest,token){
+ async function startV3Staging(manifest,token,{cloudExistingRevision=null}={}){
   const id=manifest.sha256;
   await stagingTransaction((kv,abort)=>{
    const req=kv.get(stagingKey(id)),receipt=kv.get('receipt:'+id),owner=kv.get('restore-owner:'+id);
    let stage,prior,owned,checks=0;const finish=()=>{if(++checks!==3)return;
-    if(stage||prior||owned){abort(Error('该归档已有暂存、恢复进度或所有权；禁止覆盖，请先核对收据'));return;}
-    kv.add({id,token,status:'staging',manifest,indices:[],createdAt:new Date().toISOString()},stagingKey(id));
+    const cloudAllowed=cloudExistingRevision!==null&&prior?.archiveFormat==='v3'&&prior?._restoreRevision===cloudExistingRevision&&
+      ['complete','prepared','interrupted'].includes(prior.status);
+    if(stage||owned||(prior&&!cloudAllowed)||(!prior&&cloudExistingRevision!==null)){
+     abort(Error('该归档已有暂存、恢复进度或所有权；禁止覆盖，请先核对收据'));return;}
+    kv.add({id,token,status:'staging',manifest,indices:[],cloudRecoveryRevision:cloudExistingRevision,createdAt:new Date().toISOString()},stagingKey(id));
    };
    req.onsuccess=()=>{stage=req.result;finish()};receipt.onsuccess=()=>{prior=receipt.result;finish()};owner.onsuccess=()=>{owned=owner.result;finish()};
    req.onerror=()=>abort(req.error);receipt.onerror=()=>abort(receipt.error);owner.onerror=()=>abort(owner.error);
@@ -324,7 +327,7 @@
     const owner=kv.get('restore-owner:'+id),receipt=kv.get('receipt:'+id);
     let checks=0,owned,record;
     const check=()=>{if(++checks!==2)return;
-     if(owned||record?.status==='running'||record?.status==='prepared'||record?.status==='interrupted'){
+     if(owned||record?.status==='running'||(['prepared','interrupted'].includes(record?.status)&&r.cloudRecoveryRevision!==record?._restoreRevision)){
       abort(Error('归档已进入恢复流程，禁止清理来源'));return;
      }
      for(const i of r.indices)kv.delete('v3-volume:'+id+':'+i);
@@ -350,18 +353,27 @@
   if(source.id!==id)throw Error('整馆分卷身份变化，拒绝写库');
   return source;
  }
- async function completeV3Staging(id,token,plans){
+ async function completeV3Staging(id,token,plans,{cloudExistingRevision=null}={}){
   let result;
   await stagingTransaction((kv,abort)=>{
    const req=kv.get(stagingKey(id)),owner=kv.get('restore-owner:'+id),receipt=kv.get('receipt:'+id);
    let stage,owned,old,checks=0;
    const finish=()=>{if(++checks!==3)return;
-    if(!stage||stage.token!==token||stage.status!=='staging'||stage.indices.length!==stage.manifest.volumes.length||owned||old){
+    const cloudAllowed=cloudExistingRevision!==null&&old?.archiveFormat==='v3'&&old._restoreRevision===cloudExistingRevision&&
+       ['complete','prepared','interrupted'].includes(old.status);
+    if(!stage||stage.token!==token||stage.status!=='staging'||stage.indices.length!==stage.manifest.volumes.length||owned||
+       (old&&!cloudAllowed)||(!old&&cloudExistingRevision!==null)){
      abort(Error('整馆暂存或恢复状态变化，拒绝创建假收据'));return;
     }
-    result={id,createdAt:new Date().toISOString(),status:'prepared',archiveFormat:'v3',strategy:'merge-new-only',
+    if(old?.status==='complete')kv.put(old,'cloud-restore-history:'+id+':'+old._restoreRevision);
+    result=old?{...old,status:'prepared',archiveFormat:'v3',strategy:'merge-new-only',
+      stages:old.status==='complete'?Object.fromEntries(NAMES.map(n=>[n,{status:'pending'}])):old.stages,
+      plans,stagingReleased:false,previousCompletedAt:old.status==='complete'?old.completedAt:old.previousCompletedAt,
+      _restoreRevision:old._restoreRevision+1,updatedAt:new Date().toISOString()}
+     :{id,createdAt:new Date().toISOString(),status:'prepared',archiveFormat:'v3',strategy:'merge-new-only',
       stages:Object.fromEntries(NAMES.map(n=>[n,{status:'pending'}])),plans,
       warning:'全部分卷和九库已预检；逐阶段只增加缺失记录，出现冲突则停止。',_restoreRevision:1};
+    if(old?.status==='complete')delete result.completedAt;
     kv.put({...stage,status:'ready',token:null,verifiedAt:new Date().toISOString()},stagingKey(id));
     kv.put(result,'receipt:'+id);kv.put(id,'latest');
    };
@@ -664,5 +676,93 @@
  });
  const receiptUI=()=>guarded(async()=>{if(!activeId)throw Error('暂无恢复收据');download(new Blob([JSON.stringify(await journal('receipt:'+activeId),null,2)],{type:'application/json'}),'咪嘛馆_迁移收据.json')});
  const draftsUI=()=>guarded(async()=>{const rows=await MimaLocalStore.exportPlayToolRecords(),box=document.getElementById('tavern-migration-drafts');if(!box)return;box.replaceChildren();for(const[key,value]of rows.filter(([key])=>key.startsWith('play_tools_v1:draft:'))){const b=document.createElement('button');b.className='ghost-btn';b.textContent='打开草稿 '+key.slice('play_tools_v1:draft:'.length,60);b.onclick=()=>guarded(()=>MimaPlayTools.restoreMigrationDraft(value));box.append(b)}if(!box.childNodes.length)box.textContent='没有已保存的工具草稿。'});
- window.MimaTavernBackup=Object.freeze({build,inspect,preflight,prepare,resume,prepareVolumes,resumeV3,releaseV3StagingUI,cleanupInterruptedV3UI,markup,mount,exportUI,exportVolumesUI,takeoverVolumesUI,chooseUI,chooseVolumesUI,resumeUI,takeoverUI,receiptUI,draftsUI});
+ // Cloud integration is deliberately narrow. V3 remains the only archive
+ // writer and the existing restore journal remains the only commit authority.
+ async function createCloudV3Source({archiveId,createdAt,includeApiKey=false,onVolume,onProgress=()=>{}}){
+  if(typeof onVolume!=='function')throw Error('缺少云端分卷回调');
+  await MimaPlayTools?.flushDrafts?.();window.preserveComposerDraft?.();window.r19PersistReading?.();
+  let inventory=null;
+  return MimaBackupVolumes.create({archiveId,createdAt,includeApiKey,getSection:collect,
+   getFonts:async(op,meta)=>{
+    if(op==='inventory'){inventory=await MimaFontManager.listBackupInventory();verifyFontCoverage(inventory.audit);return inventory;}
+    if(op==='source')return MimaFontManager.openBackupSource(meta.id);
+    if(op==='assert')return MimaFontManager.assertBackupInventory(inventory);
+    throw Error('未知字体备份操作');
+   },onVolume,onProgress});
+ }
+ // Downloaded objects are provided one at a time. This routine never starts
+ // a real library write until ALL cloud volumes pass SHA and nine-stage preflight.
+ // Explicit cloud-only new recovery pass. Preserve the previous completed
+ // receipt as immutable history and never overwrite an active restore owner.
+ async function restartCompletedCloudReceipt(id,expected,plans){
+  let result;
+  await stagingTransaction((kv,abort)=>{
+   const a=kv.get('receipt:'+id),b=kv.get('restore-owner:'+id);let old,owner,checks=0;
+   const finish=()=>{if(++checks!==2)return;
+    if(owner||old?.archiveFormat!=='v3'||old.status!=='complete'||old._restoreRevision!==expected._restoreRevision)
+     {abort(Error('完成收据已变化或其他标签正在恢复，拒绝重新启用'));return;}
+    result={...old,status:'prepared',plans,stagingReleased:false,previousCompletedAt:old.completedAt,
+      stages:Object.fromEntries(NAMES.map(n=>[n,{status:'pending'}])),_restoreRevision:old._restoreRevision+1,updatedAt:new Date().toISOString()};
+    delete result.completedAt;
+    kv.put(old,'cloud-restore-history:'+id+':'+old._restoreRevision);
+    kv.put(result,'receipt:'+id);kv.put(id,'latest');
+   };
+   a.onsuccess=()=>{old=a.result;finish()};b.onsuccess=()=>{owner=b.result;finish()};
+   a.onerror=()=>abort(a.error);b.onerror=()=>abort(b.error);
+  });activeId=id;paintReceipt(result);return result;
+ }
+ async function prepareCloudV3({manifest,readVolume,onProgress=()=>{}}){
+  if(!manifest||!Array.isArray(manifest.volumes)||typeof readVolume!=='function')throw Error('远程分卷清单无效');
+  const fileName='咪嘛馆_'+manifest.archiveId+'.mimavolumes.json';
+  const header=new File([JSON.stringify(manifest)],fileName,{type:'application/json'});
+  const mock=manifest.volumes.map(v=>({name:v.name,size:v.size}));
+  const parsed=await MimaBackupVolumes.readManifest([header,...mock]);
+  const id=parsed.manifest.sha256;
+  const prior=await journal('receipt:'+id);
+  if(prior&&prior.archiveFormat!=='v3')throw Error('该归档的历史恢复记录格式不一致');
+  // Every cloud entry, even an already-completed receipt, MUST authenticate
+  // and hash the CURRENT remote bytes before trusting a cached local source.
+  const verifyVolume=async info=>{
+   const blob=await readVolume(info);
+   if(!(blob instanceof Blob)||blob.size!==info.size||await MimaBackupVolumes.sha(blob)!==info.sha256)
+    throw Error('第 '+(info.index+1)+' 卷远端下载与原 V3 清单不符');
+   return blob;
+  };
+  const existingStage=await journal(stagingKey(id)),existingManifest=await journal('v3-manifest:'+id);
+  const hasSource=!!(existingStage?.status==='ready'||existingManifest?.manifest);
+  if(prior&&hasSource){
+   for(const info of parsed.manifest.volumes){await verifyVolume(info);onProgress('已重新核对云端第 '+(info.index+1)+' / '+parsed.manifest.volumes.length+' 卷');}
+   const source=await loadV3Source(id),plans=await preflightV3Stream(source);
+   if(prior.status==='complete')return restartCompletedCloudReceipt(id,prior,plans);
+   return saveReceipt({...prior,status:'prepared',plans});
+  }
+  if(prior&&!['complete','prepared','interrupted'].includes(prior.status))
+   throw Error('已有恢复收据正在处理，禁止重新建立暂存');
+  const execute=async()=>{
+   const token=stagingToken();let started=false;
+   const total=parsed.manifest.volumes.reduce((n,v)=>n+v.size,0);
+   const budget=await navigator.storage?.estimate?.().catch(()=>null);
+   if(budget&&Number.isFinite(budget.quota)&&Number.isFinite(budget.usage)&&budget.quota-budget.usage<total+8*1048576)
+    throw Error('当前浏览器空间不足以安全暂存全部云端分卷，未修改正式数据库');
+   try{
+    await startV3Staging(parsed.manifest,token,{cloudExistingRevision:prior?._restoreRevision??null});started=true;liveStagingTokens.add(token);
+    for(const info of parsed.manifest.volumes){
+     const blob=await verifyVolume(info);
+     await writeV3Volume(id,token,info.index,blob);
+     onProgress('已解密、验证并暂存 '+(info.index+1)+' / '+parsed.manifest.volumes.length+' 卷');
+    }
+    const source=await loadV3Source(id,{allowStaging:true});
+    const plans=await preflightV3Stream(source);
+    return completeV3Staging(id,token,plans,{cloudExistingRevision:prior?._restoreRevision??null});
+   }catch(error){
+    if(started){try{await discardStaging(id,token);}catch(clean){throw Error('云端暂存失败且清理未完成；正式业务库未写入：'+clean.message+'；原错误：'+error.message)}}
+    throw error;
+   }finally{liveStagingTokens.delete(token)}
+  };
+  if(navigator.locks?.request)return navigator.locks.request('mima-v3-import-'+id,{mode:'exclusive',ifAvailable:true},lock=>{
+   if(!lock)throw Error('另一个标签正在恢复同一分卷');return execute();
+  });
+  return execute();
+ }
+ window.MimaTavernBackup=Object.freeze({build,inspect,preflight,prepare,resume,prepareVolumes,resumeV3,createCloudV3Source,prepareCloudV3,withCloudV3Owner:withV3Owner,releaseV3StagingUI,cleanupInterruptedV3UI,markup,mount,exportUI,exportVolumesUI,takeoverVolumesUI,chooseUI,chooseVolumesUI,resumeUI,takeoverUI,receiptUI,draftsUI});
 })();

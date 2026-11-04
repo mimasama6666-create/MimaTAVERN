@@ -707,7 +707,11 @@ window.MimaFontManager = (() => {
         const duplicate=await identicalFile(fingerprint,buffer);
         if(duplicate)return {...duplicate,duplicate:true};
         const id = `font_${Date.now()}_${Math.random().toString(36).slice(2,7)}`;
-        const record = { id, name:file.name, family:safeFamily(file.name), format:ext, size:buffer.byteLength, buffer, fingerprint,contentVersion:fingerprint,createdAt:new Date().toISOString() };
+        // A new same-name file is not a new version of an existing selection.
+        // Give it a distinct selectable CSS family while retaining original filename and bytes.
+        const baseFamily=safeFamily(file.name), existingFamilies=new Set((await listMetadata()).map(x=>x.family));
+        const family=existingFamilies.has(baseFamily)?baseFamily+'__'+id.replace(/[^a-z0-9]/gi,'').slice(-12):baseFamily;
+        const record = { id, name:file.name, family, format:ext, size:buffer.byteLength, buffer, fingerprint,contentVersion:fingerprint,createdAt:new Date().toISOString() };
         // An explicit single-file import must prove it is a decodable font
         // before saving or reporting success. Reuse that verified face; only
         // the library's startup registration remains lazy.
@@ -733,13 +737,7 @@ window.MimaFontManager = (() => {
         // that *actually passed decoding*.  Creating a new Blob/FontFace after
         // validation was an unnecessary second WebKit decode and could fail
         // despite import being reported as successful.
-        const selected=getSelected('ui')===record.family||getSelected('story')===record.family;
-        if(selected){
-            entry.contentVersion=versionOf(record);
-            attachFont(record.id,entry);
-            await applySelected().catch(error=>console.warn('字体已保存，但重挂显示失败',error));
-            if(entry.face.status!=='loaded')throw new Error('字体已保存但尚未通过应用验证，请点击「重新加载」检查');
-        }else disposeFont(entry);
+        disposeFont(entry); // Validation never changes the selected face or triggers a redraw.
         return metadataOf(record);
     }
     // Different imports may have the same filename/family. The newest committed
@@ -1229,6 +1227,9 @@ window.MimaFontManager = (() => {
         if(!family||/["'\\;{}\n\r]/.test(family))throw Error('字体名称不能包含特殊 CSS 符号');
         const css=/fonts\.googleapis\.com$/i.test(parsed.hostname)||/\.css(?:$|[?#])/i.test(parsed.pathname);
         const fonts=urlFontsForBatchWrite();if(fonts.length>=100)throw Error('链接字体库最多保存 100 个');
+        if(css&&(fonts.some(f=>f.css&&f.family.toLocaleLowerCase()===family.toLocaleLowerCase())||
+          ['ui','story'].some(kind=>getSelected(kind).toLocaleLowerCase()===family.toLocaleLowerCase())))
+            throw Error('此 CSS 字体族名已经被收藏或正在使用；不能通过导入同名字体隐式替换当前外观');
         const id='urlfont_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,9);
         // File links use a unique internal family; imported CSS must retain
         // the author-defined family name declared inside its stylesheet.

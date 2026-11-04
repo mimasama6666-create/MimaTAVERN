@@ -227,7 +227,7 @@
   const size = token.image ? inspectBytes(bytes, token.mime, limits) : null;
   entry = {url:URL.createObjectURL(new Blob([bytes], {type:token.mime})), refs:1, dimensions:size, limit:limits.maxImagePixels, cancel:null, promise:null};
   pool.set(token.source, entry);
-  try { entry.promise = token.image ? decodeImage(entry) : Promise.resolve(); }
+  try { entry.promise = Promise.resolve(); } // Native raster decode is deferred to browser rendering; header and animation limits are validated above.
   catch (error) { drop(token.source, entry); throw error; }
   // An aborted last consumer can leave a native decoder's rejection arriving
   // later. Keep that rejection observed without starting any further work.

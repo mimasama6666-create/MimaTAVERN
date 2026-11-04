@@ -7,7 +7,7 @@
   'use strict';
 
   const API_CONFIG_KEY = 'MIMAMAO_TAVERN_STANDALONE_API_V1';
-  let state = { storeRevision: 0, schemaVersion: 4, sessions: [], masks: [], presets: [], worldbooks: [], cssPresets: [], regexPacks: [], theaterCards: [], quickCommands: [], settingTemplates: [], novelProjects: [], themeSettings:{theme:'default',updatedAt:''} };
+  let state = { storeRevision: 0, schemaVersion: 4, sessions: [], masks: [], presets: [], worldbooks: [], cssPresets: [], cssCategoriesV1: [], resourceCategoriesV1:{presets:[],worldbook:[]}, regexPacks: [], theaterCards: [], quickCommands: [], settingTemplates: [], novelProjects: [], themeSettings:{theme:'default',updatedAt:''} };
   let lastUsage = null; // v1.1.4: upstream usage/cache telemetry only; never treated as canonical story data.
   // A live attempt in this JS realm must never be settled by recovery while its
   // own model call or canonical commit is still in progress.
@@ -36,6 +36,54 @@
   const estimateTokens = t => Math.ceil(String(t || '').length / 2.5);
 
   function fingerprint(data){const str=JSON.stringify(data);let h=2166136261;for(let i=0;i<str.length;i++){h^=str.charCodeAt(i);h=Math.imul(h,16777619);}return 'fnv1a32:'+((h>>>0).toString(16).padStart(8,'0'))+':'+str.length;}
+  // SHA-256 of the actual CSS bytes (not an updatedAt-only hint). The digest is
+  // checked against the canonical CSS record inside the same IndexedDB CAS
+  // transaction as selection. Synchronous hashing is necessary because an IDB
+  // readwrite transaction cannot await crypto.subtle without losing ownership.
+  const cssShaK=[
+    0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+    0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+    0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+    0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+    0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+    0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+    0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+    0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
+  ];
+  function cssSha256(source){
+    const data=new TextEncoder().encode(String(source??'')),len=data.length;
+    const h=[0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+    const words=new Uint32Array(64),blocks=Math.ceil((len+9)/64);
+    const rot=(x,n)=>(x>>>n)|(x<<(32-n));
+    for(let block=0;block<blocks;block++){
+      for(let i=0;i<16;i++){
+        let v=0;for(let j=0;j<4;j++){
+          const k=block*64+i*4+j;
+          const b=k<len?data[k]:k===len?0x80:k>=blocks*64-8?(k<blocks*64-4?((Math.floor(len/0x20000000)>>>((blocks*64-5-k)*8))&255):(((len*8)>>>((blocks*64-1-k)*8))&255)):0;
+          v=(v<<8)|b;
+        }words[i]=v>>>0;
+      }
+      for(let i=16;i<64;i++){
+        const x=words[i-15],y=words[i-2];
+        const a=rot(x,7)^rot(x,18)^(x>>>3),b=rot(y,17)^rot(y,19)^(y>>>10);
+        words[i]=(words[i-16]+a+words[i-7]+b)>>>0;
+      }
+      let [a,b,c,d,e,f,g,z]=h;
+      for(let i=0;i<64;i++){
+        const s1=rot(e,6)^rot(e,11)^rot(e,25),choose=(e&f)^(~e&g);
+        const t1=(z+s1+choose+cssShaK[i]+words[i])>>>0;
+        const s0=rot(a,2)^rot(a,13)^rot(a,22),majority=(a&b)^(a&c)^(b&c);
+        const t2=(s0+majority)>>>0;
+        z=g;g=f;f=e;e=(d+t1)>>>0;d=c;c=b;b=a;a=(t1+t2)>>>0;
+      }
+      for(const [i,v] of [a,b,c,d,e,f,g,z].entries())h[i]=(h[i]+v)>>>0;
+    }
+    return h.map(x=>x.toString(16).padStart(8,'0')).join('');
+  }
+  function cssSelectionIdentity(p){
+    if(!p)return null;
+    return JSON.stringify(['css-selection-sha256-v1',p.id||'',cssSha256(p.css),p.scope||'',p.surface||'',p.atelierReleaseKey||'',p.updatedAt||'']);
+  }
   function memorySourceFingerprint(messages,count){return fingerprint((messages||[]).slice(0,count).map(m=>[m.id,m.role,m.content,m.rawContent,m.versions,m.isEdited,m.branchId]));}
   function manualReplyFingerprint(m){return fingerprint([String(m.content??m.canonicalContent??''),String(m.rawContent??m.content??m.canonicalContent??'')]);}
   function isManuallyRecoveredReply(m){return !!m?.metadata?.manualRecovery?.diagnosticId&&m.metadata.manualRecovery.contentFingerprint===manualReplyFingerprint(m);}
@@ -353,11 +401,14 @@
     const nextTheaters=prepare(theaters,'theater'),nextCommands=prepare(commands,'command');
     return commitLibraryEdit(stored=>{stored.theaterCards.push(...nextTheaters);stored.quickCommands.push(...nextCommands);return {theaterCards:clone(nextTheaters),quickCommands:clone(nextCommands)};});
   }
+  function normalizeCategoryRecords(raw){return (Array.isArray(raw)?raw:[]).map(x=>({id:x.id,name:x.name,createdAt:x.createdAt||''}));}
+  function normalizedCategoryGroups(raw){return {presets:normalizeCategoryRecords(raw?.presets),worldbook:normalizeCategoryRecords(raw?.worldbook)};}
   function normalizeState(raw = {}) {
     return {
       schemaVersion: 4, storeRevision: Math.max(0,Number(raw.storeRevision)||0),
       sessions: legacyRoot(raw.sessions,'legacy_session',normalizeSession), masks: legacyRoot(raw.masks,'legacy_mask',normalizeMask),
       presets: legacyRoot(raw.presets,'legacy_preset',normalizePreset), worldbooks: legacyRoot(raw.worldbooks,'legacy_worldbook',normalizeWorldbook), cssPresets: legacyRoot(raw.cssPresets,'legacy_css',normalizeCssPreset),
+      cssCategoriesV1:normalizeCategoryRecords(raw.cssCategoriesV1),resourceCategoriesV1:normalizedCategoryGroups(raw.resourceCategoriesV1),
       regexPacks: legacyRoot(raw.regexPacks,'legacy_regexpack',normalizeRegexPack),
       theaterCards:legacyRoot(raw.theaterCards,'legacy_theater',p=>normalizePlayResource(p,'theater')),quickCommands:legacyRoot(raw.quickCommands,'legacy_command',p=>normalizePlayResource(p,'command')),settingTemplates:legacyRoot(raw.settingTemplates,'legacy_template',normalizeSettingTemplate),
       novelProjects: arr(raw.novelProjects).map((p,index)=>{const x=stableLegacyNovel(p,index);return window.MimaNovelEngine?.normalizeProject?window.MimaNovelEngine.normalizeProject(x):x;}),
@@ -391,11 +442,48 @@
     sessionSaveTail=task.then(()=>{},()=>{});
     return task;
   }
+  const categorySpec={css:['cssPresets','cssCategoriesV1'],presets:['presets','presets'],worldbook:['worldbooks','worldbook']};
+  function categoryEntries(stored,kind){return kind==='css'?stored.cssCategoriesV1:stored.resourceCategoriesV1[kind];}
+  function categoryResources(stored,kind){return stored[categorySpec[kind][0]];}
+  function categoryView(stored,kind){
+    const registered=categoryEntries(stored,kind);const seen=new Set(registered.map(x=>x.name));
+    return [...registered.map(x=>({...x})),...[...new Set(categoryResources(stored,kind).map(x=>x.category||'未分类'))].filter(name=>name!=='未分类'&&!seen.has(name)).map(name=>({id:'legacy:'+name,name,legacy:true}))];
+  }
+  async function changeCategories(kind,body){
+    if(!categorySpec[kind])throw new ApiError('E_CATEGORY_KIND','未知分类类型');
+    const action=body?.action,expected=body?.expectedRevision;
+    const execute=stored=>{
+      if(stored.storeRevision!==expected)throw new ApiError('E_CATEGORY_STALE','分类库已变化，请刷新后重试');
+      const records=categoryEntries(stored,kind),items=categoryResources(stored,kind);
+      const nameOf=x=>String(x||'').trim();const old=nameOf(body?.oldName),name=nameOf(body?.name);
+      const existing=new Set([...records.map(x=>x.name),...items.map(x=>x.category||'未分类')]);
+      if(['create','rename'].includes(action)){
+        if(!name||name.length>60||name==='未分类')throw new ApiError('E_CATEGORY_NAME','分类名称必须为 1～60 字且不能使用保留名称');
+        if([...existing].some(x=>x.toLocaleLowerCase()===name.toLocaleLowerCase()&&x!==old))throw new ApiError('E_CATEGORY_DUPLICATE','已经存在同名分类');
+      }
+      if(action==='create'){records.push({id:makeId('category'),name,createdAt:nowIso()});}
+      else if(action==='rename'||action==='delete'){
+        if(!old||old==='未分类'||!existing.has(old))throw new ApiError('E_CATEGORY_MISSING','分类已经消失，请刷新');
+        if(action==='rename'&&name===old)return {changed:0,items:0};
+        const idx=records.findIndex(x=>x.name===old);
+        if(idx>=0){if(action==='delete')records.splice(idx,1);else records[idx].name=name;}
+        else if(action==='rename')records.push({id:makeId('category'),name,createdAt:nowIso()});
+        for(const item of items)if(item.category===old)item.category=action==='delete'?'未分类':name;
+      }else if(action==='move'){
+        const ids=body?.ids;if(!Array.isArray(ids)||!ids.length||ids.length>500||new Set(ids).size!==ids.length)throw new ApiError('E_CATEGORY_ITEMS','未选择有效的移动项目');
+        if(name!=='未分类'&&!existing.has(name))throw new ApiError('E_CATEGORY_MISSING','目标分类不存在');
+        if(ids.some(id=>!items.some(item=>item.id===id)))throw new ApiError('E_CATEGORY_ITEMS','待移动记录已变化，不执行部分移动');
+        for(const item of items)if(ids.includes(item.id))item.category=name;
+      }else throw new ApiError('E_CATEGORY_ACTION','不支持的分类操作');
+      return {kind,action,category:name,items:items.length,categories:categoryView(stored,kind)};
+    };
+    return (kind==='css'?commitAppearanceEdit:commitLibraryEdit)(execute);
+  }
   function normalizeAppearance(raw){
-    return {...raw,cssPresets:legacyRoot(raw.cssPresets,'legacy_css',normalizeCssPreset),
+    return {...raw,cssPresets:legacyRoot(raw.cssPresets,'legacy_css',normalizeCssPreset),cssCategoriesV1:normalizeCategoryRecords(raw.cssCategoriesV1),
       themeSettings:window.MimaThemeEngine?.normalizeSettings?window.MimaThemeEngine.normalizeSettings(raw.themeSettings||{}):{theme:'default',...(raw.themeSettings||{})}};
   }
-  function commitAppearanceEdit(edit){
+  function commitAppearanceEdit(edit,{checkCanonical=null}={}){
     const commit=async()=>{
       let result;
       try{
@@ -403,7 +491,7 @@
           const stored=normalizeAppearance(raw);result=edit(stored);
           if(result&&result[NO_LIBRARY_WRITE]===true){result=result.value;return false;}
           Object.assign(raw,stored);
-        });
+        },{checkCanonical});
         state=window.MimaLocalStore.mergeAppearance(state,normalizeAppearance(appearance));
         return result;
       }catch(error){
@@ -415,6 +503,15 @@
     const task=sessionSaveTail.then(commit,commit);sessionSaveTail=task.then(()=>{},()=>{});return task;
   }
   function resourceChanged(a,b){return JSON.stringify(a) !== JSON.stringify(b);}
+  function cssRendererChanged(a,b){return ['css','scope','surface','atelierReleaseKey'].some(key=>(a?.[key]||'')!==(b?.[key]||''));}
+  function cssHasCanonicalReferences(base,appearance,id){
+    // Base and overlay are read in one IDB write transaction with competing
+    // session saves. Disabled but retained links are also protected.
+    return (base.sessions||[]).some(s=>s.customCssId===id)||
+      (base.novelProjects||[]).some(p=>p.appearance?.customCssId===id)||
+      (base.settingTemplates||[]).some(t=>t.config?.customCssId===id)||
+      appearance.themeSettings?.globalCssPresetId===id;
+  }
   function assertResourceFresh(table,id,stored){
     const seen=state[table].find(item=>item.id===id)||null;
     const current=stored[table].find(item=>item.id===id)||null;
@@ -424,14 +521,20 @@
   }
   function commitResource(table,value,expectedUpdatedAt){
     const input=clone(value);
-    return (table==='cssPresets'?commitAppearanceEdit:commitLibraryEdit)(stored=>{
+    const checkReference=table==='cssPresets'&&state.cssPresets.some(old=>old.id===input.id&&cssRendererChanged(old,input))?
+      (base,appearance)=>{
+        if(cssHasCanonicalReferences(base,appearance,input.id))
+          throw new ApiError('E_CSS_REFERENCED_FORK_REQUIRED','这份 CSS 正被剧情、全局、小说或模板引用；已保护原件，请另存为未启用的新预设');
+      }:null;
+    const edit=stored=>{
       const current=assertResourceFresh(table,input.id,stored);
       if(current&&expectedUpdatedAt&&String(expectedUpdatedAt)!==String(current.updatedAt||''))
         throw new ApiError('E_CANONICAL_CONFLICT','资源已更新，旧编辑不能覆盖新内容：'+table+'/'+input.id);
       const items=stored[table],index=items.findIndex(x=>x.id===input.id);
       if(index<0)items.push(input);else items[index]=input;
       return clone(input);
-    });
+    };
+    return table==='cssPresets'?commitAppearanceEdit(edit,{checkCanonical:checkReference}):commitLibraryEdit(edit);
   }
   function unlinkTemplateResource(db,table,id){
     const mapping={masks:'loadedUserMaskId',presets:'presetIds',worldbooks:'worldbookIds',cssPresets:'customCssId',regexPacks:'regexPackIds',theaterCards:'theaterCardIds'};
@@ -580,7 +683,7 @@
       const old=stored.cssPresets.find(x=>x.id===preset.id||x.atelierReleaseKey===preset.atelierReleaseKey);
       if(old&&(old.id!==preset.id||old.atelierReleaseKey!==preset.atelierReleaseKey||old.css!==preset.css))throw Error('同一工坊发布指纹对应不同 CSS，拒绝覆盖历史版本');
       if(!old)stored.cssPresets.push(preset);
-      stored.themeSettings=window.MimaThemeEngine?.normalizeSettings?window.MimaThemeEngine.normalizeSettings({...stored.themeSettings,globalCssPresetId:preset.id,globalCssEnabled:true,updatedAt:nowIso()}):{...stored.themeSettings,globalCssPresetId:preset.id,globalCssEnabled:true,updatedAt:nowIso()};
+      if(!body.prepareOnly)stored.themeSettings=window.MimaThemeEngine?.normalizeSettings?window.MimaThemeEngine.normalizeSettings({...stored.themeSettings,globalCssPresetId:preset.id,globalCssEnabled:true,updatedAt:nowIso()}):{...stored.themeSettings,globalCssPresetId:preset.id,globalCssEnabled:true,updatedAt:nowIso()};
       return {preset:clone(old||preset),themeSettings:clone(stored.themeSettings)};
     });
     try{window.MimaThemeEngine?.apply?.(state.themeSettings);}catch(e){console.error('[Atelier] canonical CSS committed; theme repaint pending',e);}
@@ -596,7 +699,7 @@
       const existing=stored.cssPresets.find(p=>p.id===preset.id);
       if(existing&&(existing.css!==preset.css||existing.scope!=='app'||existing.atelierReleaseKey))throw Error('同 ID 助手 CSS 与原版本冲突；拒绝修改既有预设');
       if(!existing)stored.cssPresets.push(preset);
-      stored.themeSettings=window.MimaThemeEngine?.normalizeSettings?window.MimaThemeEngine.normalizeSettings({...stored.themeSettings,globalCssPresetId:preset.id,globalCssEnabled:true,updatedAt:nowIso()}):{...stored.themeSettings,globalCssPresetId:preset.id,globalCssEnabled:true,updatedAt:nowIso()};
+      if(!body.prepareOnly)stored.themeSettings=window.MimaThemeEngine?.normalizeSettings?window.MimaThemeEngine.normalizeSettings({...stored.themeSettings,globalCssPresetId:preset.id,globalCssEnabled:true,updatedAt:nowIso()}):{...stored.themeSettings,globalCssPresetId:preset.id,globalCssEnabled:true,updatedAt:nowIso()};
       return {preset:clone(existing||preset),themeSettings:clone(stored.themeSettings)};
     });
     try{window.MimaThemeEngine?.apply?.(state.themeSettings);}catch(e){console.error('[Assistant CSS] canonical global CSS committed, repaint pending',e);}
@@ -664,6 +767,37 @@
       // Do not change caller revision before the actual durable commit.
       return result;
     }).then(result=>{p.recordRevision=result.recordRevision;return result;});
+  }
+  async function commitGlobalCssSelection(body={}){
+    const expected=body.expected||{},candidate=body.candidate||{},identity=body.identity;
+    const next=await commitAppearanceEdit(stored=>{
+      const current=stored.themeSettings||{};
+      if((current.globalCssPresetId||null)!==(expected.globalCssPresetId||null)||
+         (current.globalCssEnabled!==false)!==(expected.globalCssEnabled!==false)||
+         (current.updatedAt||'')!==(expected.updatedAt||''))
+        throw new ApiError('E_CSS_SELECTION_STALE','全局外观已在其他窗口改变，本次不覆盖');
+      const actual=stored.cssPresets.find(p=>p.id===candidate.globalCssPresetId);
+      if(!actual||actual.scope!=='app'||!identity||cssSelectionIdentity(actual)!==identity)
+        throw new ApiError('E_CSS_CANDIDATE_CHANGED','候选全局 CSS 已变化，本次不应用旧版本');
+      const appliedAt=new Date(Math.max(Date.now(),(Date.parse(current.updatedAt)||0)+1)).toISOString();
+      stored.themeSettings=window.MimaThemeEngine?.normalizeSettings?
+        window.MimaThemeEngine.normalizeSettings({...current,globalCssPresetId:actual.id,globalCssEnabled:true,updatedAt:appliedAt}):
+        {...current,globalCssPresetId:actual.id,globalCssEnabled:true,updatedAt:appliedAt};
+      return clone(stored.themeSettings);
+    });
+    try{window.MimaThemeEngine?.apply?.(next);}catch(error){console.error('E_THEME_APPLY_AFTER_CSS_SELECTION',error);}
+    return next;
+  }
+  function readCssSelectionCanonical(sessionIds=[]){
+    // One verified canonical snapshot contains the selection AND its CSS bytes.
+    // Queue with local writes; never settle a crash receipt from tab-local RAM.
+    const read=async()=>{
+      const persisted=normalizeState(await window.MimaLocalStore.loadState());
+      state=persisted;
+      return {themeSettings:clone(persisted.themeSettings),cssPresets:persisted.cssPresets.map(p=>({...p})),
+        sessions:persisted.sessions.filter(s=>sessionIds.includes(s.id)).map(s=>clone(s)),storeRevision:persisted.storeRevision};
+    };
+    const task=sessionSaveTail.then(read,read);sessionSaveTail=task.then(()=>{},()=>{});return task;
   }
   async function saveThemeSettings(input={}){
     const baseline=clone(state.themeSettings);
@@ -3832,11 +3966,26 @@
   async function handle(endpoint,method='GET',body=null,signal=null,progress=null){
     try{
       const path=String(endpoint||'').split('?')[0];
+      if(path==='/css-selection/canonical-view'&&method==='POST'){
+        if(!Array.isArray(body?.sessionIds)||body.sessionIds.some(id=>typeof id!=='string'))throw new ApiError('E_CSS_RECOVERY_INPUT','CSS 恢复会话列表无效');
+        return ok(await readCssSelectionCanonical(body.sessionIds));
+      }
       if(path==='/atelier/publish'&&method==='POST')return ok(await publishAtelierCss(body));
       if(path==='/assistant/css-publish'&&method==='POST')return ok(await publishAssistantCss(body));
       if(path==='/assistant/mount'&&method==='POST')return ok(await mountAssistantResources(body));
       if(path==='/assistant/regex-bundle'&&method==='POST')return ok(await publishAssistantRegexBundle(body));
       if(path==='/theme'&&method==='GET')return ok(clone(state.themeSettings));
+      if(path==='/theme/css-selection'&&method==='POST')return ok(await commitGlobalCssSelection(body||{}));
+      if(path==='/theme/css-disable'&&method==='POST')return ok(await commitAppearanceEdit(stored=>{
+        const current=stored.themeSettings||{};
+        if(body?.expected&&((current.globalCssPresetId||null)!==(body.expected.globalCssPresetId||null)||
+          (current.globalCssEnabled!==false)!==(body.expected.globalCssEnabled!==false)||
+          (current.updatedAt||'')!==(body.expected.updatedAt||'')))
+          throw new ApiError('E_CSS_SELECTION_STALE','全局外观已改变，取消操作未覆盖其他窗口的新选择');
+        const appliedAt=new Date(Math.max(Date.now(),(Date.parse(current.updatedAt)||0)+1)).toISOString();
+        stored.themeSettings={...current,...(body?.clearSelection?{globalCssPresetId:null}:{}),globalCssEnabled:false,updatedAt:appliedAt};
+        return clone(stored.themeSettings);
+      }));
       if(path==='/theme'&&method==='PATCH')return ok(await saveThemeSettings(body||{}));
       if(path==='/novel-assets'&&method==='GET')return ok(novelAssets());
       if(path==='/novels'&&method==='GET')return ok(novelSummaries());
@@ -3887,6 +4036,26 @@
       }
       m=path.match(/^\/sessions\/([^/]+)$/);if(m&&method==='GET'){const s=getSession(m[1]);return s?ok(s):fail('未找到剧本');}
       if(m&&method==='PATCH'){const s=getSession(m[1]);return s?ok(await saveSession({...s,...body,id:s.id,createdAt:s.createdAt})):fail('未找到剧本');}
+      m=path.match(/^\/sessions\/([^/]+)\/css-disable$/);if(m&&method==='POST')return ok(await commitLibraryEdit(stored=>{
+        const session=stored.sessions.find(x=>x.id===m[1]);if(!session)throw new ApiError('E_STORY_SESSION_MISSING','原剧情已不存在，未改变其他剧情');
+        if(body?.expected&&(session.recordRevision!==body.expected.recordRevision||
+          (session.customCssId||null)!==(body.expected.customCssId||null)||
+          (session.customCssEnabled!==false)!==(body.expected.customCssEnabled!==false)))
+          throw new ApiError('E_CSS_SELECTION_STALE','剧情 CSS 已改变，本次取消未覆盖新选择');
+        if(body?.clearSelection)session.customCssId=null;
+        session.customCssEnabled=false;session.recordRevision++;session.updatedAt=nowIso();return clone(session);
+      }));
+      m=path.match(/^\/sessions\/([^/]+)\/css-selection$/);if(m&&method==='POST'){
+        const targetId=m[1],expected=body?.expected||{},candidate=body?.candidate||{};
+        return ok(await commitLibraryEdit(stored=>{
+          const session=stored.sessions.find(x=>x.id===targetId);
+          if(!session||session.recordRevision!==expected.recordRevision||session.customCssId!==expected.customCssId||session.customCssEnabled!==expected.customCssEnabled)
+            throw new ApiError('E_CSS_SELECTION_STALE','剧情 CSS 已被其他操作修改，本次不覆盖');
+          const actual=stored.cssPresets.find(x=>x.id===candidate.customCssId);
+          if(!actual||actual.scope==='app'||!body.identity||cssSelectionIdentity(actual)!==body.identity)throw new ApiError('E_CSS_CANDIDATE_CHANGED','候选 CSS 内容或作用域已改变，剧情 CSS 未提交');
+          session.customCssId=candidate.customCssId||null;session.customCssEnabled=!!candidate.customCssEnabled;session.recordRevision++;session.updatedAt=nowIso();return clone(session);
+        }));
+      }
       if(m&&method==='DELETE')return ok(await deleteResource('sessions',m[1]));
       m=path.match(/^\/sessions\/([^/]+)\/generation-abandon$/);if(m&&method==='POST')return ok(await abandonUnknownStoryGeneration(m[1],body||{}));
       m=path.match(/^\/sessions\/([^/]+)\/chat$/);if(m&&method==='POST')return ok(await processStoryTurn(m[1],body?.text,body?.action||'send',signal,body?.temperature,{directorNote:body?.directorNote||'',targetMessageId:body?.targetMessageId||null,expectedRecordRevision:body?.expectedRecordRevision??null,expectedSourceFingerprint:body?.expectedSourceFingerprint||null,diagnosticTurnId:body?.diagnosticTurnId||'',diagnosticTraceId:body?.diagnosticTraceId||'',regenerationContext:body?.regenerationContext||'original',retryParameters:body?.retryParameters==='current'?'current':'original',confirmUnknownTakeover:body?.confirmUnknownTakeover===true},progress));
@@ -3928,6 +4097,8 @@
       m=path.match(/^\/presets\/([^/]+)$/);if(m&&method==='PATCH'){const old=getPreset(m[1]);return old?ok(await savePreset({...old,...body,id:m[1]})):fail('未找到预设');}
       if(m&&method==='DELETE')return ok(await deleteResource('presets',m[1],(db,id)=>{for(const s of db.sessions)if(s.presetIds.includes(id)){s.presetIds=s.presetIds.filter(x=>x!==id);s.recordRevision++;}for(const p of db.novelProjects)if(p.presetIds.includes(id)){p.presetIds=p.presetIds.filter(x=>x!==id);p.recordRevision++;}}));
 
+      m=path.match(/^\/resource-categories\/(css|presets|worldbook)$/);if(m&&method==='GET')return ok({records:categoryView(state,m[1]),storeRevision:state.storeRevision});
+      if(m&&method==='POST')return ok(await changeCategories(m[1],body||{}));
       if(path==='/css-presets'&&method==='GET')return ok(state.cssPresets);
       if(path==='/css-presets'&&method==='POST')return ok(await saveCssPreset(body||{}));
       m=path.match(/^\/css-presets\/([^/]+)$/);if(m&&method==='PATCH'){const old=getCssPreset(m[1]);return old?ok(await saveCssPreset({...old,...body,id:m[1]})):fail('未找到 CSS Preset');}
@@ -4005,7 +4176,8 @@
       const themeAppearance=t=>JSON.stringify([t?.theme,t?.globalCssPresetId,t?.globalCssEnabled]);
       const emptyTheme=normalizeState({}).themeSettings;
       const existingCustomizedTheme=themeAppearance(before.themeSettings)!==themeAppearance(emptyTheme);
-      if(mergeMode==='empty-only'&&(currentHasData||existingCustomizedTheme))
+      const existingCategories=before.cssCategoriesV1.length||before.resourceCategoriesV1.presets.length||before.resourceCategoriesV1.worldbook.length;
+      if(mergeMode==='empty-only'&&(currentHasData||existingCustomizedTheme||existingCategories))
         throw new ApiError('E_NATIVE_RESTORE_NOT_EMPTY','原生资料库含剧情、资料或自定义外观；空库模式拒绝覆盖');
       if(mergeMode==='merge-new-only'){
         const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
@@ -4023,6 +4195,12 @@
         // explicit appearance identity is used by both safe merge modes.
         if(existingCustomizedTheme&&themeAppearance(before.themeSettings)!==themeAppearance(next.themeSettings))
           throw new ApiError('E_NATIVE_RESTORE_THEME_CONFLICT','本机已有自定义主题，与备份不同；即使没有剧情记录，也禁止静默覆盖，请先导出本机设置');
+        const mergeCategoryRecords=(a,b,at)=>{const combined=new Map(a.map(x=>[x.id,x]));for(const item of b){const prev=combined.get(item.id);
+          if(prev&&JSON.stringify(prev)!==JSON.stringify(item))throw new ApiError('E_CATEGORY_RESTORE_CONFLICT','同 ID 分类内容冲突：'+at);
+          if([...combined.values()].some(x=>x.id!==item.id&&x.name.toLocaleLowerCase()===item.name.toLocaleLowerCase()))throw new ApiError('E_CATEGORY_RESTORE_NAME_CONFLICT','分类名称冲突：'+at+'/'+item.name);
+          combined.set(item.id,prev||item);}return [...combined.values()];};
+        merged.cssCategoriesV1=mergeCategoryRecords(before.cssCategoriesV1,next.cssCategoriesV1,'css');
+        merged.resourceCategoriesV1={presets:mergeCategoryRecords(before.resourceCategoriesV1.presets,next.resourceCategoriesV1.presets,'presets'),worldbook:mergeCategoryRecords(before.resourceCategoriesV1.worldbook,next.resourceCategoriesV1.worldbook,'worldbook')};
         merged.themeSettings=existingCustomizedTheme?before.themeSettings:next.themeSettings;
         next=merged;
       }
@@ -4071,5 +4249,5 @@
 
   window.MimaMemoryContracts=Object.freeze({normalizeManualMemory});
   // Normalized CSS presets contain scalar fields; copy their records without serializing History or immutable CSS strings.
-  window.MimaStandalone={getPlayTools:()=>({theaterCards:state.theaterCards.map(p=>({...p})),quickCommands:state.quickCommands.map(p=>({...p}))}),init,handle,previewMemoryPlan,memorySourceParts,memoryWorkPlan,runRecordedMemory,memorySourceFingerprint,memoryFactSignature,manualReplyFingerprint,isManuallyRecoveredReply,getApiConfig,saveApiConfig,apiCapacityIdentity,effectiveRequestConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,validateStoryReply,classifyStoryReply,applyRegexForSession,applyRegexForSessionAsync,applyRegexBatchForSessionAsync,hasActiveRegexForSession,resolveMacrosForSession,compileUserInputForPrompt,exportLibrary,importLibrary,previewLibraryImport,validateLibrary,assemble,getLastUsage,getPhoneResources:()=>({masks:clone(state.masks),presets:clone(state.presets),worldbooks:clone(state.worldbooks),themeSettings:clone(state.themeSettings),storeRevision:state.storeRevision}),getThemeSettings:()=>clone(state.themeSettings),getCssAppearance:()=>({themeSettings:clone(state.themeSettings),cssPresets:state.cssPresets.map(p=>({...p}))}),getState:()=>clone(state)};
+  window.MimaStandalone={getPlayTools:()=>({theaterCards:state.theaterCards.map(p=>({...p})),quickCommands:state.quickCommands.map(p=>({...p}))}),init,handle,previewMemoryPlan,memorySourceParts,memoryWorkPlan,runRecordedMemory,memorySourceFingerprint,memoryFactSignature,manualReplyFingerprint,isManuallyRecoveredReply,getApiConfig,saveApiConfig,apiCapacityIdentity,effectiveRequestConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,validateStoryReply,classifyStoryReply,applyRegexForSession,applyRegexForSessionAsync,applyRegexBatchForSessionAsync,hasActiveRegexForSession,resolveMacrosForSession,compileUserInputForPrompt,exportLibrary,importLibrary,previewLibraryImport,validateLibrary,assemble,getLastUsage,getPhoneResources:()=>({masks:clone(state.masks),presets:clone(state.presets),worldbooks:clone(state.worldbooks),themeSettings:clone(state.themeSettings),storeRevision:state.storeRevision}),getThemeSettings:()=>clone(state.themeSettings),cssSelectionIdentity,getResourceCategoryList:kind=>categorySpec[kind]?categoryView(state,kind):[],getStoreRevision:()=>state.storeRevision,getCssAppearance:()=>({themeSettings:clone(state.themeSettings),cssPresets:state.cssPresets.map(p=>({...p}))}),getState:()=>clone(state)};
 })();

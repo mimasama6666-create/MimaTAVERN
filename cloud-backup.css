@@ -1,0 +1,24 @@
+/* Scope strictly to the opt-in cloud card; leave old backup/UI styles alone. */
+.mima-cloud-backup{position:relative;isolation:isolate;overflow:hidden;background:linear-gradient(135deg,rgba(225,233,245,.32),rgba(252,238,246,.18))!important;border:1px solid rgba(151,170,198,.25);border-radius:20px;padding:clamp(14px,3vw,22px)}
+.mima-cloud-head{display:flex;align-items:start;justify-content:space-between;gap:10px}
+.mima-cloud-head .row-title{font-size:1.15em;font-weight:700}
+.mima-cloud-chip{white-space:nowrap;font-size:.75em;padding:5px 10px;border-radius:99px;background:rgba(180,197,224,.22);color:inherit}
+.mima-cloud-fields{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;margin:16px 0}
+.mima-cloud-fields>label{display:flex;flex-direction:column;gap:6px;font-size:.92em;min-width:0}
+.mima-cloud-fields .mima-cloud-wide{grid-column:1/-1}
+.mima-cloud-fields input.field,.mima-cloud-fields select.field{width:100%;max-width:100%;min-width:0;min-height:44px;border-radius:12px;box-sizing:border-box;font-size:16px}
+.mima-cloud-fields details{padding:10px 12px;border:1px solid rgba(151,170,198,.22);border-radius:14px}
+.mima-cloud-fields summary{cursor:pointer;user-select:none}
+.mima-cloud-extra{display:grid;gap:12px;margin-top:12px}
+.mima-cloud-extra>label:not(.check-row){display:grid;gap:6px}
+.mima-cloud-actions{display:flex;flex-wrap:wrap;gap:8px}
+.mima-cloud-actions button{min-height:42px;white-space:normal}
+.mima-cloud-actions button:disabled{opacity:.55;cursor:wait}
+.mima-cloud-status{font-size:.91em;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere;padding:10px 12px;margin:12px 0;border-radius:12px;background:rgba(170,186,213,.12)}
+.mima-cloud-snapshots{display:grid;gap:11px;margin-top:12px}
+.mima-cloud-snapshot{display:grid;gap:8px;padding:12px;border-radius:14px;border:1px solid rgba(153,171,197,.24);background:rgba(255,255,255,.11)}
+.mima-cloud-snapshot .toolbar{display:flex;gap:7px;flex-wrap:wrap}
+.mima-cloud-snapshot button{min-height:38px}
+.mima-cloud-backup .helper{font-size:.82em;line-height:1.65}
+@media(max-width:560px){.mima-cloud-fields{grid-template-columns:minmax(0,1fr);gap:12px}.mima-cloud-head{align-items:center}.mima-cloud-chip{display:none}.mima-cloud-actions button{flex:1 1 135px}.mima-cloud-backup{border-radius:16px}}
+@media(prefers-reduced-motion:reduce){.mima-cloud-backup *{scroll-behavior:auto!important;animation-duration:.01ms!important;transition-duration:.01ms!important}}

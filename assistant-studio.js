@@ -530,7 +530,7 @@
   }
   async function saveArtifact(index,mode){
     const msg=thread()[index];const detail=parseArtifactDetailed(msg?.content);const artifact=detail.artifact;if(!artifact)return notify(detail.found?`检测到工件标记，但解析失败：${detail.error}`:'这条消息没有可保存的工件。');
-    const bridge=window.MimaTavernBridge,session=bridge?.getSession?.();
+    const bridge=window.MimaTavernBridge,session=bridge?.getSession?.(),cssTarget=bridge?.getCssTarget?.();
     let phase='尚未提交',savedRegex=null,savedPreset=null,savedCss=null;
     try{
       if(artifact.kind==='regex_bundle'&&mode==='all'){
@@ -564,12 +564,12 @@
         if(css.scope==='app'){
           if(/[?&]noCss=1(?:&|$)/.test(window.location?.search||''))throw Error('当前是 CSS 紧急禁用模式，未提交新全局主题；请退出安全模式再应用');
           input.surface='global';
-          const r=await window.MimaStandalone.handle('/assistant/css-publish','POST',{preset:input});
-          if(!r.success)throw Error(r.msg||'全局 CSS 保存失败');phase='全局主题已提交';savedCss=r.data.preset;
-          const visual=await bridge?.reload?.();
+          const r=await window.MimaStandalone.handle('/assistant/css-publish','POST',{preset:input,prepareOnly:true});
+          if(!r.success)throw Error(r.msg||'全局 CSS 保存失败');phase='CSS 已保存到库';savedCss=r.data.preset;
+          const visual=await bridge?.applyCssPreset?.(savedCss.id,{surface:'global'});
+          if(visual?.status!=='APPLIED')return notify(visual?.status==='SAVED_VISUAL_UNCERTAIN'?`全局 CSS「${savedCss.name}」已保存，显示安全待确认`:`CSS「${savedCss.name}」已保留在库中，应用尚未确认：${visual?.error||visual?.status||'显示未确认'}`);
           const selected=bridge?.getThemeSettings?.();
           if(selected?.globalCssPresetId!==savedCss.id)throw Error('全局选择回读与提交不一致，主库已提交但显示状态未知');
-          if(visual?.status!=='APPLIED')return notify(`全局 CSS「${savedCss.name}」已提交，但尚未成功显示，原画面保留：${visual?.error||'视觉确认尚未完成'}`);
           return notify(`全局 CSS「${savedCss.name}」已保存并在全局画面生效`);
         }
         input.surface=css.scope==='novel'?'novel':css.scope==='assistant'?'assistant':'chat';
@@ -581,13 +581,14 @@
       phase='工件已保存';
       if(session?.id){
         const patch={sessionId:session.id,presetId:savedPreset?.id||'',regexId:savedRegex?.id||'',cssId:savedCss&&['story','global'].includes(savedCss.scope)?savedCss.id:''};
-        if(patch.presetId||patch.regexId||patch.cssId){
+        if(patch.presetId||patch.regexId){
           // This exact session remains the target even if the user switches
           // stories while resource saving is pending. Backend uses latest
           // canonical lists, never the stale client-side session snapshot.
-          const mounted=await window.MimaStandalone.handle('/assistant/mount','POST',patch);
+          const mounted=await window.MimaStandalone.handle('/assistant/mount','POST',{...patch,cssId:''});
           if(!mounted.success)throw Error(mounted.msg||'原剧情挂载失败，资源仍已保存');
         }
+        if(patch.cssId){const visual=await bridge?.applyCssPreset?.(patch.cssId,cssTarget||{id:session.id,epoch:-1});if(visual?.status!=='APPLIED')return notify(`CSS「${savedCss.name}」已保留在库中，当前剧情应用未确认：${visual?.error||visual?.status||'显示未确认'}`);}
         await bridge?.reload?.();
       }
       if(savedCss)notify(session?`当前剧情 CSS「${savedCss.name}」已保存并选择；全局主题未改变`:`CSS「${savedCss.name}」已保存；进入剧情后可选择应用`);

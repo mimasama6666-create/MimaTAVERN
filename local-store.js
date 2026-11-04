@@ -44,17 +44,18 @@
     }
   }
   function blankState() {
-    return {schemaVersion:4,storeRevision:0,sessions:[],masks:[],presets:[],worldbooks:[],cssPresets:[],regexPacks:[],theaterCards:[],quickCommands:[],settingTemplates:[],novelProjects:[],themeSettings:{...EMPTY_THEME}};
+    return {schemaVersion:4,storeRevision:0,sessions:[],masks:[],presets:[],worldbooks:[],cssPresets:[],cssCategoriesV1:[],resourceCategoriesV1:{presets:[],worldbook:[]},regexPacks:[],theaterCards:[],quickCommands:[],settingTemplates:[],novelProjects:[],themeSettings:{...EMPTY_THEME}};
   }
   function appearanceFromState(value) {
     return {version:1,baseRevision:Number(value?.storeRevision)||0,storeRevision:Number(value?.storeRevision)||0,
-      cssPresets:value?.cssPresets||[],themeSettings:value?.themeSettings||{...EMPTY_THEME},deletedCssIds:[],deletedCssAt:{},savedAt:value?.savedAt||''};
+      cssPresets:value?.cssPresets||[],cssCategoriesV1:value?.cssCategoriesV1||[],themeSettings:value?.themeSettings||{...EMPTY_THEME},deletedCssIds:[],deletedCssAt:{},savedAt:value?.savedAt||''};
   }
   function assertAppearance(value) {
     if(!value||value.version!==1||!Number.isInteger(value.storeRevision)||value.storeRevision<0||
       !Number.isInteger(value.baseRevision)||value.baseRevision<0||value.baseRevision>value.storeRevision||
       !Array.isArray(value.cssPresets)||!value.themeSettings||typeof value.themeSettings!=='object'||Array.isArray(value.themeSettings)||
-      !Array.isArray(value.deletedCssIds)||value.deletedCssIds.some(id=>typeof id!=='string'))
+      !Array.isArray(value.deletedCssIds)||value.deletedCssIds.some(id=>typeof id!=='string')||
+      (value.cssCategoriesV1!==undefined&&!Array.isArray(value.cssCategoriesV1)))
       throw Error('E_APPEARANCE_UNVERIFIED: 外观记录无法核实，拒绝覆盖');
     return value;
   }
@@ -62,7 +63,7 @@
   // Tombstones remain until a complete canonical write folds them into state.
   function mergeAppearance(base,appearance) {
     assertAppearance(appearance);
-    const next={...base,cssPresets:appearance.cssPresets,themeSettings:appearance.themeSettings,storeRevision:appearance.storeRevision,savedAt:appearance.savedAt};
+    const next={...base,cssPresets:appearance.cssPresets,cssCategoriesV1:appearance.cssCategoriesV1??base.cssCategoriesV1??[],themeSettings:appearance.themeSettings,storeRevision:appearance.storeRevision,savedAt:appearance.savedAt};
     if(!appearance.deletedCssIds.length)return next;
     const deleted=new Set(appearance.deletedCssIds);
     next.sessions=(base.sessions||[]).map(s=>deleted.has(s.customCssId)?{...s,customCssId:null,customCssEnabled:false,recordRevision:(Number(s.recordRevision)||0)+1}:s);
@@ -113,7 +114,7 @@
   async function loadAppearance(){const value=await get(APPEARANCE_KEY);return assertAppearance(value);}
   // edit is synchronous and receives a detached, small IDB clone. False means
   // no write; exceptions abort. No state document or message is read here.
-  async function commitAppearance(edit,{signal=null}={}) {
+  async function commitAppearance(edit,{signal=null,checkCanonical=null}={}) {
     const db=await openDb();
     if(signal?.aborted){db.close();throw new DOMException('外观保存已取消','AbortError');}
     return new Promise((resolve,reject)=>{
@@ -121,14 +122,26 @@
       const abort=()=>{issue=new DOMException('外观保存已取消','AbortError');try{tx.abort();}catch{}};
       signal?.addEventListener?.('abort',abort,{once:true});
       const req=kv.get(APPEARANCE_KEY);
-      req.onerror=()=>{issue=req.error;tx.abort();};
-      req.onsuccess=()=>{try{
+      // Renderer-content PATCH is the only frequent appearance write that
+      // needs the large canonical base. Keep ordinary category/name/preview
+      // writes on the lightweight overlay-only path.
+      const baseReq=typeof checkCanonical==='function'?kv.get(STATE_KEY):null;
+      let ready=0;
+      const inspect=()=>{if(++ready!==(baseReq?2:1))return;try{
         const value=assertAppearance(req.result),revision=value.storeRevision,baseRevision=value.baseRevision;
+        if(baseReq){
+          if(!isCanonicalStateRecord(baseReq.result)||Number(baseReq.result.storeRevision||0)!==baseRevision)
+            throw Error('E_APPEARANCE_BASE_CONFLICT: CSS 引用基线无法核实，未覆盖');
+          const verdict=checkCanonical(baseReq.result,value);
+          if(verdict&&typeof verdict.then==='function')throw Error('E_APPEARANCE_ASYNC_CHECK');
+        }
         const outcome=edit(value);if(outcome&&typeof outcome.then==='function')throw Error('E_APPEARANCE_ASYNC_EDIT');
         if(outcome===false){result=value;return;}
         result={...value,baseRevision,storeRevision:revision+1,savedAt:new Date().toISOString()};assertAppearance(result);
         if(signal?.aborted){abort();return;}kv.put(result,APPEARANCE_KEY);
       }catch(error){issue=error;tx.abort();}};
+      req.onerror=()=>{issue=req.error;tx.abort();};req.onsuccess=inspect;
+      if(baseReq){baseReq.onerror=()=>{issue=baseReq.error;tx.abort();};baseReq.onsuccess=inspect;}
       const close=()=>{signal?.removeEventListener?.('abort',abort);db.close();};
       tx.oncomplete=()=>{close();resolve(result);};
       tx.onabort=()=>{close();reject(issue||tx.error||Error('E_APPEARANCE_WRITE_ABORTED'));};
@@ -386,6 +399,23 @@
       mustStringList(w.tags,`${at}.tags`,version>=4);
     }});
     validateItems(src.cssPresets||[], 'cssPresets', {validate:(c,at)=>mustString(c.css,`${at}.css`,version>=4)});
+    // Optional on old archives, strictly verified when present. Category records
+    // never replace resource IDs or CSS/source bytes.
+    function validCategories(rows,path){
+      if(!Array.isArray(rows))invalid(path,'分类注册表必须为数组');
+      const ids=new Set(),names=new Set();
+      for(const [i,item]of rows.entries()){
+        if(!item||typeof item!=='object'||Array.isArray(item)||typeof item.id!=='string'||!item.id||typeof item.name!=='string'||
+          !item.name.trim()||item.name!==item.name.trim()||item.name.length>60||item.name==='未分类'||ids.has(item.id)||names.has(item.name.toLocaleLowerCase()))invalid(path+'['+i+']','分类 ID 或名称无效/重复');
+        ids.add(item.id);names.add(item.name.toLocaleLowerCase());
+      }
+    }
+    if(src.cssCategoriesV1!==undefined)validCategories(src.cssCategoriesV1,'cssCategoriesV1');
+    if(src.resourceCategoriesV1!==undefined){const categories=src.resourceCategoriesV1;
+      if(!categories||typeof categories!=='object'||Array.isArray(categories)||!Array.isArray(categories.presets)||!Array.isArray(categories.worldbook))invalid('resourceCategoriesV1','分类结构不完整');
+      validCategories(categories.presets,'resourceCategoriesV1.presets');validCategories(categories.worldbook,'resourceCategoriesV1.worldbook');
+    }
+
     validateItems(src.regexPacks||[], 'regexPacks', {validate:(p,at)=>{
       validateItems(mustArray(p.rules,`${at}.rules`,version>=4),`${at}.rules`,{requireId:false,validate:(rule,rp)=>persistedTextFields(rule,['pattern','replacement'],rp,version)});
     }});
@@ -511,7 +541,7 @@
       masks:Array.isArray(src.masks)?src.masks:[],
       presets:Array.isArray(src.presets)?src.presets:[],
       worldbooks:Array.isArray(src.worldbooks)?src.worldbooks:[],
-      cssPresets:Array.isArray(src.cssPresets)?src.cssPresets:[],
+      cssPresets:Array.isArray(src.cssPresets)?src.cssPresets:[],cssCategoriesV1:src.cssCategoriesV1??[],resourceCategoriesV1:src.resourceCategoriesV1??{presets:[],worldbook:[]},
       regexPacks:Array.isArray(src.regexPacks)?src.regexPacks:[],
       theaterCards:Array.isArray(src.theaterCards)?src.theaterCards:[],quickCommands:Array.isArray(src.quickCommands)?src.quickCommands:[],
       settingTemplates:Array.isArray(src.settingTemplates)?src.settingTemplates:[],

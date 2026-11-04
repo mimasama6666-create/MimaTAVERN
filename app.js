@@ -1,6 +1,147 @@
-// A reload during an unfinished CSS paint enters a recoverable view.
-window.MimaCssRecoveryBypass=false;
-try{if(sessionStorage.getItem('mima-css-paint-pending-v1')){window.MimaCssRecoveryBypass=true;sessionStorage.removeItem('mima-css-paint-pending-v1');}}catch(e){console.warn('[CSS recovery] storage unavailable',e);}
+// Preserve crash evidence across reloads: an interrupted candidate stays
+// isolated, while unrelated previously working CSS is allowed to render.
+const CSS_PAINT_RECEIPT_KEY='mima-css-paint-receipt-v2';
+const cssRecoveryState=(()=>{
+ const value={version:2,blocked:[],pending:null,legacyUnknown:false};
+ try{
+  const saved=JSON.parse(sessionStorage.getItem(CSS_PAINT_RECEIPT_KEY)||'null');
+  if(saved?.version===2){value.blocked=Array.isArray(saved.blocked)?saved.blocked.filter(x=>x&&['global','story'].includes(x.surface)&&typeof x.candidate?.id==='string'):[];value.pending=saved.pending||null;value.unsettled=Array.isArray(saved.unsettled)?saved.unsettled:[];value.legacyUnknown=saved.legacyUnknown===true;}
+  const interrupted=[...(value.unsettled||[]),...(value.pending?[value.pending]:[])];value.unsettled=[];
+  for(const tx of interrupted){
+   if(!tx||tx.phase==='committed')continue;
+   tx.key=tx.key||'legacy:'+String(tx.generation)+':'+String(tx.sessionId);
+   if(value.unsettled.some(x=>x.key===tx.key))continue;
+   value.unsettled.push(tx);
+   for(const surface of ['global','story']){
+    const candidate=tx.candidates?.[surface],stable=tx.stable?.[surface];
+    if(!candidate?.id||surface!==tx.commitIntent&&candidate.id===stable?.id&&candidate.identity===stable.identity)continue;
+    const item={surface,sessionId:surface==='story'?tx.sessionId:null,candidate,stable:stable||null,status:'needs_reconciliation',receiptKey:tx.key};
+    const found=value.blocked.find(x=>x.surface===item.surface&&x.sessionId===item.sessionId&&x.candidate?.id===candidate.id&&x.candidate?.identity===candidate.identity);
+    if(found){found.status=item.status;found.receiptKey=tx.key;}else value.blocked.push(item);
+   }
+  }
+  value.pending=null;
+  const legacy=sessionStorage.getItem('mima-css-paint-pending-v1');
+  if(legacy){
+   let old=null;try{old=JSON.parse(legacy);}catch(_){}
+   if(typeof old?.id==='string'&&old.id){
+    if(!value.blocked.some(x=>x.surface==='global'&&x.candidate?.id===old.id))value.blocked.push({surface:'global',sessionId:null,candidate:{id:old.id,identity:null},stable:null,legacy:true});
+   }else value.legacyUnknown=true; // v1 could not identify its failed story CSS.
+   sessionStorage.removeItem('mima-css-paint-pending-v1');
+  }
+  sessionStorage.setItem(CSS_PAINT_RECEIPT_KEY,JSON.stringify(value));
+ }catch(error){console.warn('[CSS recovery] persistent receipt unavailable',error);}
+ value.unsettled=value.unsettled||[];return value;
+})();
+window.MimaCssRecoveryBypass=cssRecoveryState.legacyUnknown;
+// Repeated checks during a single CSS selection reuse the same strong digest.
+// A changed string/scope/metadata always invalidates the memo without hashing
+// all saved CSS items during settings render.
+const cssIdentityMemo=new WeakMap();
+function cssIdentityCached(p){
+ if(!p)return null;
+ const old=cssIdentityMemo.get(p);
+ if(old&&old.css===p.css&&old.scope===p.scope&&old.surface===p.surface&&old.release===p.atelierReleaseKey&&old.updatedAt===p.updatedAt&&old.id===p.id)return old.identity;
+ const identity=MimaStandalone.cssSelectionIdentity(p);
+ cssIdentityMemo.set(p,{css:p.css,scope:p.scope,surface:p.surface,release:p.atelierReleaseKey,updatedAt:p.updatedAt,id:p.id,identity});
+ return identity;
+}
+function cssRecoverySave(){try{sessionStorage.setItem(CSS_PAINT_RECEIPT_KEY,JSON.stringify(cssRecoveryState));}catch(error){console.warn('[CSS recovery] receipt persistence failed',error);}}
+function cssRecoveryCandidate(p){return p?{id:p.id,identity:cssIdentityCached(p)}:null;}
+const cssReceiptPage=globalThis.crypto?.randomUUID?.()||String(Date.now())+':'+Math.random();
+const cssActiveCommits=new Set();let cssRecoveryReadTask=null;
+function cssRecoveryMatches(item,surface,candidate,sessionId){return !!candidate&&item.surface===surface&&(surface==='global'||item.sessionId===sessionId)&&item.candidate?.id===candidate.id&&(item.legacy||item.candidate.identity===candidate.identity);}
+function cssRecoveryResolve(surface,p,sessionId,retry=null){
+ const seen=new Set();
+ while(p){
+  const candidate=cssRecoveryCandidate(p);
+  if(retry?.surface===surface&&retry.sessionId===(surface==='story'?sessionId:null)&&retry.candidate.id===candidate.id&&retry.candidate.identity===candidate.identity)return p;
+  if(seen.has(candidate.identity))return null;seen.add(candidate.identity);
+  const block=cssRecoveryState.blocked.find(x=>cssRecoveryMatches(x,surface,candidate,sessionId));
+  if(!block)return p;
+  const old=block.stable;p=old?.id&&(surface==='global'||old.sessionId===sessionId)?cssPresets.find(x=>x.id===old.id&&cssIdentityCached(x)===old.identity&&((surface==='global')===(x.scope==='app')))||null:null;
+ }
+ return null;
+}
+function cssRecoveryBlock(tx,status){
+ if(!tx)return;
+ for(const surface of ['global','story']){
+  const candidate=tx.candidates?.[surface],stable=tx.stable?.[surface];
+  if(!candidate?.id||surface!==tx.commitIntent&&candidate.id===stable?.id&&candidate.identity===stable.identity)continue;
+  const found=cssRecoveryState.blocked.find(x=>cssRecoveryMatches(x,surface,candidate,tx.sessionId));
+  if(found){found.status=status;found.receiptKey=tx.key;}
+  else cssRecoveryState.blocked.push({surface,sessionId:surface==='story'?tx.sessionId:null,candidate,stable:stable||null,status,receiptKey:tx.key});
+ }
+}
+function cssRecoveryBegin(generation,plan,old,sessionId,options={}){
+ cssRecoveryState.pending={key:cssReceiptPage+':'+generation,generation,phase:'preparing',sessionId,commitIntent:options.commitIntent||null,expected:options.expected||null,
+  candidates:{global:cssRecoveryCandidate(plan[0]?.p),story:cssRecoveryCandidate(plan[1]?.p)},
+  stable:{global:cssRecoveryCandidate(old[0]?.mounted?.p),story:old[1]?.mounted?.p?{...cssRecoveryCandidate(old[1].mounted.p),sessionId:old[1].mounted.sessionId}:null}};
+ cssRecoverySave();
+}
+function cssRecoveryPhase(generation,phase){
+ const tx=cssRecoveryState.pending;if(tx?.generation!==generation)return;
+ tx.phase=phase;
+ if(phase==='commit_unknown'){
+  cssRecoveryState.unsettled.push(tx);cssActiveCommits.add(tx.key);cssRecoveryState.pending=null;
+ }
+ cssRecoverySave();
+}
+function cssRecoveryClearPending(generation){if(cssRecoveryState.pending?.generation===generation){cssRecoveryState.pending=null;cssRecoverySave();}}
+function cssRecoveryCommitResult(generation,confirmed){
+ const key=cssReceiptPage+':'+generation,tx=cssRecoveryState.unsettled.find(x=>x.key===key);
+ cssActiveCommits.delete(key);if(!tx)return;
+ if(confirmed){
+  const surface=tx.commitIntent,candidate=tx.candidates?.[surface];
+  cssRecoveryState.blocked=cssRecoveryState.blocked.filter(x=>!cssRecoveryMatches(x,surface,candidate,tx.sessionId));
+  cssRecoveryState.unsettled=cssRecoveryState.unsettled.filter(x=>x.key!==key);
+ }else cssRecoveryBlock(tx,'needs_reconciliation');
+ cssRecoverySave();
+}
+async function reconcileCssRecovery(){
+ if(cssRecoveryReadTask)return cssRecoveryReadTask;
+ const receipts=cssRecoveryState.unsettled.filter(x=>!cssActiveCommits.has(x.key));
+ if(!receipts.length)return {status:'SETTLED'};
+ const navigation=sessionNavigationEpoch,owner=currentSessionId;
+ const task=(async()=>{
+  const r=await fetchStory('/css-selection/canonical-view','POST',{sessionIds:[...new Set(receipts.map(x=>x.sessionId).concat(owner).filter(Boolean))]});
+  if(!r?.success||!Array.isArray(r.data?.cssPresets)||!Array.isArray(r.data?.sessions)){
+   for(const tx of receipts)cssRecoveryBlock(tx,'read_failed');cssRecoverySave();
+   return {status:'READ_FAILED',error:r?.msg||'真实保存状态读取失败'};
+  }
+  const canonical=r.data;cssPresets=canonical.cssPresets;
+  const session=canonical.sessions.find(x=>x.id===owner);
+  if(session&&navigation===sessionNavigationEpoch&&currentSessionId===owner&&Number(session.recordRevision)>=Number(currentSessionData?.recordRevision||0))currentSessionData=session;
+  const outcomes=[];
+  for(const tx of receipts){
+   for(const block of cssRecoveryState.blocked.filter(x=>x.receiptKey===tx.key)){
+    const saved=block.surface==='global'?canonical.themeSettings:canonical.sessions.find(x=>x.id===block.sessionId);
+    const id=block.surface==='global'?saved?.globalCssPresetId:saved?.customCssId;
+    const enabled=saved&&(block.surface==='global'?saved.globalCssEnabled:saved.customCssEnabled)!==false;
+    const candidate=canonical.cssPresets.find(x=>x.id===id);
+    const same=enabled&&candidate&&cssRecoveryMatches(block,block.surface,cssRecoveryCandidate(candidate),block.sessionId);
+    const expected=tx.expected;
+    const changed=block.surface==='global'?(saved?.updatedAt||'')!==(expected?.updatedAt||''):Number(saved?.recordRevision)>Number(expected?.recordRevision);
+    block.status=same&&(!expected||changed)?'committed_visual_uncertain':'not_committed';
+    if(!same&&saved&&expected&&(block.surface==='global'?(id||null)!==(expected.globalCssPresetId||null):((id||null)!==(expected.customCssId||null)||saved.customCssEnabled!==expected.customCssEnabled)))block.status='superseded';
+    block.canonical={id:id||null,enabled:!!enabled,revision:block.surface==='global'?saved?.updatedAt||'':saved?.recordRevision??null,identity:cssRecoveryCandidate(candidate)?.identity||null};
+    outcomes.push({receiptKey:tx.key,surface:block.surface,sessionId:block.sessionId,status:block.status});
+   }
+   cssRecoveryState.unsettled=cssRecoveryState.unsettled.filter(x=>x.key!==tx.key);
+  }
+  cssRecoverySave();return {status:'RECONCILED',outcomes};
+ })();cssRecoveryReadTask=task;
+ try{return await task;}finally{if(cssRecoveryReadTask===task)cssRecoveryReadTask=null;}
+}
+function cssRecoveryMarkup(){
+ const blocks=cssRecoveryState.blocked.filter(x=>x.surface==='global'||x.sessionId===currentSessionId),safe=cssRecoveryState.legacyUnknown||emergencyCssVisualBypass||window.MimaCssRecoveryBypass||new URLSearchParams(location.search).get('noCss')==='1';
+ if(!blocks.length&&!safe&&!cssRecoveryState.unsettled.length)return '';
+ const labels={committed_visual_uncertain:'已保存，显示安全待确认；当前保留安全外观',not_committed:'上次应用中断，未确认保存该候选；保留原样式',superseded:'保存状态已有新变化，旧候选保持隔离',read_failed:'保存状态读取失败，尚未确认结果；保留恢复记录',needs_reconciliation:'正在核对上次中断的保存状态',safety_hold:'已临时停用，等待主动应用',visual_failed:'显示检查未通过，保留原外观'};
+ return `<div class="mima-category-empty" role="status">${safe?'<p class="row-sub">CSS 安全模式已开启。退出后仍保留已知故障样式的隔离。</p><button class="ghost-btn" onclick="exitCssSafetyMode()">退出 CSS 安全模式</button>':''}${blocks.map(x=>`<p class="row-sub">${x.surface==='global'?'全局':'当前剧情'} · ${escapeHtml(cssPresets.find(p=>p.id===x.candidate.id)?.name||'原样式')}：${labels[x.status]||'上次显示中断；可在下方主动重试'}</p>`).join('')}${cssRecoveryState.unsettled.length?'<button class="ghost-btn" onclick="recheckCssRecovery()">重新核对保存状态</button>':''}</div>`;
+}
+async function recheckCssRecovery(){return queueCssSelection(async()=>{const result=await reconcileCssRecovery();await applyCustomCss();refreshCssLibraryView();toast(result.status==='READ_FAILED'?'保存状态仍未读到，恢复记录已保留':'已核对保存状态；待确认的样式可在下方主动重试');return result;});}
+async function exitCssSafetyMode(){return queueCssSelection(async()=>{cssRecoveryState.legacyUnknown=false;emergencyCssVisualBypass=false;window.MimaCssRecoveryBypass=false;clearCssSafetyUrl();cssRecoverySave();const result=await applyCustomCss();refreshCssLibraryView();return result;});}
+
 /**
  * 🍷 MIMAMAO Tavern V2 UI
  * 独立宇宙优先 · 手机优先 · Persona / Worldbook / Prompt Inspector / Local Font Library
@@ -38,6 +179,7 @@ let contextRecoveryReceipt = null;
 let lastGenerationFailure = null;
 let currentGenerationAction = null;
 let appearancePreviewSurface = 'chat';
+let appearancePreviewCollapsed = (()=>{try{const remembered=sessionStorage.getItem('mima-appearance-preview-collapsed-v2');if(remembered==='true'||remembered==='false')return remembered==='true';}catch(_){}return window.matchMedia?.('(max-width:620px), (max-height:480px)')?.matches||false;})();
 // A generation owns exactly one original session; a selected tab is merely a view.
 const generationOwners = new Map();
 const generationFailures = new Map();
@@ -316,7 +458,7 @@ function syncAppearancePreviewMode(on){
         if(!stage){
             stage=document.createElement('section');
             stage.id='appearance-preview-stage';
-            stage.className='appearance-preview-stage'+((rootHeightForPreview()<480)?' is-collapsed':'');
+            stage.className='appearance-preview-stage'+(appearancePreviewCollapsed?' is-collapsed':'');
             panel.insertBefore(stage,qs('settings-content'));
         }
         renderAppearancePreview();
@@ -326,16 +468,17 @@ function syncAppearancePreviewMode(on){
     }
 }
 function rootHeightForPreview(){return window.visualViewport?.height||window.innerHeight}
-function toggleAppearancePreview(){qs('appearance-preview-stage')?.classList.toggle('is-collapsed');renderAppearancePreview()}
+function toggleAppearancePreview(){appearancePreviewCollapsed=!appearancePreviewCollapsed;try{sessionStorage.setItem('mima-appearance-preview-collapsed-v2',String(appearancePreviewCollapsed))}catch(_){}const stage=qs('appearance-preview-stage');if(stage){stage.classList.toggle('is-collapsed',appearancePreviewCollapsed);renderAppearancePreview();}}
 function setAppearancePreviewSurface(surface){appearancePreviewSurface=['chat','novel','assistant'].includes(surface)?surface:'chat';renderAppearancePreview()}
 function renderAppearancePreview(){
     const stage=qs('appearance-preview-stage');if(!stage)return;
     stage.dataset.surface=appearancePreviewSurface;
     const safeOn=currentSessionData?.renderMode==='safe_html';
-    const tabs=`<div class="appearance-preview-tabs"><button class="${appearancePreviewSurface==='chat'?'active':''}" onclick="setAppearancePreviewSurface('chat')">聊天</button><button class="${appearancePreviewSurface==='novel'?'active':''}" onclick="setAppearancePreviewSurface('novel')">小说</button><button class="${appearancePreviewSurface==='assistant'?'active':''}" onclick="setAppearancePreviewSurface('assistant')">助手</button></div>`;
-    if(appearancePreviewSurface==='novel'){stage.innerHTML='<button class="appearance-preview-toggle" type="button" onclick="toggleAppearancePreview()">展开 / 收起预览</button>'+tabs+`<div class="appearance-preview-novel"><div class="eyebrow">NOVEL STUDIO PREVIEW</div><h2>第十二章　午夜钟声</h2><p>雨声落在窗沿上，纸页在灯下泛着柔和的灰。她没有立刻拆开那封信，只把它压在掌心。</p><p>第二段用来确认段距、行高和首行缩进。长篇阅读的舒适度比炫目的特效更重要。</p><div class="novel-memory-card"><h4>剧情档案</h4><p>红色信封的来源仍未揭示；钟楼线正在推进。</p></div><div class="novel-director-box"><label>续写要求</label><div class="field">暂时不要揭露寄信人身份。</div></div><section class="novel-draft"><strong>AI CONTINUATION · Draft</strong><p>新的正文草稿会显示在这里。</p></section><button class="primary-btn">✒ 续写</button></div>`;return}
-    if(appearancePreviewSurface==='assistant'){stage.innerHTML='<button class="appearance-preview-toggle" type="button" onclick="toggleAppearancePreview()">展开 / 收起预览</button>'+tabs+`<div class="appearance-preview-assistant"><div class="eyebrow">ASSISTANT STUDIO PREVIEW</div><div class="assistant-chat-text">你：帮我做一个水墨屏风格的 Novel CSS。</div><div class="assistant-chat-text">CSS 美化助手：会使用稳定的 Novel selector 与 reader token。</div></div>`;return}
-    stage.innerHTML='<button class="appearance-preview-toggle" type="button" onclick="toggleAppearancePreview()" aria-expanded="'+!stage.classList.contains('is-collapsed')+'">'+(stage.classList.contains('is-collapsed')?'展开排版预览':'收起排版预览')+'</button>'+tabs+`<div class="appearance-preview-head"><div><span class="eyebrow">LIVE PREVIEW（实时预览）</span><strong>正文排版实验室</strong></div><div class="appearance-preview-badges"><span class="tag">不会写入剧情</span><span class="tag ${safeOn?'preview-safe-on':'preview-safe-off'}">Safe HTML ${safeOn?'ON':'OFF'}</span></div></div>
+    const toggle=`<button class="appearance-preview-toggle" type="button" onclick="toggleAppearancePreview()" aria-controls="appearance-preview-tabs" aria-expanded="${!appearancePreviewCollapsed}"><span class="appearance-preview-toggle-heading">◉ 实时排版预览</span><span class="appearance-preview-toggle-action">${appearancePreviewCollapsed?'展开 ▼':'收起 ▲'}</span></button>`;
+    const tabs=`<div id="appearance-preview-tabs" class="appearance-preview-tabs"><button class="${appearancePreviewSurface==='chat'?'active':''}" onclick="setAppearancePreviewSurface('chat')">聊天</button><button class="${appearancePreviewSurface==='novel'?'active':''}" onclick="setAppearancePreviewSurface('novel')">小说</button><button class="${appearancePreviewSurface==='assistant'?'active':''}" onclick="setAppearancePreviewSurface('assistant')">助手</button></div>`;
+    if(appearancePreviewSurface==='novel'){stage.innerHTML=toggle+tabs+`<div class="appearance-preview-novel"><div class="eyebrow">NOVEL STUDIO PREVIEW</div><h2>第十二章　午夜钟声</h2><p>雨声落在窗沿上，纸页在灯下泛着柔和的灰。她没有立刻拆开那封信，只把它压在掌心。</p><p>第二段用来确认段距、行高和首行缩进。长篇阅读的舒适度比炫目的特效更重要。</p><div class="novel-memory-card"><h4>剧情档案</h4><p>红色信封的来源仍未揭示；钟楼线正在推进。</p></div><div class="novel-director-box"><label>续写要求</label><div class="field">暂时不要揭露寄信人身份。</div></div><section class="novel-draft"><strong>AI CONTINUATION · Draft</strong><p>新的正文草稿会显示在这里。</p></section><span class="preview-demo-only" aria-label="示范按钮，不可操作">✒ 续写 · 预览示范</span></div>`;return}
+    if(appearancePreviewSurface==='assistant'){stage.innerHTML=toggle+tabs+`<div class="appearance-preview-assistant"><div class="eyebrow">ASSISTANT STUDIO PREVIEW</div><div class="assistant-chat-text">你：帮我做一个水墨屏风格的 Novel CSS。</div><div class="assistant-chat-text">CSS 美化助手：会使用稳定的 Novel selector 与 reader token。</div></div>`;return}
+    stage.innerHTML=toggle+tabs+`<div class="appearance-preview-head"><div><span class="eyebrow">LIVE PREVIEW（实时预览）</span><strong>正文排版实验室</strong></div><div class="appearance-preview-badges"><span class="tag">不会写入剧情</span><span class="tag ${safeOn?'preview-safe-on':'preview-safe-off'}">Safe HTML ${safeOn?'ON':'OFF'}</span></div></div>
     <div class="appearance-preview-scroll"><div class="typography-preview-page">
       <article class="message assistant-msg typography-preview-message"><div class="msg-header">Character（示范角色） · 默认示范文本</div><div class="msg-content tavern-story-content${safeOn?' safe-html-content':''}">
         <div class="story-prose story-paragraph">雨声落在窗沿上，像有人用指尖轻轻敲着玻璃。她把书页压住，抬眼望向你："还没有睡吗？"</div>
@@ -939,7 +1082,7 @@ function setupImmersiveReading(){
 }
 // User-facing release notes: once per distinct production release by default.
 // Avoid touching Store/History or making automatic announcements mandatory.
-const MIMA_RELEASE_NOTES_VERSION='R19-20261101-V5.27-FONT-REWORK';
+const MIMA_RELEASE_NOTES_VERSION='R19-20261105-V5.59-CSS-DISABLE-REFERENCE-GUARD';
 const MIMA_RELEASE_NOTES_SEEN='mima-release-notes-seen:'+MIMA_RELEASE_NOTES_VERSION;
 const MIMA_RELEASE_NOTES_OPTOUT='mima-release-notes-disable-auto-v1';
 function openMimaReleaseNotice(){
@@ -1134,7 +1277,7 @@ async function savePngSelectedResources(){
     if(!info||pngResourceBusy)return;
     const chosen=info.resources.filter(r=>r.selected&&r.canImport&&!r.imported);
     if(!chosen.length)return toast('请先勾选可导入的项目。');
-    const targetSessionId=currentSessionId;
+    const targetSessionId=currentSessionId,targetNavigation=sessionNavigationEpoch;
     const mount=!!info.mountCurrent;
     if(mount&&['character','css'].some(kind=>chosen.filter(r=>r.kind===kind).length>1))return toast('同时挂载时只能选择一张角色卡和一份聊天 CSS；其他资源可单独保存。');
     if(mount&&!targetSessionId)return toast('没有打开的剧情，无法自动挂载；可以取消挂载仅保存资源。');
@@ -1164,18 +1307,19 @@ async function savePngSelectedResources(){
     }
     if(mount&&successes.length){
         try{
-            if(currentSessionId!==targetSessionId)throw new Error('当前剧情已切换；资源已保存在库中，但没有挂载。');
+            if(currentSessionId!==targetSessionId||sessionNavigationEpoch!==targetNavigation)throw new Error('当前剧情已切换；资源已保存在库中，但没有挂载。');
             const latest=await fetchStory(`/sessions/${targetSessionId}`);
             if(!latest.success)throw new Error(latest.msg||'读取最新剧情失败，资源保留在库中');
             const patch={};
             for(const key of ['worldbookIds','presetIds','regexPackIds'])if(ids[key].length)patch[key]=[...new Set([...(latest.data[key]||[]),...ids[key]])];
             if(charId)patch.loadedCharMaskId=charId;
-            if(cssId){patch.customCssId=cssId;patch.customCssEnabled=true;}
+            if(currentSessionId!==targetSessionId||sessionNavigationEpoch!==targetNavigation)throw new Error('当前剧情已切换，未挂载；已保存的资源仍在库中');
             if(Object.keys(patch).length){
                 const saved=await fetchStory(`/sessions/${targetSessionId}`,'PATCH',patch);
                 if(!saved.success)throw new Error(saved.msg||'挂载失败');
-                if(currentSessionId===targetSessionId)currentSessionData=saved.data;
+                if(currentSessionId===targetSessionId&&sessionNavigationEpoch===targetNavigation)currentSessionData=saved.data;
             }
+            if(cssId){const applied=await applySavedCssResource(cssId,{id:targetSessionId,epoch:targetNavigation});if(applied?.status!=='APPLIED')throw new Error('CSS 已保存到库，尚未挂载：'+(applied?.error||applied?.status||'显示未确认'));}
         }catch(e){failures.push(`自动挂载：${e.message}`)}
     }
     try{await loadAll();applyCustomCss()}catch(e){failures.push('界面刷新失败：'+e.message)}
@@ -1190,10 +1334,45 @@ function exportMask(id){const m=masks.find(x=>x.id===id);if(m)downloadJson(`${m.
 
 // Presentation metadata only: never alters prompt inclusion or resource mounting.
 const mimaLibraryView={presets:{search:'',category:'all',favorites:false},worldbook:{search:'',category:'all',favorites:false},css:{search:'',category:'all',favorites:false}};
-function mimaLibraryToolbar(kind,items){const v=mimaLibraryView[kind],cats=[...new Set(items.map(x=>String(x.category||'未分类')).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'zh'));
+const mimaCategorySelected={css:new Set(),presets:new Set(),worldbook:new Set()};
+function mimaCategoryItems(kind){return kind==='presets'?presets:kind==='worldbook'?worldbooks:cssPresets;}
+function mimaCategoryEntries(kind){return window.MimaStandalone.getResourceCategoryList?.(kind)||[];}
+function mimaLibraryToolbar(kind,items){
+ const v=mimaLibraryView[kind],known=mimaCategoryEntries(kind),names=[...new Set([...known.map(c=>c.name),...items.map(x=>String(x.category||'未分类'))])].sort((a,b)=>a.localeCompare(b,'zh'));
  const safe=x=>escapeHtml(x);
- return `<div class="mima-library-filters"><input class="field" aria-label="搜索资源" placeholder="搜索名称、标签和说明" value="${safe(v.search)}" oninput="mimaFilterLibrary('${kind}','search',this.value)"><select class="field" aria-label="资源分类" onchange="mimaFilterLibrary('${kind}','category',this.value)"><option value="all">全部分类</option>${cats.map(c=>`<option value="${safe(c)}" ${v.category===c?'selected':''}>${safe(c)}</option>`).join('')}</select><label class="check-row"><input type="checkbox" ${v.favorites?'checked':''} onchange="mimaFilterLibrary('${kind}','favorites',this.checked)"> ★ 只看收藏</label></div>`;
+ return `<div class="mima-library-filters"><input class="field" aria-label="搜索资源" placeholder="搜索名称、标签和说明" value="${safe(v.search)}" oninput="mimaFilterLibrary('${kind}','search',this.value)"><select class="field" aria-label="资源分类" onchange="mimaFilterLibrary('${kind}','category',this.value)"><option value="all">全部分类</option><option value="未分类" ${v.category==='未分类'?'selected':''}>未分类</option>${names.filter(c=>c!=='未分类').map(c=>`<option value="${safe(c)}" ${v.category===c?'selected':''}>${safe(c)}（${items.filter(x=>(x.category||'未分类')===c).length}）</option>`).join('')}</select><label class="check-row"><input type="checkbox" ${v.favorites?'checked':''} onchange="mimaFilterLibrary('${kind}','favorites',this.checked)"> ★ 只看收藏</label></div><div class="mima-category-tools"><button type="button" class="ghost-btn" onclick="mimaCategoryCreate('${kind}')">＋ 新建分类</button><button type="button" class="ghost-btn" onclick="mimaCategoryManage('${kind}')">管理分类</button><button type="button" class="ghost-btn" onclick="mimaBatchMove('${kind}')">移动已勾选项目</button><span class="row-sub">分类可为空；勾选卡片上的「选入批量移动」后进行归类</span></div><div id="mima-categories-${kind}" class="mima-category-panel hidden"></div>`;
 }
+function mimaCategorySelect(kind,id,checked){const chosen=mimaCategorySelected[kind];if(checked)chosen.add(id);else chosen.delete(id);}
+function mimaChooseCategory(kind,allowUncategorized=true){
+ const names=mimaCategoryEntries(kind).map(c=>c.name).filter(c=>c!=='未分类');
+ const options=[...(allowUncategorized?['未分类']:[]),...names];
+ if(!options.length)return '未分类';
+ const answer=prompt('选择保存分类（输入编号）：\n'+options.map((n,i)=>`${i+1}. ${n}`).join('\n')+'\n取消 = 不保存',String(Math.min(options.length,1)));
+ if(answer===null)return null;
+ const i=Number(String(answer).trim())-1;
+ if(!Number.isInteger(i)||i<0||i>=options.length){toast('分类编号无效，本次没有修改');return null;}
+ return options[i];
+}
+async function mimaCategoryWrite(kind,action,details){
+ const res=await fetchStory(`/resource-categories/${kind}`,'POST',{action,...details,expectedRevision:MimaStandalone.getStoreRevision()});
+ if(!res?.success){toast('分类保存失败：'+(res?.msg||res?.code||'未知错误'));return false;}
+ const path=kind==='css'?'/css-presets':kind==='worldbook'?'/worldbooks':'/presets';
+ const fresh=await fetchStory(path);
+ if(!fresh?.success||!Array.isArray(fresh.data)){toast('分类已保存，但列表重载失败，请重新打开设置');return true;}
+ if(kind==='css')cssPresets=fresh.data;else if(kind==='worldbook')worldbooks=fresh.data;else presets=fresh.data;
+ if(mimaLibraryView[kind].category!=='all'&&!fresh.data.some(x=>x.category===mimaLibraryView[kind].category)&&!mimaCategoryEntries(kind).some(x=>x.name===mimaLibraryView[kind].category))mimaLibraryView[kind].category='all';
+ if(isSettingsOpen()&&settingsTab===(kind==='css'?'appearance':kind==='worldbook'?'worldbook':'presets'))await renderSettings();
+ toast('分类操作已保存');return true;
+}
+async function mimaCategoryCreate(kind){const name=prompt('新分类名称（可以先创建空分类）');if(name===null)return;const next=name.trim();if(!next)return toast('分类名不能为空');await mimaCategoryWrite(kind,'create',{name:next});}
+function mimaCategoryManage(kind){const root=qs('mima-categories-'+kind);if(!root)return;const shouldOpen=root.classList.contains('hidden');if(!shouldOpen){root.classList.add('hidden');root.innerHTML='';return;}
+ const items=mimaCategoryItems(kind),cats=mimaCategoryEntries(kind).filter(x=>x.name!=='未分类');
+ root.innerHTML=`<div class="mima-category-panel-head"><strong>分类管理</strong><button class="ghost-btn" type="button" onclick="mimaCategoryManage('${kind}')">完成 / 收起</button></div>${cats.length?cats.map((c,i)=>`<div class="mima-category-row"><span>${escapeHtml(c.name)} <small>(${items.filter(x=>x.category===c.name).length})</small></span><div class="mima-category-row-actions"><button type="button" class="ghost-btn" onclick="mimaCategoryRename('${kind}',${i})">重命名</button><button type="button" class="danger-btn" onclick="mimaCategoryDelete('${kind}',${i})">删除分类</button></div></div>`).join(''):'<p class="row-sub">暂无分类，点击「新建分类」可创建空分类。</p>'}<p class="row-sub">删除分类只把其中的资源移动到「未分类」，不会删除任何原件。</p>`;
+ root.classList.remove('hidden');
+}
+async function mimaCategoryRename(kind,index){const old=mimaCategoryEntries(kind).filter(c=>c.name!=='未分类')[index]?.name;if(!old)return toast('分类已变化，请重新打开');const name=prompt('重命名分类：',old);if(name===null)return;await mimaCategoryWrite(kind,'rename',{oldName:old,name:name.trim()});}
+async function mimaCategoryDelete(kind,index){const old=mimaCategoryEntries(kind).filter(c=>c.name!=='未分类')[index]?.name;if(!old)return toast('分类已变化，请重新打开');if(!confirm(`删除分类「${old}」？分类中的所有资源只移到「未分类」，内容不会删除。`))return;await mimaCategoryWrite(kind,'delete',{oldName:old});}
+async function mimaBatchMove(kind){const allIds=new Set(mimaCategoryItems(kind).map(x=>x.id));const ids=[...mimaCategorySelected[kind]].filter(id=>allIds.has(id));if(!ids.length)return toast('请先勾选要移动的资源');const name=mimaChooseCategory(kind,true);if(name===null)return;const result=await mimaCategoryWrite(kind,'move',{ids,name});if(result){mimaCategorySelected[kind].clear();const root=qs(kind==='css'?'css-preset-list':kind==='worldbook'?'worldbook-list':'preset-list');if(kind==='css')renderCssPresetLibrary(root);else if(kind==='worldbook')fillWorldbooks(root);else fillPresets(root);}}
 function mimaFilterLibrary(kind,key,value){if(!mimaLibraryView[kind])return;mimaLibraryView[kind][key]=value;
  const items=kind==='presets'?presets:kind==='worldbook'?worldbooks:cssPresets;
  const root=kind==='presets'?qs('preset-list'):kind==='worldbook'?qs('worldbook-list'):qs('css-preset-list');
@@ -1210,8 +1389,8 @@ function renderWorldbookTab(box){
  box.innerHTML=`<section class="settings-section"><h3>📚 世界书</h3><p class="helper">收藏和分类仅影响资源库展示，不改变本剧情的世界书挂载与触发规则。</p><div class="toolbar"><button class="primary-btn" onclick="openWorldbookEditor()">＋ 新建世界书</button><button class="ghost-btn" onclick="chooseWorldbookImport()">⇧ 导入 JSON</button></div>${mimaLibraryToolbar('worldbook',worldbooks)}<div id="worldbook-list"></div></section>`;
  fillWorldbooks(qs('worldbook-list'));
 }
-function fillWorldbooks(root){if(!root)return;const mounted=new Set(currentSessionData.worldbookIds||[]);root.innerHTML='';const items=mimaVisibleResources('worldbook',worldbooks);if(!items.length){root.innerHTML='<div class="row-sub">当前筛选下没有世界书。</div>';return;}
- items.sort((a,b)=>Number(!!b.favorite)-Number(!!a.favorite)||String(a.name).localeCompare(String(b.name),'zh')).forEach(w=>{const row=document.createElement('div');row.className='worldbook-row';row.innerHTML=`<input type="checkbox" ${mounted.has(w.id)?'checked':''} onchange="toggleWorldbookMount('${w.id}',this.checked)"><div class="row-main"><div class="row-title">${escapeHtml(w.name)}</div><div class="row-sub">${escapeHtml(w.category||'未分类')} · ${w.entries?.length||0} 条 · ${escapeHtml(String(w.description||'无说明').slice(0,160))}</div></div><button class="ghost-btn" title="收藏世界书" aria-label="${w.favorite?'取消收藏':'收藏'}" onclick="mimaToggleFavorite('worldbook','${w.id}')">${w.favorite?'★':'☆'}</button><button class="ghost-btn" onclick="openWorldbookEditor('${w.id}')">编辑</button><button class="ghost-btn" onclick="exportWorldbook('${w.id}')">导出</button>`;root.appendChild(row);});
+function fillWorldbooks(root){if(!root)return;const mounted=new Set(currentSessionData.worldbookIds||[]);root.innerHTML='';const items=mimaVisibleResources('worldbook',worldbooks);if(!items.length){root.innerHTML='<div class="row-sub">当前分类没有世界书。可以新建世界书或导入 JSON。</div>';return;}
+ items.sort((a,b)=>Number(!!b.favorite)-Number(!!a.favorite)||String(a.name).localeCompare(String(b.name),'zh')).forEach(w=>{const row=document.createElement('div');row.className='worldbook-row';row.innerHTML=`<label class="mima-resource-select"><input type="checkbox" ${mimaCategorySelected.worldbook.has(w.id)?'checked':''} onchange="mimaCategorySelect('worldbook','${w.id}',this.checked)"> 批量移动</label><input type="checkbox" aria-label="挂载世界书" ${mounted.has(w.id)?'checked':''} onchange="toggleWorldbookMount('${w.id}',this.checked)"><div class="row-main"><div class="row-title">${escapeHtml(w.name)}</div><div class="row-sub">${escapeHtml(w.category||'未分类')} · ${w.entries?.length||0} 条 · ${escapeHtml(String(w.description||'无说明').slice(0,160))}</div></div><button class="ghost-btn" title="收藏世界书" aria-label="${w.favorite?'取消收藏':'收藏'}" onclick="mimaToggleFavorite('worldbook','${w.id}')">${w.favorite?'★':'☆'}</button><button class="ghost-btn" onclick="openWorldbookEditor('${w.id}')">编辑</button><button class="ghost-btn" onclick="exportWorldbook('${w.id}')">导出</button>`;root.appendChild(row);});
 }
 async function toggleWorldbookMount(id,on){const set=new Set(currentSessionData.worldbookIds||[]);on?set.add(id):set.delete(id);await patchCurrent({worldbookIds:[...set]},true);refreshHeader();renderSettings()}
 function defaultEntry(){return {name:'新条目',content:'',keywords:[],secondaryKeywords:[],enabled:true,alwaysActive:false,matchMode:'any',caseSensitive:false,useRegex:false,priority:50,scanDepth:12,depth:0,position:'middle',maxChars:0}}
@@ -1248,7 +1427,7 @@ async function saveWorldbookEditor(){
 async function deleteWorldbook(id){if(!confirm('删除整个世界书？'))return;try{const result=await fetchStory(`/worldbooks/${id}`,'DELETE');if(!result?.success)return toast('世界书删除失败：'+(result?.msg||'存储未确认'));closeEditor();await loadAll();openSettings('worldbook')}catch(e){toast('世界书删除失败：'+e.message)}}
 function chooseWorldbookImport(){qs('worldbook-file-input').value='';qs('worldbook-file-input').click()}
 function normalizeImportedWorldbook(raw,name){const src=raw.data||raw;let rawEntries=src.entries||[];if(!Array.isArray(rawEntries)&&rawEntries&&typeof rawEntries==='object')rawEntries=Object.values(rawEntries);const entries=arr(rawEntries).map((e,i)=>({name:e.name||e.comment||`条目 ${i+1}`,content:e.content||'',keywords:e.keywords||e.key||e.keys||[],secondaryKeywords:e.secondaryKeywords||e.keysecondary||[],enabled:e.enabled!==false&&e.disable!==true,alwaysActive:!!(e.alwaysActive||e.constant),matchMode:e.matchMode||'any',caseSensitive:!!e.caseSensitive,useRegex:!!e.useRegex,priority:Number(e.priority??e.order??50),scanDepth:Number(e.scanDepth??12),depth:Number(e.depth??0),position:['front','middle','back'].includes(e.position)?e.position:'middle',maxChars:Number(e.maxChars||0)}));return {name:src.name||name||'导入世界书',description:src.description||'',tags:src.tags||[],entries}}
-async function importWorldbookFile(file){if(!file)return;try{const raw=JSON.parse(await file.text());const body=normalizeImportedWorldbook(raw,file.name.replace(/\.json$/i,''));const res=await fetchStory('/worldbooks','POST',body);if(!res.success)throw new Error(res.msg);await loadAll();openSettings('worldbook');toast(`已导入世界书 ${res.data.name}`)}catch(e){toast(`世界书导入失败：${e.message}`)}}
+async function importWorldbookFile(file){if(!file)return;try{const raw=JSON.parse(await file.text());const body=normalizeImportedWorldbook(raw,file.name.replace(/\.json$/i,''));const category=mimaChooseCategory('worldbook',true);if(category===null)return;body.category=category;const res=await fetchStory('/worldbooks','POST',body);if(!res.success)throw new Error(res.msg);await loadAll();openSettings('worldbook');toast(`已导入世界书 ${res.data.name}`)}catch(e){toast(`世界书导入失败：${e.message}`)}}
 function exportWorldbook(id){const w=worldbooks.find(x=>x.id===id);if(w)downloadJson(`${w.name}.mimamao-worldbook.json`,w)}
 
 function renderPresetsTab(box){
@@ -1257,8 +1436,8 @@ function renderPresetsTab(box){
 }
 function fillPresets(root){if(!root)return;root.innerHTML='';const active=new Set(arr(currentSessionData.presetIds)),mountIndex=new Map(arr(currentSessionData.presetIds).map((id,i)=>[id,i]));
  const ordered=mimaVisibleResources('presets',presets).sort((a,b)=>Number(a.priority??50)-Number(b.priority??50)||(mountIndex.get(a.id)??Number.MAX_SAFE_INTEGER)-(mountIndex.get(b.id)??Number.MAX_SAFE_INTEGER));
- if(!ordered.length){root.innerHTML='<div class="row-sub">当前筛选下没有预设。</div>';return;}
- ordered.forEach(p=>{const r=document.createElement('div');r.className='preset-row';r.innerHTML=`<input type="checkbox" ${active.has(p.id)?'checked':''} onchange="togglePreset('${p.id}',this.checked)"><div class="row-main"><div class="row-title">${escapeHtml(p.name)}</div><div class="row-sub">${escapeHtml(p.category||'未分类')} · ${escapeHtml(presetTypeLabel(p.type||'style'))} · priority ${p.priority??50}</div></div><button class="ghost-btn" title="收藏预设" onclick="mimaToggleFavorite('presets','${p.id}')">${p.favorite?'★':'☆'}</button><button class="ghost-btn" onclick="openPresetEditor('${p.id}')">编辑</button>`;root.appendChild(r);});
+ if(!ordered.length){root.innerHTML='<div class="row-sub">当前分类没有预设，可以点击上方「新建预设」。</div>';return;}
+ ordered.forEach(p=>{const r=document.createElement('div');r.className='preset-row';r.innerHTML=`<label class="mima-resource-select"><input type="checkbox" ${mimaCategorySelected.presets.has(p.id)?'checked':''} onchange="mimaCategorySelect('presets','${p.id}',this.checked)"> 批量移动</label><input type="checkbox" aria-label="挂载剧情预设" ${active.has(p.id)?'checked':''} onchange="togglePreset('${p.id}',this.checked)"><div class="row-main"><div class="row-title">${escapeHtml(p.name)}</div><div class="row-sub">${escapeHtml(p.category||'未分类')} · ${escapeHtml(presetTypeLabel(p.type||'style'))} · priority ${p.priority??50}</div></div><button class="ghost-btn" title="收藏预设" onclick="mimaToggleFavorite('presets','${p.id}')">${p.favorite?'★':'☆'}</button><button class="ghost-btn" onclick="openPresetEditor('${p.id}')">编辑</button>`;root.appendChild(r);});
 }
 async function togglePreset(id,on){const set=new Set(currentSessionData.presetIds||[]);on?set.add(id):set.delete(id);await patchCurrent({presetIds:[...set]},true);renderSettings()}
 function openPresetEditor(id=null){const p=id?presets.find(x=>x.id===id):{name:'',type:'style',description:'',content:'',priority:50};editorState={type:'preset',id};qs('editor-title').textContent=id?`编辑预设 · ${p.name}`:'新建预设';qs('editor-eyebrow').textContent='PRESET（预设）';qs('editor-body').innerHTML=`<div class="form-grid"><div><label class="form-label">名称</label><input id="pre-name" class="field" value="${escapeHtml(p.name||'')}"></div><div><label class="form-label">类型</label><select id="pre-type" class="field">${['style','format','behavior','model'].map(x=>`<option value="${x}" ${p.type===x?'selected':''}>${presetTypeLabel(x)}</option>`).join('')}</select></div><div><label class="form-label">Priority（发送顺序，小值先发）</label><input id="pre-priority" type="number" class="field" value="${Number(p.priority??50)}"></div><div><label class="form-label">分类</label><input id="pre-category" class="field" value="${escapeHtml(p.category||'未分类')}"></div><div class="form-full"><label class="form-label">说明</label><input id="pre-desc" class="field" value="${escapeHtml(p.description||'')}"></div><div class="form-full"><label class="form-label">内容</label><textarea id="pre-content" class="field textarea tall">${escapeHtml(p.content||'')}</textarea></div></div>`;setupEditorButtons(id?()=>deletePreset(id):null,savePresetEditor);qs('editor-modal').classList.remove('hidden')}
@@ -2345,11 +2524,12 @@ async function renderDataTab(box,renderEpoch=++settingsRenderEpoch){
     const receipt=lastFullSettingsRestoreReceipt;
     const backupRestoreResult=receipt?`<div class="data-backup-card" role="${receipt.warnings.length||!receipt.uiRefreshed?'alert':'status'}" style="white-space:pre-wrap"><strong>${receipt.warnings.length||!receipt.uiRefreshed?'⚠️ 本次恢复：部分完成':'✅ 本次恢复：完成'}</strong><div class="row-sub">${!receipt.uiRefreshed?'主资料库已提交，但页面刷新失败；请检查后手动刷新，不要重复导入。':receipt.warnings.length?'主资料库已经恢复，但下列设置未能全部恢复：':'主资料库和本次设置均已恢复。'}</div>${receipt.warnings.map(item=>`<div class="row-sub">• ${escapeHtml(String(item).slice(0,650))}</div>`).join('')}</div>`:'';
     box.innerHTML=`<section class="settings-section"><h3>💾 Data Backup（数据备份）</h3><p class="helper">这里备份的不只是剧情，还包括角色卡、世界书、预设、正则包、CSS Preset（CSS 预设）、API（接口）参数、温度/流式设置、字体选择；可选把本地字体文件也一起装进备份。普通“刷新 / 强制刷新”不会删除这些数据，但 Safari 的“清除历史记录与网站数据”或删除网站数据会清掉 IndexedDB（本地数据库）和 localStorage（本地存储），所以真正保险的是导出 JSON（数据文件）到“文件”App。</p>
-    ${window.MimaTavernBackup?.markup?.()||''}<div class="data-backup-card"><div class="row-title">本机设置快照</div><div class="row-sub">${snap?`最近保存：${escapeHtml(snap.savedAt||snap.exportedAt||'已保存')}`:'尚未保存本机快照'}</div><div class="toolbar"><button class="primary-btn" onclick="saveFullSettingsSnapshot()">保存咪嘛馆设置数据</button><button class="ghost-btn" onclick="restoreSavedSettingsSnapshot()">恢复本机快照</button><button class="ghost-btn" onclick="cleanupSettingsSnapshotStaging()">清理失败快照暂存</button></div><div class="row-sub">新版快照将字体原件独立保存。它仍位于本网站数据库，不能替代设备外备份。</div></div>
+    ${window.MimaTavernBackup?.markup?.()||''}${window.MimaCloudBackupUI?.markup?.()||''}<div class="data-backup-card"><div class="row-title">本机设置快照</div><div class="row-sub">${snap?`最近保存：${escapeHtml(snap.savedAt||snap.exportedAt||'已保存')}`:'尚未保存本机快照'}</div><div class="toolbar"><button class="primary-btn" onclick="saveFullSettingsSnapshot()">保存咪嘛馆设置数据</button><button class="ghost-btn" onclick="restoreSavedSettingsSnapshot()">恢复本机快照</button><button class="ghost-btn" onclick="cleanupSettingsSnapshotStaging()">清理失败快照暂存</button></div><div class="row-sub">新版快照将字体原件独立保存。它仍位于本网站数据库，不能替代设备外备份。</div></div>
     <div class="data-backup-card"><div class="row-title">剧情与设置备份（不含小手机）</div><div class="row-sub"><strong>重要：这不是整馆迁移。</strong>只包含原生剧情、资源、工坊、壁纸及可选字体／接口设置；不包含小手机独立数据库或酒馆兼容库。清除网站数据或换设备前，还必须分别在小手机备份页、酒馆兼容管理页导出各自存档。尚不支持多库一键原子恢复。</div><label class="check-row"><input id="backup-fonts" type="checkbox" checked> 把本地字体文件也加入备份（文件可能变大）</label><label class="check-row"><input id="backup-api-key" type="checkbox"> 把 API Key（接口密钥）加入导出/快照 <strong>（敏感）</strong></label><div class="toolbar"><button class="primary-btn" onclick="exportFullSettingsBackup()">⇩ 导出剧情与设置</button><button class="ghost-btn" onclick="chooseFullSettingsImport()">⇧ 恢复剧情与设置</button><button class="ghost-btn" onclick="resumeSettingsJsonTemp()">继续保存临时 JSON</button><button class="ghost-btn" onclick="cleanupSettingsJsonTemp()">清理导出临时文件</button></div><div class="row-sub">当前 API（接口）：${cfg.apiBase?escapeHtml(cfg.apiBase):'未配置'} · Model（模型）：${cfg.model?escapeHtml(cfg.model):'未选择'}</div></div>
     <div id="data-backup-status" class="api-status">${snap?'✅ 当前浏览器已有本机快照。':'建议先保存一次本机快照，再导出一份文件备份。'}</div>${backupRestoreResult}</section>
     <section class="settings-section"><h3>🧹 Cache（缓存）说明</h3><p class="helper"><strong>只想让 GitHub Pages 加载新代码时，不需要先清除网站数据。</strong>本版已经给 CSS / JS 资源加入版本号 <code>?v=1.1.0</code>，部署后浏览器会把它们当成新资源重新拉取。若仍显示旧页面，先关闭该标签页再重新打开，或做一次强制刷新；不要直接使用会删除网站数据的清理方式，除非你已经导出了完整设置备份。</p></section>`;
     if(window.MimaTavernBackup)void MimaTavernBackup.mount().catch(error=>console.error('迁移收据读取失败',error));
+    if(window.MimaCloudBackupUI)void MimaCloudBackupUI.mount().catch(()=>{const n=document.getElementById('mima-cloud-status');if(n)n.textContent='云端设置加载失败。当前本地备份不受影响。';});
 }
 
 function appearancePersonalSoundRows(){
@@ -2555,8 +2735,8 @@ ${typographyControlHtml('段间距','paragraphGap',0,3,.05,typo.paragraphGap,'em
 ${typographyControlHtml('字间距','letterSpacing',-.04,.18,.005,typo.letterSpacing,'em')}
 ${typographyControlHtml('首行缩进','firstLineIndent',0,4,.25,typo.firstLineIndent,'em')}
 </div><div class="typography-indent-hint"><span>中文小说推荐：<strong>2em</strong>（约两个汉字宽）</span><div class="typography-quick-buttons"><button class="tool-mini" onclick="updateStoryTypography('firstLineIndent',0)">0</button><button class="tool-mini" onclick="updateStoryTypography('firstLineIndent',1)">1em</button><button class="tool-mini" onclick="updateStoryTypography('firstLineIndent',2)">2em</button><button class="tool-mini" onclick="updateStoryTypography('firstLineIndent',3)">3em</button></div></div><div class="toolbar typography-actions"><button class="ghost-btn" onclick="resetStoryTypography()">恢复默认排版</button></div></section>
-<section class="settings-section"><h3>🔗 网络字体收藏库 <span class="row-sub" style="font-size:.7em;font-weight:500">支持批量导入</span></h3><p class="helper">字体文件链接可点「下载离线」，校验成功后保存到本机字体库；CSS（例如 Google Fonts）链接仍在线加载，想离线使用请导入完整字体文件。离线副本不占用临时 HTTP 缓存，普通清理缓存通常不影响它；但清除网站数据仍可能删除 IndexedDB。为了真正防丢，请到「数据备份」勾选字体文件，导出完整备份 JSON 到「文件」App。</p><div class="toolbar" role="group" aria-label="网络字体添加方式" style="display:flex;flex-wrap:wrap;gap:9px;margin:12px 0 14px"><button type="button" id="url-font-mode-single" class="primary-btn" aria-pressed="true" style="min-height:44px" onclick="setUrlFontImportMode('single')">单条添加</button><button type="button" id="url-font-mode-batch" class="ghost-btn" aria-pressed="false" style="min-height:44px" onclick="setUrlFontImportMode('batch')">＋ 批量导入字体链接</button></div><div id="url-font-single-panel" class="form-grid"><div><label class="form-label">收藏名称</label><input id="url-font-name" class="field" placeholder="例如：我的日文字体"></div><div><label class="form-label">字体族名（Google Fonts CSS 需要与其声明一致）</label><input id="url-font-family" class="field" placeholder="例如：Noto Sans JP"></div><div class="form-full"><label class="form-label">HTTPS 字体文件或 CSS 地址</label><input id="url-font-address" type="url" class="field" inputmode="url" placeholder="https://…/font.woff2"></div><div class="form-full"><button type="button" class="ghost-btn" onclick="saveUrlFont()">＋ 保存到字体库并选为正文字体</button></div></div><div id="url-font-batch-panel" class="mima-font-batch" style="display:none;margin:13px 0;padding:12px;border:1px solid var(--line);border-radius:13px"><p class="helper">一次粘贴多条 HTTPS 链接（每行一条，也支持空格分隔）。字体文件自动命名为「自定义字体1、2……」并生成 CSS；Google Fonts 的 CSS 会自动识别字体族名，其他 CSS 地址需允许跨站读取才能识别。链接只收藏，选择时才加载，不更改当前字体。最多收藏 100 个。</p><label class="form-label" for="url-font-batch-links">字体链接（可一次粘贴多条）</label><textarea id="url-font-batch-links" class="field textarea mono" rows="5" style="min-height:110px" spellcheck="false" placeholder="https://example.com/font1.woff2&#10;https://example.com/font2.ttf&#10;https://fonts.googleapis.com/css2?family=Noto+Sans+JP&amp;display=swap"></textarea><div class="toolbar" style="margin-top:9px"><button id="url-font-batch-import" type="button" class="primary-btn" style="min-height:56px" onclick="batchImportUrlFonts()">＋ 批量导入到字体库</button></div><div id="url-font-batch-status" class="row-sub" role="status" aria-live="polite" style="white-space:pre-wrap;overflow-wrap:anywhere;margin-top:8px"></div></div><div class="toolbar"><button type="button" class="ghost-btn" onclick="exportUrlFontRaw()">⇩ 导出链接字体收藏原始数据（救援）</button></div><div id="url-font-list" class="mima-url-font-list">${urlFontItemsHtml()}</div><details class="mima-legacy-font"><summary>旧版单链接字体（兼容保留）</summary><div class="form-grid"><div><label class="form-label">旧 URL</label><input id="legacy-font-url" class="field" value="${escapeHtml(localStorage.getItem(LEGACY_FONT_URL_KEY)||'')}"></div><div><label class="form-label">字体族名</label><input id="legacy-font-family" class="field" value="${escapeHtml(localStorage.getItem(LEGACY_FONT_FAMILY_KEY)||'')}"></div><div class="form-full"><button type="button" class="ghost-btn" onclick="applyLegacyUrlFont()">应用旧版链接</button></div></div></details></section>
-${window.MimaChatWallpaper?.markup?.()||''}<section class="settings-section"><h3>🪄 CSS Preset Library（CSS 预设库）</h3><p class="helper">支持直接粘贴或导入<strong>纯 CSS</strong>，不需要手动包 &lt;style&gt;。CSS 可以只美化模型输出的自定义 HTML，也可以覆盖剧情区域，或选择“咪嘛馆全局”直接二改整个 UI（界面）。模型输出本身仍经过 Safe HTML sanitizer（安全 HTML 清洗器），不会执行 &lt;script&gt; / &lt;style&gt;。</p><div class="toolbar css-default-tools"><button class="primary-btn" onclick="openCssPresetEditor()">＋ 新建 CSS（样式）</button><button class="ghost-btn" onclick="chooseCssImport()">⇧ 导入 .css（样式文件）</button><button class="ghost-btn" onclick="copyDefaultCss()">⧉ 一键复制默认 CSS（样式）</button><button class="ghost-btn" onclick="exportDefaultCss()">⇩ 导出默认 CSS（样式）</button><button class="ghost-btn" onclick="forkDefaultCss()">✦ 默认 CSS 二改</button><button class="ghost-btn" onclick="MimaAssistantStudio.open('css')">✦ CSS 美化助手</button><button class="danger-btn" onclick="emergencyDisableCss()">🚑 临时禁用自定义 CSS（样式）</button></div><div class="toolbar"><button class="ghost-btn" onclick="stopAtelierAndRestoreCss()">停用工坊全局主题（保留旧 CSS）</button></div><div class="row-sub css-scope-note">Scope（作用域）：自定义 HTML / Chat / Novel / Assistant / 咪嘛馆全局。Novel 与 Assistant 使用稳定公开 selector；全局 CSS 仍拥有最高覆盖能力。</div><div class="row-sub" style="margin:8px 0 12px">当前聊天：${currentCssPreset()?escapeHtml(currentCssPreset().name):'未挂载'} · ${currentSessionData?.customCssEnabled===false?'已禁用':'已启用'}</div><div class="toolbar">${currentSessionData?.customCssId?'<button class="ghost-btn" onclick="unapplyCss()">取消应用</button>':''}${currentSessionData?.customCssId&&currentSessionData?.customCssEnabled===false?'<button class="ghost-btn" onclick="reenableCss()">重新启用</button>':''}</div><button class="ghost-btn" onclick="unapplyGlobalCssPreset()">取消全局 CSS</button>${mimaLibraryToolbar('css',cssPresets)}<div id="css-preset-list" class="card-grid css-preset-grid" style="margin-top:12px"></div></section>
+<section class="settings-section"><h3>🔗 网络字体收藏库 <span class="row-sub" style="font-size:.7em;font-weight:500">支持批量导入</span></h3><p class="helper">字体文件链接可点「下载离线」，校验成功后保存到本机字体库；CSS（例如 Google Fonts）链接仍在线加载，想离线使用请导入完整字体文件。离线副本不占用临时 HTTP 缓存，普通清理缓存通常不影响它；但清除网站数据仍可能删除 IndexedDB。为了真正防丢，请到「数据备份」勾选字体文件，导出完整备份 JSON 到「文件」App。</p><div class="toolbar" role="group" aria-label="网络字体添加方式" style="display:flex;flex-wrap:wrap;gap:9px;margin:12px 0 14px"><button type="button" id="url-font-mode-single" class="primary-btn" aria-pressed="true" style="min-height:44px" onclick="setUrlFontImportMode('single')">单条添加</button><button type="button" id="url-font-mode-batch" class="ghost-btn" aria-pressed="false" style="min-height:44px" onclick="setUrlFontImportMode('batch')">＋ 批量导入字体链接</button></div><div id="url-font-single-panel" class="form-grid"><div><label class="form-label">收藏名称</label><input id="url-font-name" class="field" placeholder="例如：我的日文字体"></div><div><label class="form-label">字体族名（Google Fonts CSS 需要与其声明一致）</label><input id="url-font-family" class="field" placeholder="例如：Noto Sans JP"></div><div class="form-full"><label class="form-label">HTTPS 字体文件或 CSS 地址</label><input id="url-font-address" type="url" class="field" inputmode="url" placeholder="https://…/font.woff2"></div><div class="form-full"><button type="button" class="ghost-btn" onclick="saveUrlFont()">＋ 保存到字体库（不启用）</button></div></div><div id="url-font-batch-panel" class="mima-font-batch" style="display:none;margin:13px 0;padding:12px;border:1px solid var(--line);border-radius:13px"><p class="helper">一次粘贴多条 HTTPS 链接（每行一条，也支持空格分隔）。字体文件自动命名为「自定义字体1、2……」并生成 CSS；Google Fonts 的 CSS 会自动识别字体族名，其他 CSS 地址需允许跨站读取才能识别。链接只收藏，选择时才加载，不更改当前字体。最多收藏 100 个。</p><label class="form-label" for="url-font-batch-links">字体链接（可一次粘贴多条）</label><textarea id="url-font-batch-links" class="field textarea mono" rows="5" style="min-height:110px" spellcheck="false" placeholder="https://example.com/font1.woff2&#10;https://example.com/font2.ttf&#10;https://fonts.googleapis.com/css2?family=Noto+Sans+JP&amp;display=swap"></textarea><div class="toolbar" style="margin-top:9px"><button id="url-font-batch-import" type="button" class="primary-btn" style="min-height:56px" onclick="batchImportUrlFonts()">＋ 批量导入到字体库</button></div><div id="url-font-batch-status" class="row-sub" role="status" aria-live="polite" style="white-space:pre-wrap;overflow-wrap:anywhere;margin-top:8px"></div></div><div class="toolbar"><button type="button" class="ghost-btn" onclick="exportUrlFontRaw()">⇩ 导出链接字体收藏原始数据（救援）</button></div><div id="url-font-list" class="mima-url-font-list">${urlFontItemsHtml()}</div><details class="mima-legacy-font"><summary>旧版单链接字体（兼容保留）</summary><div class="form-grid"><div><label class="form-label">旧 URL</label><input id="legacy-font-url" class="field" value="${escapeHtml(localStorage.getItem(LEGACY_FONT_URL_KEY)||'')}"></div><div><label class="form-label">字体族名</label><input id="legacy-font-family" class="field" value="${escapeHtml(localStorage.getItem(LEGACY_FONT_FAMILY_KEY)||'')}"></div><div class="form-full"><button type="button" class="ghost-btn" onclick="applyLegacyUrlFont()">应用旧版链接</button></div></div></details></section>
+${window.MimaChatWallpaper?.markup?.()||''}<section class="settings-section"><h3>🪄 CSS Preset Library（CSS 预设库）</h3><p class="helper">支持直接粘贴或导入<strong>纯 CSS</strong>，不需要手动包 &lt;style&gt;。CSS 可以只美化模型输出的自定义 HTML，也可以覆盖剧情区域，或选择“咪嘛馆全局”直接二改整个 UI（界面）。模型输出本身仍经过 Safe HTML sanitizer（安全 HTML 清洗器），不会执行 &lt;script&gt; / &lt;style&gt;。</p><div class="toolbar css-default-tools"><button class="primary-btn" onclick="openCssPresetEditor()">＋ 新建 CSS（样式）</button><button class="ghost-btn" onclick="chooseCssImport()">⇧ 导入 .css（样式文件）</button><button class="ghost-btn" onclick="copyDefaultCss()">⧉ 一键复制默认 CSS（样式）</button><button class="ghost-btn" onclick="exportDefaultCss()">⇩ 导出默认 CSS（样式）</button><button class="ghost-btn" onclick="forkDefaultCss()">✦ 默认 CSS 二改</button><button class="ghost-btn" onclick="MimaAssistantStudio.open('css')">✦ CSS 美化助手</button><button class="danger-btn" onclick="emergencyDisableCss()">🚑 临时禁用自定义 CSS（样式）</button></div><div class="toolbar"><button class="ghost-btn" onclick="stopAtelierAndRestoreCss()">停用工坊全局主题（保留旧 CSS）</button></div><div class="row-sub css-scope-note">Scope（作用域）：自定义 HTML / Chat / Novel / Assistant / 咪嘛馆全局。Novel 与 Assistant 使用稳定公开 selector；全局 CSS 仍拥有最高覆盖能力。</div><div id="css-recovery-status">${cssRecoveryMarkup()}</div><div id="css-current-status" class="row-sub" style="margin:8px 0 12px">当前聊天：${currentCssPreset()?escapeHtml(currentCssPreset().name):'未挂载'} · ${currentSessionData?.customCssEnabled===false?'已禁用':'已启用'}</div><div id="css-session-actions" class="toolbar">${currentSessionData?.customCssId?'<button class="ghost-btn" onclick="unapplyCss()">取消应用</button>':''}${currentSessionData?.customCssId&&currentSessionData?.customCssEnabled===false?'<button class="ghost-btn" onclick="reenableCss()">重新启用</button>':''}</div><button class="ghost-btn" onclick="unapplyGlobalCssPreset()">取消全局 CSS</button><div id="css-library-toolbar">${mimaLibraryToolbar('css',cssPresets)}</div><div id="css-preset-list" class="card-grid css-preset-grid" style="margin-top:12px"></div></section>
 <section class="settings-section"><h3>显示</h3><label class="check-row"><input id="render-html-setting" type="checkbox" ${currentSessionData?.renderMode==='safe_html'?'checked':''} onchange="toggleSafeHtml(this.checked)"> 允许 Safe HTML（安全 HTML）状态栏渲染</label><p class="helper">开启后会保留正文原有换行与空格，并支持 &lt;system&gt;、&lt;details&gt;、&lt;summary&gt;、区块、表格等安全结构，方便 CSS 状态栏直接生效。</p></section>`;applyMimaUiDensity();qs('font-ui-select').value=ui;qs('font-story-select').value=story;stopUrlFontPreview();stopVisibleFontPreviews();applyFontWeightPrefs();updateFontApplicationStatus();renderFontBundleStatus();const root=qs('font-list');if(fontReadError){stopVisibleFontPreviews();root.textContent='字体库读取失败，原字体和选择均未更改：'+(fontReadError.message||String(fontReadError));}else renderLocalFontRows(root,fontRecords);renderCssPresetLibrary(qs('css-preset-list'));syncStoryTypographyControls(typo);window.MimaFontBackup?.refresh?.()}
 
 // Legacy font indexing can finish after the settings sheet is opened. Refresh
@@ -2667,8 +2847,22 @@ async function preloadAtelierVisualResources(project,signal){
  // Font rules remain lazy; only the browser's actually used font workset loads.
 }
 let emergencyCssVisualBypass=false,cssPaintController=null,cssPaintPromise=null,cssPaintIdentity=null,lastCssThemeSettings=null,cssPaintRollback=null;
-function resumeCssAfterExplicitEnable(){emergencyCssVisualBypass=false;window.MimaCssRecoveryBypass=false;try{const url=new URL(location.href);if(url.searchParams.get('noCss')==='1'){url.searchParams.delete('noCss');history.replaceState(null,'',url.href);}sessionStorage.removeItem('mima-atl-safe-disabled');sessionStorage.removeItem('mima-css-paint-pending-v1');}catch(e){console.warn('[CSS rescue]',e);}}
-function cssSignature(p){return p?[p.id,p.atelierReleaseKey||'',p.scope,p.surface,p.updatedAt||''].join('|'):'off';}
+// Temporary per-layer holds prevent unrelated paint events from reviving a CSS
+// which the user is in the middle of explicitly disabling.
+const cssDisableVisualHold={story:null,global:null};
+function clearCssSafetyUrl(){try{const url=new URL(location.href);if(url.searchParams.get('noCss')==='1'){url.searchParams.delete('noCss');history.replaceState(null,'',url.href);}sessionStorage.removeItem('mima-atl-safe-disabled');sessionStorage.removeItem('mima-css-paint-pending-v1');}catch(e){console.warn('[CSS rescue]',e);}}
+function resumeCssAfterExplicitEnable(surface,p,sessionId){
+ if(cssRecoveryState.legacyUnknown){toast('旧版中断记录无法确定故障样式，请先点击“退出 CSS 安全模式”再主动应用');return null;}
+ if(emergencyCssVisualBypass||window.MimaCssRecoveryBypass||new URLSearchParams(location.search).get('noCss')==='1'){
+  // Lifting the temporary page-wide rescue must not authorize the OTHER layer.
+  const setting=MimaStandalone.getThemeSettings?.()||{},global=setting.globalCssEnabled!==false?cssPresets.find(x=>x.id===setting.globalCssPresetId&&x.scope==='app'):null;
+  const story=currentSessionData?.customCssEnabled!==false?currentCssPreset():null;
+  for(const [kind,preset]of [['global',global],['story',story]])if(preset&&!cssRecoveryState.blocked.some(x=>cssRecoveryMatches(x,kind,cssRecoveryCandidate(preset),currentSessionId)))cssRecoveryState.blocked.push({surface:kind,sessionId:kind==='story'?currentSessionId:null,candidate:cssRecoveryCandidate(preset),stable:null,status:'safety_hold'});
+  emergencyCssVisualBypass=false;window.MimaCssRecoveryBypass=false;clearCssSafetyUrl();cssRecoverySave();
+ }
+ return {surface,sessionId:surface==='story'?sessionId:null,candidate:cssRecoveryCandidate(p)};
+}
+function cssSignature(p){return p?[p.id,p.atelierReleaseKey||'',p.scope,p.surface].join('|'):'off';} // Text is compared separately; metadata edits must not recompile massive CSS.
 function cssPaintFrame(){return new Promise(resolve=>{const timer=setTimeout(resolve,250);requestAnimationFrame(()=>{clearTimeout(timer);resolve();});});}
 function assertCssVisible(){if(typeof getComputedStyle!=='function')return;
  for(const el of [document.documentElement,document.body,qs('story-chat-box')?.closest('.app-shell'),isSettingsOpen()?qs('settings-modal'):null].filter(Boolean)){
@@ -2676,17 +2870,25 @@ function assertCssVisible(){if(typeof getComputedStyle!=='function')return;
  }
 }
 function applyCustomCss(options={}){
+ // An unrelated font/Atelier event must not release rollback resources or
+ // resurrect a layer while its explicit disable is awaiting canonical CAS.
+ if(cssDisableVisualHold.global||cssDisableVisualHold.story?.sessionId===currentSessionId)return Promise.resolve({status:'STALE',reason:'css-disable-in-progress'});
+ const paintSessionId=currentSessionId;
  const setting=MimaStandalone.getThemeSettings?.()||{},engine=window.MimaAtelierCore;
  const safe=emergencyCssVisualBypass||window.MimaCssRecoveryBypass===true||new URLSearchParams(location.search).get('noCss')==='1';
  const global=Object.hasOwn(options,'globalPreset')?options.globalPreset:cssPresets.find(x=>x.id===setting.globalCssPresetId&&x.scope==='app');
- const appPreset=!safe&&(Object.hasOwn(options,'globalPreset')||setting.globalCssEnabled!==false)?global:null;
- const selected=currentCssPreset();const sessionPreset=!safe&&currentSessionData?.customCssEnabled!==false&&selected?.scope!=='app'?selected:null;
- const identity=[safe,appPreset?.id,appPreset?.css,appPreset?.atelierReleaseKey,sessionPreset?.id,sessionPreset?.css,sessionPreset?.scope,sessionPreset?.surface];
+ const appPreset=!safe&&!cssDisableVisualHold.global&&(Object.hasOwn(options,'globalPreset')||setting.globalCssEnabled!==false)?cssRecoveryResolve('global',global,currentSessionId,options.retry):null;
+ const selected=Object.hasOwn(options,'sessionPreset')?options.sessionPreset:currentCssPreset();const sessionPreset=!safe&&!(cssDisableVisualHold.story&&cssDisableVisualHold.story.sessionId===currentSessionId)&&(Object.hasOwn(options,'sessionPreset')||currentSessionData?.customCssEnabled!==false)&&selected?.scope!=='app'?cssRecoveryResolve('story',selected,currentSessionId,options.retry):null;
+ const identity=[safe,currentSessionId,options.commitIntent||null,appPreset?.id,appPreset?.css,appPreset?.atelierReleaseKey,sessionPreset?.id,sessionPreset?.css,sessionPreset?.scope,sessionPreset?.surface];
  if(cssPaintPromise&&cssPaintIdentity?.every((value,i)=>value===identity[i])){
   window.MimaPerfDiagnostics?.detail('css_apply_skipped');return cssPaintPromise;
  }
  cssPaintController?.abort();const rollbackPrevious=cssPaintRollback?.();cssPaintRollback=null;const controller=new AbortController(),signal=controller.signal;cssPaintController=controller;cssPaintIdentity=identity;const generation=++cssPaintEpoch;
  const tag=ensureCustomCssStyle(),globalTag=ensureGlobalCssStyle();
+ const previousStory=cssMounted.get(tag.id);
+ if(previousStory&&previousStory.sessionId!==paintSessionId){
+  tag.textContent='';previousStory.result?.release?.();engine?.releaseAssets?.('library-session');cssMounted.delete(tag.id);
+ }
  if(!safe&&setting.globalCssEnabled!==false&&!setting.globalCssPresetId&&!cssPresets.some(p=>p.atelierReleaseKey)&&!atelierMigrationInFlight&&engine?.getActive?.().id){atelierMigrationInFlight=true;engine.migrateLegacyTheme().then(async r=>{if(r?.status==='MIGRATED'){await reloadCssLibrary();await applyCustomCss();}}).catch(e=>toast('旧工坊主题迁移未完成：'+e.message)).finally(()=>atelierMigrationInFlight=false);}
  const plan=[{tag:globalTag,p:appPreset,owner:'library-global'},{tag,p:sessionPreset,owner:'library-session'}];
  const pending=[],old=plan.map(x=>({tag:x.tag,css:x.tag.textContent,mounted:cssMounted.get(x.tag.id)}));const priorProject=engine?.getApplied?.();let mounted=false;
@@ -2694,22 +2896,28 @@ function applyCustomCss(options={}){
  const perfCssStart=perfCss?.isRunning()?performance.now():null;
  perfCss?.detail('css_apply_start');
  const task=(async()=>{try{
-  await rollbackPrevious;cssAbort(signal);
+  await rollbackPrevious;cssAbort(signal);cssRecoveryBegin(generation,plan,old,paintSessionId,options);
   r19Lifecycle('css_prepare',{generation,globalId:appPreset?.id||null,chars:(appPreset?.css?.length||0)+(sessionPreset?.css?.length||0)});
   for(const item of plan){cssAbort(signal);const {p,owner}=item,previous=cssMounted.get(item.tag.id),signature=cssSignature(p);
    if(previous&&previous.signature===signature&&previous.source===(p?.css||'')&&item.tag.textContent===previous.css&&!(p?.atelierReleaseKey&&owner==='library-global'&&!engine?.getApplied?.())){pending.push({...item,...previous,unchanged:true});continue;}
    if(!p){pending.push({...item,css:'',source:'',signature});continue;}
    let result;try{
-    if(p.atelierReleaseKey){result=await engine.resolveLibraryCss(p,owner,{signal});cssAbort(signal);if(owner==='library-global')await preloadAtelierVisualResources(result.project,signal);}
+    if(p.atelierReleaseKey){result=await engine.resolveLibraryCss(p,owner,{signal});cssAbort(signal);}
     else {if(!window.MimaCssResources)throw Error('CSS 资源准备模块未加载');
      const began=perfCssStart!==null?performance.now():null;
-     result=await MimaCssResources.prepare(p.css,{signal});
+     // Convert inline image payloads into leased short Blob URLs before the
+     // synchronous CSSOM selector-scope pass. Parsing multi-MB base64 twice
+     // here was a real UI-thread/memory peak on embedded-image themes.
+     const prepared=await MimaCssResources.prepare(p.css,{signal});
+     try{result={...prepared,css:compileCustomCss({...p,css:prepared.css})};}
+     catch(error){prepared.discard();throw error;}
      perfCss?.detail('css_resource_prepare',began===null?0:performance.now()-began,{bytes:p.css?.length||0});}
-    cssAbort(signal);pending.push({...item,css:compileCustomCss({...p,css:result.css}),source:p.css||'',signature,result});
+    cssAbort(signal);pending.push({...item,css:result.css,source:p.css||'',signature,result});
    }catch(e){result?.discard?.();throw e;}
   }
   cssAbort(signal);
-  try{sessionStorage.setItem('mima-css-paint-pending-v1',JSON.stringify({id:appPreset?.id||null,at:Date.now()}));}catch(_){}
+  if(currentSessionId!==paintSessionId)throw new DOMException('剧情已切换','AbortError');
+  cssRecoveryPhase(generation,'painting');
   const next=pending[0];const accepted=await engine?.syncGlobalAppearance?.(appPreset,{allowLegacy:false,preparedProject:next.result?.project??(appPreset?.atelierReleaseKey?engine?.getApplied?.():null)});cssAbort(signal);if(accepted===false)throw new DOMException('外观请求已过时','AbortError');
   cssPaintRollback=()=>{for(const x of old)if(x.tag.textContent!==x.css)x.tag.textContent=x.css;MimaThemeEngine?.apply?.(lastCssThemeSettings||{...setting,globalCssEnabled:false});MimaFontManager?.refreshUrlFontUsage?.();restoreLegacyFont({syncSelection:false});return engine?.syncGlobalAppearance?.(old[0].mounted?.p||null,{allowLegacy:false,preparedProject:priorProject});};
   for(const x of pending)if(x.tag.textContent!==x.css){x.tag.textContent=x.css;perfCss?.detail('css_style_write');}mounted=true;
@@ -2717,19 +2925,21 @@ function applyCustomCss(options={}){
   // Old CSS font imports are demand-driven by *mounted* authored CSS, so
   // revisit those references after a successful theme switch, not at startup
   // on the basis of every saved URL alone.
-  MimaFontManager?.refreshUrlFontUsage?.();restoreLegacyFont({syncSelection:false});
-  await cssPaintFrame();cssAbort(signal);if(!safe)assertCssVisible();
-  for(const x of pending){if(!x.unchanged){const before=cssMounted.get(x.tag.id);x.result?.accept?.();before?.result?.release?.();if(!x.p?.atelierReleaseKey)engine?.releaseAssets?.(x.owner);cssMounted.set(x.tag.id,{signature:x.signature,source:x.source,css:x.css,p:x.p,result:x.result});}}
+  MimaFontManager?.refreshUrlFontUsage?.();
+  await cssPaintFrame();cssAbort(signal);if(!safe)assertCssVisible();cssRecoveryPhase(generation,'visual_ready');
+  for(const x of pending){if(!x.unchanged){const before=cssMounted.get(x.tag.id);x.result?.accept?.();before?.result?.release?.();if(!x.p?.atelierReleaseKey)engine?.releaseAssets?.(x.owner);cssMounted.set(x.tag.id,{signature:x.signature,source:x.source,css:x.css,p:x.p,result:x.result,sessionId:x.owner==='library-session'?paintSessionId:null});}}
   cssPaintRollback=null;lastCssThemeSettings=nextTheme;lastCssVisualProblem='';engine?.reaffirm?.();window.MimaInteraction?.apply?.(appPreset?.atelierReleaseKey?(next.result?.project?.interactions||engine?.getApplied?.()?.interactions):null);
-  try{sessionStorage.removeItem('mima-css-paint-pending-v1');}catch(_){}
+  if(!options.commitIntent)cssRecoveryClearPending(generation);
   r19Lifecycle('css_applied',{generation,globalId:appPreset?.id||null});
   perfCss?.detail('css_apply_success',perfCssStart===null?0:performance.now()-perfCssStart);
-  return {status:'APPLIED',canonicalId:appPreset?.id||null};
+  return {status:'APPLIED',generation,canonicalId:appPreset?.id||null};
  }catch(e){
   if(mounted&&generation===cssPaintEpoch){try{await cssPaintRollback?.();}catch(restore){console.error('[CSS rollback]',restore);}cssPaintRollback=null;}
   pending.forEach(x=>{if(!x.unchanged)x.result?.discard?.();});
+  if(e.name!=='AbortError'&&generation===cssPaintEpoch)cssRecoveryBlock(cssRecoveryState.pending,'visual_failed');
+  cssRecoveryClearPending(generation);
   if(e.name==='AbortError'||generation!==cssPaintEpoch){r19Lifecycle('css_cancelled',{generation});perfCss?.detail('css_apply_cancelled');return {status:'STALE'};}
-  lastCssVisualProblem=e.message||String(e);try{sessionStorage.removeItem('mima-css-paint-pending-v1');}catch(_){}
+  lastCssVisualProblem=e.message||String(e);
   r19Lifecycle('css_failed',{generation,message:lastCssVisualProblem.slice(0,250)});perfCss?.detail('css_apply_failed',perfCssStart===null?0:performance.now()-perfCssStart);console.error('[CSS apply]',e);toast('CSS 原件保留，页面维持上一成功外观：'+lastCssVisualProblem);return {status:'FAILED',error:lastCssVisualProblem};
  }})();
  cssPaintPromise=task;task.finally(()=>{if(cssPaintPromise===task)cssPaintPromise=null;});return task;
@@ -2738,78 +2948,288 @@ window.addEventListener('mima-font-selection-change',()=>restoreLegacyFont({sync
 window.addEventListener('mima-atelier-presentation-change',()=>applyCustomCss());
 window.addEventListener('load',()=>{window.MimaAtelierCore?.ready?.then(()=>applyCustomCss()).catch(e=>console.error('[CSS library] Atelier readiness',e));});
 async function selectLegacyCssAppearance(action){return action();}
-async function stopAtelierAndRestoreCss(){++globalCssSelectionEpoch;
+async function stopAtelierAndRestoreCss(){
  const setting=MimaStandalone.getThemeSettings?.()||{};
  const mounted=cssPresets.find(x=>x.id===setting.globalCssPresetId&&setting.globalCssEnabled!==false);
  const hasOld=!!window.MimaAtelierCore?.getActive?.().id;
  if(!mounted?.atelierReleaseKey&&!hasOld)return toast('当前没有工坊全局主题；普通 CSS 未改变');
  try{
-  if(mounted?.atelierReleaseKey){const res=await fetchStory('/theme','PATCH',{globalCssPresetId:null,globalCssEnabled:false});if(!res?.success)throw Error(res?.msg||'未能提交停用操作');}
+  if(mounted?.atelierReleaseKey){
+   // Reuse the exact same confirmed visual-first CAS as the ordinary button.
+   const result=await unapplyGlobalCssPreset();
+   if(result?.status!=='APPLIED')return result;
+  }else ++globalCssSelectionEpoch;
   // Legacy pointer is no longer the application authority. Retiring it must
   // not undo a successfully persisted canonical selection.
-  if(hasOld)try{await window.MimaAtelierCore.unapply();}catch(e){console.warn('[Atelier] legacy pointer cleanup pending',e);}
-  const appearance=await applyCustomCss();if(settingsTab==='appearance')renderAppearanceTab(qs('settings-content'));
-  toast(appearance?.status==='APPLIED'?'工坊全局主题已停用；旧 CSS 均保存在下方预设库，可直接重新选择':'工坊全局选择已提交，但页面外观仍在处理；当前画面保留上一成功版本');
- }catch(e){toast('停用工坊失败：'+e.message)}
+  if(hasOld){
+   try{await window.MimaAtelierCore.unapply();}catch(e){console.warn('[Atelier] legacy pointer cleanup pending',e);}
+   const visual=await applyCustomCss();
+   if(visual?.status!=='APPLIED'){toast('工坊旧指针已处理，CSS 画面尚待确认；请检查当前外观');return visual;}
+  }
+  if(settingsTab==='appearance')refreshCssLibraryView();
+  if(!mounted?.atelierReleaseKey)toast('工坊旧主题已停用；现有 CSS 预设均已保留');
+  return {status:'APPLIED'};
+ }catch(e){toast('停用工坊失败：'+e.message);return {status:'FAILED',error:e.message};}
 }
 async function reloadCssLibrary(){const r=await fetchStory('/css-presets');if(!r?.success||!Array.isArray(r.data))throw Error(r?.msg||'CSS 库读取未确认');cssPresets=r.data;}
-let globalCssSelectionEpoch=0,globalCssSelectionTail=Promise.resolve();
-function queueGlobalCssSelection(action){const intent=++globalCssSelectionEpoch;const job=globalCssSelectionTail.then(()=>intent===globalCssSelectionEpoch?action(intent):{status:'STALE'});globalCssSelectionTail=job.catch(()=>{});return job;}
-function applyGlobalCssPreset(id,options={}){return queueGlobalCssSelection(intent=>commitGlobalCssPreset(id,options,intent));}
+function refreshCssLibraryView(){
+ const tools=qs('css-library-toolbar');if(tools)tools.innerHTML=mimaLibraryToolbar('css',cssPresets);
+ const status=qs('css-current-status');if(status)status.textContent='当前聊天：'+(currentCssPreset()?.name||'未挂载')+' · '+(currentSessionData?.customCssEnabled===false?'已禁用':'已启用');
+ const actions=qs('css-session-actions');if(actions)actions.innerHTML=(currentSessionData?.customCssId?'<button class="ghost-btn" onclick="unapplyCss()">取消应用</button>':'')+(currentSessionData?.customCssId&&currentSessionData?.customCssEnabled===false?'<button class="ghost-btn" onclick="reenableCss()">重新启用</button>':'');
+ const recovery=qs('css-recovery-status');if(recovery)recovery.innerHTML=cssRecoveryMarkup();
+ renderCssPresetLibrary(qs('css-preset-list'));
+}
+let globalCssSelectionEpoch=0,cssSelectionTail=Promise.resolve();
+function queueCssSelection(action){const job=cssSelectionTail.then(action);cssSelectionTail=job.catch(()=>{});return job;}
+function queueGlobalCssSelection(action){const intent=++globalCssSelectionEpoch;return queueCssSelection(()=>intent===globalCssSelectionEpoch?action(intent):{status:'STALE'});}
+async function recoverCssCommit(generation,detail){
+ const key=cssReceiptPage+':'+generation,surface=cssRecoveryState.unsettled.find(x=>x.key===key)?.commitIntent;
+ cssRecoveryCommitResult(generation,false);
+ const result=await reconcileCssRecovery();await applyCustomCss();refreshCssLibraryView();
+ const saved=result.outcomes?.some(x=>x.receiptKey===key&&x.surface===surface&&x.status==='committed_visual_uncertain');
+ toast(result.status==='READ_FAILED'?'CSS 保存结果尚未确认，已保留恢复记录与安全外观；可重新核对':saved?'CSS 已保存，显示安全待确认；可主动重新应用':'CSS 未提交或已被新设置替代，已读取当前保存状态：'+detail);
+ return {status:result.status==='READ_FAILED'?'UNKNOWN':saved?'SAVED_VISUAL_UNCERTAIN':'FAILED',error:detail};
+}
+function applyGlobalCssPreset(id,options={}){return queueGlobalCssSelection(intent=>{cssDisableVisualHold.global=null;return commitGlobalCssPreset(id,options,intent);});}
+async function applySavedCssResource(id,target=null){
+ await reloadCssLibrary();const p=cssPresets.find(x=>x.id===id);if(!p)return {status:'FAILED',error:'已保存的 CSS 未读到'};
+ const globalTarget=target?.surface==='global';
+ if(globalTarget&&p.scope!=='app')return {status:'STALE',error:'CSS 作用域已改变，本次全局应用未执行'};
+ if(p.scope==='app')return target&&!globalTarget?{status:'STALE',error:'该 CSS 属于全局，请在外观页明确应用到全局'}:applyGlobalCssPreset(id);
+ if(target&&(currentSessionId!==target.id||sessionNavigationEpoch!==target.epoch))return {status:'STALE',error:'剧情已切换，CSS 已保留在库中'};
+ const owner=currentSessionId,navigation=sessionNavigationEpoch;
+ if(!owner)return {status:'FAILED',error:'请先打开目标剧情'};
+ const fresh=await fetchStory(`/sessions/${encodeURIComponent(owner)}/canonical-view`);
+ if(!fresh?.success)return {status:'FAILED',error:fresh?.msg||'剧情保存状态读取失败'};
+ if(currentSessionId!==owner||sessionNavigationEpoch!==navigation)return {status:'STALE',error:'剧情已切换'};
+ if(Number(fresh.data.recordRevision)<Number(currentSessionData?.recordRevision))return {status:'STALE',error:'剧情已有更新'};
+ currentSessionData=fresh.data;return applyCssPreset(id);
+}
 async function commitGlobalCssPreset(id,{render=true}={},intent){
  const preset=cssPresets.find(x=>x.id===id&&x.scope==='app');if(!preset)return {status:'FAILED'};
- resumeCssAfterExplicitEnable();const visual=await applyCustomCss({globalPreset:preset});
- if(visual?.status!=='APPLIED')return visual;
- if(intent!==globalCssSelectionEpoch){await applyCustomCss();return {status:'STALE'};}
- try{const r=await fetchStory('/theme','PATCH',{globalCssPresetId:id,globalCssEnabled:true});if(!r.success)throw Error(r.msg||'外观选择未保存');}
- catch(e){await applyCustomCss();toast('外观选择未保存，已恢复：'+e.message);return {status:'FAILED',error:e.message};}
+ const expected=MimaStandalone.getThemeSettings?.()||{};
+ const identity=cssIdentityCached(preset);
+ const retry=resumeCssAfterExplicitEnable('global',preset,null);if(!retry)return {status:'SAFETY_MODE'};
+ const visual=await applyCustomCss({globalPreset:preset,commitIntent:'global',expected:{globalCssPresetId:expected.globalCssPresetId||null,globalCssEnabled:expected.globalCssEnabled,updatedAt:expected.updatedAt||''},retry});
+ if(visual?.status!=='APPLIED'){refreshCssLibraryView();return visual;}
+ if(intent!==globalCssSelectionEpoch||cssPaintEpoch!==visual.generation){cssRecoveryClearPending(visual.generation);await applyCustomCss();return {status:'STALE'};}
+ try{
+  cssRecoveryPhase(visual.generation,'commit_unknown');
+  const r=await fetchStory('/theme/css-selection','POST',{expected:{globalCssPresetId:expected.globalCssPresetId||null,globalCssEnabled:expected.globalCssEnabled,updatedAt:expected.updatedAt||''},candidate:{globalCssPresetId:id},identity});
+  if(!r.success)throw Error(r.msg||'候选全局 CSS 已变化，未保存');
+ }catch(e){return recoverCssCommit(visual.generation,e.message);}
+ cssRecoveryCommitResult(visual.generation,true);
  if(intent!==globalCssSelectionEpoch)return {status:'STALE',committed:true};
- if(render)renderCssPresetLibrary(qs('css-preset-list'));toast('已应用全局主题；内置皮肤已挂起，原主题和素材仍保留');return visual;
+ if(cssPaintEpoch!==visual.generation)await applyCustomCss();
+ if(render)refreshCssLibraryView();toast('已应用全局主题；内置皮肤已挂起，原主题和素材仍保留');return visual;
 }
 function unapplyGlobalCssPreset(){return queueGlobalCssSelection(()=>commitUnapplyGlobalCssPreset());}
-async function commitUnapplyGlobalCssPreset(){const r=await fetchStory('/theme','PATCH',{globalCssPresetId:null,globalCssEnabled:false});if(!r.success)return toast(r.msg||'取消失败');const visual=await applyCustomCss();renderCssPresetLibrary(qs('css-preset-list'));if(visual?.status==='APPLIED')toast('已禁用全局 CSS，恢复所选内置主题');return visual;}
+async function commitUnapplyGlobalCssPreset(){
+ const expected=MimaStandalone.getThemeSettings?.()||{};
+ const snapshot={globalCssPresetId:expected.globalCssPresetId||null,globalCssEnabled:expected.globalCssEnabled,updatedAt:expected.updatedAt||''};
+ const tx=await stageCssDisable('global');if(tx.status!=='READY')return tx;
+ const intent=globalCssSelectionEpoch;
+ const response=await saveCssDisable('/theme/css-disable',{expected:snapshot,clearSelection:true},'global',null);
+ if(response.status!=='SAVED'){
+  await settleCssDisableFailure(tx,response);return response;
+ }
+ finishCssDisable(tx);
+ if(intent===globalCssSelectionEpoch){refreshCssLibraryView();toast('已取消全局 CSS，原样式保留在库中，恢复所选内置主题');}
+ return {status:'APPLIED',saved:true};
+}
 
 function cssScopeLabel(scope){return scope==='app'?'咪嘛馆全局 Scope（作用域）':scope==='novel'?'Novel Studio（小说工作区）':scope==='assistant'?'Assistant Studio（助手工作区）':scope==='global'?'剧情面板级 Scope（作用域）':'自定义 HTML 内容级 Scope（作用域）'}
-function renderCssPresetLibrary(root){if(!root)return;const active=currentSessionData?.customCssId,theme=MimaStandalone.getThemeSettings?.(),globalId=theme?.globalCssEnabled===false?null:theme?.globalCssPresetId;
- const list=mimaVisibleResources('css',cssPresets);root.innerHTML='';if(!list.length){root.innerHTML='<div class="row-sub">当前筛选下没有 CSS 预设。</div>';return;}
- list.sort((a,b)=>Number(!!b.favorite)-Number(!!a.favorite)||String(a.name).localeCompare(String(b.name),'zh')).forEach(p=>{const global=p.scope==='app',mounted=global?p.id===globalId:p.id===active;const row=document.createElement('div');row.className=`library-card ${mounted?'mounted':''}`;row.innerHTML=`<div class="card-title"><span>${escapeHtml(p.name)}</span>${mounted?`<span class="tag">${global?'全局挂载':'当前 Session'}</span>`:''}</div><div class="card-desc">${escapeHtml(p.category||'未分类')} · ${cssScopeLabel(p.scope)} · ${String(p.css||'').length} 字符</div><div class="card-actions"><button class="${mounted?'primary-btn':'ghost-btn'}" onclick="${global?'applyGlobalCssPreset':'applyCssPreset'}('${p.id}')">${global?'应用到全局':mounted?'重新启用':'应用到聊天'}</button><button class="ghost-btn" onclick="mimaToggleFavorite('css','${p.id}')">${p.favorite?'★ 已收藏':'☆ 收藏'}</button><button class="ghost-btn" onclick="openCssPresetEditor('${p.id}')">编辑</button>${String(p.css||'').length>200000&&mounted?`<button class="danger-btn" onclick="${global?'unapplyGlobalCssPreset':'unapplyCss'}()">停用大型 CSS</button>`:''}<button class="ghost-btn" onclick="duplicateCssPreset('${p.id}')">复制</button><button class="ghost-btn" onclick="exportCssPreset('${p.id}')">导出</button></div>`;root.appendChild(row);});
+function renderCssPresetLibrary(root){if(!root)return;const active=currentSessionData?.customCssEnabled===false?null:currentSessionData?.customCssId,theme=MimaStandalone.getThemeSettings?.(),globalId=theme?.globalCssEnabled===false?null:theme?.globalCssPresetId;
+ const list=mimaVisibleResources('css',cssPresets);root.innerHTML='';if(!list.length){root.innerHTML='<div class="mima-category-empty"><p class="row-sub">这里还没有 CSS 预设。可以先创建空分类，再导入或新建样式。</p><div class="toolbar"><button type="button" class="primary-btn" onclick="openCssPresetEditor()">＋ 新建 CSS</button><button type="button" class="ghost-btn" onclick="chooseCssImport()">⇧ 导入 CSS</button></div></div>';return;}
+ list.sort((a,b)=>Number(!!b.favorite)-Number(!!a.favorite)||String(a.name).localeCompare(String(b.name),'zh')).forEach(p=>{const global=p.scope==='app',mounted=global?p.id===globalId:p.id===active;const row=document.createElement('div');row.className=`library-card ${mounted?'mounted':''}`;row.innerHTML=`<label class="mima-resource-select"><input type="checkbox" ${mimaCategorySelected.css.has(p.id)?'checked':''} onchange="mimaCategorySelect('css','${p.id}',this.checked)"> 选入批量移动</label><div class="card-title"><span>${escapeHtml(p.name)}</span>${mounted?`<span class="tag">${global?'全局挂载':'当前 Session'}</span>`:''}</div><div class="card-desc">${escapeHtml(p.category||'未分类')} · ${cssScopeLabel(p.scope)} · ${String(p.css||'').length} 字符</div><div class="card-actions"><button class="${mounted?'primary-btn':'ghost-btn'}" onclick="${global?'applyGlobalCssPreset':'applyCssPreset'}('${p.id}')">${global?'应用到全局':mounted?'重新启用':'应用到聊天'}</button><button class="ghost-btn" onclick="mimaToggleFavorite('css','${p.id}')">${p.favorite?'★ 已收藏':'☆ 收藏'}</button><button class="ghost-btn" onclick="openCssPresetEditor('${p.id}')">编辑</button>${String(p.css||'').length>200000&&mounted?`<button class="danger-btn" onclick="${global?'unapplyGlobalCssPreset':'unapplyCss'}()">停用大型 CSS</button>`:''}<button class="ghost-btn" onclick="duplicateCssPreset('${p.id}')">复制</button><button class="ghost-btn" onclick="exportCssPreset('${p.id}')">导出</button><button class="danger-btn" onclick="deleteCssPreset('${p.id}')">删除</button></div>`;root.appendChild(row);});
 }
-function openCssPresetEditor(id=null){const p=id?cssPresets.find(x=>x.id===id):{name:'',css:'',scope:'story'};const giant=String(p?.css||'').length>200000;editorState={type:'css-preset',id,giant,loaded:!giant};qs('editor-title').textContent=id?`编辑 CSS · ${p?.name||''}`:'新建 CSS Preset（CSS 预设）';qs('editor-eyebrow').textContent='CSS PRESET（CSS 预设）';qs('editor-body').innerHTML=`<div class="form-grid"><div class="form-full"><label class="form-label">名称</label><input id="css-pre-name" class="field" value="${escapeHtml(p?.name||'')}"></div><div class="form-full"><label class="form-label">分类</label><input id="css-pre-category" class="field" value="${escapeHtml(p?.category||'未分类')}"></div><div class="form-full"><label class="form-label">Scope（作用域）</label><select id="css-pre-scope" class="field"><option value="story" ${p?.scope==='story'||!p?.scope?'selected':''}>自定义 HTML / 剧情内容（最安全）</option><option value="global" ${p?.scope==='global'?'selected':''}>剧情聊天区域</option><option value="app" ${p?.scope==='app'?'selected':''}>咪嘛馆全局 UI + HTML（全局二改）</option><option value="novel" ${p?.scope==='novel'?'selected':''}>Novel Studio（小说）</option><option value="assistant" ${p?.scope==='assistant'?'selected':''}>Assistant Studio（助手）</option></select><div class="row-sub">“咪嘛馆全局”会按原样应用 CSS，可修改顶栏、设置中心、输入框和剧情 HTML；若样式把 UI 隐藏，请重新打开页面后在外观里点“🚑 临时禁用”；极端情况下可在网址末尾加 <code>?noCss=1</code> 进入 CSS 安全模式。</div></div><div class="form-full">${giant?`<div class="row-sub" style="padding:12px;border:1px solid currentColor">这个 CSS 有 ${String(p.css).length.toLocaleString()} 字符，默认不加载正文以保护手机。可以直接修改名称、分类或作用域并保存，CSS 原文保持不变。<button type="button" class="ghost-btn" onclick="mimaLoadLargeCssForEdit()">确认后加载巨型 CSS</button></div>`:''}<label class="form-label">CSS（样式）</label><textarea id="css-pre-code" class="field textarea tall css-code-editor" spellcheck="false" ${giant?'disabled':''} placeholder="/* 直接写 CSS，不用 <style> */&#10;system, .status-card { padding: 12px; border-radius: 16px; }">${giant?'':escapeHtml(p?.css||'')}</textarea></div></div>`;setupEditorButtons(id?()=>deleteCssPreset(id):null,saveCssPresetEditor);qs('editor-modal').classList.remove('hidden')}
+function openCssPresetEditor(id=null){const p=id?cssPresets.find(x=>x.id===id):{name:'',css:'',scope:'story'};const giant=String(p?.css||'').length>200000;editorState={type:'css-preset',id,giant,loaded:!giant};qs('editor-title').textContent=id?`编辑 CSS · ${p?.name||''}`:'新建 CSS Preset（CSS 预设）';qs('editor-eyebrow').textContent='CSS PRESET（CSS 预设）';qs('editor-body').innerHTML=`<div class="form-grid"><div class="form-full"><label class="form-label">名称</label><input id="css-pre-name" class="field" value="${escapeHtml(p?.name||'')}"></div><div class="form-full"><label class="form-label">分类</label><input id="css-pre-category" class="field" list="mima-css-category-choices" value="${escapeHtml(p?.category||'未分类')}"><datalist id="mima-css-category-choices">${mimaCategoryEntries('css').map(c=>`<option value="${escapeHtml(c.name)}"></option>`).join('')}</datalist></div><div class="form-full"><label class="form-label">Scope（作用域）</label><select id="css-pre-scope" class="field"><option value="story" ${p?.scope==='story'||!p?.scope?'selected':''}>自定义 HTML / 剧情内容（最安全）</option><option value="global" ${p?.scope==='global'?'selected':''}>剧情聊天区域</option><option value="app" ${p?.scope==='app'?'selected':''}>咪嘛馆全局 UI + HTML（全局二改）</option><option value="novel" ${p?.scope==='novel'?'selected':''}>Novel Studio（小说）</option><option value="assistant" ${p?.scope==='assistant'?'selected':''}>Assistant Studio（助手）</option></select><div class="row-sub">“咪嘛馆全局”会按原样应用 CSS，可修改顶栏、设置中心、输入框和剧情 HTML；若样式把 UI 隐藏，请重新打开页面后在外观里点“🚑 临时禁用”；极端情况下可在网址末尾加 <code>?noCss=1</code> 进入 CSS 安全模式。</div></div><div class="form-full">${giant?`<div class="row-sub" style="padding:12px;border:1px solid currentColor">这个 CSS 有 ${String(p.css).length.toLocaleString()} 字符，默认不加载正文以保护手机。可以直接修改名称、分类或作用域并保存，CSS 原文保持不变。<button type="button" class="ghost-btn" onclick="mimaLoadLargeCssForEdit()">确认后加载巨型 CSS</button></div>`:''}<label class="form-label">CSS（样式）</label><textarea id="css-pre-code" class="field textarea tall css-code-editor" spellcheck="false" ${giant?'disabled':''} placeholder="/* 直接写 CSS，不用 <style> */&#10;system, .status-card { padding: 12px; border-radius: 16px; }">${giant?'':escapeHtml(p?.css||'')}</textarea></div></div>`;setupEditorButtons(id?()=>deleteCssPreset(id):null,saveCssPresetEditor);qs('editor-modal').classList.remove('hidden')}
 function mimaLoadLargeCssForEdit(){if(editorState?.type!=='css-preset'||!editorState.giant)return;const p=cssPresets.find(x=>x.id===editorState.id);if(!p)return toast('原始 CSS 已不存在；未改变任何数据');if(!confirm(`确定加载 ${String(p.css).length.toLocaleString()} 字符 CSS？低内存手机可能卡顿。`))return;qs('css-pre-code').disabled=false;qs('css-pre-code').value=p.css;editorState.loaded=true;const initial=editorInitialForm?.find(field=>field[0]==='css-pre-code');if(initial)initial[1]=p.css;}
-async function saveCssPresetEditor(){const original=editorState?.id?cssPresets.find(x=>x.id===editorState.id):null;if(editorState?.giant&&!editorState.loaded&&!original)return toast('原始巨型 CSS 不存在，拒绝保存空正文');const wantedScope=qs('css-pre-scope').value;const body={name:qs('css-pre-name').value.trim()||'未命名 CSS（样式）',category:(qs('css-pre-category').value||'未分类').trim().slice(0,60),scope:['story','global','app','novel','assistant'].includes(wantedScope)?wantedScope:'story',surface:wantedScope==='novel'?'novel':wantedScope==='assistant'?'assistant':wantedScope==='app'?'global':'chat',css:editorState?.giant&&!editorState.loaded?original.css:stripEmbeddedStyleTags(qs('css-pre-code').value),atelierReleaseKey:editorState.id?((original?.css||'')===(editorState?.giant&&!editorState.loaded?original.css:stripEmbeddedStyleTags(qs('css-pre-code').value))?(original?.atelierReleaseKey||''):''):''};const res=await fetchStory(editorState.id?`/css-presets/${editorState.id}`:'/css-presets',editorState.id?'PATCH':'POST',body);if(!res.success)return toast(res.msg||'保存 CSS 失败');const saved=res.data;closeEditor();await reloadCssLibrary();const visual=await applyCustomCss();await openSettings('appearance');toast(`CSS Preset（CSS 预设）「${saved.name}」已保存${visual?.status==='FAILED'?'；外观未应用，保留上一成功版本':''}`)}
-async function applyCssPreset(id){const p=cssPresets.find(x=>x.id===id);if(!p)return;if(p.scope==='app')return applyGlobalCssPreset(id);if(!await patchCurrent({customCssId:id,customCssEnabled:true},true,{paint:false}))return;resumeCssAfterExplicitEnable();const visual=await applyCustomCss();if(settingsTab==='appearance')await renderSettings();if(visual.status==='APPLIED')toast('已切换当前剧情 CSS');return visual;}
-async function unapplyCss(){if(!await patchCurrent({customCssId:null,customCssEnabled:false},true,{paint:false}))return;await applyCustomCss();if(settingsTab==='appearance')await renderSettings();toast('当前剧情已取消 CSS');}
+async function saveCssPresetEditor(){const original=editorState?.id?cssPresets.find(x=>x.id===editorState.id):null;if(editorState?.giant&&!editorState.loaded&&!original)return toast('原始巨型 CSS 不存在，拒绝保存空正文');const wantedScope=qs('css-pre-scope').value;const body={name:qs('css-pre-name').value.trim()||'未命名 CSS（样式）',category:(qs('css-pre-category').value||'未分类').trim().slice(0,60),scope:['story','global','app','novel','assistant'].includes(wantedScope)?wantedScope:'story',surface:wantedScope==='novel'?'novel':wantedScope==='assistant'?'assistant':wantedScope==='app'?'global':'chat',css:editorState?.giant&&!editorState.loaded?original.css:stripEmbeddedStyleTags(qs('css-pre-code').value),atelierReleaseKey:editorState.id?((original?.css||'')===(editorState?.giant&&!editorState.loaded?original.css:stripEmbeddedStyleTags(qs('css-pre-code').value))&&original?.scope===wantedScope&&(original?.surface||'chat')===(wantedScope==='novel'?'novel':wantedScope==='assistant'?'assistant':wantedScope==='app'?'global':'chat')?(original?.atelierReleaseKey||''):''):''};const selectedGlobal=MimaStandalone.getThemeSettings?.();const active=!!original&&(currentSessionData?.customCssId===original.id||selectedGlobal?.globalCssEnabled!==false&&selectedGlobal?.globalCssPresetId===original.id);const contentChanged=!!original&&['css','scope','surface','atelierReleaseKey'].some(k=>(original[k]||'')!==(body[k]||''));const saveAsNew=active&&contentChanged;
+ if(saveAsNew)body.name=body.name+' · 未启用修改';
+ let forked=saveAsNew;
+ let res=await fetchStory(editorState.id&&!saveAsNew?`/css-presets/${editorState.id}`:'/css-presets',editorState.id&&!saveAsNew?'PATCH':'POST',body);
+ if(!res?.success&&res?.code==='E_CSS_REFERENCED_FORK_REQUIRED'&&original&&contentChanged){
+  // Another story/tab may have mounted this exact CSS after the editor opened.
+  // Never retry PATCH: copy once as a new inert resource without its old ID.
+  forked=true;res=await fetchStory('/css-presets','POST',{...body,name:body.name+' · 未启用修改'});
+ }
+ if(!res?.success)return toast(res?.msg||'保存 CSS 失败');const saved=res.data;closeEditor();await reloadCssLibrary();refreshCssLibraryView();toast(forked?`已另存「${saved.name}」，原 CSS 及其它剧情保持不变；新预设未启用`:`CSS 预设「${saved.name}」已保存到库，未自动启用；当前外观保持不变`)}
+let storyCssSelectionEpoch=0;
+function applyCssPreset(id){
+ if(cssPresets.find(x=>x.id===id)?.scope==='app')return applyGlobalCssPreset(id);
+ const intent=++storyCssSelectionEpoch,owner=currentSessionId;
+ const navigation=sessionNavigationEpoch;
+ return queueCssSelection(()=>{if(intent!==storyCssSelectionEpoch||owner!==currentSessionId||navigation!==sessionNavigationEpoch)return {status:'STALE'};if(cssDisableVisualHold.story?.sessionId===owner)cssDisableVisualHold.story=null;return commitStoryCssPreset(id,intent,owner);});
+}
+async function commitStoryCssPreset(id,intent,owner){
+ const p=cssPresets.find(x=>x.id===id);if(!p)return {status:'FAILED',error:'CSS 不存在'};
+ if(p.scope==='app')return {status:'STALE',error:'CSS 作用域已改变，请重新选择'};
+ const old=currentSessionData,navigation=sessionNavigationEpoch;
+ if(!owner||old?.id!==owner)return {status:'STALE'};
+ const expected={recordRevision:old.recordRevision,customCssId:old.customCssId||null,customCssEnabled:old.customCssEnabled};
+ const identity=cssIdentityCached(p);
+ const retry=resumeCssAfterExplicitEnable('story',p,owner);if(!retry)return {status:'SAFETY_MODE'};
+ const visual=await applyCustomCss({sessionPreset:p,commitIntent:'story',expected,retry});
+ if(visual?.status!=='APPLIED'){refreshCssLibraryView();return visual;}
+ const valid=()=>intent===storyCssSelectionEpoch&&cssPaintEpoch===visual.generation&&currentSessionId===owner&&sessionNavigationEpoch===navigation&&currentSessionData?.recordRevision===expected.recordRevision&&
+  cssPresets.some(x=>x.id===id&&cssIdentityCached(x)===identity);
+ if(!valid()){cssRecoveryClearPending(visual.generation);await applyCustomCss();return {status:'STALE'};}
+ cssRecoveryPhase(visual.generation,'commit_unknown');
+ let res;try{res=await fetchStory(`/sessions/${encodeURIComponent(owner)}/css-selection`,'POST',{expected,candidate:{customCssId:id,customCssEnabled:true},identity});}catch(error){res={success:false,msg:error?.message||String(error)};}
+ if(!res?.success){
+  return recoverCssCommit(visual.generation,res?.msg||'存储拒绝');
+ }
+ cssRecoveryCommitResult(visual.generation,true);
+ if(currentSessionId===owner&&sessionNavigationEpoch===navigation&&currentSessionData?.recordRevision===expected.recordRevision)currentSessionData=res.data;
+ if(intent!==storyCssSelectionEpoch||currentSessionId!==owner||sessionNavigationEpoch!==navigation)return {status:'STALE',committed:true};
+ if(cssPaintEpoch!==visual.generation)await applyCustomCss();
+ try{await refreshSessionSummaryList()}catch(e){console.error('CSS 选择保存后列表刷新失败',e)}
+ refreshCssLibraryView();toast('已应用并保存当前剧情 CSS');return visual;
+}
+function unapplyCss(){
+ const intent=++storyCssSelectionEpoch,owner=currentSessionId,navigation=sessionNavigationEpoch;
+ return queueCssSelection(async()=>{
+  if(intent!==storyCssSelectionEpoch||owner!==currentSessionId||navigation!==sessionNavigationEpoch)return {status:'STALE'};
+  if(!owner||currentSessionData?.id!==owner)return {status:'FAILED',error:'请先打开剧情'};
+  const expected={recordRevision:currentSessionData.recordRevision,customCssId:currentSessionData.customCssId||null,customCssEnabled:currentSessionData.customCssEnabled};
+  const tx=await stageCssDisable('story',owner);if(tx.status!=='READY')return tx;
+  const response=await saveCssDisable(`/sessions/${encodeURIComponent(owner)}/css-disable`,{expected,clearSelection:true},'story',owner);
+  if(response.status!=='SAVED'){await settleCssDisableFailure(tx,response);return response;}
+  if(currentSessionId===owner&&navigation===sessionNavigationEpoch&&response.canonical)currentSessionData=response.canonical;
+  finishCssDisable(tx);
+  if(intent===storyCssSelectionEpoch&&owner===currentSessionId&&navigation===sessionNavigationEpoch){refreshCssLibraryView();toast('当前剧情已取消 CSS，样式原件仍保留在库中');}
+  return {status:'APPLIED',saved:true};
+ });
+}
+
+// Disabling must not compile the other CSS layer (which may itself be broken),
+// nor persist a success before the target style is visibly disconnected.
+async function stageCssDisable(surface,sessionId=null){
+ const owner=surface==='story'?sessionId:null,hold={sessionId:owner,token:Symbol('css-disable')};
+ if(surface==='story'&&currentSessionId!==owner)return {status:'STALE'};
+ // Install the hold BEFORE awaiting the old paint. Otherwise a font or
+ // Atelier notification in that gap could repaint the disabled CSS.
+ cssDisableVisualHold[surface]=hold;
+ cssPaintController?.abort();++cssPaintEpoch;cssPaintRollback=null;cssPaintIdentity=null;
+ try{if(cssPaintPromise)await cssPaintPromise;}catch(e){console.warn('[CSS disable] prior paint stopped',e);}
+ if(cssDisableVisualHold[surface]!==hold||surface==='story'&&currentSessionId!==owner){
+  if(cssDisableVisualHold[surface]===hold)cssDisableVisualHold[surface]=null;
+  return {status:'STALE'};
+ }
+ const tag=surface==='global'?ensureGlobalCssStyle():ensureCustomCssStyle();
+ const existing=cssMounted.get(tag.id),theme=surface==='global'?(MimaStandalone.getThemeSettings?.()||{}):null;
+ const priorProject=surface==='global'?window.MimaAtelierCore?.getApplied?.():null;
+ const priorPreset=surface==='global'?cssPresets.find(p=>p.id===theme.globalCssPresetId&&p.scope==='app')||existing?.p:null;
+ const oldText=existing?.css??tag.textContent,oldThemeCache=lastCssThemeSettings;
+ try{
+  tag.textContent='';
+  if(surface==='global'){
+   const disabledTheme={...theme,globalCssPresetId:null,globalCssEnabled:false};
+   const accepted=await window.MimaAtelierCore?.syncGlobalAppearance?.(null,{allowLegacy:false});
+   if(accepted===false)throw Error('工坊预览仍占用外观，未取消全局 CSS');
+   MimaThemeEngine?.apply?.(disabledTheme);
+  }
+  MimaFontManager?.refreshUrlFontUsage?.();
+  await cssPaintFrame();
+  if(cssDisableVisualHold[surface]!==hold||surface==='story'&&currentSessionId!==owner)throw new DOMException('CSS 操作已被新请求替代','AbortError');
+  return {status:'READY',surface,sessionId:owner,hold,tag,existing,theme,priorPreset,priorProject,oldText,oldThemeCache};
+ }catch(error){
+  if(cssDisableVisualHold[surface]===hold){cssDisableVisualHold[surface]=null;tag.textContent=oldText;
+   if(surface==='global'){
+    try{await window.MimaAtelierCore?.syncGlobalAppearance?.(priorPreset||null,{allowLegacy:false,preparedProject:priorProject});}catch(e){console.error('[CSS disable] atelier restore failed',e);}
+    try{MimaThemeEngine?.apply?.(theme);}catch(e){console.error('[CSS disable] theme restore failed',e);}
+   }
+   MimaFontManager?.refreshUrlFontUsage?.();
+  }
+  if(error?.name==='AbortError')return {status:'STALE'};
+  toast('CSS 未取消，原样式仍保留：'+(error?.message||String(error)));
+  return {status:'FAILED',error:error?.message||String(error)};
+ }
+}
+function finishCssDisable(tx){
+ if(cssDisableVisualHold[tx.surface]!==tx.hold)return;
+ if(tx.surface==='story'&&currentSessionId!==tx.sessionId){cssDisableVisualHold.story=null;return;}
+ cssDisableVisualHold[tx.surface]=null;
+ if(tx.surface==='global'){lastCssThemeSettings={...tx.theme,globalCssPresetId:null,globalCssEnabled:false};window.MimaInteraction?.apply?.(null);}
+ // Release only this layer. Do not touch the other story/global font/image
+ // leases, History, theme presets or CSS recovery receipts.
+ tx.existing?.result?.release?.();cssMounted.delete(tx.tag.id);
+ window.MimaAtelierCore?.releaseAssets?.(tx.surface==='global'?'library-global':'library-session');
+ MimaFontManager?.refreshUrlFontUsage?.();
+}
+async function settleCssDisableFailure(tx,response){
+ if(cssDisableVisualHold[tx.surface]!==tx.hold)return;
+ if(tx.surface==='story'&&currentSessionId!==tx.sessionId){cssDisableVisualHold.story=null;return;}
+ if(response.status==='FAILED'){
+  cssDisableVisualHold[tx.surface]=null;tx.tag.textContent=tx.oldText;
+  if(tx.surface==='global'){
+   lastCssThemeSettings=tx.oldThemeCache;
+   try{await window.MimaAtelierCore?.syncGlobalAppearance?.(tx.priorPreset||null,{allowLegacy:false,preparedProject:tx.priorProject});}catch(e){console.error('[CSS disable] rollback atelier',e);}
+   try{MimaThemeEngine?.apply?.(tx.theme);}catch(e){console.error('[CSS disable] rollback theme',e);}
+  }
+  MimaFontManager?.refreshUrlFontUsage?.();
+  toast('CSS 取消未保存，已恢复原画面：'+(response.error||'资料状态变化'));
+ }else{
+  // Unknown commit outcome: leave this CSS visually hidden without claiming
+  // durability. Subsequent explicit apply or a page reload can reconcile it.
+  toast('CSS 已临时隐藏，保存结果尚未确认；刷新前请核对当前外观，必要时使用 CSS 安全模式');
+ }
+ refreshCssLibraryView();
+}
+async function saveCssDisable(path,body,surface,owner){
+ let r;
+ try{r=await fetchStory(path,'POST',body);}catch(error){r={success:false,msg:error?.message||String(error)};}
+ if(r?.success)return {status:'SAVED',canonical:r.data};
+ // A lost response is not proof of a failed transaction. Re-read the full
+ // canonical snapshot, including CSS identity, before any visual rollback.
+ try{
+  const read=await fetchStory('/css-selection/canonical-view','POST',{sessionIds:owner?[owner]:[]});
+  if(!read?.success)throw Error(read?.msg||'独立资料校验失败');
+  const canonical=surface==='global'?read.data.themeSettings:read.data.sessions.find(x=>x.id===owner);
+  if(!canonical)return {status:'UNKNOWN',error:'原剧情未读到'};
+  if(surface==='global'?canonical.globalCssEnabled===false&&!canonical.globalCssPresetId:canonical.customCssEnabled===false&&!canonical.customCssId){
+   return {status:'SAVED',canonical};
+  }
+  const expected=body.expected||{};
+  const unchanged=surface==='global'?
+   (canonical.globalCssPresetId||null)===(expected.globalCssPresetId||null)&&(canonical.globalCssEnabled!==false)===(expected.globalCssEnabled!==false)&&(canonical.updatedAt||'')===(expected.updatedAt||''):
+   (canonical.customCssId||null)===(expected.customCssId||null)&&(canonical.customCssEnabled!==false)===(expected.customCssEnabled!==false)&&canonical.recordRevision===expected.recordRevision;
+  return {status:unchanged?'FAILED':'UNKNOWN',error:r?.msg||'其它窗口已改变 CSS 选择',canonical};
+ }catch(error){return {status:'UNKNOWN',error:error?.message||String(error)};}
+}
+
 
 async function emergencyDisableCss(){
  // Disarm in-flight asynchronous CSS paints BEFORE removing styles. A failed
  // storage operation must never turn this temporary visual rescue into a lie.
- ++globalCssSelectionEpoch;emergencyCssVisualBypass=true;window.MimaCssRecoveryBypass=true;++cssPaintEpoch;cssPaintController?.abort();
+ const owner=currentSessionId,navigation=sessionNavigationEpoch;
+ ++globalCssSelectionEpoch;++storyCssSelectionEpoch;cssDisableVisualHold.story=null;cssDisableVisualHold.global=null;emergencyCssVisualBypass=true;window.MimaCssRecoveryBypass=true;++cssPaintEpoch;cssPaintRollback=null;cssPaintController?.abort();
  try{window.MimaAtelierCore?.disabled?.();}catch(e){console.error('[CSS rescue] atelier disable',e)}
  ensureCustomCssStyle().textContent='';ensureGlobalCssStyle().textContent='';for(const x of cssMounted.values())x.result?.release?.();cssMounted.clear();const novel=qs('novel-project-custom-css');if(novel)novel.textContent='';MimaThemeEngine?.apply?.(MimaStandalone.getThemeSettings());
  toast('🚑 已在当前页面临时隐藏自定义 CSS，正在保存停用设置…');
- let sessionSaved=!currentSessionId,globalSaved=false;const failures=[];
- try{if(currentSessionId){sessionSaved=!!(await patchCurrent({customCssEnabled:false},true));if(!sessionSaved)failures.push('剧情：保存未确认');}}
+ return queueCssSelection(async()=>{
+ let sessionSaved=!owner,globalSaved=false;const failures=[];
+ try{if(owner){const r=await fetchStory(`/sessions/${encodeURIComponent(owner)}/css-disable`,'POST',{});sessionSaved=!!r?.success;if(sessionSaved&&currentSessionId===owner&&sessionNavigationEpoch===navigation)currentSessionData=r.data;if(!sessionSaved)failures.push('剧情：'+(r?.msg||'保存未确认'));}}
  catch(e){failures.push(`剧情：${e.code||''} ${e.message}`);console.error('[CSS rescue] session persistence failed',e);}
- try{const r=await fetchStory('/theme','PATCH',{globalCssEnabled:false});globalSaved=!!r?.success;if(!globalSaved)failures.push(`全局：${r?.code||''} ${r?.msg||'保存未确认'}`);}
+ try{const r=await fetchStory('/theme/css-disable','POST',{});globalSaved=!!r?.success;if(!globalSaved)failures.push(`全局：${r?.code||''} ${r?.msg||'保存未确认'}`);}
  catch(e){failures.push(`全局：${e.code||''} ${e.message}`);console.error('[CSS rescue] global persistence failed',e);}
  try{if(settingsTab==='appearance')renderAppearanceTab(qs('settings-content'));}catch(e){console.error('[CSS rescue] settings refresh failed',e);}
  if(sessionSaved&&globalSaved)toast('🚑 CSS 已在当前页隐藏，剧情及全局停用均已保存');
  else toast(`⚠️ 当前页已隐藏 CSS；剧情${sessionSaved?'已保存':'未保存'}，全局${globalSaved?'已保存':'未保存'}。刷新可能恢复未保存部分；可用 ?noCss=1 进入。${failures.join('；')}`);
  return {visualHidden:true,sessionSaved,globalSaved,failures};
+ });
 }
-async function reenableCss(){if(!currentSessionData?.customCssId)return;resumeCssAfterExplicitEnable();if(!await patchCurrent({customCssEnabled:true},true,{paint:false}))return;await applyCustomCss();if(settingsTab==='appearance')await renderSettings();}
-async function duplicateCssPreset(id){const p=cssPresets.find(x=>x.id===id);if(!p)return;const res=await fetchStory('/css-presets','POST',{name:`${p.name} · 副本`,css:p.css,scope:p.scope,surface:p.surface,category:p.category,atelierReleaseKey:p.atelierReleaseKey||'',favorite:false});if(res.success){await reloadCssLibrary();await openSettings('appearance');toast('CSS Preset（CSS 预设）已复制')}else toast(res.msg||'复制失败')}
-async function deleteCssPreset(id){if(!confirm('删除这个 CSS Preset（CSS 预设）？挂载它的 Session（剧情会话）会自动取消应用。'))return;const res=await fetchStory(`/css-presets/${id}`,'DELETE');if(!res.success)return toast(res.msg||'删除失败');closeEditor();await reloadCssLibrary();await applyCustomCss();await openSettings('appearance')}
+async function reenableCss(){const id=currentSessionData?.customCssId;if(!id)return;const result=await applyCssPreset(id);if(settingsTab==='appearance'&&isSettingsOpen())await renderSettings();return result;}
+async function duplicateCssPreset(id){const p=cssPresets.find(x=>x.id===id);if(!p)return;const res=await fetchStory('/css-presets','POST',{name:`${p.name} · 副本`,css:p.css,scope:p.scope,surface:p.surface,category:p.category,atelierReleaseKey:p.atelierReleaseKey||'',favorite:false});if(res.success){await reloadCssLibrary();refreshCssLibraryView();toast('CSS Preset（CSS 预设）已复制')}else toast(res.msg||'复制失败')}
+async function deleteCssPreset(id){if(!confirm('删除这个 CSS Preset（CSS 预设）？挂载它的 Session（剧情会话）会自动取消应用。'))return;const res=await fetchStory(`/css-presets/${id}`,'DELETE');if(!res.success)return toast(res.msg||'删除失败');closeEditor();await reloadCssLibrary();if(currentSessionId){const fresh=await fetchStory('/sessions/'+encodeURIComponent(currentSessionId));if(fresh?.success)currentSessionData=fresh.data;else return toast('CSS 已删除；当前剧情状态重新读取失败，请重新打开剧情');}await applyCustomCss();refreshCssLibraryView()}
 function chooseCssImport(){qs('css-file-input').value='';qs('css-file-input').click()}
 async function importCssFile(file){if(!file)return;
- const picked=prompt('导入后选择作用域：1=咪嘛馆全局（全部界面），2=Novel Studio，3=聊天正文，4=Assistant Studio；取消则不导入。','1');
- if(picked===null)return;const scope=({'1':'app','2':'novel','3':'story','4':'assistant'})[String(picked).trim()];if(!scope){alert('请输入 1 / 2 / 3 / 4');return;}
- try{const css=stripEmbeddedStyleTags(await file.text());const res=await fetchStory('/css-presets','POST',{name:file.name.replace(/\.css$/i,'')||'导入 CSS',css,scope,surface:scope==='app'?'global':scope==='novel'?'novel':scope==='assistant'?'assistant':'chat'});
-  if(!res.success)throw Error(res.msg||'导入失败');await reloadCssLibrary();let visual=null;
-  if(scope==='app')visual=await applyGlobalCssPreset(res.data.id,{render:false});
-  else if(scope==='story'&&currentSessionId){if(await patchCurrent({customCssId:res.data.id,customCssEnabled:true},true,{paint:false}))visual=await applyCustomCss();}
-  await openSettings('appearance');
-  toast(visual?.status==='FAILED'?'CSS 原件已保存；应用失败，保留上一成功外观':visual?.status==='STALE'?'CSS 已保存；正在处理更新的主题':scope==='novel'||scope==='assistant'?'CSS 已保存，可在对应工作区挂载':'CSS 已导入并应用');
+ const picked=prompt('导入 CSS 作用域：1=咪嘛馆全局，2=Novel Studio，3=剧情正文，4=Assistant Studio；取消不导入。','1');
+ if(picked===null)return;const scope=({'1':'app','2':'novel','3':'story','4':'assistant'})[String(picked).trim()];if(!scope)return toast('请输入 1 / 2 / 3 / 4');
+ const category=await mimaChooseCategory('css',true);if(category===null)return;
+ try{const css=stripEmbeddedStyleTags(await file.text());const res=await fetchStory('/css-presets','POST',{name:file.name.replace(/\.css$/i,'')||'导入 CSS',css,scope,category,surface:scope==='app'?'global':scope==='novel'?'novel':scope==='assistant'?'assistant':'chat'});
+  if(!res.success)throw Error(res.msg||'导入失败');await reloadCssLibrary();refreshCssLibraryView();toast('CSS 已保存到「'+category+'」，未启用；需要使用时点击“应用”');
  }catch(e){toast('CSS 导入失败：'+e.message);}
 }
 
@@ -2838,7 +3258,7 @@ async function copyDefaultCss(){try{const css=await loadDefaultCssSource();await
 async function exportDefaultCss(){try{const css=await loadDefaultCssSource();downloadText('mimamao-default-v1.0.9.css',css,'text/css;charset=utf-8');toast('咪嘛馆默认 CSS（样式）已导出')}catch(e){toast(`导出默认 CSS 失败：${e.message}`)}}
 async function forkDefaultCss(){try{const css=await loadDefaultCssSource();openCssPresetEditor();qs('css-pre-name').value='咪嘛馆默认主题 · 二改';qs('css-pre-scope').value='app';qs('css-pre-code').value=css;toast('默认 CSS 已装进编辑器，可直接全局二改')}catch(e){toast(`载入默认 CSS 失败：${e.message}`)}}
 function chooseFontImport(){qs('font-file-input').value='';qs('font-file-input').click()}
-async function importFontFile(file){try{const r=await MimaFontManager.importFile(file);fontRecords=await MimaFontManager.listMetadata();let selectionFailure=null;if(!MimaFontManager.getSelected('story'))try{await MimaFontManager.setSelected('story',r.family)}catch(error){selectionFailure=error}renderAppearanceTab(qs('settings-content'));toast(selectionFailure?`字体 ${r.family} 已保存，但尚未成功应用：${selectionFailure.message}`:r.duplicate?`字体文件与已收藏的「${r.family}」完全相同，已使用原记录`:`字体 ${r.family} 已导入`) }catch(e){toast(e.message)}}
+async function importFontFile(file){try{const r=await MimaFontManager.importFile(file);fontRecords=await MimaFontManager.listMetadata();refreshFontSelectors(fontRecords);const list=qs('font-list');if(list)renderLocalFontRows(list,fontRecords);toast(r.duplicate?`字体文件与已收藏的「${r.name}」完全相同，保留原记录`:`字体「${r.name}」已保存到库，未启用`);}catch(e){toast(e.message)}}
 async function exportReadableFonts(){
  try{await MimaFontBackup.start();}
  catch(error){toast('字体备份未开始：'+(error?.message||error));}
@@ -3123,16 +3543,16 @@ async function cacheUrlFontLocally(id,button){
     try{
         const source=MimaFontManager.urlFonts().find(f=>f.id===id);
         if(!source)throw new Error('字体链接已经删除');
-        const before={ui:MimaFontManager.getSelected('ui'),story:MimaFontManager.getSelected('story')};
-        const local=await MimaFontManager.cacheUrlFont(id);
+        await MimaFontManager.cacheUrlFont(id);
         fontRecords=await MimaFontManager.listMetadata();
-        // If this URL was active, switch those same surfaces to its persistent
-        // offline copy. Do not change unrelated choices or load unused fonts.
-        for(const kind of ['ui','story'])if(before[kind]===source.family)
-            await MimaFontManager.setSelected(kind,local.family);
-        const box=qs('settings-content');
-        if(box&&settingsTab==='appearance')await renderAppearanceTab(box);
-        toast('离线字体已保存到本机字体库；完整备份请勾选「包含字体文件」并导出到文件 App');
+        // Downloading is not selecting; the separate "应用离线" button is the
+        // only authority to switch. Refresh rows, not the entire settings tab.
+        if(settingsTab==='appearance'){
+            const list=qs('url-font-list');if(list){stopUrlFontPreview();list.innerHTML=urlFontItemsHtml();}
+            refreshFontSelectors(fontRecords);
+            const localList=qs('font-list');if(localList)renderLocalFontRows(localList,fontRecords);
+        }
+        toast('离线字体已保存（当前字体不变）；需要切换请点「应用离线」。完整备份请包含字体文件');
     }catch(error){toast('保存离线字体失败：'+(error?.message||String(error)));}
     finally{if(button?.isConnected){button.disabled=false;button.textContent='下载离线';}}
 }
@@ -3248,19 +3668,9 @@ async function batchImportUrlFonts(){
     finally{button.disabled=false;button.textContent='＋ 批量导入到字体库';}
 }
 async function saveUrlFont(){
-    try{
-        const f=MimaFontManager.addUrlFont(qs('url-font-name').value,qs('url-font-address').value,qs('url-font-family').value);
-        // Re-render the collection without claiming that the remote font loaded.
-        await renderAppearanceTab(qs('settings-content'));
-        try{
-            await MimaFontManager.setSelected('story',f.family);
-            const picker=qs('font-story-select');if(picker)picker.value=f.family;
-            toast('字体链接已收藏，浏览器确认字体加载成功');
-        }catch(error){
-            const picker=qs('font-story-select');if(picker)picker.value=MimaFontManager.getSelected('story');
-            toast('链接已收藏，但字体未能应用：'+(error?.message||String(error)));
-        }
-    }catch(e){toast(e?.message||String(e));}
+ try{const f=MimaFontManager.addUrlFont(qs('url-font-name').value,qs('url-font-address').value,qs('url-font-family').value);
+  refreshFontSelectors(fontRecords);const list=qs('url-font-list');if(list){stopUrlFontPreview();list.innerHTML=urlFontItemsHtml();}toast('网络字体「'+f.name+'」已收藏，未启用');
+ }catch(e){toast(e?.message||String(e));}
 }
 async function activateUrlFont(id){
     const f=MimaFontManager.urlFonts().find(x=>x.id===id);if(!f)return toast('字体链接已不存在');
@@ -5079,7 +5489,7 @@ function restoreLegacyFont({syncSelection=true}={}){
 }
 
 // Expose inline handlers
-Object.assign(window,{setMimaFeedbackPreference,chooseMimaFeedbackSound,previewMimaFeedbackSound,resetMimaFeedbackSound,openMimaReleaseNotice,closeMimaReleaseNotice,setMimaReleaseNoticeOptOut,openGenerationTaskViewer,closeGenerationTaskViewer,copyGenerationTaskViewerText,importCurrentSessionAsSettingTemplate,chooseIndependentTemplate,saveIndependentTemplate,copyIndependentTemplate,setIndependentTemplateDefault,deleteIndependentTemplate,setImmersiveReading,saveCurrentSettingTemplate,duplicateSettingTemplate,setDefaultSettingTemplate,deleteSettingTemplate,exportSettingTemplate,importSettingTemplate,refreshSettingTemplateChoices,renderSettingTemplatePreview,manualRollingSummary,mimaFilterLibrary,mimaToggleFavorite,goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,choosePngResourceInspection,playInspectedPngInCompat,savePngSelectedResources,exportPngInspection,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,exportStoryTranscript,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,loadMemoryModels,selectMemoryModel,startFactMemoryEdit,cancelFactMemoryEdit,saveFactMemoryEdit,toggleMergeFactSelection,previewFactMemoryMerge,cancelFactMemoryMerge,confirmFactMemoryMerge,undoFactMemoryMerge,clearCoreMemory,deleteFactMemory,clearAllFactMemories,revokeRollingMemory,restoreRollingMemory,discardMemoryCandidate,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,cleanupSettingsSnapshotStaging,cleanupSettingsJsonTemp,resumeSettingsJsonTemp,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,saveUrlFont,activateUrlFont,removeUrlFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,mimaLoadLargeCssForEdit,stopAtelierAndRestoreCss,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,apiIdentityDraftChanged,syncTemperature,updateStoryTypography,resetStoryTypography,setAppearancePreviewSurface,setBuiltInTheme,dismissGenerationPanel,previewFailedGenerationRaw,recoverFailedGenerationRaw,repairFailedGenerationHtml,retryFailedGeneration,retryGenerationReconciliation,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,regenerateCurrentMsg,continueMsg,autoAdvance,restoreMessageVersion,stopGeneration,abandonUnknownGeneration,toggleGenerationPanelMinimize,restoreGenerationPanel,saveGenerationContextAndPreview,resumeGenerationAfterCapacityPreview});
+Object.assign(window,{recheckCssRecovery,exitCssSafetyMode,setMimaFeedbackPreference,chooseMimaFeedbackSound,previewMimaFeedbackSound,resetMimaFeedbackSound,openMimaReleaseNotice,closeMimaReleaseNotice,setMimaReleaseNoticeOptOut,openGenerationTaskViewer,closeGenerationTaskViewer,copyGenerationTaskViewerText,importCurrentSessionAsSettingTemplate,chooseIndependentTemplate,saveIndependentTemplate,copyIndependentTemplate,setIndependentTemplateDefault,deleteIndependentTemplate,setImmersiveReading,saveCurrentSettingTemplate,duplicateSettingTemplate,setDefaultSettingTemplate,deleteSettingTemplate,exportSettingTemplate,importSettingTemplate,refreshSettingTemplateChoices,renderSettingTemplatePreview,manualRollingSummary,mimaFilterLibrary,mimaToggleFavorite,goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,choosePngResourceInspection,playInspectedPngInCompat,savePngSelectedResources,exportPngInspection,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,exportStoryTranscript,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,loadMemoryModels,selectMemoryModel,startFactMemoryEdit,cancelFactMemoryEdit,saveFactMemoryEdit,toggleMergeFactSelection,previewFactMemoryMerge,cancelFactMemoryMerge,confirmFactMemoryMerge,undoFactMemoryMerge,clearCoreMemory,deleteFactMemory,clearAllFactMemories,revokeRollingMemory,restoreRollingMemory,discardMemoryCandidate,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,cleanupSettingsSnapshotStaging,cleanupSettingsJsonTemp,resumeSettingsJsonTemp,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,saveUrlFont,activateUrlFont,removeUrlFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,mimaLoadLargeCssForEdit,stopAtelierAndRestoreCss,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,apiIdentityDraftChanged,syncTemperature,updateStoryTypography,resetStoryTypography,setAppearancePreviewSurface,setBuiltInTheme,dismissGenerationPanel,previewFailedGenerationRaw,recoverFailedGenerationRaw,repairFailedGenerationHtml,retryFailedGeneration,retryGenerationReconciliation,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,regenerateCurrentMsg,continueMsg,autoAdvance,restoreMessageVersion,stopGeneration,abandonUnknownGeneration,toggleGenerationPanelMinimize,restoreGenerationPanel,saveGenerationContextAndPreview,resumeGenerationAfterCapacityPreview});
 
 
 window.MimaPlayTools?.register('native',{
@@ -5097,6 +5507,8 @@ window.MimaPlayTools?.register('native',{
 
 window.MimaTavernBridge={
     getSessionId:()=>currentSessionId,
+    getCssTarget:()=>({id:currentSessionId,epoch:sessionNavigationEpoch}),
+    applyCssPreset:applySavedCssResource,
     getSession:()=>currentSessionData?clone(currentSessionData):null,
     getPresets:()=>clone(presets),
     getRegexPacks:()=>clone(regexPacks),
@@ -5159,6 +5571,7 @@ async function mimaBoot(){
             missing.code='E_STARTUP_STORE_SCRIPT_MISSING';throw missing;
         }
         await MimaStandalone.init();
+        await reconcileCssRecovery();
         stage='bind_application';
         if(!mimaStartupBound){
             const inputIds=['story-input','session-file-input','png-inspector-input','persona-file-input','worldbook-file-input','regex-file-input','font-file-input','css-file-input','api-config-file-input','library-file-input','full-settings-file-input'];
@@ -5191,7 +5604,7 @@ async function mimaBoot(){
         stage='load_library_and_session';
         await loadAll();
         mimaStartupReady=true;
-        if(window.MimaCssRecoveryBypass)toast('上次 CSS 应用未完成，本次已进入安全外观；原 CSS 和存档均保留，可在外观页重新选择启用。');
+        if(window.MimaCssRecoveryBypass||cssRecoveryState.blocked.length)toast(cssRecoveryState.unsettled.length?'上次 CSS 应用中断，保存状态尚未确认；恢复记录已保留，可在外观页重新核对':cssRecoveryState.blocked.some(x=>x.status==='committed_visual_uncertain')?'上次 CSS 已保存，显示安全待确认；可在外观页主动重试':'上次 CSS 显示中断，故障候选保持隔离；可在外观页主动重试');
         // Resume only recorded deletions; imported orphan references require the explicit tools action.
         void window.MimaPlayTools?.recoverUnlinks().then(ok=>{if(ok===false)toast('小剧场挂载清理未完成，可在小剧场页重试；剧情原文保留。');}).catch(e=>{console.error('小剧场清理恢复失败',e);toast('小剧场挂载清理未完成，可在小剧场页重试；剧情原文保留。');});
         document.getElementById('mima-startup-failure')?.remove();
