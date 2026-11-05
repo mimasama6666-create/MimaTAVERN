@@ -36,7 +36,10 @@
    for(const row of rows){
      const candidate=candById.get(row.id),size=roughSize(row)+(candidate?roughSize(candidate):0);
      const expired=Number(row.createdAtMs||0)<cutoff;
-     if(expired||(!candidate&&(kept>=LIMIT_COUNT||bytes+size>LIMIT_BYTES))){deletes.push(row.id);continue;}
+     // A slow, still active paid request may exist before its full candidate is
+     // saved. Do not prune its only diagnostic-to-ledger identity mid-stream.
+     const recentActive=['preparing','requesting','provider_returned'].includes(row.status)&&Number(row.createdAtMs||0)>=Date.now()-12*3600000;
+     if(expired||(!candidate&&!recentActive&&(kept>=LIMIT_COUNT||bytes+size>LIMIT_BYTES))){deletes.push(row.id);continue;}
      keepIds.add(row.id);kept++;bytes+=size;
    }
    // Orphan full candidates are never allowed to outlive the parent diagnostic.
@@ -54,12 +57,24 @@
    return id;
  }
  function event(id,data={}){
-   if(!id||!data||!['request','transport_response','provider_result','settlement','manual_recovery','timing','preflight_failure','transformation_provenance'].includes(data.type))return Promise.resolve();
+   if(!id||!data||!['generation_prepared','dispatch_attempt','request','transport_response','provider_result','settlement','manual_recovery','timing','preflight_failure','transformation_provenance'].includes(data.type))return Promise.resolve();
    return transact(async()=>{
      const db=await open();const tx=db.transaction(STORE,'readwrite'),st=tx.objectStore(STORE),row=await waitRequest(st.get(id));
      // Deleting a record is final, even if a request still runs.
      if(row){
-       if(data.type==='preflight_failure'){
+       if(data.type==='generation_prepared'){
+         // Write correlation before fetch. Even when the later request-logging
+         // transaction fails, verified primary fragments can still be found.
+         row.generationId=pickString(data.generationId,120);
+         row.generationAttempt=Number(data.generationAttempt)||null;
+         row.model=pickString(data.model||row.model,160);
+         row.ownerTraceId=pickString(data.ownerTraceId,120);
+       }else if(data.type==='dispatch_attempt'){
+         row.generationId=pickString(data.generationId||row.generationId,120);
+         row.generationAttempt=Number(data.generationAttempt)||row.generationAttempt||null;
+         row.model=pickString(data.model||row.model,160);
+         row.requestDispatchAttempted=true;
+       }else if(data.type==='preflight_failure'){
          row.status='rejected';row.phase='preflight';row.requestSent=false;row.settledAt=new Date().toISOString();
          row.model=pickString(data.model,160);row.endpointOrigin=pickString(data.endpointOrigin,260);
          row.configuredWindow=Number(data.configuredWindow)||0;row.sourceCount=Number(data.sourceCount)||0;
@@ -75,6 +90,7 @@
          row.request=all.length<=MAX_REQUEST_CHARS?safe:null;
          row.requestTruncated=all.length>MAX_REQUEST_CHARS;
          row.requestChars=all.length;row.messageCount=safe.messages.length;row.model=safe.model;row.requestId=pickString(data.requestId,120);row.endpointOrigin=pickString(data.endpointOrigin,260);row.status='requesting';
+         row.requestSent=true;row.requestDispatchAttempted=true;
          row.requestBytes=Number(data.requestBytes)||0;row.preparationElapsedMs=Number.isFinite(data.preparationElapsedMs)?data.preparationElapsedMs:null;
          row.serializationElapsedMs=Number(data.serializationElapsedMs)||0;row.generationId=pickString(data.generationId,120);row.generationAttempt=Number(data.generationAttempt)||null;
        }else if(data.type==='timing'){
@@ -98,6 +114,7 @@
            regexVersions:data.regexVersions,admissionStage:pickString(data.admissionStage,120),contractMode:pickString(data.contractMode,80),recordedAt:new Date().toISOString()});
          row.transformations=row.transformations.slice(-12);
        }else if(data.type==='transport_response'){
+         row.requestDispatchAttempted=true;row.requestSent=true;
          row.transport={requestStartedAt:pickString(data.requestStartedAt,50),responseReceivedAt:pickString(data.responseReceivedAt,50),fetchElapsedMs:Number(data.fetchElapsedMs)||0,httpStatus:Number(data.httpStatus)||0,
            providerRequestId:pickString(data.providerRequestId,200),cfRay:pickString(data.cfRay,200)};
        }else if(data.type==='provider_result'){
@@ -160,26 +177,32 @@
    if(saved)return {id:record.id,raw:saved.raw,rawChars:saved.rawChars,complete:true,digest:saved.rawDigest,source:'full_candidate'};
    const raw=String(record.rawRejectedReply||'');
    const legacyLimited=String(record.action||'').startsWith('compat_')&&raw.length===24000&&!record.replyCaptureVersion;
-   if((record.rejectedReplyTruncated||!raw)&&record.status!=='committed'&&!String(record.action||'').startsWith('compat_')&&record.generationId&&Number.isInteger(record.generationAttempt)&&window.MimaLocalStore?.generationRead){
+   let ledgerReadError='';
+   if(record.phase!=='preflight'&&record.status!=='committed'&&!String(record.action||'').startsWith('compat_')&&record.generationId&&Number.isInteger(record.generationAttempt)&&window.MimaLocalStore?.generationRead){
+     try{
+     // A missing diagnostic 'request' event does not mean fetch never ran. Use
+     // the independently committed generation identity and stream receipt.
+     // Never borrow fragments from a different owner, or mix conflicting text.
      const read=await window.MimaLocalStore.generationRead({sessionId:record.sessionId,generationId:record.generationId,attempt:record.generationAttempt});
+     const receipt=read.receipt;
+     const ownerMatches=!record.traceId||!receipt?.ownerId||receipt.ownerId===record.traceId;
+     const dispatched=receipt?.requestDispatchAttempted===true||record.requestDispatchAttempted===true||record.requestSent===true||!!record.transport?.responseReceivedAt;
      const last=record.request?.messages?.at(-1),prefix=last?.role==='assistant'&&last.prefix===true?String(last.content||''):'';
-     let matches=read.text?.startsWith(raw),prefixObserved=false;
+     let matches=typeof read.text==='string'&&read.text.startsWith(raw),prefixObserved=false;
      if(!matches&&prefix){
-       // Older transport errors retained prefix+suffix, while the ledger
-       // already contains only the projected continuation suffix.
        if(raw.startsWith(prefix)){matches=read.text?.startsWith(raw.slice(prefix.length));prefixObserved=matches&&raw.length>prefix.length;}
        else if(prefix.startsWith(raw))matches=true;
      }
-     // Never borrow another request's fragments or replace a conflicting prefix.
-     if(read.complete&&read.text?.trim()&&matches){
-       // prefix:true does not prove that the gateway echoed the prefix:
-       // prefixReturnsSuffix gateways still use that request flag. Without
-       // observed prefix-inclusive bytes, keep the conservative count.
+     if(dispatched&&ownerMatches&&read.complete&&read.text?.trim()&&matches&&read.text.length>=raw.length&&(!raw||record.rejectedReplyTruncated||read.text.length>raw.length)){
        const expected=Math.max(prefixObserved?0:Number(record.responseChars)||0,...(record.timings||[]).map(t=>Math.max(0,(Number(t.receivedChars)||0)-(prefixObserved&&['first_visible_delta','last_delta','stream_finish'].includes(t.phase)?prefix.length:0),Number(t.chars)||0)));
-       return {id:record.id,raw:read.text,rawChars:read.text.length,complete:expected>0&&read.text.length>=expected,digest:null,source:'stream_fragments'};
+       // Contiguous local fragments are not proof the provider completed. An
+       // interrupted stream stays explicitly PARTIAL even when locally intact.
+       const complete=record.finishKind==='complete'&&expected>0&&read.text.length>=expected;
+       return {id:record.id,raw:read.text,rawChars:read.text.length,complete,digest:null,source:'stream_fragments'};
      }
+     }catch(error){ledgerReadError=String(error?.message||error);console.warn('独立流式账本读取失败，保留现有诊断原文',{diagnosticId:record.id,error});}
    }
-   return {id:record.id,raw,rawChars:raw.length,complete:!!raw&&!record.rejectedReplyTruncated&&!legacyLimited,digest:null,source:'diagnostic_preview'};
+   return {id:record.id,raw,rawChars:raw.length,complete:!!raw&&!record.rejectedReplyTruncated&&!legacyLimited,digest:null,source:'diagnostic_preview',...(ledgerReadError?{ledgerReadError}:{})};
  }
  async function candidatePreview(id){const record=await get(id);if(!record)throw Error('诊断记录不存在');return recoverySource(record);
  }

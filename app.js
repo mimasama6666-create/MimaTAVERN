@@ -509,9 +509,13 @@ function editorHasUnsavedChanges(){
 }
 function closeEditor(){
  const modal=qs('editor-modal');modal.querySelector('.editor-discard-confirm')?.remove();modal.classList.add('hidden');
+ // An edited preset can contain megabytes of text. Release its hidden textarea
+ // after closing instead of pinning an extra copy until the next editor opens.
+ if(editorState?.type==='preset')qs('editor-body')?.replaceChildren();
  editorState=null;editorInitialForm=null;editorInitialDraft=null;editorDraftStructureChanged=false;
 }
 function requestCloseEditor(reason='cancel'){
+ if(editorState?.type==='preset'&&editorState.saving){toast('预设正在提交，保存完成后再关闭编辑框');return;}
  const modal=qs('editor-modal');if(modal.classList.contains('hidden'))return;
  if(!editorHasUnsavedChanges())return closeEditor();
  let confirmLayer=modal.querySelector('.editor-discard-confirm');
@@ -1082,7 +1086,7 @@ function setupImmersiveReading(){
 }
 // User-facing release notes: once per distinct production release by default.
 // Avoid touching Store/History or making automatic announcements mandatory.
-const MIMA_RELEASE_NOTES_VERSION='R19-20261105-V5.59-CSS-DISABLE-REFERENCE-GUARD';
+const MIMA_RELEASE_NOTES_VERSION='R19-20261105-V5.62-PRESET-STREAM-TOP-P';
 const MIMA_RELEASE_NOTES_SEEN='mima-release-notes-seen:'+MIMA_RELEASE_NOTES_VERSION;
 const MIMA_RELEASE_NOTES_OPTOUT='mima-release-notes-disable-auto-v1';
 function openMimaReleaseNotice(){
@@ -1440,8 +1444,24 @@ function fillPresets(root){if(!root)return;root.innerHTML='';const active=new Se
  ordered.forEach(p=>{const r=document.createElement('div');r.className='preset-row';r.innerHTML=`<label class="mima-resource-select"><input type="checkbox" ${mimaCategorySelected.presets.has(p.id)?'checked':''} onchange="mimaCategorySelect('presets','${p.id}',this.checked)"> 批量移动</label><input type="checkbox" aria-label="挂载剧情预设" ${active.has(p.id)?'checked':''} onchange="togglePreset('${p.id}',this.checked)"><div class="row-main"><div class="row-title">${escapeHtml(p.name)}</div><div class="row-sub">${escapeHtml(p.category||'未分类')} · ${escapeHtml(presetTypeLabel(p.type||'style'))} · priority ${p.priority??50}</div></div><button class="ghost-btn" title="收藏预设" onclick="mimaToggleFavorite('presets','${p.id}')">${p.favorite?'★':'☆'}</button><button class="ghost-btn" onclick="openPresetEditor('${p.id}')">编辑</button>`;root.appendChild(r);});
 }
 async function togglePreset(id,on){const set=new Set(currentSessionData.presetIds||[]);on?set.add(id):set.delete(id);await patchCurrent({presetIds:[...set]},true);renderSettings()}
-function openPresetEditor(id=null){const p=id?presets.find(x=>x.id===id):{name:'',type:'style',description:'',content:'',priority:50};editorState={type:'preset',id};qs('editor-title').textContent=id?`编辑预设 · ${p.name}`:'新建预设';qs('editor-eyebrow').textContent='PRESET（预设）';qs('editor-body').innerHTML=`<div class="form-grid"><div><label class="form-label">名称</label><input id="pre-name" class="field" value="${escapeHtml(p.name||'')}"></div><div><label class="form-label">类型</label><select id="pre-type" class="field">${['style','format','behavior','model'].map(x=>`<option value="${x}" ${p.type===x?'selected':''}>${presetTypeLabel(x)}</option>`).join('')}</select></div><div><label class="form-label">Priority（发送顺序，小值先发）</label><input id="pre-priority" type="number" class="field" value="${Number(p.priority??50)}"></div><div><label class="form-label">分类</label><input id="pre-category" class="field" value="${escapeHtml(p.category||'未分类')}"></div><div class="form-full"><label class="form-label">说明</label><input id="pre-desc" class="field" value="${escapeHtml(p.description||'')}"></div><div class="form-full"><label class="form-label">内容</label><textarea id="pre-content" class="field textarea tall">${escapeHtml(p.content||'')}</textarea></div></div>`;setupEditorButtons(id?()=>deletePreset(id):null,savePresetEditor);qs('editor-modal').classList.remove('hidden')}
-async function savePresetEditor(){const body={name:qs('pre-name').value||'未命名预设',type:qs('pre-type').value,priority:Number(qs('pre-priority').value === '' ? 50 : qs('pre-priority').value),description:qs('pre-desc').value,category:(qs('pre-category').value||'未分类').trim().slice(0,60),content:qs('pre-content').value};const res=await fetchStory(editorState.id?`/presets/${editorState.id}`:'/presets',editorState.id?'PATCH':'POST',body);if(res.success){closeEditor();await loadAll();openSettings('presets')}else toast(res.msg||'保存失败')}
+function openPresetEditor(id=null){const p=id?presets.find(x=>x.id===id):{name:'',type:'style',description:'',content:'',priority:50};editorState={type:'preset',id,saving:false,nonce:newGenerationTraceId()};qs('editor-title').textContent=id?`编辑预设 · ${p.name}`:'新建预设';qs('editor-eyebrow').textContent='PRESET（预设）';qs('editor-body').innerHTML=`<div class="form-grid"><div><label class="form-label">名称</label><input id="pre-name" class="field" value="${escapeHtml(p.name||'')}"></div><div><label class="form-label">类型</label><select id="pre-type" class="field">${['style','format','behavior','model'].map(x=>`<option value="${x}" ${p.type===x?'selected':''}>${presetTypeLabel(x)}</option>`).join('')}</select></div><div><label class="form-label">Priority（发送顺序，小值先发）</label><input id="pre-priority" type="number" class="field" value="${Number(p.priority??50)}"></div><div><label class="form-label">分类</label><input id="pre-category" class="field" value="${escapeHtml(p.category||'未分类')}"></div><div class="form-full"><label class="form-label">说明</label><input id="pre-desc" class="field" value="${escapeHtml(p.description||'')}"></div><div class="form-full"><label class="form-label">内容</label><textarea id="pre-content" class="field textarea tall">${escapeHtml(p.content||'')}</textarea></div></div>`;setupEditorButtons(id?()=>deletePreset(id):null,savePresetEditor);qs('editor-modal').classList.remove('hidden')}
+async function savePresetEditor(){
+ const edit=editorState;if(edit?.type!=='preset'||edit.saving)return;
+ const body={name:qs('pre-name').value||'未命名预设',type:qs('pre-type').value,priority:Number(qs('pre-priority').value === '' ? 50 : qs('pre-priority').value),description:qs('pre-desc').value,category:(qs('pre-category').value||'未分类').trim().slice(0,60),content:qs('pre-content').value};
+ edit.saving=true;const saveButton=qs('editor-save');if(saveButton){saveButton.disabled=true;saveButton.textContent='正在保存…';}
+ try{
+  const res=await fetchStory(edit.id?`/presets/${edit.id}`:'/presets',edit.id?'PATCH':'POST',body);
+  if(!res.success){toast(res.msg||'预设保存失败，旧内容未覆盖');return;}
+  // Only the saved preset is patched. Never loadAll/openSession/renderChat
+  // or rebuild currently displayed HTML, CSS, fonts and History.
+  const saved=res.data,index=presets.findIndex(p=>p.id===saved.id);
+  if(index<0)presets.push(saved);else presets[index]=saved;
+  if(editorState===edit){closeEditor();if(settingsTab==='presets'&&isSettingsOpen())renderPresetsTab(qs('settings-content'));}
+  toast('预设已保存');
+ }finally{
+  edit.saving=false;if(editorState===edit&&saveButton){saveButton.disabled=false;saveButton.textContent='保存';}
+ }
+}
 async function deletePreset(id){if(!confirm('删除这个预设？'))return;try{const result=await fetchStory(`/presets/${id}`,'DELETE');if(!result?.success)return toast('预设删除失败：'+(result?.msg||'存储未确认'));closeEditor();await loadAll();openSettings('presets')}catch(e){toast('预设删除失败：'+e.message)}}
 
 
@@ -3715,6 +3735,7 @@ function renderApiTab(box){
     <div class="form-full"><label class="form-label">API Key（接口密钥）</label><input id="api-key" class="field" type="password" autocomplete="off" placeholder="sk-..." value="${escapeHtml(c.apiKey||'')}"></div>
     <div class="form-full"><label class="form-label">Model（模型）</label><div class="model-picker-stack"><div class="inline-field-row"><select id="api-model-select" class="field" onchange="syncApiModelSelect()"><option value="">先点“拉取模型”，然后从这里展开选择</option>${c.model?`<option value="${escapeHtml(c.model)}" selected>${escapeHtml(c.model)} · 当前</option>`:''}</select><button class="ghost-btn" onclick="loadApiModels()">拉取模型</button></div><input id="api-model" class="field" oninput="apiIdentityDraftChanged()" placeholder="也可以手动填写模型名" value="${escapeHtml(c.model||'')}"><div class="row-sub">iPhone / iPad（苹果移动设备）会使用原生下拉选择器；选择后会自动同步到下方模型名输入框。</div></div></div>
     <div class="form-full"><label class="form-label">Temperature（温度） <span id="api-temp-value" class="value-pill">${temp.toFixed(2)}</span></label><div class="temperature-row"><input id="api-temp-range" class="temp-range" type="range" min="0.1" max="2" step="0.05" value="${temp}" oninput="syncTemperature('range')"><input id="api-temperature" class="field temp-number" type="number" min="0.1" max="2" step="0.05" value="${temp}" oninput="syncTemperature('number')"></div><div class="row-sub">数值越高通常越发散，越低通常越稳定。具体有效范围以模型/中转站为准。</div></div>
+    <div class="form-full"><label class="form-label">Top-p（核采样） <span id="api-top-p-value" class="value-pill">${Number(c.topP??1).toFixed(2)}</span></label><div class="temperature-row"><input id="api-top-p-range" class="temp-range" type="range" min="0" max="1" step="0.01" value="${Number(c.topP??1)}" oninput="syncTopP('range')"><input id="api-top-p" class="field temp-number" type="number" min="0" max="1" step="0.01" value="${Number(c.topP??1)}" oninput="syncTopP('number')"></div><label class="check-row"><input id="api-send-top-p" type="checkbox" ${c.sendTopP===true?'checked':''}> 发送 top_p 参数</label><div class="row-sub">默认不发送。勾选后向兼容 OpenAI Chat Completions 的接口附加 top_p；具体模型不支持时会直接提示 API 错误，不修改其它采样参数。</div></div>
     <div><label class="form-label">模型上下文窗口（Tokens，0=未知，不假设硬上限）</label><input id="api-context-window" class="field" type="number" min="0" value="${Number(c.contextWindowTokens||0)}"><div class="row-sub">这是整个输入+输出共享的上下文容量，不等于下方 Max Tokens（只控制输出）。填写服务商确认的容量后会进行预算检查和按需有凭据地规划剧情；留 0 表示容量未知，仍发送完整剧情，由服务商决定能否接收。不用虚构的 32K 限制拦截请求，也不会删除本地 History。</div></div><div><label class="form-label">Max Tokens（最大输出 Tokens，0=不发送）</label><input id="api-max-tokens" class="field" type="number" min="0" value="${Number(c.maxTokens||0)}"></div>
     <div class="form-full"><label class="form-label">续写接口方式</label><select id="api-continuation-mode" class="field"><option value="assistant_tail" ${c.continuationMode!=='deepseek_prefix'?'selected':''}>普通 Chat：生成后续 assistant 段落</option><option value="deepseek_prefix" ${c.continuationMode==='deepseek_prefix'?'selected':''}>已确认支持 DeepSeek prefix 的端点</option></select><div class="row-sub">普通 Chat 保留真实 assistant 尾文，不保证原文前缀补全。prefix 模式仅适用于支持该字段的端点；部分模型要求请求以 user 结束，可能不支持无伪玩家消息的续写。失败会保留原文，不自动换端点或追加指令。</div><label class="check-row"><input id="api-prefix-suffix" type="checkbox" ${c.prefixReturnsSuffix===true?'checked':''}> 前缀接口仅回新后缀（仅在接口确实如此时选择；默认按完整前缀响应校验）</label></div>
     <div class="form-full"><h4>🧠 Thinking（模型思考显示）</h4><div class="row-sub">普通剧情不自动插入任何角色表达、思考或创作方式提示词，包括旧版保存的“角色意识／纯正文”配置。你的预设、面具与世界书原文保持不变。若服务商返回 Thinking 文本或摘要，咪嘛馆会与剧情正文分开保存。</div>
@@ -3739,20 +3760,22 @@ function apiIdentityDraftChanged(){
 }
 function syncApiModelSelect(){const sel=qs('api-model-select'),input=qs('api-model');if(sel?.value&&input){input.value=sel.value;apiIdentityDraftChanged();}}
 function syncTemperature(source){const range=qs('api-temp-range'),num=qs('api-temperature'),pill=qs('api-temp-value');let v=Number(source==='range'?range?.value:num?.value);if(!Number.isFinite(v))v=.85;v=Math.max(.1,Math.min(2,v));if(range&&source!=='range')range.value=v;if(num&&source!=='number')num.value=v.toFixed(2);if(pill)pill.textContent=v.toFixed(2)}
+function syncTopP(source){const range=qs('api-top-p-range'),num=qs('api-top-p'),pill=qs('api-top-p-value');const raw=source==='range'?range?.value:num?.value;const v=Number(raw);if(!Number.isFinite(v)||v<0||v>1)return;if(range&&source!=='range')range.value=String(v);if(num&&source!=='number')num.value=v.toFixed(2);if(pill)pill.textContent=v.toFixed(2)}
 function populateApiModelSelect(models){const sel=qs('api-model-select');if(!sel)return;const current=qs('api-model')?.value.trim()||'';sel.innerHTML='<option value="">请选择 Model（模型）</option>'+models.map(x=>`<option value="${escapeHtml(x)}" ${x===current?'selected':''}>${escapeHtml(x)}</option>`).join('');if(current&&!models.includes(current)){const opt=document.createElement('option');opt.value=current;opt.textContent=`${current} · 手动`;opt.selected=true;sel.appendChild(opt)}}
-function collectApiForm(){const temp=Math.max(.1,Math.min(2,Number(qs('api-temperature')?.value||.85)));return{apiBase:qs('api-base').value.trim(),apiKey:qs('api-key').value.trim(),model:qs('api-model').value.trim(),chatEndpoint:qs('api-chat-endpoint').value.trim(),modelsEndpoint:qs('api-models-endpoint').value.trim(),extraHeaders:qs('api-extra-headers').value.trim(),sendTemperature:qs('api-send-temp').checked,temperature:temp,stream:qs('api-stream').checked,maxTokens:Number(qs('api-max-tokens').value||0),contextWindowTokens:Number(qs('api-context-window')?.value||0),continuationMode:qs('api-continuation-mode')?.value||'assistant_tail',prefixReturnsSuffix:qs('api-prefix-suffix')?.checked===true,thinkingMode:'normal',showThinking:qs('api-show-thinking')?.checked!==false,reasoningEffort:qs('api-reasoning-effort')?.value||'inherit',requestGeminiThoughts:qs('api-request-gemini-thoughts')?.checked===true}}
+function collectApiForm(){const temp=Math.max(.1,Math.min(2,Number(qs('api-temperature')?.value||.85)));return{apiBase:qs('api-base').value.trim(),apiKey:qs('api-key').value.trim(),model:qs('api-model').value.trim(),chatEndpoint:qs('api-chat-endpoint').value.trim(),modelsEndpoint:qs('api-models-endpoint').value.trim(),extraHeaders:qs('api-extra-headers').value.trim(),sendTemperature:qs('api-send-temp').checked,temperature:temp,sendTopP:qs('api-send-top-p')?.checked===true,topP:Number(qs('api-top-p')?.value),stream:qs('api-stream').checked,maxTokens:Number(qs('api-max-tokens').value||0),contextWindowTokens:Number(qs('api-context-window')?.value||0),continuationMode:qs('api-continuation-mode')?.value||'assistant_tail',prefixReturnsSuffix:qs('api-prefix-suffix')?.checked===true,thinkingMode:'normal',showThinking:qs('api-show-thinking')?.checked!==false,reasoningEffort:qs('api-reasoning-effort')?.value||'inherit',requestGeminiThoughts:qs('api-request-gemini-thoughts')?.checked===true}}
 function saveApiSettings(){
     try{
         // Invalid numbers must not be silently clamped or saved as defaults.
         const temp=validatedSettingNumber('api-temperature','API 温度',0.1,2,false);
         const windowSize=validatedSettingNumber('api-context-window','模型上下文窗口',0,100000000,true,true);
         const maxTokens=validatedSettingNumber('api-max-tokens','最大输出 Tokens',0,100000000,true,true);
-        if(temp===null||windowSize===null||maxTokens===null)return false;
+        const topP=validatedSettingNumber('api-top-p','Top-p 核采样',0,1,false);
+        if(temp===null||windowSize===null||maxTokens===null||topP===null)return false;
         const c=collectApiForm();
         if(c.extraHeaders)JSON.parse(c.extraHeaders);
         MimaStandalone.saveApiConfig({...c,capacityExplicit:true});
         const actual=MimaStandalone.getApiConfig();
-        if(actual.temperature!==temp||actual.maxTokens!==maxTokens||actual.contextWindowTokens!==windowSize||actual.model!==c.model||actual.apiBase!==c.apiBase||actual.chatEndpoint!==c.chatEndpoint||actual.stream!==c.stream)
+        if(actual.temperature!==temp||actual.topP!==topP||actual.sendTopP!==c.sendTopP||actual.maxTokens!==maxTokens||actual.contextWindowTokens!==windowSize||actual.model!==c.model||actual.apiBase!==c.apiBase||actual.chatEndpoint!==c.chatEndpoint||actual.stream!==c.stream)
             throw new Error('保存后的 API 数值与输入不一致');
         localStorage.setItem(TEMP_KEY,String(c.temperature));
         toast(`API 配置已保存 · ${actual.stream?'流式已开启':'非流式已选择'}`);
@@ -3767,7 +3790,7 @@ async function testApiConnection(){if(!saveApiSettings())return;const status=qs(
 function describeApiError(e){const message=e?.message||e?.msg||(typeof e==='string'?e:'未知 API 错误');const code=e?.code||(/Failed to fetch|NetworkError|Load failed|CORS/i.test(message)?'E_API_NETWORK_CORS':'E_API_UNKNOWN');const status=Number(e?.status)||0;let hint=e?.hint||'';if(!hint&&code==='E_API_NETWORK_CORS')hint='浏览器 Fetch 在拿不到响应时无法可靠区分 CORS、网络断线、证书错误或“网关错误响应缺少 CORS 头”。如果同一配置一会成功一会失败，更像中转/CDN 节点抖动，而不是你的剧情数据坏了。';if(!hint&&code==='E_STREAM_INTERRUPTED')hint='流式连接已建立后中断。不要自动重复计费；可点击“仅重试本轮”手动重试，玩家消息不会重复写入。';if(!hint&&code==='E_API_REFUSAL_CONTENT')hint='模型把拒绝文本当普通回复返回；正文已拦截且不会进入角色历史或旧版本。可手动重试，不会自动重复计费。';if(!hint)hint='请检查 API（接口）地址、密钥、模型名、参数兼容性以及中转站状态。';return{message,code,status,hint,details:e?.details||'',partialDraft:typeof e?.partialDraft==='string'?e.partialDraft.slice(0,24000):''}}
 function friendlyApiError(e){const i=describeApiError(e);return `${i.code}${i.status?` · HTTP（状态码） ${i.status}`:''} · ${i.message}\n可能原因：${i.hint}`}
 function chooseApiImport(){qs('api-config-file-input').value='';qs('api-config-file-input').click()}
-async function importApiConfigFile(file){if(!file)return;try{const raw=JSON.parse(await file.text()),src=raw.data||raw;const temperature=Number(src.temperature??localStorage.getItem(TEMP_KEY)??.85);MimaStandalone.saveApiConfig({apiBase:src.apiBase||src.baseUrl||src.base_url||'',apiKey:src.apiKey||src.api_key||src.key||'',model:src.model||'',chatEndpoint:src.chatEndpoint||'',modelsEndpoint:src.modelsEndpoint||'',extraHeaders:typeof src.extraHeaders==='string'?src.extraHeaders:src.extraHeaders?JSON.stringify(src.extraHeaders):'',sendTemperature:src.sendTemperature!==false,temperature,stream:!!(src.stream??src.streaming),maxTokens:Number(src.maxTokens||0),contextWindowTokens:Number(src.contextWindowTokens??src.context_window??0),capacityExplicit:true,continuationMode:src.continuationMode==='deepseek_prefix'?'deepseek_prefix':'assistant_tail',prefixReturnsSuffix:src.prefixReturnsSuffix===true,thinkingMode:src.thinkingMode||'normal',showThinking:src.showThinking!==false,reasoningEffort:src.reasoningEffort||'inherit',requestGeminiThoughts:src.requestGeminiThoughts===true});localStorage.setItem(TEMP_KEY,String(temperature));renderApiTab(qs('settings-content'));toast('API（接口）配置已导入到当前浏览器')}catch(e){toast(`API（接口）配置导入失败：${e.message}`)}}
+async function importApiConfigFile(file){if(!file)return;try{const raw=JSON.parse(await file.text()),src=raw.data||raw;const temperature=Number(src.temperature??localStorage.getItem(TEMP_KEY)??.85);MimaStandalone.saveApiConfig({apiBase:src.apiBase||src.baseUrl||src.base_url||'',apiKey:src.apiKey||src.api_key||src.key||'',model:src.model||'',chatEndpoint:src.chatEndpoint||'',modelsEndpoint:src.modelsEndpoint||'',extraHeaders:typeof src.extraHeaders==='string'?src.extraHeaders:src.extraHeaders?JSON.stringify(src.extraHeaders):'',sendTemperature:src.sendTemperature!==false,temperature,sendTopP:src.sendTopP===true,topP:src.topP??src.top_p??1,stream:!!(src.stream??src.streaming),maxTokens:Number(src.maxTokens||0),contextWindowTokens:Number(src.contextWindowTokens??src.context_window??0),capacityExplicit:true,continuationMode:src.continuationMode==='deepseek_prefix'?'deepseek_prefix':'assistant_tail',prefixReturnsSuffix:src.prefixReturnsSuffix===true,thinkingMode:src.thinkingMode||'normal',showThinking:src.showThinking!==false,reasoningEffort:src.reasoningEffort||'inherit',requestGeminiThoughts:src.requestGeminiThoughts===true});localStorage.setItem(TEMP_KEY,String(temperature));renderApiTab(qs('settings-content'));toast('API（接口）配置已导入到当前浏览器')}catch(e){toast(`API（接口）配置导入失败：${e.message}`)}}
 
 function renderPromptTab(box){box.innerHTML=`<section class="settings-section"><h3>🔬 Prompt Inspector（提示词检查器）</h3><p class="helper">只预览、不调用 LLM。咪嘛馆在模型上下文容量允许时优先提供完整原始剧情；每轮各注入一份已启用 Persona / Preset 与预算内命中的 Worldbook。模型窗口不足时按完整轮次分批裁剪，默认每批10轮且至少保留最新20轮；未有可信来源范围的滚动摘要时暂停，不请求 Provider。原始 History 永远完整保留。v1.1.4 还会显示上游返回的缓存命中统计；没有统计不等于没有缓存。</p><div class="toolbar"><button class="primary-btn" onclick="refreshPromptInspector()">扫描本轮 Prompt（提示词）</button><button class="ghost-btn" onclick="switchSettingsTab('diagnostics')">查看真实请求和异常日志</button></div><div id="prompt-inspector"><div class="row-sub">点击上方按钮生成预览。</div></div></section>`}
 async function refreshPromptInspector(){
@@ -3879,8 +3902,12 @@ async function recoverDiagnosticReply(diagnosticId){
             if(typeof window.MimaCompatRuntime?.restoreRejectedReply!=='function')throw new Error('酒馆兼容恢复组件未加载，请完整更新本版本。');
             result=await MimaCompatRuntime.restoreRejectedReply(diagnosticId,{confirmed:true,allowPartial:record.recoveryIsPartial===true});
         }else{
-            const response=await fetchStory('/sessions/'+encodeURIComponent(record.sessionId)+'/recover-reply','POST',{diagnosticId,confirmed:true,allowPartial:record.recoveryIsPartial===true});
-            if(!response.success)throw new Error(response.msg||'未恢复，原剧情保持不变。');
+            let response=await fetchStory('/sessions/'+encodeURIComponent(record.sessionId)+'/recover-reply','POST',{diagnosticId,confirmed:true,allowPartial:record.recoveryIsPartial===true});
+            if(!response.success&&response.code==='E_REPLY_RECOVERY_STALE'&&record.action==='send'){
+                const approved=confirm('原失败请求已被后来的一次请求替换。若原用户消息仍是当前剧情最后一条、而新请求也已结束，可以把这份已收到的文字补回为单独的 Assistant 回复。\n\n不会重发 API、覆盖已有角色回复或改写其它剧情；若已有后续消息或请求还在进行，系统将拒绝。要核对并尝试补回吗？');
+                if(approved)response=await fetchStory('/sessions/'+encodeURIComponent(record.sessionId)+'/recover-reply','POST',{diagnosticId,confirmed:true,allowPartial:record.recoveryIsPartial===true,recoverSupersededAsLatest:true});
+            }
+            if(!response.success)throw new Error(response.msg||'未恢复，原剧情保持不变；诊断原文仍可下载。');
             result=response.data;
         }
         restored=true;
@@ -3933,7 +3960,7 @@ async function reviewRejectedDiagnosticHtml(record){
 }
 function diagnosticHtmlCodeRepairButton(record){
     const b=document.createElement('button');b.type='button';b.className='ghost-btn';b.textContent='HTML 免 API 补全';b.title='优先只追加缺失的 HTML 闭合标签；复杂结构仍需绑定模板或手动恢复。没有 API 请求。';
-    b.disabled=!!record.manualRecovery||!record.rawRejectedReply;
+    b.disabled=!!record.manualRecovery||record.requestSent===false;
     b.onclick=()=>void reviewRejectedDiagnosticHtml(record);return b;
 }
 function diagnosticRecoveryButton(record){
@@ -3955,6 +3982,7 @@ async function refreshDiagnosticsView(){
     const policy=MimaDiagnosticJournal.status(),error=policy.error;
     status.textContent=`${records.length} 条记录 · 自动保留最近 ${policy.limitCount} 条、最长 ${policy.limitDays} 天、约 ${Math.round(policy.limitBytes/1048576)} MB。${error?'最近存储故障：'+error:'日志写入与清理不会修改剧情数据。'}`;
     root.innerHTML='';
+    let selectedRow=null;
     for(const record of records){
         const b=document.createElement('button');b.type='button';b.className='ghost-btn diag-list-item';
         b.setAttribute('aria-pressed',String(diagnosticViewState.selectedId===record.id));
@@ -3964,9 +3992,11 @@ async function refreshDiagnosticsView(){
             label=record.phase==='preflight'?'🧮 发送前已拦截 · 0 次模型请求':record.finishKind==='blocked'||/REFUSAL/.test(code)?'⛔ 拒绝类回复':record.finishKind==='truncated'||/TRUNCATED/.test(code)?'✂ 回复被截断':/STREAM_INTERRUPTED/.test(code)?'⚠ 连接中断':http>=400?'⚠ 请求失败 · HTTP '+http:'⚠ 未通过提交';
         }
 
-        b.textContent=`${label} · ${new Date(record.createdAt).toLocaleString()} · ${record.action||'send'} · ${record.model||'模型未请求'} · ${record.error?.code||record.finishReason||''}`;
+        b.textContent=`${label} · ${new Date(record.createdAt).toLocaleString()} · ${record.action||'send'} · ${record.model||(record.phase==='preflight'?'预检未发送':'模型名称未记入日志')} · ${record.error?.code||record.finishReason||''}`;
         b.onclick=()=>{diagnosticViewState.selectedId=record.id;void refreshDiagnosticsView();};
         const row=document.createElement('div');row.className='diag-list-row';row.appendChild(b);
+        if(diagnosticViewState.selectedId===record.id)selectedRow=row;
+        if(['rejected','aborted','conflict'].includes(record.status)){const view=document.createElement('button');view.type='button';view.className='ghost-btn';view.textContent='👁 查看保存正文';view.onclick=()=>{diagnosticViewState.selectedId=record.id;void refreshDiagnosticsView();};row.appendChild(view);}
         if(['rejected','aborted','conflict'].includes(record.status)){if(record.requestSent!==false)row.appendChild(diagnosticRecoveryButton(record));if(['E_HTML_STRUCTURE_MISSING','E_HTML_REQUIRED_NODE_MISSING','E_STORY_OUTPUT_INCOMPLETE'].includes(record.error?.code))row.appendChild(diagnosticHtmlCodeRepairButton(record));}
         root.appendChild(row);
     }
@@ -3981,8 +4011,8 @@ async function refreshDiagnosticsView(){
     const responseHttp=Number(record.transport?.httpStatus||record.error?.status||0);
     const fmt=request?.messages?.map((m,i)=>`#${i} ${m.role}${m.prefix===true?' · prefix=true':''} · ${record.messageSources?.[i]?.kind||'未记录来源'} / ${record.messageSources?.[i]?.sourceId||record.messageSources?.[i]?.messageId||''}\n${m.content}`).join('\n\n')||'';
     wrap.innerHTML=`<h4>诊断详情 · ${escapeHtml(record.action)}</h4>
-      <div class="row-sub">会话：${escapeHtml(record.sessionId)} · Turn：${escapeHtml(record.turnId)} · Request：${escapeHtml(record.requestId||'请求前失败')}<br>
-      结果：${escapeHtml(record.status)} · Model：${escapeHtml(record.model||'未请求')} · 结束：${escapeHtml(record.finishKind||'—')} / ${escapeHtml(record.finishReason||'—')} · HTTP：${responseHttp||'—'}</div>
+      <div class="row-sub">会话：${escapeHtml(record.sessionId)} · Turn：${escapeHtml(record.turnId)} · Request：${escapeHtml(record.requestId||(record.phase==='preflight'?'预检阶段':'请求 ID 未记录'))}<br>
+      结果：${escapeHtml(record.status)} · Model：${escapeHtml(record.model||(record.phase==='preflight'?'预检未发送':'模型名称未记入日志'))} · 结束：${escapeHtml(record.finishKind||'—')} / ${escapeHtml(record.finishReason||'—')} · HTTP：${responseHttp||'—'}</div>
       <div class="toolbar"><button class="ghost-btn" id="diag-delete-one">删除这条</button><button class="ghost-btn" id="diag-copy-one">复制此条 JSON</button><button class="ghost-btn" id="diag-download-one">下载此条 JSON</button></div>
       <div class="row-sub">请求体：${record.requestBytes?Number(record.requestBytes).toLocaleString()+' bytes':'未记录'} · 准备：${record.preparationElapsedMs==null?'未记录':Number(record.preparationElapsedMs)+' ms'} · 等待响应头：${record.transport?Number(record.transport.fetchElapsedMs)+' ms':'未记录'}${record.transport?.providerRequestId?` · 服务端请求 ID：${escapeHtml(record.transport.providerRequestId)}`:''}${record.transport?.cfRay?` · CF-Ray：${escapeHtml(record.transport.cfRay)}`:''}</div>
       ${record.requestSent===false?`<div class="row-sub">本地预检拦截，零出站：当前模型已绑定窗口 ${Number(record.configuredWindow||0).toLocaleString()} Tokens；无 HTTP 请求。</div>`:''}<h4>真实请求内容（不包含 API Key 和请求头）</h4>
@@ -4001,7 +4031,10 @@ async function refreshDiagnosticsView(){
         note.textContent=record.requestSent===false?'本轮仅在本地预检中被拦截，没有调用 Provider，也没有可恢复的模型正文；请检查当前 API 身份和窗口配置。':record.manualRecovery?'这条文本已由你手动恢复。上面的原始错误与结束标记仍作为证据保留。':'可免费恢复已留存正文；只剩片段时会明确提示并再次确认。原失败任务已被新请求替换时不会覆盖新剧情，仍可复制或下载留存文字。';
         wrap.querySelector('.toolbar').after(note);
     }
-    detail.appendChild(wrap);
+    // Keep the text directly below its diagnostic row. Previously the detail
+    // appeared after all 30 rows, making the retained body effectively hidden
+    // on a narrow phone despite being present in IndexedDB.
+    (selectedRow||detail).appendChild(wrap);
     qs('diag-delete-one').onclick=async()=>{
         if(!confirm('删除这条诊断记录？不会删除剧情消息。'))return;
         try{await MimaDiagnosticJournal.remove(record.id);diagnosticViewState.selectedId=null;await refreshDiagnosticsView();}catch(e){toast(`删除日志失败：${e.message}`)}
@@ -4050,6 +4083,7 @@ async function openGenerationTaskViewer(){
  const viewer=qs('generation-task-viewer'),status=qs('generation-task-status'),body=qs('generation-task-text');
  if(!viewer||!currentSessionId)return;
  viewer.classList.remove('hidden');status.textContent='正在读取本地记录…';body.textContent='';r19UnsettledRecovery=null;qs('generation-task-manual-recover')?.classList.add('hidden');
+ const button=qs('generation-task-manual-recover');if(button)button.textContent='手动恢复本机文字';
  const sessionId=currentSessionId,nav=sessionNavigationEpoch,readToken=++r19TaskViewerReadToken;
  try{
    const res=await fetchStory(`/sessions/${encodeURIComponent(sessionId)}/canonical-view`);
@@ -4081,6 +4115,19 @@ async function openGenerationTaskViewer(){
    body.textContent=reply||draft||(hasSavedReply?'回复已保存到剧情，但无法通过记录定位到原消息。请在剧情中查看。':'这轮没有在本机留下可核实的正文。非流式请求在页面关闭前未收到的响应无法恢复。');
    // The saved fragment ledger is independent of History. Offer explicit
    // Owner restoration for a lost prepared attempt, never for a live owner.
+   // A settled failed send may have stream fragments even if the independent
+   // diagnostic row was lost. Do not force the Owner to copy-only or mislabel
+   // this as a Provider empty response. Backend still checks exact identity.
+   if(entry.status==='failed'&&entry.action==='send'&&!localActive&&!draftProblem&&draft.trim()&&receipt?.fragmentCount>0){
+     const original=res.data.messages.at(-1);
+     if(original?.role==='user'&&entry.id===res.data.pendingGeneration?.id&&entry.attempt===res.data.pendingGeneration?.attempt&&
+        original.metadata?.submissionTraceId===res.data.pendingGeneration?.ownerId){
+       r19UnsettledRecovery={mode:'ledger',sessionId,generationId:entry.id,attempt:entry.attempt};
+       const recoverButton=qs('generation-task-manual-recover');
+       if(recoverButton){recoverButton.textContent='恢复本机片段（需确认）';recoverButton.classList.remove('hidden');}
+       status.textContent+='\n诊断正文缺失时，可由主人明确确认恢复账本中的实际片段；不会补造缺失结尾。';
+     }
+   }
    if(entry.status==='prepared'&&!localActive&&!draftProblem){
      const identity={sessionId,generationId:entry.id,attempt:entry.attempt};
      const records=await MimaDiagnosticJournal.list({sessionId});
@@ -4100,6 +4147,8 @@ async function openGenerationTaskViewer(){
 }
 async function recoverUnsettledGeneration(){
  const identity=r19UnsettledRecovery;
+ if(identity?.mode==='ledger')return recoverFailedStreamLedgerFromViewer(identity);
+ if(identity?.mode==='diagnostic')return recoverDiagnosticReply(identity.diagnosticId);
  const navigationAtStart=sessionNavigationEpoch;
  if(!identity||diagnosticRecoveryBusy.has(identity.diagnosticId)||currentSessionId!==identity.sessionId)return toast('原任务身份已经变化，请重新打开上轮状态');
  if(generationOwners.has(identity.sessionId))return toast('本窗口的生成仍在进行，不能提前恢复');
@@ -4131,6 +4180,34 @@ async function recoverUnsettledGeneration(){
    toast((result.data.alreadyRestored?'该回复已经恢复，没有重复写入':'已手动恢复本机留存正文，没有重发模型请求')+notice);
  }catch(error){toast((restored?'正文已保存，但后续操作失败：':'未恢复：')+error.message);console.error('原任务恢复流程异常',error);}
  finally{diagnosticRecoveryBusy.delete(identity.diagnosticId);}
+}
+function downloadGenerationTaskViewerText(){
+ if(!r19TaskViewerCopiedText)return toast('本机未找到可下载的正文片段');
+ downloadText('咪嘛馆-上轮本机留存正文.txt',r19TaskViewerCopiedText);
+}
+async function recoverFailedStreamLedgerFromViewer(identity){
+ if(currentSessionId!==identity.sessionId||generationOwners.has(identity.sessionId))return toast('已切换剧情或原任务仍在本窗口运行');
+ const nav=sessionNavigationEpoch;
+ try{
+   const view=await fetchStory(`/sessions/${encodeURIComponent(identity.sessionId)}/canonical-view`);
+   const pending=view.data?.pendingGeneration;
+   if(!view.success||pending?.id!==identity.generationId||pending.attempt!==identity.attempt||pending.status!=='failed'||pending.action!=='send')throw Error('最新剧情任务身份已变化，未恢复');
+   const read=await MimaLocalStore.generationRead(identity);
+   if(!read.complete||!read.text?.trim()||!read.receipt?.fragmentCount)throw Error('没有可核对的实际接收片段');
+   const kind=`${read.text.length} 个字符（仅为已保存片段，后半段可能缺失）`;
+   if(!confirm(`本机账本确实保存了 ${kind}。
+
+这不是完整模型回复的证明，将跳过自动 HTML 结构检查，由主人明确选择是否补回。
+不会重发请求；只有原主人消息仍是最后一条且任务已失败，才会允许保存。
+
+确定手动恢复吗？`))return;
+   const done=await fetchStory(`/sessions/${encodeURIComponent(identity.sessionId)}/recover-stream-ledger`,'POST',{
+     generationId:identity.generationId,attempt:identity.attempt,confirmed:true,allowPartial:true});
+   if(!done.success)throw Error(done.msg||'账本片段恢复失败');
+   if(currentSessionId===identity.sessionId&&sessionNavigationEpoch===nav){currentSessionData=done.data.session;refreshChatBox({scrollToBottom:false});}
+   closeGenerationTaskViewer();await refreshSessionSummaryList();
+   toast(done.data.alreadyRestored?'这条片段已经恢复，不重复写入':'已恢复本机实际保存片段；缺失的结尾没有补造');
+ }catch(error){toast('不能恢复本机片段：'+error.message);}
 }
 async function copyGenerationTaskViewerText(){
  if(!r19TaskViewerCopiedText)return toast('没有已核实的文字可复制');
@@ -4393,6 +4470,27 @@ function patchLiveRenderedChildren(oldParent,newParent){
  }
  while(oldParent.childNodes.length>incoming.length)oldParent.lastChild.remove();
 }
+// Fast path is valid only if neither arbitrary display regex nor macro expansion
+// can alter earlier text. Re-render only the actively growing paragraph; every
+// completed paragraph retains its original sanitized Markdown DOM and CSS.
+function patchPlainStreamSuffix(st,raw,token){
+ const normalized=raw.includes('\r')?raw.replace(/\r\n?/g,'\n'):raw;
+ let cache=st.plainStream;
+ if(!cache||cache.token!==token||!normalized.startsWith(cache.previous)){
+  st.contentNode.replaceChildren();cache={token,previous:'',tailOffset:0,lastNode:null};st.plainStream=cache;
+ }
+ const tail=normalized.slice(cache.tailOffset),previousStart=cache.tailOffset;
+ if(cache.lastNode?.isConnected)cache.lastNode.remove();
+ const before=st.contentNode.childElementCount;
+ appendProseText(st.contentNode,tail,true);
+ // Last paragraph is provisional, earlier paragraphs are immutable until a
+ // non-append update, in which case the cache is discarded above.
+ const separators=/\n{2,}/g;let separator;
+ while((separator=separators.exec(tail)))cache.tailOffset=previousStart+separator.index+separator[0].length;
+ const pending=normalized.slice(cache.tailOffset);
+ cache.lastNode=pending.trim()&&st.contentNode.childElementCount>before?st.contentNode.lastElementChild:null;
+ cache.previous=normalized;
+}
 // Latest-snapshot rendering: decouple SSE arrival from the browser's paint budget.
 // A completed generation still goes through the original full renderer unchanged.
 async function renderLiveStreamText(){
@@ -4405,6 +4503,22 @@ async function renderLiveStreamText(){
     st.regexDirty=false;
     const raw=st.displayText||'',token=r19RegexRenderToken(),renderMode=currentSessionData?.renderMode,started=performance.now();
     try{
+        // HTML needs the complete safe sanitizer; arbitrary display regex and
+        // {{user}}/{{char}} can rewrite previous chars. Only ordinary prose is
+        // independently composable, so append its stable Markdown paragraphs.
+        const isPlainAppend=currentSessionData?.renderMode!=='safe_html'&&
+          !MimaStandalone.hasActiveRegexForSession(st.owner.sessionId,'display')&&
+          !raw.includes('{');
+        if(isPlainAppend){
+          st.contentNode.className='msg-content tavern-story-content live-stream-content';
+          patchPlainStreamSuffix(st,raw,token);
+          st.paints=(st.paints||0)+1;
+          st.lastPaintDurationMs=Math.round((performance.now()-started)*100)/100;
+          if(st.paints===1)persistStoryUiTiming(st.owner,'ui_first_visible',st);
+          const box=qs('story-chat-box');if(box&&st.followTail!==false&&!readingMode)box.scrollTop=box.scrollHeight;
+          updateStoryFollowButton();return;
+        }
+        st.plainStream=null;
         st.regexController=new AbortController();
         let rendered;
         try{rendered=await MimaStandalone.applyRegexForSessionAsync(st.owner.sessionId,raw,'display',null,{signal:st.regexController.signal});}
@@ -4437,7 +4551,8 @@ async function renderLiveStreamText(){
         // Yield to the browser between full-text sanitization passes. Never
         // spin through an unbounded do/while while the SSE transport is active.
         if(st.regexDirty&&liveStreamState===st&&ownsVisibleGeneration(st.owner)&&!isSettingsOpen()&&!st.visualPaused&&!st.renderTimer){
-          st.renderTimer=requestAnimationFrame(()=>{st.renderTimer=null;if(liveStreamState===st&&ownsVisibleGeneration(st.owner)&&!isSettingsOpen()&&!st.visualPaused)void renderLiveStreamText();});
+          if(st.targetText!==st.displayText){pumpLiveStream();}
+          else st.renderTimer=requestAnimationFrame(()=>{st.renderTimer=null;if(liveStreamState===st&&ownsVisibleGeneration(st.owner)&&!isSettingsOpen()&&!st.visualPaused)void renderLiveStreamText();});
         }
     }
 }
@@ -4507,18 +4622,25 @@ function ensureLiveStreamBubble(owner=currentGenerationOwner()){
     updateStoryFollowButton();return liveStreamState;
 }
 function pumpLiveStream(){
-    const st=liveStreamState;if(!st||st.timer)return;
-    // Never rebuild an entire HTML tree one character/12 ms. Skip stale visual
-    // snapshots, not bytes: the last received SSE body always wins.
+    const st=liveStreamState;if(!st||st.timer||st.waitTimer)return;
+    // The transport and IDB draft ledger never wait for this paint budget.
+    // Full Safe HTML/regex snapshots are coalesced; ordinary paragraphs use
+    // the incremental renderer in renderLiveStreamText.
     st.timer=requestAnimationFrame(function drawFrame(now){
         st.timer=null;
-        if(liveStreamState!==st||!ownsVisibleGeneration(st.owner))return;
-        if(isSettingsOpen()||st.visualPaused)return;
+        if(liveStreamState!==st||!ownsVisibleGeneration(st.owner)||isSettingsOpen()||st.visualPaused)return;
         if(st.targetText===st.displayText)return;
-        const minPaintInterval=currentSessionData?.renderMode==='safe_html'?Math.min(550,160+Math.floor(st.targetText.length/2500)*55):Math.min(280,90+Math.floor(st.targetText.length/4000)*30);
-        if(now-st.lastPaintAt<minPaintInterval){st.timer=requestAnimationFrame(drawFrame);return;}
+        const expensive=currentSessionData?.renderMode==='safe_html'||MimaStandalone.hasActiveRegexForSession(st.owner.sessionId,'display');
+        const minPaintInterval=expensive?Math.min(1250,250+Math.floor(st.targetText.length/3500)*85):Math.min(160,60+Math.floor(st.targetText.length/10000)*15);
+        const remaining=minPaintInterval-(now-st.lastPaintAt);
+        if(remaining>0){st.waitTimer=setTimeout(()=>{st.waitTimer=null;if(liveStreamState===st)pumpLiveStream()},remaining);return;}
+        if(MimaStandalone.classifyStoryReply?.(st.targetText)?.blocked===true){
+          st.displayText=st.targetText;st.lastPaintAt=now;
+          st.contentNode.replaceChildren();st.contentNode.textContent='收到服务商拒绝类回复，原文暂存等待核验，不会写入正式剧情。';
+          st.plainStream=null;return;
+        }
         st.displayText=st.targetText;st.lastPaintAt=now;
-        renderLiveStreamText();
+        void renderLiveStreamText();
         if(st.targetText!==st.displayText)pumpLiveStream();
     });
 }
@@ -4536,10 +4658,9 @@ function handleGenerationProgress(payload,owner=currentGenerationOwner()){
     if(payload?.thinkingText!==undefined)owner.thinkingProgress=String(payload.thinkingText||'');
     let blocked=false;
     if(payload?.streamText!==undefined){
-        const snippet=String(payload.streamText||'');
-        blocked=MimaStandalone.classifyStoryReply?.(snippet)?.blocked===true;
-        owner.streamText=blocked?'':snippet;
-        if(blocked&&ownsVisibleGeneration(owner))clearLiveStream();
+        // Full cumulative refusal/HTML scans are paid once per visual snapshot,
+        // not for every tiny SSE delta. Raw incoming text stays in the ledger.
+        owner.streamText=String(payload.streamText||'');
     }
     if(!ownsVisibleGeneration(owner))return;
     if(isSettingsOpen())deferredGenerationProgress={owner,payload};else setGenerationProgress(payload);
@@ -4552,8 +4673,9 @@ function handleGenerationProgress(payload,owner=currentGenerationOwner()){
           st.targetText=owner.streamText;st.visualPaused=isSettingsOpen();
           // Render the first visible body delta immediately: otherwise a fast
           // completing response can clear the placeholder before the first RAF.
-          if(!st.visualPaused&&st.paints===0&&st.targetText&&st.targetText.length<=8000){
-            st.displayText=st.targetText;st.lastPaintAt=performance.now();renderLiveStreamText();
+          if(!st.visualPaused&&!st.regexProcessing&&st.paints===0&&st.targetText&&st.targetText.length<=8000&&
+             MimaStandalone.classifyStoryReply?.(st.targetText)?.blocked!==true){
+            st.displayText=st.targetText;st.lastPaintAt=performance.now();void renderLiveStreamText();
           }else pumpLiveStream();
         }
     }
@@ -4561,6 +4683,7 @@ function handleGenerationProgress(payload,owner=currentGenerationOwner()){
 function clearLiveStream(){
     liveStreamState?.regexController?.abort();
     if(liveStreamState?.timer)cancelAnimationFrame(liveStreamState.timer);
+    if(liveStreamState?.waitTimer)clearTimeout(liveStreamState.waitTimer);
     if(liveStreamState?.renderTimer)cancelAnimationFrame(liveStreamState.renderTimer);
     if(liveStreamState?.paints)persistStoryUiTiming(liveStreamState.owner,'ui_last_visible',liveStreamState);
     if(liveStreamState?.node?.isConnected)liveStreamState.node.remove();
@@ -4576,7 +4699,7 @@ function finishGenerationProgress(owner=null){
     const sessionId=currentSessionId;
     setTimeout(()=>{if(!currentGenerationOwner()&&currentSessionId===sessionId){panel?.classList.add('hidden');qs('generation-minimized-badge')?.classList.add('hidden');}},650);
 }
-function showGenerationError(err,action=currentGenerationAction,fromRestore=false){
+function showGenerationError(err,action=currentGenerationAction,fromRestore=false,receivedText=''){
     deferredGenerationProgress=null;
     setGenerationPanelMinimized(false);
     const info=describeApiError(err),panel=qs('generation-panel'),bar=qs('generation-progress-bar'),label=qs('generation-label'),pct=qs('generation-percent'),detail=qs('generation-detail'),retry=qs('generation-retry');
@@ -4590,6 +4713,12 @@ function showGenerationError(err,action=currentGenerationAction,fromRestore=fals
         const evidence=document.createElement('details'),caption=document.createElement('summary'),content=document.createElement('pre');
         caption.textContent='展开完整错误诊断（不影响关闭和重试）';
         content.textContent=info.details;content.className='generation-error-diagnostic';
+        evidence.append(caption,content);detail.appendChild(evidence);
+    }
+    if(receivedText){
+        const evidence=document.createElement('details'),caption=document.createElement('summary'),content=document.createElement('pre');
+        evidence.open=true;caption.textContent='⚠ 本轮已接收但未正式保存的正文（可复制；刷新后请从生成诊断查看）';
+        content.textContent=receivedText;content.className='generation-error-diagnostic';content.style.maxHeight='32vh';content.style.overflow='auto';
         evidence.append(caption,content);detail.appendChild(evidence);
     }
     if(info.partialDraft){
@@ -4851,7 +4980,7 @@ async function triggerChat(text,actionType='send',generationOptions={}){
                 requestAnimationFrame(()=>{if(currentSessionId===targetSessionId)persistStoryUiTiming(owner,'ui_final_stable');});
                 refreshHeader();finishGenerationProgress();
             }else{
-                showGenerationError(res,actionType);toast(`生成失败 · ${res.code||'E_UNKNOWN'}`);
+                showGenerationError(res,actionType,false,owner.streamText);toast(`生成失败 · ${res.code||'E_UNKNOWN'}`);
                 await reconcileCanonicalGenerationSession(targetSessionId);
             }
             if(preserveReading&&!finalStreamView&&!preservedReaderAnchor&&storyBox&&preservedScrollTop!==null)
@@ -4870,7 +4999,7 @@ async function triggerChat(text,actionType='send',generationOptions={}){
         generationReconcileStates.set(targetSessionId,{status:'checking',sessionId:targetSessionId});
         if(generationOwners.get(targetSessionId)===owner)generationOwners.delete(targetSessionId);
         generationFailures.set(targetSessionId,{...describeApiError(e),action:actionType});
-        if(currentSessionId===targetSessionId){clearLiveStream();toggleUIState(false);showGenerationError(e,actionType);toast(`生成失败 · ${e?.code||'E_UNKNOWN'}`);}
+        if(currentSessionId===targetSessionId){clearLiveStream();toggleUIState(false);showGenerationError(e,actionType,false,owner?.streamText||'');toast(`生成失败 · ${e?.code||'E_UNKNOWN'}`);}
         else console.error('其他剧情请求异常，原会话仍持有错误信息',{targetSessionId,turnId:owner.turnId,error:e});
         await reconcileCanonicalGenerationSession(targetSessionId);
     }finally{
@@ -5489,7 +5618,7 @@ function restoreLegacyFont({syncSelection=true}={}){
 }
 
 // Expose inline handlers
-Object.assign(window,{recheckCssRecovery,exitCssSafetyMode,setMimaFeedbackPreference,chooseMimaFeedbackSound,previewMimaFeedbackSound,resetMimaFeedbackSound,openMimaReleaseNotice,closeMimaReleaseNotice,setMimaReleaseNoticeOptOut,openGenerationTaskViewer,closeGenerationTaskViewer,copyGenerationTaskViewerText,importCurrentSessionAsSettingTemplate,chooseIndependentTemplate,saveIndependentTemplate,copyIndependentTemplate,setIndependentTemplateDefault,deleteIndependentTemplate,setImmersiveReading,saveCurrentSettingTemplate,duplicateSettingTemplate,setDefaultSettingTemplate,deleteSettingTemplate,exportSettingTemplate,importSettingTemplate,refreshSettingTemplateChoices,renderSettingTemplatePreview,manualRollingSummary,mimaFilterLibrary,mimaToggleFavorite,goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,choosePngResourceInspection,playInspectedPngInCompat,savePngSelectedResources,exportPngInspection,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,exportStoryTranscript,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,loadMemoryModels,selectMemoryModel,startFactMemoryEdit,cancelFactMemoryEdit,saveFactMemoryEdit,toggleMergeFactSelection,previewFactMemoryMerge,cancelFactMemoryMerge,confirmFactMemoryMerge,undoFactMemoryMerge,clearCoreMemory,deleteFactMemory,clearAllFactMemories,revokeRollingMemory,restoreRollingMemory,discardMemoryCandidate,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,cleanupSettingsSnapshotStaging,cleanupSettingsJsonTemp,resumeSettingsJsonTemp,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,saveUrlFont,activateUrlFont,removeUrlFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,mimaLoadLargeCssForEdit,stopAtelierAndRestoreCss,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,apiIdentityDraftChanged,syncTemperature,updateStoryTypography,resetStoryTypography,setAppearancePreviewSurface,setBuiltInTheme,dismissGenerationPanel,previewFailedGenerationRaw,recoverFailedGenerationRaw,repairFailedGenerationHtml,retryFailedGeneration,retryGenerationReconciliation,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,regenerateCurrentMsg,continueMsg,autoAdvance,restoreMessageVersion,stopGeneration,abandonUnknownGeneration,toggleGenerationPanelMinimize,restoreGenerationPanel,saveGenerationContextAndPreview,resumeGenerationAfterCapacityPreview});
+Object.assign(window,{recheckCssRecovery,exitCssSafetyMode,setMimaFeedbackPreference,chooseMimaFeedbackSound,previewMimaFeedbackSound,resetMimaFeedbackSound,openMimaReleaseNotice,closeMimaReleaseNotice,setMimaReleaseNoticeOptOut,openGenerationTaskViewer,closeGenerationTaskViewer,copyGenerationTaskViewerText,downloadGenerationTaskViewerText,importCurrentSessionAsSettingTemplate,chooseIndependentTemplate,saveIndependentTemplate,copyIndependentTemplate,setIndependentTemplateDefault,deleteIndependentTemplate,setImmersiveReading,saveCurrentSettingTemplate,duplicateSettingTemplate,setDefaultSettingTemplate,deleteSettingTemplate,exportSettingTemplate,importSettingTemplate,refreshSettingTemplateChoices,renderSettingTemplatePreview,manualRollingSummary,mimaFilterLibrary,mimaToggleFavorite,goPhone,openDrawer,closeDrawer,openSettings,closeSettings,switchSettingsTab,choosePngResourceInspection,playInspectedPngInCompat,savePngSelectedResources,exportPngInspection,openNewSessionModal,closeNewSessionModal,createSession,deleteCurrentSession,exportCurrentSession,exportStoryTranscript,chooseSessionImport,toggleDirector,saveRoleMounts,mountMask,insertCharacterOpening,openMaskEditor,choosePersonaImport,exportMask,toggleWorldbookMount,openWorldbookEditor,addWorldbookEntry,removeWorldbookEntry,chooseWorldbookImport,exportWorldbook,togglePreset,openPresetEditor,toggleRegexPack,openRegexPackEditor,addRegexRule,removeRegexRule,testRegexDraft,chooseRegexImport,exportRegexPack,saveContextSettings,saveMemorySettings,saveCoreMemoryEdit,generateCoreMemory,generateFactMemories,loadMemoryModels,selectMemoryModel,startFactMemoryEdit,cancelFactMemoryEdit,saveFactMemoryEdit,toggleMergeFactSelection,previewFactMemoryMerge,cancelFactMemoryMerge,confirmFactMemoryMerge,undoFactMemoryMerge,clearCoreMemory,deleteFactMemory,clearAllFactMemories,revokeRollingMemory,restoreRollingMemory,discardMemoryCandidate,setCoreMemoryTarget,syncFactMemoryScope,stopMemorySummary,exportWholeLibrary,chooseLibraryImport,saveFullSettingsSnapshot,restoreSavedSettingsSnapshot,cleanupSettingsSnapshotStaging,cleanupSettingsJsonTemp,resumeSettingsJsonTemp,exportFullSettingsBackup,chooseFullSettingsImport,chooseFontImport,changeFont,deleteLocalFont,saveUrlFont,activateUrlFont,removeUrlFont,toggleSafeHtml,applyLegacyUrlFont,openCssPresetEditor,mimaLoadLargeCssForEdit,stopAtelierAndRestoreCss,applyCssPreset,unapplyCss,emergencyDisableCss,reenableCss,duplicateCssPreset,deleteCssPreset,chooseCssImport,exportCssPreset,copyDefaultCss,exportDefaultCss,forkDefaultCss,saveApiSettings,loadApiModels,testApiConnection,chooseApiImport,syncApiModelSelect,apiIdentityDraftChanged,syncTemperature,updateStoryTypography,resetStoryTypography,setAppearancePreviewSurface,setBuiltInTheme,dismissGenerationPanel,previewFailedGenerationRaw,recoverFailedGenerationRaw,repairFailedGenerationHtml,retryFailedGeneration,retryGenerationReconciliation,resumeStoryStreamFollow,refreshPromptInspector,closeEditor,deleteStoryMessage,sendMsg,regenerateMsg,regenerateCurrentMsg,continueMsg,autoAdvance,restoreMessageVersion,stopGeneration,abandonUnknownGeneration,toggleGenerationPanelMinimize,restoreGenerationPanel,saveGenerationContextAndPreview,resumeGenerationAfterCapacityPreview});
 
 
 window.MimaPlayTools?.register('native',{

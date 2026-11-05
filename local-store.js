@@ -6,10 +6,13 @@
   const DB_NAME = 'mimamao_tavern_standalone';
   // v2 fences older bundles: their v1 opens must fail rather than overwrite
   // the appearance overlay with an obsolete whole-library snapshot.
-  const DB_VERSION = 2;
+  const DB_VERSION = 3;
   const STORE = 'kv';
   const STATE_KEY = 'state';
   const APPEARANCE_KEY = 'appearance_v1';
+  const PRESETS_KEY = 'presets_overlay_head_v1';
+  const PRESET_RECORD_PREFIX = 'presets_overlay_record_v1:';
+  const BASE_REVISION_KEY = 'canonical_base_revision_v1';
   const SETTINGS_SNAPSHOT_KEY = 'settings_snapshot_v1';
   const EMPTY_THEME = { theme: 'default', updatedAt: '' };
 
@@ -71,40 +74,130 @@
     next.settingTemplates=(base.settingTemplates||[]).map(t=>deleted.has(t.config?.customCssId)?{...t,config:{...t.config,customCssId:null,customCssEnabled:false},revision:(Number(t.revision)||0)+1,updatedAt:appearance.deletedCssAt?.[t.config.customCssId]||appearance.savedAt}:t);
     return next;
   }
-  // Every canonical read, including direct memory transactions, uses both keys
-  // under the SAME IDB transaction. This request facade preserves callback code.
-  function readCanonical(kv) {
-    const request={},base=kv.get(STATE_KEY),appearance=kv.get(APPEARANCE_KEY);let ready=0;
-    const fail=error=>{request.error=error;request.onerror?.({target:request});};
-    const done=()=>{if(++ready!==2)return;try{
+  function presetsFromState(value){
+    const revision=Math.max(0,Number(value?.storeRevision)||0);
+    return {version:1,baseRevision:revision,storeRevision:revision,changes:[],savedAt:value?.savedAt||''};
+  }
+  function assertPresetsOverlay(value){
+    if(!value||value.version!==1||
+       !Number.isInteger(value.baseRevision)||value.baseRevision<0||
+       !Number.isInteger(value.storeRevision)||value.storeRevision<value.baseRevision||
+       !Array.isArray(value.changes)||value.changes.some(id=>typeof id!=='string'||!id)||
+       new Set(value.changes).size!==value.changes.length||
+       value.changes.length>value.storeRevision-value.baseRevision)
+      throw Error('E_PRESETS_OVERLAY_UNVERIFIED: 预设存储无法核实，拒绝覆盖');
+    return value;
+  }
+  // Base snapshot owns every unmodified preset. Each modified preset has ONE
+  // durable, ID-keyed record. No preset save rewrites a different preset.
+  function mergePresets(base,appearance,head,changed){
+    assertPresetsOverlay(head);
+    const baseRev=Number(base?.storeRevision)||0;
+    if(head.baseRevision!==baseRev||appearance.baseRevision!==baseRev)
+      throw Error('E_PRESETS_BASE_CONFLICT: 预设基线版本不一致');
+    const result=mergeAppearance(base,appearance);
+    const pending=new Map(changed);
+    const merged=[];
+    for(const row of base.presets||[]){
+      if(!pending.has(row.id)){merged.push(row);continue;}
+      const patch=pending.get(row.id);pending.delete(row.id);
+      if(patch!==null)merged.push(patch);
+    }
+    // New records preserve first-edit order, not an arbitrary object hash order.
+    for(const id of head.changes)if(pending.has(id)){
+      const patch=pending.get(id);if(patch!==null)merged.push(patch);
+    }
+    result.presets=merged;
+    result.storeRevision=baseRev+(appearance.storeRevision-baseRev)+(head.storeRevision-baseRev);
+    return result;
+  }
+  // ONE preset ID + small CAS head in the same transaction. The global
+  // revision checks protect concurrent edits and ensure old view cannot win.
+  async function commitPreset(id,record,expectedRevision){
+    if(typeof id!=='string'||!id||!record||record.id!==id||typeof record.content!=='string'||
+       !Number.isSafeInteger(expectedRevision)||expectedRevision<0)
+      throw Error('E_PRESET_EDIT_INVALID');
+    const db=await openDb();return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE);
+      const a=kv.get(PRESETS_KEY),b=kv.get(BASE_REVISION_KEY),c=kv.get(APPEARANCE_KEY);
+      let issue,result,ready=0;
+      const fail=e=>{issue=e;try{tx.abort();}catch{}};
+      const settle=()=>{if(++ready!==3)return;try{
+        const head=assertPresetsOverlay(a.result),base=b.result,appearance=assertAppearance(c.result);
+        if(!base||!Number.isInteger(base.revision)||base.revision!==head.baseRevision||appearance.baseRevision!==base.revision)
+          throw Error('E_PRESETS_BASE_CONFLICT: 资料库基线已经改变，本次未覆盖');
+        const globalRevision=base.revision+(appearance.storeRevision-base.revision)+(head.storeRevision-base.revision);
+        if(expectedRevision!==globalRevision)throw Error('E_CANONICAL_CONFLICT: 资料在其他窗口或任务已更新，请刷新后重新编辑，旧数据未覆盖');
+        const next={...head,changes:head.changes.includes(id)?head.changes:[...head.changes,id],
+          storeRevision:head.storeRevision+1,savedAt:new Date().toISOString()};
+        assertPresetsOverlay(next);
+        // The only content written by this operation is the selected record.
+        kv.put(record,PRESET_RECORD_PREFIX+id);kv.put(next,PRESETS_KEY);
+        result={value:record,storeRevision:globalRevision+1};
+      }catch(e){fail(e)}};
+      for(const req of [a,b,c]){req.onsuccess=settle;req.onerror=()=>fail(req.error);}
+      tx.oncomplete=()=>{db.close();resolve(result)};
+      tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_PRESET_COMMIT_ABORTED'))};
+    });
+  }
+  // Read base/CSS/head and every changed preset in the SAME transaction.
+  // An incomplete/missing changed record is corruption, never an empty preset.
+  function readCanonical(kv){
+    const request={},base=kv.get(STATE_KEY),appearance=kv.get(APPEARANCE_KEY),head=kv.get(PRESETS_KEY),records=new Map();
+    let pending=3,failed=false;
+    const fail=error=>{if(failed)return;failed=true;request.error=error;request.onerror?.({target:request});};
+    const done=()=>{if(--pending!==0||failed)return;try{
       if(base.result!==undefined&&!isCanonicalStateRecord(base.result))throw Error('E_CANONICAL_STATE_UNVERIFIED');
-      assertAppearance(appearance.result);
+      assertAppearance(appearance.result);assertPresetsOverlay(head.result);
       if((Number(base.result?.storeRevision)||0)!==appearance.result.baseRevision)throw Error('E_APPEARANCE_BASE_CONFLICT');
-      request.result=mergeAppearance(base.result||blankState(),appearance.result);
+      for(const id of head.result.changes){
+        const item=records.get(id);
+        if(!item||item.id!==id||typeof item.content!=='string')throw Error('E_PRESET_FRAGMENT_INCOMPLETE: 预设增量记录缺失');
+      }
+      request.result=mergePresets(base.result||blankState(),appearance.result,head.result,records);
     }catch(error){fail(error);return;}request.onsuccess?.({target:request});};
     base.onsuccess=done;appearance.onsuccess=done;
-    base.onerror=()=>fail(base.error);appearance.onerror=()=>fail(appearance.error);
+    head.onsuccess=()=>{try{
+      const value=assertPresetsOverlay(head.result);
+      pending+=value.changes.length;
+      for(const id of value.changes){
+        const item=kv.get(PRESET_RECORD_PREFIX+id);
+        item.onsuccess=()=>{records.set(id,item.result);done()};item.onerror=()=>fail(item.error);
+      }
+      done();
+    }catch(e){fail(e)}};
+    base.onerror=()=>fail(base.error);appearance.onerror=()=>fail(appearance.error);head.onerror=()=>fail(head.error);
     return request;
   }
   function putCanonical(kv,value) {
-    // The caller owns CAS validation in this same transaction. Pair the full
-    // document with the overlay head, including memory-specific canonical writes.
+    // Fold the authoritative composite snapshot back into the base in this
+    // SAME transaction. Reclaim obsolete per-ID preset deltas only after the
+    // new complete base has been queued; a transaction abort keeps both intact.
+    const oldHead=kv.get(PRESETS_KEY);
+    oldHead.onsuccess=()=>{
+      try{for(const id of assertPresetsOverlay(oldHead.result).changes)kv.delete(PRESET_RECORD_PREFIX+id);}
+      catch(_){try{kv.transaction.abort();}catch{}}
+    };
+    oldHead.onerror=()=>{try{kv.transaction.abort();}catch{}};
     kv.put(value,STATE_KEY);kv.put(appearanceFromState(value),APPEARANCE_KEY);
+    kv.put(presetsFromState(value),PRESETS_KEY);kv.put({revision:value.storeRevision},BASE_REVISION_KEY);
   }
   function openDb() {
     return new Promise((resolve, reject) => {
       let rejected=false,upgradeIssue;
       const req = indexedDB.open(DB_NAME, DB_VERSION);
       req.onblocked=()=>{rejected=true;reject(Error('E_DATABASE_UPGRADE_BLOCKED: 请关闭其他旧版咪嘛馆窗口后重试，资料未被覆盖'));};
-      req.onupgradeneeded = () => {
+      req.onupgradeneeded = event => {
         const db=req.result;
         if(!db.objectStoreNames.contains(STORE))db.createObjectStore(STORE);
         if(rejected){req.transaction.abort();return;}
         const kv=req.transaction.objectStore(STORE),old=kv.get(STATE_KEY);
         old.onsuccess=()=>{try{
           if(old.result!==undefined&&!isCanonicalStateRecord(old.result))throw Error('E_CANONICAL_STATE_UNVERIFIED: 旧资料结构无法核实，停止升级');
-          // Additive migration only. Original history and saved CSS stay intact.
-          kv.put(appearanceFromState(old.result),APPEARANCE_KEY);
+          // v2 already has an appearance overlay. Never overwrite it on v3 upgrade.
+          if(event.oldVersion<2)kv.put(appearanceFromState(old.result),APPEARANCE_KEY);
+          if(event.oldVersion<3){kv.put(presetsFromState(old.result),PRESETS_KEY);
+            kv.put({revision:Number(old.result?.storeRevision)||0},BASE_REVISION_KEY);}
         }catch(error){upgradeIssue=error;req.transaction.abort();}};
       };
       req.onsuccess = () => {const db=req.result;db.onversionchange=()=>db.close();if(rejected)db.close();else resolve(db);};
@@ -1508,10 +1601,15 @@
         if(old!==undefined&&(!old||old.generationId!==identity.generationId||old.attempt!==identity.attempt||old.sessionId!==identity.sessionId)){
           issue=new Error('E_GENERATION_RECEIPT_CORRUPT');tx.abort();return;
         }
-        outcome={...identity,stage:String(stage),ownerId:String(extra.ownerId||old?.ownerId||''),
+        // Every stage update replaces the single receipt record. Preserve actual
+        // request-dispatch evidence, source identity and verified stream outcome;
+        // FAILED_SETTLED must not silently turn a paid fetch into 'not requested'.
+        const fields=['sourceFingerprint','recordRevision','ownerId','finishKind','finishReason','errorCode','requestDispatchAttempted'];
+        const previous=Object.fromEntries(fields.filter(k=>old&&Object.hasOwn(old,k)).map(k=>[k,old[k]]));
+        const updates=Object.fromEntries(Object.entries(extra).filter(([k])=>fields.includes(k)));
+        outcome={...identity,...previous,stage:String(stage),ownerId:String(extra.ownerId||old?.ownerId||''),
           startedAt:old?.startedAt||Date.now(),lastSeenAt:Date.now(),
-          fragmentCount:old?.fragmentCount||0,persistedChars:old?.persistedChars||0,
-          ...Object.fromEntries(Object.entries(extra).filter(([k])=>['sourceFingerprint','recordRevision','ownerId','finishKind','finishReason','errorCode','requestDispatchAttempted'].includes(k)))};
+          fragmentCount:old?.fragmentCount||0,persistedChars:old?.persistedChars||0,...updates};
         store.put(outcome,key);
       };
       request.onerror=()=>{issue=request.error;tx.abort()};
@@ -1551,5 +1649,5 @@
     if(text.length!==receipt.persistedChars)throw new Error('E_GENERATION_FRAGMENT_INCOMPLETE');
     return {receipt,text,complete:true};
   }
-  window.MimaLocalStore={putHtmlRepairDraft,getHtmlRepairDraft,loadAppearance,commitAppearance,mergeAppearance,exportPlayToolRecords,importPlayToolRecords,listPlayToolLocal,getPlayToolLocal:key=>get('play_tools_v1:'+key),putPlayToolLocal:(key,value)=>set('play_tools_v1:'+key,value),generationReceipt,generationAppendFragment,generationRead,getRollingPreflight,putRollingPreflight,clearRollingPreflight,commitHtmlRepair,putHtmlRepairCandidate,getHtmlRepairCandidate,setHtmlRepairCandidateState,listMemoryStages,inspectLegacyMemoryStages,putMemoryRejectedDraft,listMemoryRejectedDrafts,memoryReferenceContract,putFactRangeCandidate,listFactRangeCandidates,commitVerifiedFactRanges,getMergeStage,putMergeStage,getMergeDraft,createMergeDraft,updateMergeDraft,commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,loadSettingsSnapshotSummary,clearSettingsSnapshot,beginSettingsSnapshotV2,stageSettingsSnapshotFontV2,completeSettingsSnapshotV2,discardFailedSettingsSnapshotV2,hasIncompleteSettingsSnapshotV2,loadSettingsSnapshotFontV2,pruneOldSettingsSnapshotsV2,getMemoryJob,getMemoryStage,putMemoryStage,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
+  window.MimaLocalStore={commitPreset,putHtmlRepairDraft,getHtmlRepairDraft,loadAppearance,commitAppearance,mergeAppearance,exportPlayToolRecords,importPlayToolRecords,listPlayToolLocal,getPlayToolLocal:key=>get('play_tools_v1:'+key),putPlayToolLocal:(key,value)=>set('play_tools_v1:'+key,value),generationReceipt,generationAppendFragment,generationRead,getRollingPreflight,putRollingPreflight,clearRollingPreflight,commitHtmlRepair,putHtmlRepairCandidate,getHtmlRepairCandidate,setHtmlRepairCandidateState,listMemoryStages,inspectLegacyMemoryStages,putMemoryRejectedDraft,listMemoryRejectedDrafts,memoryReferenceContract,putFactRangeCandidate,listFactRangeCandidates,commitVerifiedFactRanges,getMergeStage,putMergeStage,getMergeDraft,createMergeDraft,updateMergeDraft,commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,loadSettingsSnapshotSummary,clearSettingsSnapshot,beginSettingsSnapshotV2,stageSettingsSnapshotFontV2,completeSettingsSnapshotV2,discardFailedSettingsSnapshotV2,hasIncompleteSettingsSnapshotV2,loadSettingsSnapshotFontV2,pruneOldSettingsSnapshotsV2,getMemoryJob,getMemoryStage,putMemoryStage,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
 })();

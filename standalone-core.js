@@ -534,6 +534,19 @@
       if(index<0)items.push(input);else items[index]=input;
       return clone(input);
     };
+    if(table==='presets'){
+      const commit=async()=>{
+        const current=state.presets.find(item=>item.id===input.id)||null;
+        if(current&&expectedUpdatedAt&&String(expectedUpdatedAt)!==String(current.updatedAt||''))
+          throw new ApiError('E_CANONICAL_CONFLICT','资源已更新，旧编辑不能覆盖新内容：presets/'+input.id);
+        const saved=await window.MimaLocalStore.commitPreset(input.id,input,state.storeRevision);
+        const index=state.presets.findIndex(item=>item.id===input.id);
+        const next=state.presets.slice();if(index<0)next.push(input);else next[index]=input;
+        state={...state,presets:next,storeRevision:saved.storeRevision};
+        return clone(input);
+      };
+      const task=sessionSaveTail.then(commit,commit);sessionSaveTail=task.then(()=>{},()=>{});return task;
+    }
     return table==='cssPresets'?commitAppearanceEdit(edit,{checkCanonical:checkReference}):commitLibraryEdit(edit);
   }
   function unlinkTemplateResource(db,table,id){
@@ -1425,7 +1438,7 @@
   // ---------- API ----------
   // V1.0.2 patch: keep the old OpenAI-compatible route, but add strict empty-reply protection,
   // structured diagnostics, real streaming, and a persisted temperature setting.
-  function defaultApiConfig(){return{apiBase:'',apiKey:'',model:'',chatEndpoint:'',modelsEndpoint:'',extraHeaders:'',sendTemperature:true,temperature:0.85,stream:false,maxTokens:0,contextWindowTokens:0,continuationMode:'assistant_tail',prefixReturnsSuffix:false,thinkingMode:'normal',showThinking:true,reasoningEffort:'inherit',requestGeminiThoughts:false};}
+  function defaultApiConfig(){return{apiBase:'',apiKey:'',model:'',chatEndpoint:'',modelsEndpoint:'',extraHeaders:'',sendTemperature:true,temperature:0.85,sendTopP:false,topP:1,stream:false,maxTokens:0,contextWindowTokens:0,continuationMode:'assistant_tail',prefixReturnsSuffix:false,thinkingMode:'normal',showThinking:true,reasoningEffort:'inherit',requestGeminiThoughts:false};}
   // An API window is a declaration for an exact endpoint + model, not a global
   // entitlement. Preserve the legacy configuration for its ORIGINAL identity.
   // Never silently carry a 1M window over to another channel or model.
@@ -1469,6 +1482,8 @@
     const known=Number(profiles[identity]);next.contextWindowTokens=Number.isSafeInteger(known)&&known>=4096?known:0;
     next.contextWindowIdentity=identity;next.modelCapacityProfiles=profiles;delete next.capacityExplicit;
     next.temperature=clampTemp(next.temperature);next.stream=!!next.stream;
+    if(!Number.isFinite(Number(next.topP))||Number(next.topP)<0||Number(next.topP)>1)throw new ApiError('E_API_TOP_P_INVALID','Top-p 必须介于 0 到 1。');
+    next.topP=Number(next.topP);next.sendTopP=next.sendTopP===true;
     next.thinkingMode=['normal','character','prose'].includes(next.thinkingMode)?next.thinkingMode:'normal';
     next.reasoningEffort=['inherit','low','medium','high'].includes(next.reasoningEffort)?next.reasoningEffort:'inherit';
     next.showThinking=next.showThinking!==false;next.requestGeminiThoughts=next.requestGeminiThoughts===true;
@@ -1482,6 +1497,7 @@
   function apiErrorHint(code,status,message=''){
     const m=String(message||'');
     if(status===400&&/(?:prompt_rejected|prompt[_ -]?blocked|prohibited[_ -]?content|blocked by upstream content policy|content[_ -]?filter|prohibited.use.policy)/i.test(m))return '接口明确报告内容政策拦截。本轮请求已被服务端拒绝，原始请求与剧情已保留，不会自动重复计费。';
+    if(code==='E_HTML_STRUCTURE_MISSING'||code==='E_HTML_REQUIRED_NODE_MISSING')return '模型已返回正文，但本机启用的 HTML 结构合同未满足，因此未自动提交到剧情。原文留存在独立诊断中；可查看、下载或经确认手动恢复，无须再请求模型。';
     if(String(code||'').startsWith('E_HTML_'))return '这是本机 HTML 检查、修复或保存阶段的反馈；原剧情未被失败候选覆盖。请按具体原因检查模板、选择器或待确认字段。';
     if(code==='E_API_CONFIG')return '请检查 API Base URL（基础地址）、模型名和高级端点设置。';
     if(code==='E_API_NETWORK_CORS')return '浏览器没有拿到可读取的响应。常见原因是 CORS（跨域）被 API 服务拦截、域名不可达、HTTPS 证书异常或网络中断。';
@@ -1805,6 +1821,7 @@
     const stream=options.streamOverride===undefined?!!cfg.stream:!!options.streamOverride;
     if(stream)body.stream=true;
     if(cfg.sendTemperature!==false)body.temperature=clampTemp(temperature);
+    if(cfg.sendTopP===true)body.top_p=Number(cfg.topP);
     if(Number(cfg.maxTokens)>0)body.max_tokens=Math.floor(Number(cfg.maxTokens));
     return body;
   }
@@ -1818,7 +1835,7 @@
       else row.content=m.content;
       return row;
     })};
-    for(const key of ['stream','temperature','max_tokens','reasoning_effort','extra_body'])if(Object.hasOwn(body,key))safe[key]=clone(body[key]);
+    for(const key of ['stream','temperature','top_p','max_tokens','reasoning_effort','extra_body'])if(Object.hasOwn(body,key))safe[key]=clone(body[key]);
     const trimAudit=contextTrace?.plannedTrimRounds?{
       policyVersion:1,trimBatchRounds:contextTrace.trimBatchRounds,
       protectedRecentRounds:contextTrace.protectedRecentRounds,
@@ -1845,7 +1862,7 @@
       if(!['system','user','assistant'].includes(m.role)||typeof content!=='string')throw new ApiError('E_GENERATION_SNAPSHOT_INVALID','请求快照包含无效消息。');
       return {role:m.role,content,...(m.prefix===true?{prefix:true}:{})};
     })};
-    for(const key of ['stream','temperature','max_tokens','reasoning_effort','extra_body'])if(Object.hasOwn(snapshot.requestBody,key))body[key]=clone(snapshot.requestBody[key]);
+    for(const key of ['stream','temperature','top_p','max_tokens','reasoning_effort','extra_body'])if(Object.hasOwn(snapshot.requestBody,key))body[key]=clone(snapshot.requestBody[key]);
     return stripRetiredStoryProtocol(body);
   }
   function prefixResponseText(value,body,cfg,partial=false){
@@ -3362,7 +3379,7 @@
       emitProgress(progress,{phase:'request_mode_frozen',percent:35,streamRequested:frozenTransportStream,
         detail:`这次沿用原请求快照：${frozenTransportStream?'流式':'非流式'}（当前 API 设置为${currentTransportStream?'流式':'非流式'}）。如需改为当前模式，请选择按当前参数重试/重说。`});
     }
-    cfg={...cfg,model:requestBody.model,stream:frozenTransportStream,sendTemperature:Object.hasOwn(requestBody,'temperature'),maxTokens:requestBody.max_tokens||0};
+    cfg={...cfg,model:requestBody.model,stream:frozenTransportStream,sendTemperature:Object.hasOwn(requestBody,'temperature'),sendTopP:Object.hasOwn(requestBody,'top_p'),topP:Object.hasOwn(requestBody,'top_p')?requestBody.top_p:cfg.topP,maxTokens:requestBody.max_tokens||0};
     messages=requestBody.messages;
     pending={id:retryPending?.id||makeId('generation'),action,targetMessageId:target?.id||null,snapshot,canonicalFingerprint,status:'prepared',attempt:(retryPending?.attempt||0)+1,
       ownerId:String(options.diagnosticTraceId||''),preparedAt:nowIso()};
@@ -3405,22 +3422,38 @@
       catch(err){console.error('恢复账本错误后无法结算 prepared；保留原状态',{sessionId:id,generationId:pending.id,error:err});}
       throw new ApiError('E_GENERATION_RECEIPT_UNAVAILABLE','本地恢复账本无法提交，未向模型发送请求。',{details:String(recoveryError)});
     }
-    let lastStream='',persistedChars=0,ordinal=0,lastDraftAttemptAt=0,draftDegraded=false;
+    if(diagnosticId){
+      // This association survives a failed/lost request-log row, without
+      // exposing text or credentials and without stopping a valid request.
+      try{await journal.event(diagnosticId,{type:'generation_prepared',generationId:pending.id,generationAttempt:pending.attempt,
+        ownerTraceId:pending.ownerId,model:cfg.model});}catch(error){console.error('生成身份诊断保存失败，独立流式账本仍为恢复来源',{sessionId:id,error});}
+    }
+    let lastStream='',queuedChars=0,queuedOrdinal=0,persistedChars=0,lastDraftAttemptAt=0,draftDegraded=false;
     let draftTail=Promise.resolve();
     const queueDraft=(force=false)=>{
-      if(draftDegraded||lastStream.length<=persistedChars)return;
-      if(!force&&lastStream.length-persistedChars<512&&Date.now()-lastDraftAttemptAt<350)return;
+      if(draftDegraded||lastStream.length<=queuedChars)return;
+      if(!force&&lastStream.length-queuedChars<512&&Date.now()-lastDraftAttemptAt<350)return;
       lastDraftAttemptAt=Date.now();
-      const chunk=lastStream.slice(persistedChars),offset=persistedChars,seq=ordinal;
-      persistedChars=lastStream.length;ordinal++;
-      draftTail=draftTail.then(()=>recoverStore.generationAppendFragment(identity,seq,offset,chunk)).catch(err=>{
-        draftDegraded=true;console.error('draft_storage_degraded; canonical 未改动',{sessionId:id,generationId:pending.id,attempt:pending.attempt,stage:'generation_draft_write',error:err});
-        emitProgress(progress,{phase:'draft_storage_degraded',detail:'流式草稿保存失败；已保存的剧情未改变。'});
+      const chunk=lastStream.slice(queuedChars),offset=queuedChars,seq=queuedOrdinal++;
+      queuedChars=lastStream.length;
+      draftTail=draftTail.then(async()=>{
+        if(draftDegraded)return;
+        const receipt=await recoverStore.generationAppendFragment(identity,seq,offset,chunk);
+        // Only a committed IndexedDB receipt can advance durable evidence.
+        persistedChars=receipt.persistedChars;
+      }).catch(err=>{
+        if(draftDegraded)return;
+        draftDegraded=true;console.error('draft_storage_degraded; canonical 未改动',{sessionId:id,generationId:pending.id,attempt:pending.attempt,persistedChars,stage:'generation_draft_write',error:err});
+        emitProgress(progress,{phase:'draft_storage_degraded',detail:'流式草稿保存失败；已保存的剧情未改变，后续片段不再伪称已持久化。'});
       });
     };
     const generationProgress=ev=>{
       if(ev?.streamText!==undefined){const incoming=String(ev.streamText||'');
-        if(incoming.length>=lastStream.length&&incoming.startsWith(lastStream)){
+        if(incoming.length>=lastStream.length&&
+          // Provider adapter already appended a verified delta to its own reply.
+          // Avoid rescanning the entire cumulative prefix for every SSE chunk.
+          ((typeof ev.delta==='string'&&ev.delta.length>0&&incoming.length===lastStream.length+ev.delta.length&&incoming.endsWith(ev.delta))||
+            incoming.startsWith(lastStream))){
           lastStream=incoming;queueDraft();
         }else if(incoming!==lastStream)console.warn('流式文本发生非增量替换，拒绝将错误片段拼入暂存',{sessionId:id,generationId:pending.id});
       }
@@ -3436,6 +3469,8 @@
     inFlightStoryAttempts.add(liveAttemptKey);
     try{
     await recoverStore.generationReceipt(identity,'REQUEST_DISPATCH_ATTEMPT',{requestDispatchAttempted:true,ownerId:pending.ownerId});
+    if(diagnosticId)try{await journal.event(diagnosticId,{type:'dispatch_attempt',generationId:pending.id,generationAttempt:pending.attempt,model:cfg.model});}
+    catch(error){console.error('付费请求的诊断事件没有保存；不能据此判定未请求模型',{sessionId:id,error});}
     const replyRaw=await callModelWithConfig(messages,cfg,temp,signal,{onProgress:generationProgress,resultMeta:storyResultMeta,requestBody,messageSources:snapshot.messageSources,
       onReceivedText:value=>{diagnosticCandidate=String(value||'');},
       storyContext:{sessionId:id,generationId:pending.id,generationAttempt:pending.attempt,preparationElapsedMs:Date.now()-preparationStartedAt},
@@ -3633,8 +3668,9 @@
     if(!pending||pending.id!==record.generationId||pending.attempt!==record.generationAttempt||pending.status!=='failed'||pending.action!==record.action||
       pending.canonicalFingerprint!==memorySourceFingerprint(session.messages,session.messages.length))
       throw new ApiError('E_HTML_REPAIR_RECOVERY_STALE','失败生成已更换或剧情变化，不生成过期候选。');
-    const raw=String(record.rawRejectedReply||'');
-    if(!raw.trim()||record.rejectedReplyTruncated)throw new ApiError('E_HTML_REPAIR_RAW_INCOMPLETE','诊断正文不完整，不允许猜测或补造。');
+    const source=await window.MimaDiagnosticJournal.candidatePreview(record.id);
+    if(!source.complete||!source.raw?.trim())throw new ApiError('E_HTML_REPAIR_RAW_INCOMPLETE','诊断缺少完整的原始正文，不允许猜测或补造。');
+    const raw=source.raw;
     const contract=session.promptSettings?.outputContract||{};
     const template=session.messages.find(x=>x.id===contract.templateMessageId&&x.role==='assistant');
     const validator=window.MimaHtmlStructure;
@@ -3660,11 +3696,25 @@
     if(record.sessionId!==id||String(record.action||'').startsWith('compat_'))throw new ApiError('E_REPLY_RECOVERY_OWNER','诊断不属于这个原生剧情。');
     const persisted=normalizeState(await window.MimaLocalStore.loadState()),sourceSession=persisted.sessions.find(s=>s.id===id),session=sourceSession?normalizeSession(clone(sourceSession)):null;
     if(!session)throw new ApiError('E_STORY_SESSION_MISSING','原剧情已删除，未重建或覆盖存档。');
-    const previous=session.messages.find(m=>m.metadata?.manualRecovery?.diagnosticId===record.id||arr(m.metadata?.manualRecoveryIds).includes(record.id));
+    const previous=session.messages.find(m=>m.metadata?.manualRecovery?.diagnosticId===record.id||arr(m.metadata?.manualRecoveryIds).includes(record.id)||
+      (m.metadata?.manualRecovery?.generationId===record.generationId&&m.metadata?.manualRecovery?.attempt===record.generationAttempt));
     if(previous)return {session,messageId:previous.id,alreadyRestored:true,action:record.action};
-    const pending=session.pendingGeneration;
-    if(!record.generationId||!pending||pending.id!==record.generationId||pending.attempt!==record.generationAttempt||!(pending.status==='failed'||(body.allowUnsettled===true&&pending.status==='prepared'&&['requesting','provider_returned'].includes(record.status)))||pending.action!==record.action)
-      throw new ApiError('E_REPLY_RECOVERY_STALE','原失败任务已被重试、替换或清理，未将旧回复写入新剧情。');
+    const currentPending=session.pendingGeneration;
+    const originalStillCurrent=!!record.generationId&&!!currentPending&&currentPending.id===record.generationId&&currentPending.attempt===record.generationAttempt&&
+      (currentPending.status==='failed'||(body.allowUnsettled===true&&currentPending.status==='prepared'&&['requesting','provider_returned'].includes(record.status)))&&currentPending.action===record.action;
+    // A second failed attempt can replace the pending generation even though the
+    // original send's saved user message is STILL the last canonical message.
+    // The Owner may explicitly append that retained response exactly once. Never
+    // overwrite a newer assistant, append after another user, or steal an active
+    // request; storage CAS still protects multi-tab mutations at commit time.
+    const lastMessage=session.messages.at(-1);
+    const olderSendAppend=!originalStillCurrent&&body.recoverSupersededAsLatest===true&&record.action==='send'&&
+      !!record.traceId&&lastMessage?.role==='user'&&lastMessage.metadata?.submissionTraceId===record.traceId&&
+      (!currentPending||['failed','aborted'].includes(currentPending.status));
+    if(!originalStillCurrent&&!olderSendAppend)
+      throw new ApiError('E_REPLY_RECOVERY_STALE','原失败任务已被新尝试替换；若原用户发言仍是当前最后一条且新任务已结束，可在明确确认后补回独立回复。否则请从诊断下载原文，禁止覆盖新剧情。');
+    const pending=olderSendAppend?{id:record.generationId,attempt:record.generationAttempt,action:'send',status:'failed',
+      canonicalFingerprint:memorySourceFingerprint(session.messages,session.messages.length),snapshot:null,preparedAt:record.createdAt}:currentPending;
     if(body.allowUnsettled===true&&pending.status==='prepared'){
       const identity={sessionId:id,generationId:pending.id,attempt:pending.attempt};
       if(inFlightStoryAttempts.has(JSON.stringify(identity)))
@@ -3727,7 +3777,7 @@
     }
     target.metadata={...(target.metadata||{}),...(htmlRepair?{htmlCodeRepair:{candidateId:htmlRepair.id,originalRawPreserved:true,approvedAt:nowIso(),recoveryDiagnosticId:record.id}}:{}),generationSnapshot:action==='continue'?target.metadata?.generationSnapshot:pending.snapshot,
       manualRecoveryIds:[...new Set([...arr(target.metadata?.manualRecoveryIds),record.id])],
-      manualRecovery:{diagnosticId:record.id,generationId:pending.id,attempt:pending.attempt,action,restoredAt:nowIso(),providerFinishReason:record.finishReason||'',partialCapture:record.recoveryIsPartial===true,recoverySource:record.recoverySource,formatCheckOwnerOverride:!htmlRepair,originalRejectionCode:String(record.error?.code||''),contentFingerprint:manualReplyFingerprint(target)}};
+      manualRecovery:{diagnosticId:record.id,generationId:pending.id,attempt:pending.attempt,action,restoredAt:nowIso(),providerFinishReason:record.finishReason||'',partialCapture:record.recoveryIsPartial===true,recoverySource:record.recoverySource,formatCheckOwnerOverride:!htmlRepair,olderSendAppend:olderSendAppend===true,originalRejectionCode:String(record.error?.code||''),contentFingerprint:manualReplyFingerprint(target)}};
     target.renderedContent=await applyRegexForSessionAsync(session,target.content,'display');target.tokenEstimate=estimateTokens(target.content);
     // Explicit human action only: no Provider, retry or background summary.
     let saved;
@@ -3742,6 +3792,46 @@
       state=normalizeState(committed);saved=normalized;
     }else saved=await saveSession({...session,pendingGeneration:null,lastGeneration:{id:pending.id,attempt:pending.attempt,action,preparedAt:pending.preparedAt,settledAt:nowIso(),status:'completed',resultMessageId:target.id,manualRecovery:true},legacyMemoryQuarantined:true});
     return {session:saved,messageId:target.id,alreadyRestored:false,action};
+  }
+  async function restoreFailedStreamLedger(id,body={}){
+    if(body.confirmed!==true||body.allowPartial!==true)throw new ApiError('E_LEDGER_RECOVERY_CONFIRM','必须确认仅恢复本机实际保存的片段，不能补造末尾。');
+    const generationId=String(body.generationId||''),attempt=Number(body.attempt);
+    if(!generationId||!Number.isSafeInteger(attempt)||attempt<1)throw new ApiError('E_GENERATION_IDENTITY_INVALID','原请求身份无效。');
+    const persisted=normalizeState(await window.MimaLocalStore.loadState());
+    const rawSession=persisted.sessions.find(s=>s.id===id),session=rawSession?normalizeSession(clone(rawSession)):null;
+    if(!session)throw new ApiError('E_STORY_SESSION_MISSING','剧情已不存在，不能恢复到别的剧情。');
+    const recovered=session.messages.find(m=>m.metadata?.manualRecovery?.generationId===generationId&&m.metadata?.manualRecovery?.attempt===attempt);
+    if(recovered)return {session,messageId:recovered.id,alreadyRestored:true,action:'send'};
+    const pending=session.pendingGeneration;
+    if(!pending||pending.id!==generationId||pending.attempt!==attempt||pending.action!=='send'||pending.status!=='failed'||
+      session.lastGeneration?.status!=='failed'||session.lastGeneration?.id!==generationId||session.lastGeneration?.attempt!==attempt)
+      throw new ApiError('E_LEDGER_RECOVERY_STALE','本轮不再是最近一次已结算的失败发送；未覆盖新剧情。');
+    if(inFlightStoryAttempts.has(JSON.stringify({sessionId:id,generationId,attempt})))
+      throw new ApiError('E_GENERATION_STILL_ACTIVE','原请求仍在本窗口执行，不允许抢先恢复。');
+    if(pending.canonicalFingerprint!==memorySourceFingerprint(session.messages,session.messages.length))
+      throw new ApiError('E_CANONICAL_CONFLICT','剧情正文已经变化，不能插入旧片段。');
+    const last=session.messages.at(-1);
+    if(last?.role!=='user'||!pending.ownerId||last.metadata?.submissionTraceId!==pending.ownerId)
+      throw new ApiError('E_LEDGER_RECOVERY_OWNER','原主人消息不是剧情最后一条，或原发送身份无法核实。');
+    const read=await window.MimaLocalStore.generationRead({sessionId:id,generationId,attempt}),receipt=read.receipt;
+    if(!read.complete||!read.text?.trim()||!receipt||Number(receipt.fragmentCount)<1||Number(receipt.persistedChars)!==read.text.length||
+      (receipt.ownerId&&receipt.ownerId!==pending.ownerId)||
+      !(receipt.requestDispatchAttempted===true||receipt.stage==='FAILED_SETTLED'))
+      throw new ApiError('E_LEDGER_RECOVERY_NO_TEXT','本机没有能核对来源的请求正文片段；没有修改剧情。');
+    const raw=read.text;
+    validateStoryReply(raw,{manualRecovery:true,outputContract:session.promptSettings?.outputContract});
+    const msg=makeMessage('assistant',raw,session,{source:'manual_stream_ledger_recovery'});
+    msg.rawContent=raw;
+    msg.metadata={...(msg.metadata||{}),manualRecovery:{diagnosticId:'ledger:'+generationId+':'+attempt,
+      generationId,attempt,action:'send',restoredAt:nowIso(),partialCapture:true,
+      recoverySource:'verified_stream_fragments',formatCheckOwnerOverride:true,contentFingerprint:manualReplyFingerprint(msg)}};
+    msg.renderedContent=await applyRegexForSessionAsync(session,raw,'display');
+    msg.tokenEstimate=estimateTokens(raw);session.messages.push(msg);
+    state=persisted;
+    const saved=await saveSession({...session,pendingGeneration:null,
+      lastGeneration:{id:generationId,attempt,action:'send',preparedAt:pending.preparedAt,settledAt:nowIso(),status:'completed',
+        resultMessageId:msg.id,manualRecovery:true,partialCapture:true},legacyMemoryQuarantined:true});
+    return {session:saved,messageId:msg.id,alreadyRestored:false,action:'send',partialCapture:true};
   }
   async function inspectHtmlMessage(id,msgId){
     state=normalizeState(await window.MimaLocalStore.loadState());
@@ -4060,6 +4150,7 @@
       m=path.match(/^\/sessions\/([^/]+)\/generation-abandon$/);if(m&&method==='POST')return ok(await abandonUnknownStoryGeneration(m[1],body||{}));
       m=path.match(/^\/sessions\/([^/]+)\/chat$/);if(m&&method==='POST')return ok(await processStoryTurn(m[1],body?.text,body?.action||'send',signal,body?.temperature,{directorNote:body?.directorNote||'',targetMessageId:body?.targetMessageId||null,expectedRecordRevision:body?.expectedRecordRevision??null,expectedSourceFingerprint:body?.expectedSourceFingerprint||null,diagnosticTurnId:body?.diagnosticTurnId||'',diagnosticTraceId:body?.diagnosticTraceId||'',regenerationContext:body?.regenerationContext||'original',retryParameters:body?.retryParameters==='current'?'current':'original',confirmUnknownTakeover:body?.confirmUnknownTakeover===true},progress));
       m=path.match(/^\/sessions\/([^/]+)\/recover-reply$/);if(m&&method==='POST')return ok(await restoreRejectedReply(m[1],body||{}));
+      m=path.match(/^\/sessions\/([^/]+)\/recover-stream-ledger$/);if(m&&method==='POST')return ok(await restoreFailedStreamLedger(m[1],body||{}));
       m=path.match(/^\/sessions\/([^/]+)\/recover-reply\/html-repair$/);if(m&&method==='POST')return ok(await prepareRejectedHtmlRepair(m[1],body?.diagnosticId));
       m=path.match(/^\/sessions\/([^/]+)\/prompt-preview$/);if(m&&method==='POST'){state=normalizeState(await window.MimaLocalStore.loadState());return ok(await previewPrompt(m[1],body||{}));}
       m=path.match(/^\/sessions\/([^/]+)\/opening$/);if(m&&method==='POST')return ok(await addOpening(m[1],body?.content||''));
