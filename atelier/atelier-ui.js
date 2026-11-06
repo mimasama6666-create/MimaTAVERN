@@ -5,6 +5,7 @@ const $=id=>shadow?.getElementById(id),esc=C.esc,cl=C.clone,uid=C.uid;
 let catalogSearch='',catalogKind='all',catalogPage=0,previewCandidate=null,previewLayer='combined';
 let previewFrameRequest=null;
 let projectListTask=null,projectListEpoch=0,projectListOffset=0,projectListController=null;
+let splitRatio=(()=>{try{const n=Number(localStorage.getItem('mima-atelier-split-ratio-v1'));return Number.isFinite(n)&&n>=.25&&n<=.75?n:.47;}catch(_){return .47;}})(),splitDrag=null;
 let host=null,shadow=null,project=null,tab='templates',selected=['shell'],patternId=null,stickerId=null,undo=[],redo=[],saveTimer=null,previewStyle=null,statusTimer=null,opened=false,drag=null,applying=false,activeVersion=0,sceneMode='day',previewMode='structure',previewDevice='fit',gestureKey=null,saveQueue=Promise.resolve(),draftVersions=new Map(),fullscreen=false,previewTimer=null,beforeSnapshot=null,compareBefore=false,openingPromise=null,draftConflict=null,changingProject=false,liveDocked=false,liveRevisionTimer=null,liveDockOpId=null,pickingRealArea=false;
 const FIELD_GROUPS={
  '材质与颜色':[
@@ -17,13 +18,70 @@ const FIELD_GROUPS={
 const LABELS={flat:'平面',minimal:'极简',glass:'磨砂',neo:'新拟物',skeuo:'复古拟物',clay:'软陶',aqua:'水晶',brutal:'粗野',none:'无',linear:'线性',radial:'径向',conic:'角向',round:'普通圆角',pill:'胶囊',cookie:'饼干',cloud:'云朵',ticket:'票券',hexagon:'六角',float:'悬浮',glow:'呼吸亮度',double:'双重包边',dotted:'点状花边',cream:'奶油外壳',inset:'内部细边',stars:'星空',lace:'蕾丝',bubbles:'水泡',grain:'细腻颗粒',paper:'纸纹',scanlines:'屏幕扫描线',pixels:'像素块',grid:'网格',gloss:'镜面高光',holo:'全息彩光',ornate:'古典纹章',watercolor:'水彩叠色',waves:'波浪纹',dots:'波点',geometric:'几何',stripes:'斜条纹',marble:'大理石'};
 const PATTERN_LABELS={dots:'韩系波点',grid:'细格纹',stripes:'横斜条纹',diagonal:'斜线',checker:'棋盘格',waves:'水波纹',rings:'同心圆',radial:'放射纹',diamond:'菱格',cross:'十字',halftone:'半调点'};
 function note(s,error=false){const n=$('atl-status');if(n){n.textContent=s;n.dataset.error=error?'1':'0';}clearTimeout(statusTimer);statusTimer=setTimeout(()=>{if(n)n.textContent=''},5800)}
-function start(){if(host)return;host=document.createElement('div');host.id='mima-atelier-host';host.style.cssText='display:none;position:fixed;inset:0;z-index:2147483000';document.body.appendChild(host);shadow=host.attachShadow({mode:'open'});shadow.innerHTML=`<link rel="stylesheet" href="./atelier/atelier-ui.css?v=20261027-interaction-editor"><main class="atl-app"><header class="atl-header"><div class="atl-toolbar-primary"><button class="atl-close" data-action="close" aria-label="关闭工坊">‹</button><button class="atl-exit-live" data-action="exit-live-editor" type="button">结束真实编辑</button><div class="atl-heading"><b>✦ 咪嘛馆主题工坊</b><small>自由编辑 · 真实试穿</small></div><button class="atl-apply" data-action="saveapply">应用全局主题</button><details class="atl-toolbar-secondary"><summary aria-label="更多编辑操作">⋯</summary><div class="atl-aux-actions"><button data-action="undo" title="撤销">↶ 撤销</button><button data-action="redo" title="重做">↷ 重做</button><button class="atl-pick-real" data-action="pick-real-area" type="button" aria-pressed="false">点选真实区域</button></div></details></div></header><div class="atl-main"><section class="atl-preview-section"><div class="atl-preview-toolbar"><strong id="atl-project-name">主题工坊</strong><div><button data-action="live-editor" title="不离开编辑器，直接在真实剧情页面调整样式">★ 真实页面边看边调</button><select id="atl-device" aria-label="模拟预览尺寸"><option value="fit">自适应</option><option value="compact">小手机</option><option value="phone">大手机</option><option value="landscape">手机横屏</option><option value="tablet">平板</option></select><button data-action="expand" aria-label="放大预览" aria-pressed="false">⛶ 全屏</button></div></div><div class="atl-preview-frame" id="atl-preview-frame" data-device="fit"><button type="button" class="atl-exit-fullscreen" data-action="exit-fullscreen" aria-label="退出全屏预览">✕ 退出全屏</button><iframe id="atl-sandbox-preview" title="隔离结构快照试穿预览（模拟界面结构）" sandbox="" hidden></iframe><div id="atl-preview" data-atl-preview="1"><div class="atl-scene"><div class="atl-demo-top"><span>☰ 剧情</span><b>✦ 咪嘛馆</b><span>功能　设置</span></div><div class="atl-demo-chat"><div class="atl-demo-message atl-demo-safe-host" data-demo-role="assistant"><strong>圣德芬 · 剧情示例</strong><p>柔和的阳光落在窗边，咖啡香气悄悄漫开。这里会实时显示你制作的主题。</p></div><div class="atl-demo-message atl-demo-user" data-demo-role="user"><strong>你 · 对话示例</strong><p>我想看看新的主题是什么样子！</p></div><div class="atl-demo-session-list"><div class="atl-demo-session-item">✦ 独立宇宙 <small>12 条剧情</small></div><div class="atl-demo-session-item">✧ 另一段旅途 <small>9 条剧情</small></div></div><div class="atl-demo-card"><b>✧ 角色状态栏</b><div class="atl-demo-status"><span>心情　☕ 温柔</span><div class="atl-demo-progress"><i></i></div></div></div><div class="atl-demo-buttonrow"><button class="atl-demo-primary" type="button">主要按钮</button><button class="atl-demo-secondary" type="button">次要按钮</button></div></div><div class="atl-demo-composer"><input class="atl-demo-field" placeholder="输入剧情和对话……" readonly><button class="atl-demo-send" type="button">➤</button></div><div id="atl-preview-stickers" class="atl-preview-stickers"></div></div></div></div><div class="atl-preview-foot"><span>风格示意 · 非正式页面。点「真实页面边看边调」可实时查看完整效果，退出不保存。</span><span id="atl-selected-label"></span></div></section><section class="atl-editor"><nav class="atl-tabs" aria-label="工坊功能"><button data-tab="templates">选主题</button><button data-tab="design">编辑</button><button data-tab="interactions">交互音效</button><button data-tab="project">管理</button><details class="atl-tab-more"><summary>素材 ▾</summary><div class="atl-more-actions"><button data-tab="patterns">纹样</button><button data-tab="stickers">贴纸</button></div></details></nav><details id="atl-effect-warnings" class="atl-effect-warnings" role="note" hidden></details><div id="atl-editor-content" class="atl-editor-content"></div><p id="atl-status" class="atl-status" role="status"></p></section></div></main><input type="file" id="atl-image-input" accept="image/png,image/jpeg,image/webp,image/gif" hidden><input type="file" id="atl-sound-input" accept=".mp3,.wav,.m4a,.aac,audio/mpeg,audio/wav,audio/mp4,audio/aac" hidden><input type="file" id="atl-font-input" accept=".ttf,.otf,.woff,.woff2" hidden><input type="file" id="atl-project-input" accept=".json,.css,.zip,application/json,text/css,application/zip" hidden>`;
+function start(){if(host)return;host=document.createElement('div');host.id='mima-atelier-host';host.style.cssText='display:none;position:fixed;inset:0;z-index:2147483000';document.body.appendChild(host);shadow=host.attachShadow({mode:'open'});shadow.innerHTML=`<link rel="stylesheet" href="./atelier/atelier-ui.css?v=20261107-v582-touch-fix"><main class="atl-app"><header class="atl-header"><div class="atl-toolbar-primary"><button class="atl-close" data-action="close" aria-label="关闭工坊">‹</button><button class="atl-exit-live" data-action="exit-live-editor" type="button">结束真实编辑</button><div class="atl-heading"><b>✦ 咪嘛馆主题工坊</b><small>自由编辑 · 真实试穿</small></div><button class="atl-apply" data-action="saveapply">应用全局主题</button><details class="atl-toolbar-secondary"><summary aria-label="更多编辑操作">⋯</summary><div class="atl-aux-actions"><button data-action="undo" title="撤销">↶ 撤销</button><button data-action="redo" title="重做">↷ 重做</button><button class="atl-pick-real" data-action="pick-real-area" type="button" aria-pressed="false">点选真实区域</button></div></details></div></header><div class="atl-main" id="atl-main"><section class="atl-preview-section"><div class="atl-preview-toolbar"><strong id="atl-project-name">主题工坊</strong><div><button data-action="live-editor" title="不离开编辑器，直接在真实剧情页面调整样式">★ 真实页面边看边调</button><select id="atl-device" aria-label="模拟预览尺寸"><option value="fit">自适应</option><option value="compact">小手机</option><option value="phone">大手机</option><option value="landscape">手机横屏</option><option value="tablet">平板</option></select><button data-action="expand" aria-label="放大预览" aria-pressed="false">⛶ 全屏</button></div></div><div class="atl-preview-frame" id="atl-preview-frame" data-device="fit"><button type="button" class="atl-exit-fullscreen" data-action="exit-fullscreen" aria-label="退出全屏预览">✕ 退出全屏</button><iframe id="atl-sandbox-preview" title="隔离结构快照试穿预览（模拟界面结构）" sandbox="" hidden></iframe><div id="atl-preview" data-atl-preview="1"><div class="atl-scene"><div class="atl-demo-top"><span>☰ 剧情</span><b>✦ 咪嘛馆</b><span>功能　设置</span></div><div class="atl-demo-chat"><div class="atl-demo-message atl-demo-safe-host" data-demo-role="assistant"><strong>圣德芬 · 剧情示例</strong><p>柔和的阳光落在窗边，咖啡香气悄悄漫开。这里会实时显示你制作的主题。</p></div><div class="atl-demo-message atl-demo-user" data-demo-role="user"><strong>你 · 对话示例</strong><p>我想看看新的主题是什么样子！</p></div><div class="atl-demo-session-list"><div class="atl-demo-session-item">✦ 独立宇宙 <small>12 条剧情</small></div><div class="atl-demo-session-item">✧ 另一段旅途 <small>9 条剧情</small></div></div><div class="atl-demo-card"><b>✧ 角色状态栏</b><div class="atl-demo-status"><span>心情　☕ 温柔</span><div class="atl-demo-progress"><i></i></div></div></div><div class="atl-demo-buttonrow"><button class="atl-demo-primary" type="button">主要按钮</button><button class="atl-demo-secondary" type="button">次要按钮</button></div></div><div class="atl-demo-composer"><input class="atl-demo-field" placeholder="输入剧情和对话……" readonly><button class="atl-demo-send" type="button">➤</button></div><div id="atl-preview-stickers" class="atl-preview-stickers"></div></div></div></div><div class="atl-preview-foot"><span>风格示意 · 非正式页面。点「真实页面边看边调」可实时查看完整效果，退出不保存。</span><span id="atl-selected-label"></span></div></section><div id="atl-splitter" class="atl-splitter" aria-label="预览和编辑分隔条"><div id="atl-split-grip" class="atl-split-grip" role="separator" tabindex="0" aria-orientation="horizontal" aria-label="拖动或按上下方向键调整上方预览高度" aria-valuemin="25" aria-valuemax="75" aria-valuenow="47"><span class="atl-split-knob" aria-hidden="true"></span><span class="atl-split-hint">拖动调大小</span></div><div class="atl-split-presets" role="group" aria-label="快速调整预览比例"><button type="button" data-action="split-edit" aria-label="编辑优先">编辑</button><button type="button" data-action="split-balance" aria-label="均衡比例">均衡</button><button type="button" data-action="split-preview" aria-label="预览优先">预览</button></div></div><section class="atl-editor"><nav class="atl-tabs" aria-label="工坊功能"><button data-tab="templates">选主题</button><button data-tab="design">编辑</button><button data-tab="interactions">交互音效</button><button data-tab="project">管理</button><details class="atl-tab-more"><summary>素材 ▾</summary><div class="atl-more-actions"><button data-tab="patterns">纹样</button><button data-tab="stickers">贴纸</button></div></details></nav><details id="atl-effect-warnings" class="atl-effect-warnings" role="note" hidden></details><div id="atl-editor-content" class="atl-editor-content"></div><p id="atl-status" class="atl-status" role="status"></p></section></div></main><input type="file" id="atl-image-input" accept="image/png,image/jpeg,image/webp,image/gif" hidden><input type="file" id="atl-sound-input" accept=".mp3,.wav,.m4a,.aac,audio/mpeg,audio/wav,audio/mp4,audio/aac" hidden><input type="file" id="atl-font-input" accept=".ttf,.otf,.woff,.woff2" hidden><input type="file" id="atl-project-input" accept=".json,.css,.zip,application/json,text/css,application/zip" hidden>`;
 shadow.addEventListener('click',onClick);shadow.addEventListener('input',onInput);shadow.addEventListener('change',onChange);shadow.addEventListener('focusout',()=>{gestureKey=null});document.addEventListener('keydown',e=>{if(opened&&fullscreen&&e.key==='Escape'){e.preventDefault();setFullscreen(false);}});
 $('atl-sound-input').addEventListener('change',onSoundFile);$('atl-image-input').addEventListener('change',onImage);$('atl-font-input').addEventListener('change',onFont);$('atl-project-input').addEventListener('change',onImport);
 document.addEventListener('click',onRealSelectionCapture,true);
-$('atl-preview-stickers').addEventListener('pointerdown',onPointerDown);shadow.addEventListener('pointermove',onPointerMove);shadow.addEventListener('pointerup',onPointerUp);
+$('atl-split-grip').addEventListener('pointerdown',onSplitPointerDown);
+    $('atl-split-grip').addEventListener('pointermove',onSplitPointerMove);
+    $('atl-split-grip').addEventListener('pointerup',onSplitPointerUp);
+    $('atl-split-grip').addEventListener('pointercancel',onSplitPointerCancel);
+    $('atl-split-grip').addEventListener('lostpointercapture',onSplitPointerCancel);
+    $('atl-split-grip').addEventListener('keydown',onSplitKey);
+    window.addEventListener('resize',scheduleAtelierSplitResize,{passive:true});
+    window.visualViewport?.addEventListener('resize',scheduleAtelierSplitResize,{passive:true});
+    $('atl-preview-stickers').addEventListener('pointerdown',onPointerDown);shadow.addEventListener('pointermove',onPointerMove);shadow.addEventListener('pointerup',onPointerUp);
 }
 // Structural snapshots retain shared immutable base64 strings while making edited fields independent.
+/* User-interface split: independent of theme projects and published CSS. */
+let splitResizeFrame=null;
+function scheduleAtelierSplitResize(){if(splitResizeFrame!==null)return;splitResizeFrame=requestAnimationFrame(()=>{splitResizeFrame=null;if(opened&&!liveDocked)applyAtelierSplit();});}
+function splitLimits(){
+ const main=$('atl-main');if(!main)return {available:0,min:.25,max:.75};
+ const height=main.getBoundingClientRect().height-54;
+ const minPreview=Math.min(210,Math.max(112,height*.24));
+ const minEditor=Math.min(230,Math.max(140,height*.30));
+ const lo=height>0?Math.min(.5,minPreview/height):.25;
+ const hi=height>0?Math.max(.5,1-minEditor/height):.75;
+ return {available:height,min:Math.min(lo,hi),max:Math.max(lo,hi)};
+}
+function applyAtelierSplit(){
+ if(!host||!opened||liveDocked)return;
+ const main=$('atl-main'),grip=$('atl-split-grip');if(!main||!grip)return;
+ const bounds=splitLimits();if(bounds.available<=0)return;
+ const effective=Math.max(bounds.min,Math.min(bounds.max,splitRatio));
+ main.style.setProperty('--atl-preview-height',Math.round(bounds.available*effective)+'px');
+ grip.setAttribute('aria-valuenow',String(Math.round(effective*100)));
+ grip.setAttribute('aria-valuetext',`预览 ${Math.round(effective*100)}%，编辑 ${Math.round((1-effective)*100)}%`);
+ for(const action of ['edit','balance','preview']){const b=shadow.querySelector(`[data-action="split-${action}"]`);if(b)b.setAttribute('aria-pressed',String(Math.abs(splitRatio-({edit:.32,balance:.50,preview:.67}[action]))<.01));}
+}
+function saveAtelierSplit(){try{localStorage.setItem('mima-atelier-split-ratio-v1',String(splitRatio));}catch(error){note('本次预览比例已调整，但浏览器没有允许保存布局偏好',true);}}
+function setAtelierSplit(next,save=true){const {min,max}=splitLimits();splitRatio=Math.max(min,Math.min(max,next));applyAtelierSplit();if(save)saveAtelierSplit();}
+function onSplitPointerDown(e){
+ if(e.button!==0||!opened||liveDocked||!window.matchMedia('(max-width:850px)').matches)return;
+ splitDrag={pointerId:e.pointerId,initial:splitRatio,startY:e.clientY};
+ const grip=$('atl-split-grip');grip.classList.add('is-dragging');grip.setPointerCapture(e.pointerId);e.preventDefault();
+}
+function onSplitPointerMove(e){
+ if(!splitDrag||splitDrag.pointerId!==e.pointerId)return;
+ const bounds=splitLimits();if(bounds.available<=0)return;
+ setAtelierSplit(splitDrag.initial+(e.clientY-splitDrag.startY)/bounds.available,false);e.preventDefault();
+}
+function onSplitPointerUp(e){
+ if(!splitDrag||splitDrag.pointerId!==e.pointerId)return;
+ splitDrag=null;const grip=$('atl-split-grip');grip.classList.remove('is-dragging');saveAtelierSplit();
+ if(grip.hasPointerCapture(e.pointerId))grip.releasePointerCapture(e.pointerId);
+}
+function onSplitPointerCancel(e){
+ if(!splitDrag||splitDrag.pointerId!==e.pointerId)return;
+ const prior=splitDrag.initial;splitDrag=null;$('atl-split-grip').classList.remove('is-dragging');setAtelierSplit(prior,false);
+}
+function onSplitKey(e){
+ if(!['ArrowUp','ArrowDown','Home','End'].includes(e.key))return;
+ e.preventDefault();
+ const next=e.key==='Home'?.25:e.key==='End'?.75:splitRatio+(e.key==='ArrowDown'?.05:-.05);
+ setAtelierSplit(next);
+}
 function snapshot(value){return {...value,elements:Object.fromEntries(Object.entries(value.elements||{}).map(([k,v])=>[k,{...v}])),patterns:(value.patterns||[]).map(v=>({...v})),stickers:(value.stickers||[]).map(v=>({...v})),fonts:(value.fonts||[]).map(v=>({...v})),favorites:(value.favorites||[]).map(v=>({...v,style:{...v.style}})),interactions:{...value.interactions,sounds:{...value.interactions?.sounds},soundNames:{...value.interactions?.soundNames}},regions:{...value.regions},variants:value.variants?.night?{...value.variants,night:{elements:Object.fromEntries(Object.entries(value.variants.night.elements).map(([k,v])=>[k,{...v}])),patterns:value.variants.night.patterns.map(v=>({...v}))}}:{}};}
 function push(key=null){if(!project)return;if(key&&gestureKey===key)return;gestureKey=key;undo.push(snapshot(project));if(undo.length>60)undo.shift();redo=[];}
 function previewSource(){return previewCandidate||{...project,...edition(),variants:{}};}
@@ -275,7 +333,7 @@ function setLiveDock(enabled){
  if(!host)return;
  host.classList.toggle('atl-live-dock',!!enabled);
  if(enabled)syncDockViewport();
- else host.style.cssText='display:block;position:fixed;inset:0;z-index:2147483000';
+ else {host.style.cssText='display:block;position:fixed;inset:0;z-index:2147483000';scheduleAtelierSplitResize();}
 }
 async function beginDockedLiveEditor(){
  if(isPreviewPending())return showRecoveryStatus();
@@ -332,7 +390,7 @@ function renderStatus(message){
 }
 async function open(){if(opened)return;if(openingPromise)return openingPromise;openingPromise=(async()=>{start();await C.ready;const active=C.getActive();activeVersion=active.version;
  if(suspendedDraft&&project){host.style.display='block';opened=true;suspendedDraft=false;
- document.documentElement.classList.add('mima-atl-editing');setFullscreen(false);render();refreshPreview();syncPreviewControls();
+ document.documentElement.classList.add('mima-atl-editing');setFullscreen(false);render();refreshPreview();syncPreviewControls();applyAtelierSplit();
  note('已恢复本页保留的未保存草稿。存储故障期间不要刷新页面；可重试核对正式主题。',true);return;}
  await saveQueue.catch(error=>console.warn('[Atelier] previous draft save failed; reopening remains available',error));
  const draftId=window.sessionStorage.getItem('mima-atl-current'),recent=await C.get('lastEdited');let loaded=draftId?await C.get('project:'+draftId):null;
@@ -340,7 +398,7 @@ async function open(){if(opened)return;if(openingPromise)return openingPromise;o
  if(!loaded&&active.id)loaded=await C.get('project:'+active.id);
  project=loaded?C.normalized(loaded):C.baseTheme();previewCandidate=null;beforeSnapshot=snapshot(project);compareBefore=false;draftVersions.set(project.id,project.draftVersion||0);
  window.sessionStorage.setItem('mima-atl-current',project.id);host.style.display='block';opened=true;syncPreviewControls();
- document.documentElement.classList.add('mima-atl-editing');setFullscreen(false);render();refreshPreview();renderStatus();
+ document.documentElement.classList.add('mima-atl-editing');setFullscreen(false);render();refreshPreview();renderStatus();applyAtelierSplit();
  if(!loaded){await queueDraft();renderStatus('已创建并保存首份草稿');}
  
 })();try{return await openingPromise;}finally{openingPromise=null;}
@@ -497,6 +555,9 @@ function onClick(e){const t=e.target.closest('button');if(!t){const area=e.targe
  if(t.dataset.template){switchToTheme(C.baseTheme(t.dataset.template)).then(()=>publishCurrentTheme()).catch(e=>note('选择主题失败：'+e.message,true));return;}
  if(t.dataset.patternSelect){patternId=t.dataset.patternSelect;render();return;}if(t.dataset.stickerSelect){stickerId=t.dataset.stickerSelect;tab='stickers';render();return;}
  const choice=t.dataset.action;
+ if(choice==='split-edit'||choice==='split-balance'||choice==='split-preview'){
+  setAtelierSplit({"split-edit":.32,"split-balance":.5,"split-preview":.67}[choice]);return;
+ }
  if(choice==='clean-panels'){
   if(!project)return;
   push('clean-panels');for(const key of ['topbar','composer','drawer']){

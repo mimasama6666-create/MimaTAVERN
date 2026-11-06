@@ -41,3 +41,12 @@ html[data-mima-menu-motion="on"] .modal:not(.hidden) > .modal-panel{animation:mi
 .mima-personal-sound-actions{display:flex;gap:7px;flex-wrap:wrap}
 .mima-personal-sound-actions button{flex:1 1 auto;min-height:42px;min-width:70px;padding:7px 10px;border-radius:11px;font-size:.83rem;white-space:normal}
 .mima-personal-sound-actions button:disabled{opacity:.5;cursor:wait}
+
+/* Visible, independent animation and sound controls — no more hidden explanation-style entry. */
+.mima-motion-settings,.mima-sound-settings{border:1px solid var(--line);border-radius:17px;padding:12px;background:var(--panel)}
+.mima-motion-choice{display:grid;gap:8px;padding:10px 12px;border:1px solid var(--line);border-radius:13px;background:var(--surface,rgba(128,128,128,.035))}
+.mima-motion-choice .field{width:100%;min-width:0;min-height:calc(44px / var(--mima-ui-scale,1))}
+.mima-motion-choice button,.mima-sound-settings>button{min-height:calc(44px / var(--mima-ui-scale,1));padding:8px 12px;border:1px solid var(--line);border-radius:11px;color:var(--text);background:var(--accent-soft)}
+.mima-motion-settings .mima-feedback-setting-row,.mima-sound-settings .mima-feedback-setting-row{min-height:calc(48px / var(--mima-ui-scale,1))}
+.mima-motion-settings .check-row{min-height:calc(44px / var(--mima-ui-scale,1));align-items:center}
+.mima-feedback-switch{min-height:calc(44px / var(--mima-ui-scale,1))}

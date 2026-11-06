@@ -67,15 +67,15 @@
 :host(.atl-live-dock) .atl-exit-live{display:block;border-color:#9978b4;background:#f2e9f5;color:#402749;font-size:12px;}
 /* Old material preview is still a sketch; give its story/status enough room on phones. */
 @media(max-width:850px){
- .atl-main{grid-template-rows:minmax(290px,56%) minmax(0,44%);}
- .atl-preview-frame{min-height:215px;}
+ 
+
  .atl-demo-chat{justify-content:flex-start;}
  :host(.atl-live-dock) .atl-header{min-height:52px;padding:5px 7px;}
  :host(.atl-live-dock) .atl-heading b{font-size:11px;}
  :host(.atl-live-dock) .atl-heading small{font-size:9px;}
  :host(.atl-live-dock) .atl-header button{min-height:38px;padding:6px;}
 }
-@media(max-height:580px) and (max-width:850px){.atl-main{grid-template-rows:minmax(190px,47%) minmax(0,53%);}}
+@media(max-height:580px) and (max-width:850px){}
 .atl-pick-real{display:none}
 :host(.atl-live-dock) .atl-pick-real{display:block;border-color:#987ca6;background:#fff;color:#61456b;font-size:11px}
 :host(.atl-live-dock) .atl-pick-real[aria-pressed="true"]{background:#774d89;color:#fff;border-color:#774d89}
@@ -114,9 +114,9 @@
 
 /* R19 canonical-publish editor: compact mobile layout, real preview remains opt-in. */
 @media(max-width:850px){
- .atl-main{grid-template-rows:minmax(116px,28%) minmax(0,72%)}
+ 
  .atl-preview-section{min-height:0}
- .atl-preview-frame{min-height:85px}
+
  .atl-editor-content{padding:10px 12px 22px}
  .atl-header{padding:5px 7px}
  .atl-toolbar-primary{gap:6px}
@@ -138,8 +138,8 @@
 .atl-effect-warnings summary{font-size:11px;cursor:pointer;padding:6px 0;font-weight:600}
 .atl-effect-warnings[open]{max-height:132px!important;overflow:auto;padding-bottom:7px}
 @media(max-width:850px){
- .atl-main{grid-template-rows:minmax(116px,25%) minmax(0,75%)}
- .atl-preview-frame{min-height:72px;border-radius:12px}
+ 
+ .atl-preview-frame{min-height:0;border-radius:12px}
  .atl-preview-toolbar{flex-wrap:nowrap}
  .atl-preview-toolbar strong{font-size:10px}
  .atl-preview-toolbar button,.atl-preview-toolbar select{min-height:34px}
@@ -171,8 +171,8 @@
 .atl-basic-fields .atl-field{min-width:0;margin:0}
 .atl-quick-tools{margin-top:13px;gap:7px}
 .atl-quick-tools button{min-height:40px;border-radius:11px}
-.atl-quick-tools button:first-child{flex:1 1 100%;border-color:#b5a1c7;background:#f0e8f6;font-weight:700}
-.atl-live-cta{width:100%;min-height:44px;border:1px solid #9a74ae;border-radius:11px;background:#eee3f4;color:#563861;font-weight:700}
+.atl-quick-tools button:first-child{flex:1 1 120px;border-color:#b5a1c7;background:#f0e8f6;font-weight:700}
+.atl-live-cta{width:auto;max-width:100%;min-height:44px;border:1px solid #9a74ae;border-radius:11px;background:#eee3f4;color:#563861;font-weight:700}
 .atl-optional{padding:0!important;overflow:hidden}
 .atl-optional>summary{display:flex;flex-direction:column;gap:3px;position:relative;padding:13px 36px 12px 13px;margin:0!important;min-height:48px;cursor:pointer;font-size:13px!important}
 .atl-optional>summary:after{content:'⌄';position:absolute;right:15px;top:17px;font-size:18px;color:#80698f}
@@ -199,3 +199,35 @@
 .atl-sound-card .atl-actions button{min-height:42px;padding:7px 11px}
 .atl-interact-editor input[type=range]{width:100%;accent-color:#98749f}
 @media(max-width:850px){.atl-tabs{display:grid;grid-template-columns:repeat(5,minmax(0,1fr))}.atl-tab-more{width:100%}.atl-tabs button{white-space:nowrap;font-size:10px}.atl-tab-more summary{min-height:44px;font-size:10px}.atl-interact-grid{grid-template-columns:1fr}.atl-interact-demo button{flex:1 1 40%}}
+
+/* V5.81: mobile preview/editor splitter and balanced touch controls. */
+.atl-splitter{display:none}
+.atl-catalog-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-top:auto}
+.atl-catalog-actions button,.atl-catalog-pages button,.atl-catalog-preview-label button{min-height:44px;font-size:11px;padding:8px 7px;white-space:normal;line-height:1.3;overflow-wrap:anywhere}
+.atl-catalog-actions [data-catalog-borrow]{grid-column:1/-1;background:transparent;color:#695b70}
+.atl-quick-tools button{flex:1 1 130px;min-height:44px;white-space:normal}
+.atl-live-cta{padding:11px 14px;min-height:44px}
+.atl-catalog-actions [data-catalog-create]{background:#94769f;color:#fff;border-color:#94769f}
+.atl-catalog-actions button:focus-visible,.atl-live-cta:focus-visible,.atl-splitter button:focus-visible,.atl-split-grip:focus-visible{outline:2px solid #94629e;outline-offset:2px}
+@media(max-width:850px){
+ .atl-main{grid-template-columns:minmax(0,1fr);grid-template-rows:var(--atl-preview-height,min(43dvh,350px)) 54px minmax(0,1fr)}
+ .atl-preview-section,.atl-editor{min-height:0}
+ .atl-splitter{display:flex;align-items:center;justify-content:space-between;gap:4px;padding:4px 9px;background:#f9f6fa;border-top:1px solid #e2dce7;border-bottom:1px solid #e2dce7;min-width:0;height:54px;z-index:6}
+ .atl-split-grip{display:flex;gap:6px;align-items:center;justify-content:center;flex:1 1 85px;min-width:74px;min-height:44px;touch-action:none;cursor:row-resize;border-radius:9px;color:#66596c;user-select:none;-webkit-user-select:none}
+ .atl-split-grip.is-dragging{background:#ece1f1}
+ .atl-split-knob{width:30px;height:5px;border-radius:10px;background:linear-gradient(to right,#b99cc4 0 30%,#d9c8df 30% 70%,#b99cc4 70%);box-shadow:0 0 0 1px #967c9d30}
+ .atl-split-hint{font-size:10px;white-space:nowrap}
+ .atl-split-presets{display:flex;gap:4px;min-width:0;flex:0 1 auto}
+ .atl-split-presets button{min-height:44px;min-width:39px;border-radius:9px;border:1px solid #dbd0e1;background:#fff;font-size:11px;padding:5px 6px;white-space:nowrap}
+ .atl-split-presets button[aria-pressed="true"]{background:#eee2f3;border-color:#a482af;font-weight:750;color:#694974}
+ .atl-catalog-grid{grid-template-columns:minmax(0,1fr);gap:9px}
+ .atl-catalog-card{display:grid;grid-template-columns:110px minmax(0,1fr);column-gap:10px;align-items:start;padding:10px}
+ .atl-catalog-art{grid-row:1/4;height:90px}
+ .atl-catalog-card>b,.atl-catalog-card>small,.atl-catalog-actions{grid-column:2}
+ .atl-catalog-card>small{font-size:10px}
+ .atl-catalog-actions{margin-top:3px}
+ .atl-preview-foot{max-height:38px;overflow:auto}
+ :host(.atl-live-dock) .atl-splitter{display:none!important}
+}
+@media(max-width:370px){.atl-split-hint{display:none}.atl-split-grip{min-width:44px;flex-basis:48px}.atl-catalog-card{grid-template-columns:80px minmax(0,1fr)}.atl-catalog-art{height:77px}}
+@media(prefers-reduced-motion:reduce){.atl-splitter,.atl-split-grip,.atl-split-presets button{transition:none!important}}
