@@ -1075,13 +1075,19 @@ body.mima-reading-mode #story-chat-box[data-mima-chat-wallpaper="1"]::before{
 /* Do not override the explicit minimized/hidden state with display:flex!important. */
 .app-shell>.composer-shell>.generation-panel.error:not(.hidden):not(.minimized){max-height:min(48dvh,320px);bottom:calc(100% + 12px);display:flex;}
 .app-shell>.composer-shell>.generation-panel.error .generation-detail{max-height:min(22dvh,145px);white-space:pre-wrap;overflow-y:auto;}
+/* V5.85 · The compact HUD is an overlay, never a flex/grid item.
+   Author themes legitimately give .composer-shell > * relative positioning for
+   stickers. Keep this functional control out of that generic cascade without
+   changing the author theme or the HUD's show/hide state machine. */
+.app-shell>.composer-shell>#generation-minimized-badge{position:absolute;left:auto;top:auto;right:max(10px,env(safe-area-inset-right));bottom:calc(100% + 10px);z-index:17;}
 .generation-minimized-badge{position:absolute;right:max(10px,env(safe-area-inset-right));bottom:calc(100% + 10px);width:54px;height:54px;border-radius:50%;border:1px solid color-mix(in srgb,var(--accent) 32%,var(--line));background:linear-gradient(180deg,color-mix(in srgb,var(--panel-solid) 88%,transparent),color-mix(in srgb,var(--panel) 84%,transparent));box-shadow:0 9px 26px rgba(38,25,26,.16);display:grid;place-items:center;z-index:7;-webkit-backdrop-filter:blur(15px) saturate(1.15);backdrop-filter:blur(15px) saturate(1.15);}
 .generation-minimized-ring{position:absolute;inset:5px;border-radius:50%;background:conic-gradient(var(--accent) var(--generation-mini-progress,0%),rgba(255,255,255,.38) 0);-webkit-mask:radial-gradient(circle,transparent 58%,#000 60%);mask:radial-gradient(circle,transparent 58%,#000 60%);animation:mimaMiniSpinner 1.6s linear infinite;}
 @keyframes mimaMiniSpinner{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
 .generation-minimized-percent{position:relative;z-index:1;font-size:.66rem;font-weight:760;color:var(--accent-strong);}
 @media (max-width:700px){
   .app-shell>.composer-shell>.generation-panel:not(.hidden){width:min(430px,calc(100vw - 26px));bottom:calc(100% + 6px);max-height:min(26dvh,165px);}
-  .generation-minimized-badge{right:max(12px,env(safe-area-inset-right));bottom:calc(100% + 6px);width:50px;height:50px;}
+  .app-shell>.composer-shell>#generation-minimized-badge{right:max(12px,env(safe-area-inset-right));bottom:calc(100% + 6px);}
+  .generation-minimized-badge{width:50px;height:50px;}
 }
 
 /* R16 · Inline resolution of unknown model context without an API call. */
@@ -1265,8 +1271,12 @@ html.mima-composer-keyboard .app-shell>.composer-shell{padding-bottom:10px}
 .app-shell>.composer-shell .composer-row textarea{font-size:1rem;line-height:1.45}
 
 @supports (-webkit-touch-callout:none){
- #settings-modal .settings-content :is(input.field,textarea.field,select.field):focus,
- .app-shell>.composer-shell>.composer-row textarea:focus{font-size:max(calc(16px / var(--mima-ui-scale)),1rem)}
+ /* V5.85: the iOS focus zoom guard previously enlarged the typed text only
+    AFTER focus (16px -> 20px at 80% UI scale). Keep a single readable size
+    across idle/focus/keyboard, without changing shell zoom or text contents. */
+ .app-shell>.composer-shell>.composer-row textarea#story-input,
+ .app-shell>.composer-shell>.composer-row textarea#story-input:focus{font-size:max(calc(16px / var(--mima-ui-scale,1)),1rem)}
+ #settings-modal .settings-content :is(input.field,textarea.field,select.field):focus{font-size:max(calc(16px / var(--mima-ui-scale)),1rem)}
 }
 .app-shell>.composer-shell>.quick-actions{gap:5px;scroll-snap-type:x proximity}
 .app-shell>.composer-shell>.quick-actions>.chip-btn{font-size:.75rem;padding:6px 9px;min-height:36px;line-height:1.24;scroll-snap-align:start}
@@ -1612,3 +1622,28 @@ html.mima-settings-paint-guard .app-shell *::after{animation-play-state:paused!i
     -webkit-overflow-scrolling:touch;
   }
 }
+
+
+/* V5.84 · Keyboard background continuation: paint the SAME global theme in
+   the unzoomed canvas beneath the fixed composer. Nothing here is a new theme,
+   and the existing iOS input-height/viewport code is intentionally unchanged. */
+#mima-keyboard-theme-underlay{display:none;pointer-events:none;user-select:none}
+html.mima-composer-keyboard{
+  background-color:var(--mima-kb-canvas-color,var(--bg-deep));
+  background-image:var(--mima-kb-canvas-image,none);
+  background-size:var(--mima-kb-canvas-size,cover);
+  background-position:var(--mima-kb-canvas-position,center);
+  background-repeat:var(--mima-kb-canvas-repeat,no-repeat);
+}
+html.mima-composer-keyboard body > #mima-keyboard-theme-underlay{
+  display:block;position:fixed;inset:0 auto auto 0;width:100%;
+  height:100lvh;min-height:100dvh;max-height:none;
+  /* Inheritance keeps the original global CSS picture, gradient and switches,
+     with no second encoded image and no new texture/asset. */
+  background:inherit;
+  z-index:0;overflow:hidden;pointer-events:none;
+}
+html.mima-composer-keyboard body > #mima-keyboard-theme-underlay > .mima-keyboard-theme-overlay{
+  position:absolute;inset:0;pointer-events:none;
+}
+html.mima-composer-keyboard body > .app-shell{z-index:1}
