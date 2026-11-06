@@ -47,7 +47,7 @@
      status:String(row.status||''),model:String(row.model||''),phase:String(row.phase||''),
      finishKind:String(row.finishKind||''),finishReason:String(row.finishReason||''),
      errorCode:String(row.error?.code||''),httpStatus:Number(row.transport?.httpStatus||row.error?.status)||0,
-     requestSent:row.requestSent!==false,manualRecovery:!!row.manualRecovery,
+     requestSent:row.requestSent!==false,requestSerialized:row.requestSerialized===true||!!row.request,fetchInvoked:row.fetchInvoked===true,requestDispatchAttempted:row.requestDispatchAttempted===true,responseReceived:!!row.transport?.responseReceivedAt,manualRecovery:!!row.manualRecovery,
      entryBytes:roughSize(row),candidateBytes:prior?.candidateBytes??0,
      hasCandidate:prior?.hasCandidate===true,settledAt:row.settledAt||null,
      revision:(Number(prior?.revision)||0)+1};
@@ -155,7 +155,7 @@
    return id;
  }
  function event(id,data={}){
-   if(!id||!data||!['generation_prepared','dispatch_attempt','request','transport_response','provider_result','settlement','manual_recovery','timing','preflight_failure','transformation_provenance'].includes(data.type))return Promise.resolve();
+   if(!id||!data||!['generation_prepared','dispatch_attempt','request','fetch_invoked','transport_response','provider_result','settlement','manual_recovery','timing','preflight_failure','transformation_provenance'].includes(data.type))return Promise.resolve();
    return transact(async()=>{
      const db=await open();const tx=db.transaction([STORE,META],'readwrite'),st=tx.objectStore(STORE),ms=tx.objectStore(META),row=await waitRequest(st.get(id));
      // Deleting a record is final, even if a request still runs.
@@ -172,6 +172,9 @@
          row.generationAttempt=Number(data.generationAttempt)||row.generationAttempt||null;
          row.model=pickString(data.model||row.model,160);
          row.requestDispatchAttempted=true;
+       }else if(data.type==='fetch_invoked'){
+         // This is a local transport invocation attempt, not proof the provider received bytes.
+         row.fetchInvoked=true;row.requestDispatchAttempted=true;
        }else if(data.type==='preflight_failure'){
          row.status='rejected';row.phase='preflight';row.requestSent=false;row.settledAt=new Date().toISOString();
          row.model=pickString(data.model,160);row.endpointOrigin=pickString(data.endpointOrigin,260);
@@ -197,7 +200,9 @@
          row.request=all.length<=MAX_REQUEST_CHARS?safe:null;
          row.requestTruncated=all.length>MAX_REQUEST_CHARS;
          row.requestChars=all.length;row.messageCount=safe.messages.length;row.model=safe.model;row.requestId=pickString(data.requestId,120);row.endpointOrigin=pickString(data.endpointOrigin,260);row.status='requesting';
-         row.requestSent=true;row.requestDispatchAttempted=true;
+         row.requestSerialized=true;
+         // Keep legacy conservative requestSent semantics for existing retry/recovery guards.
+         row.requestSent=true;
          row.requestBytes=Number(data.requestBytes)||0;row.preparationElapsedMs=Number.isFinite(data.preparationElapsedMs)?data.preparationElapsedMs:null;
          row.serializationElapsedMs=Number(data.serializationElapsedMs)||0;row.generationId=pickString(data.generationId,120);row.generationAttempt=Number(data.generationAttempt)||null;
        }else if(data.type==='timing'){
@@ -227,7 +232,7 @@
            regexVersions:data.regexVersions,admissionStage:pickString(data.admissionStage,120),contractMode:pickString(data.contractMode,80),recordedAt:new Date().toISOString()});
          row.transformations=row.transformations.slice(-12);
        }else if(data.type==='transport_response'){
-         row.requestDispatchAttempted=true;row.requestSent=true;
+         row.requestDispatchAttempted=true;row.requestSent=true;row.fetchInvoked=true;
          row.transport={requestStartedAt:pickString(data.requestStartedAt,50),responseReceivedAt:pickString(data.responseReceivedAt,50),fetchElapsedMs:Number(data.fetchElapsedMs)||0,httpStatus:Number(data.httpStatus)||0,
            providerRequestId:pickString(data.providerRequestId,200),cfRay:pickString(data.cfRay,200)};
        }else if(data.type==='provider_result'){

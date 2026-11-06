@@ -24,6 +24,16 @@
   const arr = v => Array.isArray(v) ? v : [];
   const text = v => String(v ?? '').replace(/\uFFFD+/g, '').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').trim();
   const list = v => arr(v).map(text).filter(Boolean);
+  function worldbookKeywords(value,field,useRegex=false){
+    if(value===undefined||value===null||value==='')return [];
+    if(Array.isArray(value))return list(value);
+    if(typeof value==='string'){
+      // SillyTavern exports sometimes use one comma-separated string instead of an array.
+      // A regex containing a comma is one expression, never split its grammar.
+      return (useRegex?[value]:value.split(/[,，\r\n]/)).map(text).filter(Boolean);
+    }
+    throw new ApiError('E_WORLDBOOK_KEYWORDS_INVALID',`世界书 ${field} 必须为字符串或字符串数组，未保存不兼容的关键词。`);
+  }
   const clone = v => JSON.parse(JSON.stringify(v));
   const clampInt = (v, min, max, fallback) => {
     const n = Number.parseInt(v, 10);
@@ -243,11 +253,15 @@
   function normalizeMask(m = {}) {
     const createdAt = stableRecordCreatedAt(m);
     const type = text(m.type || m.kind || 'character') === 'user' ? 'user' : 'character';
+    // An explicitly cleared Persona is different from an old card with no
+    // content field. Never trim or replace the author's original rich text.
+    const content=Object.prototype.hasOwnProperty.call(m,'content')?m.content:
+      Object.prototype.hasOwnProperty.call(m,'persona')?m.persona:m.description;
     return {
       id: m.id || makeId('mask'), type, name: text(m.name || '未命名面具'), source: text(m.source || 'manual'),
-      description: text(m.description), content: text(m.content || m.persona || m.description), scenario: text(m.scenario),
-      firstMessage: text(m.firstMessage || m.first_mes), exampleDialogue: text(m.exampleDialogue || m.mes_example),
-      creatorNotes: text(m.creatorNotes || m.creator_notes), avatar: text(m.avatar), aliases: list(m.aliases), tags: list(m.tags),
+      description: String(m.description ?? ''), content: String(content ?? ''), scenario: String(m.scenario ?? ''),
+      firstMessage: String(m.firstMessage ?? m.first_mes ?? ''), exampleDialogue: String(m.exampleDialogue ?? m.mes_example ?? ''),
+      creatorNotes: String(m.creatorNotes ?? m.creator_notes ?? ''), avatar: text(m.avatar), aliases: list(m.aliases), tags: list(m.tags),
       enabled: m.enabled !== false, createdAt, updatedAt: m.updatedAt || createdAt
     };
   }
@@ -269,8 +283,9 @@
 
   function normalizeWorldbookEntry(e = {}) {
     const createdAt = stableRecordCreatedAt(e);
-    return { id: e.id || makeId('wbe'), name: text(e.name || '未命名条目'), content: text(e.content),
-      keywords: list(e.keywords), secondaryKeywords: list(e.secondaryKeywords), enabled: e.enabled !== false,
+    return { id: e.id || makeId('wbe'), name: text(e.name || '未命名条目'), content: String(e.content ?? ''),
+      keywords: worldbookKeywords(e.keywords ?? e.key ?? e.keys,'keywords',!!e.useRegex),
+      secondaryKeywords: worldbookKeywords(e.secondaryKeywords ?? e.keysecondary,'secondaryKeywords',!!e.useRegex), enabled: e.enabled !== false,
       alwaysActive: !!e.alwaysActive, matchMode: e.matchMode === 'all' ? 'all' : 'any', caseSensitive: !!e.caseSensitive,
       useRegex: !!e.useRegex, priority: Number.isFinite(Number(e.priority)) ? Number(e.priority) : 50,
       scanDepth: clampInt(e.scanDepth, 1, 200, 12), depth: clampInt(e.depth, 0, 200, 0),
@@ -2079,6 +2094,7 @@
     emitProgress(options.onProgress,{phase:'requesting',percent:42,streamRequested:streamEnabled,detail:`正在请求 ${cfg.model} · 实际发送${streamEnabled?'流式':'非流式'}参数${streamEnabled?'（stream: true）':''}`});
     const fetchStartedAt=Date.now(),requestStartedAt=new Date(fetchStartedAt).toISOString();
     timing('fetch_start');
+    try{options.onDiagnostic?.({type:'fetch_invoked',requestId});}catch(e){console.error('请求尝试状态记录失败，不影响真实发送',e);}
     let res;try{res=await fetch(chat,{method:'POST',headers:apiHeaders(cfg),body:requestJson,signal,mode:'cors',credentials:'omit',cache:'no-store'});}catch(e){
       const err=asApiError(e);
       if(err instanceof ApiError&&err.code==='E_API_NETWORK_CORS'){
@@ -3659,29 +3675,19 @@
     const wouldCommit=action==='continue'&&target&&proposedContinuationKind==='suffix'?target.content+'\n'+reply:reply;
     validateStoryReply(wouldCommit,canonicalAdmissionMeta);
     if(!text(reply))throw new ApiError('E_API_EMPTY_REPLY','输出正则处理后没有有效角色正文；未提交空白消息。');
-    const renderedReply=await applyRegexForSessionAsync(session,reply,'display',null,{signal});
+    // Display regex MUST NOT run before the canonical save. The transcript's
+    // independent, cancellable display queue evaluates it after persistence.
+    // An empty renderedContent means "projection not materialized", not empty History.
+    storyMark('display_deferred_until_after_canonical');
     if(diagnosticId){
-      // Diagnostic work has no right to cancel an already successful Speech Turn.
-      // Keep raw/canonical/display hashes off History, Memory and the critical path.
-      void (async()=>{
-        try{
-          const regexVersions=activeRegexPacks(session).map(p=>({id:p.id,updatedAt:p.updatedAt||'',rules:arr(p.rules).length}));
-          const hashes=await Promise.all([replyRaw,reply,renderedReply].map(v=>exactDigest(v)));
-          await journal.event(diagnosticId,{type:'transformation_provenance',generationId:pending.id,attempt:pending.attempt,
-            regexVersions,raw:{chars:replyRaw.length,sha256:hashes[0]},canonical:{chars:reply.length,sha256:hashes[1]},
-            display:{chars:renderedReply.length,sha256:hashes[2]},admissionStage:'post_output_regex',
-            contractMode:session.promptSettings?.outputContract?.structureMode||'legacy'});
-        }catch(error){console.warn('HTML 阶段诊断失败，不影响原生成提交',{sessionId:id,generationId:pending.id,error});}
-      })();
-    }
-    storyMark('display_regex_done',{chars:renderedReply.length});
-    if(session.promptSettings?.outputContract?.requireHtml&&window.MimaHtmlStructure?.inspect){
-      const displayVerdict=window.MimaHtmlStructure.inspect(renderedReply,canonicalAdmissionMeta.outputContract);
-      if(!displayVerdict.ok){
-        storyMark('display_structure_mismatch',{stage:'display',canonicalValid:true,missing:displayVerdict.missing,
-          rawChars:replyRaw.length,canonicalChars:reply.length,displayChars:renderedReply.length});
-        // A display-only regex must never delete a committed canonical reply or charge a retry.
-      }
+      void (async()=>{try{
+        const regexVersions=activeRegexPacks(session).map(p=>({id:p.id,updatedAt:p.updatedAt||'',rules:arr(p.rules).length}));
+        const hashes=await Promise.all([replyRaw,reply].map(v=>exactDigest(v)));
+        await journal.event(diagnosticId,{type:'transformation_provenance',generationId:pending.id,attempt:pending.attempt,
+          regexVersions,raw:{chars:replyRaw.length,sha256:hashes[0]},canonical:{chars:reply.length,sha256:hashes[1]},
+          display:{status:'deferred_until_canonical_commit'},admissionStage:'post_output_regex',
+          contractMode:session.promptSettings?.outputContract?.structureMode||'legacy'});
+      }catch(error){console.warn('回复诊断写入失败，不影响原文入库',{sessionId:id,error});}})();
     }
     emitProgress(progress,{phase:'saving',percent:95,detail:'正在保存角色回复…'});
     // Provider-returned visible reasoning/summary stays in per-reply metadata;
@@ -3692,17 +3698,17 @@
       // A complete next reply is a *new* message; appending two complete status shells
       // would corrupt both. Preserve raw and canonical sources with stable lineage.
       const full=makeMessage('assistant',reply,session,{source:'continue_full_reply',continuedFromMessageId:target.id,generationSnapshot:snapshot});
-      full.rawContent=replyRaw;full.renderedContent=renderedReply;full.metadata={...(full.metadata||{}),...(thinkingRecord?{thinking:thinkingRecord}:{}),continuationMode:continuationKind==='full_reply'?'separate_complete_reply':'separate_ambiguous_status_overlap',previousMessageId:target.id};
+      full.rawContent=replyRaw;full.renderedContent='';full.metadata={...(full.metadata||{}),...(thinkingRecord?{thinking:thinkingRecord}:{}),continuationMode:continuationKind==='full_reply'?'separate_complete_reply':'separate_ambiguous_status_overlap',previousMessageId:target.id};
       session.messages.push(full);
       storyMark('full_reply_continuation_separated',{previousMessageId:target.id});
     }else if(action==='continue'&&target){
-      const i=session.messages.findIndex(m=>m.id===target.id),previousContent=session.messages[i].content,previousRaw=session.messages[i].rawContent||previousContent;archiveVersion(session.messages[i],'continue_before_append');session.messages[i].content=`${previousContent}\n${reply}`;session.messages[i].rawContent=`${previousRaw}\n${replyRaw}`;session.messages[i].renderedContent=await applyRegexForSessionAsync(session,session.messages[i].content,'display',null,{signal});session.messages[i].metadata={...(session.messages[i].metadata||{}),continuedAt:nowIso(),...(thinkingRecord?{thinkingContinuations:[...(session.messages[i].metadata?.thinkingContinuations||[]),thinkingRecord]}:{})};session.messages[i].tokenEstimate=estimateTokens(session.messages[i].content);
+      const i=session.messages.findIndex(m=>m.id===target.id),previousContent=session.messages[i].content,previousRaw=session.messages[i].rawContent||previousContent;archiveVersion(session.messages[i],'continue_before_append');session.messages[i].content=`${previousContent}\n${reply}`;session.messages[i].rawContent=`${previousRaw}\n${replyRaw}`;session.messages[i].renderedContent='';session.messages[i].metadata={...(session.messages[i].metadata||{}),continuedAt:nowIso(),...(thinkingRecord?{thinkingContinuations:[...(session.messages[i].metadata?.thinkingContinuations||[]),thinkingRecord]}:{})};session.messages[i].tokenEstimate=estimateTokens(session.messages[i].content);
     }else if(action==='regenerate'&&target){
       const i=session.messages.findIndex(m=>m.id===target.id);
       if(i<0)throw new ApiError('E_STORY_REGEN_TARGET_MISSING','要重说的那条回复在保存前消失了，已阻止覆盖其他剧情。');
-      archiveVersion(session.messages[i],classifyStoryReply(session.messages[i].rawContent||session.messages[i].content).blocked?'legacy_refusal_evidence':'regenerate');session.legacyMemoryQuarantined=true;session.messages[i].content=reply;session.messages[i].rawContent=replyRaw;session.messages[i].renderedContent=renderedReply;session.messages[i].isEdited=false;const regeneratedMetadata={...(session.messages[i].metadata||{})};delete regeneratedMetadata.thinkingContinuations;session.messages[i].metadata={...regeneratedMetadata,regeneratedAt:nowIso(),regeneratedTargetId:target.id,generationSnapshot:snapshot,thinking:thinkingRecord};session.messages[i].tokenEstimate=estimateTokens(reply);
+      archiveVersion(session.messages[i],classifyStoryReply(session.messages[i].rawContent||session.messages[i].content).blocked?'legacy_refusal_evidence':'regenerate');session.legacyMemoryQuarantined=true;session.messages[i].content=reply;session.messages[i].rawContent=replyRaw;session.messages[i].renderedContent='';session.messages[i].isEdited=false;const regeneratedMetadata={...(session.messages[i].metadata||{})};delete regeneratedMetadata.thinkingContinuations;session.messages[i].metadata={...regeneratedMetadata,regeneratedAt:nowIso(),regeneratedTargetId:target.id,generationSnapshot:snapshot,thinking:thinkingRecord};session.messages[i].tokenEstimate=estimateTokens(reply);
     }else{
-      const assistantMsg=makeMessage('assistant',reply,session,action==='auto_advance'?{source:'auto_advance',directorNote:opts.directorNote,generationSnapshot:snapshot,thinking:thinkingRecord}:{source:'model_reply',generationSnapshot:snapshot,thinking:thinkingRecord});assistantMsg.rawContent=replyRaw;assistantMsg.renderedContent=renderedReply;session.messages.push(assistantMsg);
+      const assistantMsg=makeMessage('assistant',reply,session,action==='auto_advance'?{source:'auto_advance',directorNote:opts.directorNote,generationSnapshot:snapshot,thinking:thinkingRecord}:{source:'model_reply',generationSnapshot:snapshot,thinking:thinkingRecord});assistantMsg.rawContent=replyRaw;assistantMsg.renderedContent='';session.messages.push(assistantMsg);
     }
     // A memory job may have committed while Provider was generating. Rebase only
     // when the original story prefix has not changed. Never overwrite memory.
@@ -3920,7 +3926,7 @@
     target.metadata={...(target.metadata||{}),...(htmlRepair?{htmlCodeRepair:{candidateId:htmlRepair.id,originalRawPreserved:true,approvedAt:nowIso(),recoveryDiagnosticId:record.id}}:{}),generationSnapshot:action==='continue'?target.metadata?.generationSnapshot:pending.snapshot,
       manualRecoveryIds:[...new Set([...arr(target.metadata?.manualRecoveryIds),record.id])],
       manualRecovery:{diagnosticId:record.id,generationId:pending.id,attempt:pending.attempt,action,restoredAt:nowIso(),providerFinishReason:record.finishReason||'',partialCapture:record.recoveryIsPartial===true,recoverySource:record.recoverySource,formatCheckOwnerOverride:!htmlRepair,olderSendAppend:olderSendAppend===true,originalRejectionCode:String(record.error?.code||''),contentFingerprint:manualReplyFingerprint(target)}};
-    target.renderedContent=await applyRegexForSessionAsync(session,target.content,'display');target.tokenEstimate=estimateTokens(target.content);
+    target.renderedContent='';target.tokenEstimate=estimateTokens(target.content);
     // Explicit human action only: no Provider, retry or background summary.
     let saved;
     if(htmlRepair){
@@ -3967,7 +3973,7 @@
     msg.metadata={...(msg.metadata||{}),manualRecovery:{diagnosticId:'ledger:'+generationId+':'+attempt,
       generationId,attempt,action:'send',restoredAt:nowIso(),partialCapture:true,
       recoverySource:'verified_stream_fragments',formatCheckOwnerOverride:true,contentFingerprint:manualReplyFingerprint(msg)}};
-    msg.renderedContent=await applyRegexForSessionAsync(session,raw,'display');
+    msg.renderedContent='';
     msg.tokenEstimate=estimateTokens(raw);session.messages.push(msg);
     state=persisted;
     const saved=await saveSession({...session,pendingGeneration:null,
@@ -4132,7 +4138,7 @@
       catch(error){throw new ApiError('E_HTML_REPAIR_OWNER_CONFIRMATION_REQUIRED',String(error.message||error));}
     }
     archiveVersion(message,'owner_html_code_repair');
-    message.content=approvedContent;message.renderedContent=await applyRegexForSessionAsync(session,message.content,'display');
+    message.content=approvedContent;message.renderedContent='';
     // The raw provider content remains immutable evidence.
     message.isEdited=true;message.metadata={...message.metadata,htmlCodeRepair:{candidateId:c.id,originalRawPreserved:true,approvedAt:nowIso()}};
     message.tokenEstimate=estimateTokens(message.content);session.legacyMemoryQuarantined=true;
@@ -4147,7 +4153,7 @@
   }
   // Edit only a detached canonical session. A display-regex Worker may yield;
   // leaking the edit into global state before CAS could let another save persist it.
-  async function editMessage(id,msgId,content,opts={}){const source=getSession(id),s=source?normalizeSession(clone(source)):null;if(!s)throw new Error('未找到剧本');const i=s.messages.findIndex(m=>m.id===msgId);if(i<0)throw new Error('未找到消息');const msg=s.messages[i];archiveVersion(msg,'manual_edit');msg.content=String(content||'');msg.rawContent=msg.content;msg.renderedContent=msg.role==='assistant'?await applyRegexForSessionAsync(s,msg.content,'display'):msg.content;if(msg.role==='assistant'){delete msg.metadata.thinking;delete msg.metadata.thinkingContinuations;}if(msg.role==='user')msg.metadata={...(msg.metadata||{}),inputSemanticMode:inputSemanticMode(s),inputSemanticParserVersion:'1.1.7'};msg.isEdited=true;msg.editedAt=nowIso();msg.tokenEstimate=estimateTokens(msg.content);s.legacyMemoryQuarantined=true;if(opts.truncateAfter){const removed=s.messages.slice(i+1);if(removed.length){s.archivedBranches=arr(s.archivedBranches);s.archivedBranches.push({id:makeId('branch'),fromMessageId:msg.id,reason:'edit_truncate_after',archivedAt:nowIso(),messages:removed});s.messages=s.messages.slice(0,i+1);}}return saveSession(s);}
+  async function editMessage(id,msgId,content,opts={}){const source=getSession(id),s=source?normalizeSession(clone(source)):null;if(!s)throw new Error('未找到剧本');const i=s.messages.findIndex(m=>m.id===msgId);if(i<0)throw new Error('未找到消息');const msg=s.messages[i];archiveVersion(msg,'manual_edit');msg.content=String(content||'');msg.rawContent=msg.content;msg.renderedContent='';if(msg.role==='assistant'){delete msg.metadata.thinking;delete msg.metadata.thinkingContinuations;}if(msg.role==='user')msg.metadata={...(msg.metadata||{}),inputSemanticMode:inputSemanticMode(s),inputSemanticParserVersion:'1.1.7'};msg.isEdited=true;msg.editedAt=nowIso();msg.tokenEstimate=estimateTokens(msg.content);s.legacyMemoryQuarantined=true;if(opts.truncateAfter){const removed=s.messages.slice(i+1);if(removed.length){s.archivedBranches=arr(s.archivedBranches);s.archivedBranches.push({id:makeId('branch'),fromMessageId:msg.id,reason:'edit_truncate_after',archivedAt:nowIso(),messages:removed});s.messages=s.messages.slice(0,i+1);}}return saveSession(s);}
   async function restoreMessageVersion(id,msgId,versionIndex,body={}){
     const current=getSession(id);if(!current)throw new ApiError('E_STORY_SESSION_MISSING','未找到剧情 Session。');
     const session=normalizeSession(clone(current)),msg=session.messages.find(m=>m.id===msgId);
@@ -4167,8 +4173,7 @@
     if(msg.role==='assistant'){const manualRecovery=isManuallyRecoveredReply({...version,rawContent:raw});validateStoryReply(raw,{manualRecovery});validateStoryReply(version.content,{manualRecovery});}
     archiveVersion(msg,'version_restore');
     msg.content=version.content;msg.rawContent=raw;
-    msg.renderedContent=typeof version.renderedContent==='string'?version.renderedContent:
-      (msg.role==='assistant'?await applyRegexForSessionAsync(session,version.content,'display'):version.content);
+    msg.renderedContent=''; // Display is recomputed on demand after canonical restore.
     msg.isEdited=version.isEdited===true;
     msg.metadata={...(version.metadata&&typeof version.metadata==='object'?clone(version.metadata):{}),
       restoredAt:nowIso(),restoredVersionIndex:index,restoredVersionId:version.versionId||null};
@@ -4189,7 +4194,7 @@
     if(Number.isFinite(Number(s.lastSummarizedIndex)))s.lastSummarizedIndex=Math.max(0,Math.min(Number(s.lastSummarizedIndex),s.messages.length));
     return saveSession(s);
   }
-  async function addOpening(id,content){const source=getSession(id),s=source?normalizeSession(clone(source)):null;if(!s)throw new Error('未找到剧本');if(!String(content||'').trim())throw new Error('开场白为空');const msg=makeMessage('assistant',content,s,{source:'character_first_message'});msg.renderedContent=await applyRegexForSessionAsync(s,msg.content,'display');s.messages.push(msg);return saveSession(s);}
+  async function addOpening(id,content){const source=getSession(id),s=source?normalizeSession(clone(source)):null;if(!s)throw new Error('未找到剧本');if(!String(content||'').trim())throw new Error('开场白为空');const msg=makeMessage('assistant',content,s,{source:'character_first_message'});msg.renderedContent='';s.messages.push(msg);return saveSession(s);}
   async function previewPrompt(id,opts={}){const s=getSession(id);if(!s)throw new Error('未找到剧本');const c=normalizeSession(clone(s));if(String(opts.draft||'').trim())c.messages.push(makeMessage('user',opts.draft,c,{source:'prompt_preview_draft',inputSemanticMode:inputSemanticMode(c),inputSemanticParserVersion:'1.1.7'}));return (await assemble(c,{directorNote:opts.directorNote||''})).inspector;}
 
   // ---------- Local route compatibility ----------
@@ -4366,6 +4371,7 @@
 
       if(path==='/worldbooks'&&method==='GET')return ok(state.worldbooks);
       if(path==='/worldbooks'&&method==='POST')return ok(await saveWorldbook(body||{}));
+      m=path.match(/^\/worldbooks\/([^/]+)\/canonical-view$/);if(m&&method==='GET'){const persisted=normalizeState(await window.MimaLocalStore.loadState());const book=persisted.worldbooks.find(w=>w.id===m[1]);return book?ok(clone(book)):fail('已保存世界书未找到',{code:'E_WORLDBOOK_CANONICAL_MISSING'});}
       m=path.match(/^\/worldbooks\/([^/]+)$/);if(m&&method==='GET'){const w=getWorldbook(m[1]);return w?ok(w):fail('未找到世界书');}
       if(m&&method==='PATCH'){const old=getWorldbook(m[1]);return old?ok(await saveWorldbook({...old,...body,id:m[1]})):fail('未找到世界书');}
       if(m&&method==='DELETE')return ok(await deleteResource('worldbooks',m[1],(db,id)=>{for(const s of db.sessions)if(s.worldbookIds.includes(id)){s.worldbookIds=s.worldbookIds.filter(x=>x!==id);s.recordRevision++;}for(const p of db.novelProjects)if(p.worldbookIds.includes(id)){p.worldbookIds=p.worldbookIds.filter(x=>x!==id);p.recordRevision++;}}));

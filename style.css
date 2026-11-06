@@ -611,6 +611,10 @@ body::before{
 .generation-actions{position:relative;display:flex;gap:7px;flex-wrap:wrap;margin-top:8px}
 .generation-retry{border:1px solid rgba(255,255,255,.72);background:rgba(255,255,255,.62);color:#70484d;border-radius:999px;padding:6px 10px;font-size:.69rem;line-height:1.2;box-shadow:inset 0 1px 0 rgba(255,255,255,.82)}
 .generation-retry:active{transform:translateY(1px)}
+/* V5.76: make a verified failed reply recoverable from its error HUD directly. */
+.generation-panel.error #generation-owner-recover:not(.hidden){min-height:calc(44px / var(--mima-ui-scale,1));padding:9px 14px;font-weight:750;border-color:color-mix(in srgb,var(--accent-strong) 34%,var(--line));background:linear-gradient(125deg,color-mix(in srgb,var(--accent-soft) 78%,white),rgba(255,255,255,.78));color:var(--accent-strong);box-shadow:0 3px 12px rgba(75,42,55,.08)}
+.generation-panel.error #generation-owner-recover:disabled{opacity:.65;cursor:wait}
+
 .tavern-story-content.safe-html-content progress,
 .tavern-story-content.safe-html-content meter{display:inline-block;max-width:100%;vertical-align:middle}
 @media(max-width:620px){.generation-retry{font-size:.66rem;padding:6px 9px}}
@@ -1485,3 +1489,39 @@ html.mima-settings-paint-guard .app-shell *::after{animation-play-state:paused!i
 .session-bulk-checkbox{width:19px;height:19px;accent-color:var(--accent,#a989ac);cursor:pointer}
 .session-bulk-checkbox:focus-visible,.session-bulk-toggle:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 @media(max-width:440px){.session-bulk-actions{padding:9px}.session-bulk-tools>button{flex-basis:100px}}
+
+/* V5.75: persistent, readable editor save feedback within the keyboard-safe footer. */
+.editor-save-status[hidden]{display:none!important}
+.editor-save-status{flex:1 1 100%;padding:10px 13px;border-radius:12px;background:var(--accent-soft);border:1px solid var(--line);color:var(--text);font-size:.91rem;font-weight:650;line-height:1.45;overflow-wrap:anywhere}
+.editor-save-status[data-kind="error"]{color:var(--danger);background:color-mix(in srgb,var(--danger) 9%,var(--panel-solid,#fff));border-color:color-mix(in srgb,var(--danger) 26%,var(--line))}
+.editor-actions #editor-save{min-height:calc(44px / var(--mima-ui-scale,1));min-width:calc(88px / var(--mima-ui-scale,1))}
+.editor-actions #editor-save:disabled{opacity:.67;cursor:progress}
+#mima-editor-save-notice,#mima-toast{position:fixed;z-index:2100;left:50%;top:calc(var(--mima-viewport-top,0px) + 18px);bottom:auto;transform:translateX(-50%);max-width:min(90vw,450px);width:max-content;min-width:155px;background:var(--panel-solid,#fff);color:var(--text);border:1px solid var(--line);box-shadow:0 9px 28px rgba(32,25,34,.20);padding:13px 19px;border-radius:17px;font-size:14px;font-weight:650;line-height:1.5;text-align:center;overflow-wrap:anywhere;pointer-events:none;transition:opacity .18s,transform .18s}
+#mima-toast{opacity:0}
+#mima-editor-save-notice{opacity:0;transform:translate(-50%,-7px)}
+#mima-editor-save-notice.visible{opacity:1;transform:translate(-50%,0)}
+@media(prefers-reduced-motion:reduce){#mima-editor-save-notice,#mima-toast{transition:none}}
+
+/* V5.77: display-only regex failure preserves readable canonical text without HTML execution. */
+.mima-display-regex-raw{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;font:inherit;line-height:inherit;margin:10px 0 0;padding:10px 12px;border-radius:10px;background:color-mix(in srgb,var(--surface,#fff) 87%,transparent);max-width:100%;max-height:65vh;overflow:auto;user-select:text;-webkit-user-select:text;}
+
+/* V5.78 reader-friendly release notes; scoped to release modal only. */
+.mima-release-note-content{font-size:.96rem;line-height:1.76}
+.mima-release-note-content h3{font-size:1.03rem;font-weight:700;margin:17px 0 7px}
+.mima-release-note-content p,.mima-release-note-content li{overflow-wrap:anywhere}
+.mima-release-note-content ul{padding-left:1.2em;margin:5px 0 14px}
+.mima-release-intro{font-weight:700;color:var(--text);font-size:1.04rem}
+.mima-release-footnote{font-size:.84rem;color:var(--muted)}
+/* Counteract density zoom only for the release notice's reading width and font. */
+.modal > .mima-release-note-panel{
+  width:min(calc(550px / var(--mima-ui-scale,1)),calc((100vw - 24px) / var(--mima-ui-scale,1)));
+  max-width:none;
+}
+.mima-release-note-content{font-size:1.16rem;line-height:1.7}
+.mima-release-note-content h3{font-size:1.28rem}
+.mima-release-intro{font-size:1.18rem}
+.mima-release-footnote{font-size:1rem}
+/* Keep the acknowledgement action reachable while the short notes scroll. */
+.modal > .mima-release-note-panel{display:flex;flex-direction:column;overflow:hidden}
+.mima-release-note-panel > .mima-release-note-content{flex:1 1 auto;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.mima-release-note-panel > .primary-btn{flex:0 0 auto;min-height:calc(44px / var(--mima-ui-scale,1))}

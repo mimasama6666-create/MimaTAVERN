@@ -1,15 +1,16 @@
 /* Shared keyboard-safe viewport for production dialogs; never scales the fixed layer. */
 (function(){'use strict';
-const doc=document,stack=[],previous=new WeakMap();let raf=0,composing=false,restingViewportHeight=0,restingViewportWidth=0;
+const doc=document,stack=[],previous=new WeakMap();let raf=0,composing=false,restingViewportHeight=0,restingViewportWidth=0,lastViewport={};
 function visible(n){return !n.hidden&&!n.classList.contains('hidden');}
 function viewport(){
  const v=window.visualViewport,root=doc.documentElement,r=root.style;
  const height=Math.max(1,v?.height||innerHeight),width=Math.max(1,v?.width||innerWidth);
  const top=v?.offsetTop||0,left=v?.offsetLeft||0;
- r.setProperty('--mima-viewport-height',height+'px');
- r.setProperty('--mima-viewport-width',width+'px');
- r.setProperty('--mima-viewport-top',top+'px');
- r.setProperty('--mima-viewport-left',left+'px');
+ for(const [name,value] of [['height',height],['width',width],['top',top],['left',left]]){
+  // Native keyboard scroll events can arrive every frame. Do not invalidate
+  // the zoomed, glass-backed editor's full style tree when geometry is unchanged.
+  if(lastViewport[name]!==value){lastViewport[name]=value;r.setProperty('--mima-viewport-'+name,value+'px');}
+ }
  // iOS Safari may move the visual viewport *and* the layout scroll position
  // while focusing the composer. Height compensation alone leaves the entire
  // zoomed app in the layout viewport, exposing a large blank strip above the OS keyboard.
