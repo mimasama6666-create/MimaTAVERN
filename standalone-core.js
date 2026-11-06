@@ -635,33 +635,39 @@
       .sort((a,b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
   }
 
-  // In one tab, A and B may finish independently. Both must start their
-  // canonical write from the latest verified snapshot, not a shared stale
-  // global `state`. Serialize only the short save transaction, never Provider
-  // generation: Direct Reply for each session remains independent.
+  // Keep the tab's other resources and Sessions untouched when publishing a
+  // single successful CAS. The selected row is the only History being cloned.
+  function publishSession(session,storeRevision=null){
+    const i=state.sessions.findIndex(x=>x.id===session.id);
+    const sessions=state.sessions.slice();
+    if(i<0)sessions.push(session);else sessions[i]=session;
+    state={...state,sessions,...(storeRevision===null?{}:{storeRevision})};
+    return session;
+  }
+  async function refreshPersistedSession(id){
+    const snapshot=await window.MimaLocalStore.loadSessionRecord(id,{withRevision:true});
+    const record=snapshot?.session||null;
+    const sessions=state.sessions.slice(),i=sessions.findIndex(x=>x.id===id);
+    if(record){const normalized=normalizeSession(record);if(i<0)sessions.push(normalized);else sessions[i]=normalized;}
+    else if(i>=0)sessions.splice(i,1);
+    state={...state,sessions,storeRevision:snapshot?.storeRevision??state.storeRevision};
+    return state;
+  }
   let sessionSaveTail=Promise.resolve();
   function saveSession(s,{allowCreate=false,signal=null}={}) {
     const requested=clone(s);
     const commit=async()=>{
       try{
-      if(signal?.aborted)throw new DOMException('生成已取消，结果未提交','AbortError');
-      const persisted=normalizeState(await window.MimaLocalStore.loadState());
-      if(signal?.aborted)throw new DOMException('生成已取消，结果未提交','AbortError');
-      const normalized=normalizeSession({...requested,updatedAt:nowIso()});
-      const i=persisted.sessions.findIndex(x=>x.id===normalized.id);
-      if(i<0&&!allowCreate)throw new ApiError('E_STORY_SESSION_MISSING','Session 已删除，旧请求不得复活它');
-      if(i>=0&&Number(persisted.sessions[i].recordRevision)!==Number(normalized.recordRevision))
-        throw new ApiError('E_CANONICAL_CONFLICT','当前剧情已发生新修改，本轮旧结果未提交');
-      normalized.recordRevision++;
-      if(i>=0)persisted.sessions[i]=normalized;else persisted.sessions.push(normalized);
-      // CAS protects other tabs and the independent memory ledger. A conflict
-      // is surfaced rather than overwritten; no fallback to blank storage.
-      const committed=await window.MimaLocalStore.saveState(persisted,Number(persisted.storeRevision)||0,{signal});
-      state={...persisted,storeRevision:committed.storeRevision};
-      s.recordRevision=normalized.recordRevision;
-      return normalized;
+        if(signal?.aborted)throw new DOMException('生成已取消，结果未提交','AbortError');
+        const normalized=normalizeSession({...requested,updatedAt:nowIso()});
+        const expected=Number(normalized.recordRevision)||0;
+        const saved=await window.MimaLocalStore.commitSessionRecord(normalized,expected,{allowCreate,signal});
+        const session=normalizeSession(saved.session);
+        publishSession(session,saved.storeRevision);
+        s.recordRevision=session.recordRevision;
+        return session;
       }catch(error){
-        if(error?.name!=='AbortError')try{state=normalizeState(await window.MimaLocalStore.loadState());}
+        if(error?.name!=='AbortError')try{await refreshPersistedSession(requested.id);}
         catch(readError){console.error('E_STORY_REFRESH_FAILED_AFTER_WRITE',readError);}
         throw error;
       }
@@ -708,15 +714,19 @@
     return task;
   }
   async function createSessionUsingTemplate(body){
-    return commitLibraryEdit(stored=>{
-      const id=String(body.settingTemplateId||'');
+    // A template's resource references are protected by a global revision CAS,
+    // while the newly created Session is the ONLY large record written.
+    const commit=async()=>{try{
+      const stored=state,id=String(body.settingTemplateId||'');
       const tpl=id==='default'?stored.settingTemplates.find(x=>x.isDefault):stored.settingTemplates.find(x=>x.id===id);
       if(!tpl)throw new ApiError('E_SETTINGS_TEMPLATE_MISSING','设置模板已删除，未创建剧情');
       const input=appliedSessionSettings(body,tpl,stored);
-      const result=normalizeSession({...input,id:makeId('sess'),createdAt:nowIso(),updatedAt:nowIso(),messages:[]});
-      result.recordRevision=1;stored.sessions.push(result);
-      return result;
-    });
+      const candidate=normalizeSession({...input,id:makeId('sess'),createdAt:nowIso(),updatedAt:nowIso(),messages:[],recordRevision:0});
+      const committed=await window.MimaLocalStore.commitSessionRecord(candidate,0,{allowCreate:true,expectedGlobalRevision:stored.storeRevision});
+      return publishSession(normalizeSession(committed.session),committed.storeRevision);
+    }catch(error){try{state=normalizeState(await window.MimaLocalStore.loadState());}
+      catch(readError){console.error('E_SESSION_TEMPLATE_REFRESH_FAILED',readError);}throw error;}};
+    const task=sessionSaveTail.then(commit,commit);sessionSaveTail=task.then(()=>{},()=>{});return task;
   }
   async function saveMask(m){return commitResource('masks',normalizeMask({...m,updatedAt:nowIso()}),m.updatedAt);}
   async function savePreset(p){return commitResource('presets',normalizePreset({...p,updatedAt:nowIso()}),p.updatedAt);}
@@ -841,10 +851,10 @@
     // One verified canonical snapshot contains the selection AND its CSS bytes.
     // Queue with local writes; never settle a crash receipt from tab-local RAM.
     const read=async()=>{
-      const persisted=normalizeState(await window.MimaLocalStore.loadState());
-      state=persisted;
-      return {themeSettings:clone(persisted.themeSettings),cssPresets:persisted.cssPresets.map(p=>({...p})),
-        sessions:persisted.sessions.filter(s=>sessionIds.includes(s.id)).map(s=>clone(s)),storeRevision:persisted.storeRevision};
+      const persisted=await window.MimaLocalStore.loadCssSelectionSnapshot(sessionIds);
+      for(const session of persisted.sessions)publishSession(normalizeSession(session));
+      state={...state,themeSettings:persisted.themeSettings,cssPresets:persisted.cssPresets,storeRevision:persisted.storeRevision};
+      return persisted;
     };
     const task=sessionSaveTail.then(read,read);sessionSaveTail=task.then(()=>{},()=>{});return task;
   }
@@ -2793,7 +2803,8 @@
     const normalizedPatch=patch.manualMemory?{...patch,manualMemory:normalizeManualMemory(patch.manualMemory)}:patch;
     const committed=await window.MimaLocalStore.commitMemoryJob(job,snapshot,normalizedPatch);
     // Merge persisted current state, not the stale pre-request snapshot.
-    state=normalizeState(committed);return getSession(job.sessionId);
+    publishSession(normalizeSession(committed.sessions.find(s=>s.id===job.sessionId)),committed.storeRevision);
+    return getSession(job.sessionId);
   }
   // A saved fact remains the owner's editable memory even when its source
   // History was subsequently regenerated or edited. Rebuilding core from facts
@@ -3081,7 +3092,7 @@
   }
   async function previewFactMerge(id,opts={},signal=null,progress=null){
     // Refresh canon on both zero-API planning and approved execution.
-    state=normalizeState(await window.MimaLocalStore.loadState());
+    state=await refreshPersistedSession(id);
     const session=getSession(id);if(!session)throw new ApiError('E_STORY_SESSION_MISSING','剧情已不存在');
     const memory=normalizeManualMemory(session.manualMemory),ids=arr(opts.factIds).map(String),unique=[...new Set(ids)];
     if(unique.length<2||unique.length!==ids.length)throw new ApiError('E_MEMORY_MERGE_SELECTION','至少选择两条不同的事实记忆');
@@ -3188,12 +3199,12 @@
   async function commitFactMerge(id,body){
     if(typeof window.MimaLocalStore?.commitFactMerge!=='function')throw new ApiError('E_MEMORY_MERGE_STORE_UNAVAILABLE','合并事务不可用；旧记忆保持不变');
     const stateRecord=await window.MimaLocalStore.commitFactMerge(id,body);
-    state=normalizeState(stateRecord);return getSession(id);
+    publishSession(normalizeSession(stateRecord.sessions.find(s=>s.id===id)),stateRecord.storeRevision);return getSession(id);
   }
   async function undoFactMerge(id){
     if(typeof window.MimaLocalStore?.undoFactMerge!=='function')throw new ApiError('E_MEMORY_MERGE_STORE_UNAVAILABLE','合并撤销不可用');
     const stateRecord=await window.MimaLocalStore.undoFactMerge(id);
-    state=normalizeState(stateRecord);return getSession(id);
+    publishSession(normalizeSession(stateRecord.sessions.find(s=>s.id===id)),stateRecord.storeRevision);return getSession(id);
   }
   async function deleteCoreMemory(id){let session=getSession(id);if(!session)throw new ApiError('E_STORY_SESSION_MISSING','未找到剧情 Session。');session=normalizeSession(session);const memory=normalizeManualMemory(session.manualMemory||{});memory.core=normalizeManualMemory({}).core;session.manualMemory=memory;return saveSession(session);}
   async function deleteFactMemory(id,factId=''){let session=getSession(id);if(!session)throw new ApiError('E_STORY_SESSION_MISSING','未找到剧情 Session。');session=normalizeSession(session);const memory=normalizeManualMemory(session.manualMemory||{});memory.facts=factId?memory.facts.filter(x=>x.id!==factId):[];session.manualMemory=memory;return saveSession(session);}
@@ -3426,7 +3437,7 @@
     // Never assemble from an old in-memory UI snapshot when another tab or
     // independent memory job has already committed to canonical IndexedDB.
     // A failed read is NOT an empty memory store and must abort this request.
-    state=normalizeState(await window.MimaLocalStore.loadState());
+    state=await refreshPersistedSession(id);
     let session=getSession(id);
     if(!session)throw new ApiError('E_STORY_SESSION_MISSING','剧本档案丢失猫！',{hint:'本地剧情 Session（剧情会话）不存在或已被删除，请重新打开剧情。'});
     session=normalizeSession(session);
@@ -3575,7 +3586,7 @@
       await recoverStore.generationReceipt(identity,'PREPARED_COMMITTED',{
         ownerId:pending.ownerId,sourceFingerprint:pending.canonicalFingerprint,recordRevision:session.recordRevision});
     }catch(recoveryError){
-      try{const latestState=normalizeState(await recoverStore.loadState()),live=latestState.sessions.find(x=>x.id===id);
+      try{const latestState=await refreshPersistedSession(id),live=latestState.sessions.find(x=>x.id===id);
         if(live?.pendingGeneration?.id===pending.id&&live.pendingGeneration.attempt===pending.attempt){state=latestState;await saveSession({...live,pendingGeneration:{...live.pendingGeneration,status:'failed',errorCode:'E_GENERATION_RECEIPT_UNAVAILABLE'},lastGeneration:{id:pending.id,attempt:pending.attempt,action:pending.action,status:'failed',preparedAt:pending.preparedAt,settledAt:nowIso(),errorCode:'E_GENERATION_RECEIPT_UNAVAILABLE'}});}}
       catch(err){console.error('恢复账本错误后无法结算 prepared；保留原状态',{sessionId:id,generationId:pending.id,error:err});}
       throw new ApiError('E_GENERATION_RECEIPT_UNAVAILABLE','本地恢复账本无法提交，未向模型发送请求。',{details:String(recoveryError)});
@@ -3717,7 +3728,7 @@
     }
     const generatedMessages=clone(session.messages);let saved=null;
     for(let commitAttempt=0;commitAttempt<3;commitAttempt++){
-      const persisted=normalizeState(await window.MimaLocalStore.loadState());
+      const persisted=await refreshPersistedSession(id);
       const latest=persisted.sessions.find(x=>x.id===id);
       if(signal?.aborted)throw new DOMException('生成已取消，结果未提交','AbortError');
       if(!latest||latest.pendingGeneration?.id!==pending.id||latest.pendingGeneration.attempt!==pending.attempt||latest.pendingGeneration.status!=='prepared'||JSON.stringify(latest.messages)!==JSON.stringify(sourceBeforeReply))throw new ApiError('E_CANONICAL_CONFLICT','生成期间剧情原文被其他操作修改；拒绝以旧回复覆盖新时间线。');
@@ -3752,7 +3763,7 @@
       }
       // Persist only request lifecycle metadata, never rejected model content in canonical data.
       try{
-        const persisted=normalizeState(await window.MimaLocalStore.loadState()),latest=persisted.sessions.find(x=>x.id===id);
+        const persisted=await refreshPersistedSession(id),latest=persisted.sessions.find(x=>x.id===id);
         if(latest?.pendingGeneration?.id===pending.id&&latest.pendingGeneration.attempt===pending.attempt&&latest.pendingGeneration.status==='prepared'){
           state=persisted;await saveSession({...latest,pendingGeneration:{...latest.pendingGeneration,status:'failed',errorCode:e?.code||e?.name||'E_STORY_RUNTIME'},lastGeneration:{id:pending.id,attempt:pending.attempt,action:pending.action,status:e?.name==='AbortError'?'aborted':'failed',preparedAt:pending.preparedAt,settledAt:nowIso(),errorCode:e?.code||e?.name||'E_STORY_RUNTIME'}});
           void recoverStore.generationReceipt(identity,e?.name==='AbortError'?'ABORTED_SETTLED':'FAILED_SETTLED',{errorCode:e?.code||e?.name||'E_STORY_RUNTIME'}).catch(err=>console.error('失败回执记录失败；canonical 已结算',{sessionId:id,generationId:pending.id,error:err}));
@@ -3775,7 +3786,7 @@
   // billable: this settles ONLY the local canonical lock, never reports API cancel.
   async function abandonUnknownStoryGeneration(id,body={}){
     const store=window.MimaLocalStore;
-    const persisted=normalizeState(await store.loadState());
+    const persisted=await refreshPersistedSession(id);
     const session=persisted.sessions.find(s=>s.id===id);
     const pending=session?.pendingGeneration;
     if(!session||!pending||pending.status!=='prepared'||
@@ -3811,7 +3822,7 @@
   async function prepareRejectedHtmlRepair(id,diagnosticId){
     const record=await window.MimaDiagnosticJournal.recoveryCandidate(diagnosticId);
     if(record.sessionId!==id||String(record.action||'').startsWith('compat_'))throw new ApiError('E_HTML_REPAIR_OWNER','诊断不属于原生剧情。');
-    state=normalizeState(await window.MimaLocalStore.loadState());
+    state=await refreshPersistedSession(id);
     const session=getSession(id),pending=session?.pendingGeneration;
     if(!pending||pending.id!==record.generationId||pending.attempt!==record.generationAttempt||pending.status!=='failed'||pending.action!==record.action||
       pending.canonicalFingerprint!==memorySourceFingerprint(session.messages,session.messages.length))
@@ -3842,7 +3853,7 @@
     if(body.confirmed!==true)throw new ApiError('E_REPLY_RECOVERY_CONFIRM','请先确认将已收到的文本手动恢复到原剧情。');
     const record=await window.MimaDiagnosticJournal.recoveryCandidate(body.diagnosticId,{allowPartial:body.allowPartial===true&&!body.htmlCandidateId,allowUnsettled:body.allowUnsettled===true&&!body.htmlCandidateId});
     if(record.sessionId!==id||String(record.action||'').startsWith('compat_'))throw new ApiError('E_REPLY_RECOVERY_OWNER','诊断不属于这个原生剧情。');
-    const persisted=normalizeState(await window.MimaLocalStore.loadState()),sourceSession=persisted.sessions.find(s=>s.id===id),session=sourceSession?normalizeSession(clone(sourceSession)):null;
+    const persisted=await refreshPersistedSession(id),sourceSession=persisted.sessions.find(s=>s.id===id),session=sourceSession?normalizeSession(clone(sourceSession)):null;
     if(!session)throw new ApiError('E_STORY_SESSION_MISSING','原剧情已删除，未重建或覆盖存档。');
     const previous=session.messages.find(m=>m.metadata?.manualRecovery?.diagnosticId===record.id||arr(m.metadata?.manualRecoveryIds).includes(record.id)||
       (m.metadata?.manualRecovery?.generationId===record.generationId&&m.metadata?.manualRecovery?.attempt===record.generationAttempt));
@@ -3933,11 +3944,8 @@
       const normalized=normalizeSession({...session,pendingGeneration:null,lastGeneration:{id:pending.id,attempt:pending.attempt,action,preparedAt:pending.preparedAt,settledAt:nowIso(),status:'completed',resultMessageId:target.id,manualRecovery:true},legacyMemoryQuarantined:true,updatedAt:nowIso()});
       const initialRecordRevision=Number(session.recordRevision)||0;
       normalized.recordRevision=initialRecordRevision+1;
-      const nextState=clone(persisted),idx=nextState.sessions.findIndex(x=>x.id===id);
-      if(idx<0)throw new ApiError('E_STORY_SESSION_MISSING','恢复目标已不存在');
-      nextState.sessions[idx]=normalized;
-      const committed=await window.MimaLocalStore.commitHtmlRepair(nextState,Number(persisted.storeRevision)||0,id,htmlRepair.messageId,htmlRepair.id,initialRecordRevision);
-      state=normalizeState(committed);saved=normalized;
+      const committed=await window.MimaLocalStore.commitHtmlRepair(normalized,Number(persisted.storeRevision)||0,id,htmlRepair.messageId,htmlRepair.id,initialRecordRevision);
+      saved=publishSession(normalizeSession(committed.session),committed.storeRevision);
     }else saved=await saveSession({...session,pendingGeneration:null,lastGeneration:{id:pending.id,attempt:pending.attempt,action,preparedAt:pending.preparedAt,settledAt:nowIso(),status:'completed',resultMessageId:target.id,manualRecovery:true},legacyMemoryQuarantined:true});
     return {session:saved,messageId:target.id,alreadyRestored:false,action};
   }
@@ -3945,7 +3953,7 @@
     if(body.confirmed!==true||body.allowPartial!==true)throw new ApiError('E_LEDGER_RECOVERY_CONFIRM','必须确认仅恢复本机实际保存的片段，不能补造末尾。');
     const generationId=String(body.generationId||''),attempt=Number(body.attempt);
     if(!generationId||!Number.isSafeInteger(attempt)||attempt<1)throw new ApiError('E_GENERATION_IDENTITY_INVALID','原请求身份无效。');
-    const persisted=normalizeState(await window.MimaLocalStore.loadState());
+    const persisted=await refreshPersistedSession(id);
     const rawSession=persisted.sessions.find(s=>s.id===id),session=rawSession?normalizeSession(clone(rawSession)):null;
     if(!session)throw new ApiError('E_STORY_SESSION_MISSING','剧情已不存在，不能恢复到别的剧情。');
     const recovered=session.messages.find(m=>m.metadata?.manualRecovery?.generationId===generationId&&m.metadata?.manualRecovery?.attempt===attempt);
@@ -3982,7 +3990,7 @@
     return {session:saved,messageId:msg.id,alreadyRestored:false,action:'send',partialCapture:true};
   }
   async function inspectHtmlMessage(id,msgId){
-    state=normalizeState(await window.MimaLocalStore.loadState());
+    state=await refreshPersistedSession(id);
     const session=getSession(id),message=session?.messages.find(x=>x.id===msgId);
     if(!message)throw new ApiError('E_HTML_REPAIR_TARGET_MISSING','原消息不存在。');
     const contract=session.promptSettings?.outputContract||{},template=session.messages.find(x=>x.id===contract.templateMessageId&&x.role==='assistant');
@@ -4003,7 +4011,7 @@
       renderMode:session.renderMode,trace,rules:activeRegexPacks(session).filter(p=>arr(p.rules).some(r=>r.enabled!==false)).map(p=>({id:p.id,name:p.name||p.title||p.id})),diagnostics};
   }
   async function prepareHtmlRepair(id,msgId){
-    state=normalizeState(await window.MimaLocalStore.loadState());
+    state=await refreshPersistedSession(id);
     const source=getSession(id),session=source?normalizeSession(clone(source)):null,message=session?.messages.find(x=>x.id===msgId);
     if(!session||!message||message.role!=='assistant')throw new ApiError('E_HTML_REPAIR_TARGET_MISSING','目标角色回复不存在。');
     const contract=session.promptSettings?.outputContract||{};
@@ -4025,7 +4033,7 @@
   }
   async function prepareAiHtmlRepair(id,msgId,body={}){
     if(body.confirmedCharge!==true)throw new ApiError('E_HTML_AI_CHARGE_NOT_APPROVED','主人未确认付费重排；请求 0 次。');
-    state=normalizeState(await window.MimaLocalStore.loadState());
+    state=await refreshPersistedSession(id);
     const source=getSession(id),session=source?normalizeSession(clone(source)):null,message=session?.messages.find(x=>x.id===msgId);
     if(!message||message.role!=='assistant')throw new ApiError('E_HTML_AI_TARGET_MISSING','目标角色回复不存在。');
     const contract=session.promptSettings?.outputContract||{},template=session.messages.find(x=>x.id===contract.templateMessageId&&x.role==='assistant');
@@ -4067,7 +4075,7 @@
 
     // Reopen canonical after the awaited paid request. A concurrent edit is a
     // conflict, even if a model returned perfectly valid HTML.
-    const fresh=normalizeState(await window.MimaLocalStore.loadState()),current=fresh.sessions.find(x=>x.id===id);
+    const fresh=await refreshPersistedSession(id),current=fresh.sessions.find(x=>x.id===id);
     const original=current?.messages.find(x=>x.id===msgId),ref=current?.messages.find(x=>x.id===template.id);
     if(!original||!ref||await exactDigest({content:original.content,rawContent:original.rawContent,versions:original.versions})!==targetDigest||
        await exactDigest({content:ref.content,contract:current.promptSettings?.outputContract})!==templateDigest)
@@ -4097,8 +4105,8 @@
     if(candidate?.state==='pending'&&candidate.provenance==='ai_reformatted'&&
        candidate.sessionId===id&&candidate.messageId===msgId&&
        (!draft||String(candidate.createdAt)>=String(draft.createdAt))){
-      const persisted=await window.MimaLocalStore.loadState();
-      const target=arr(persisted?.sessions).find(s=>s.id===id)?.messages?.find(m=>m.id===msgId);
+      const persisted=await window.MimaLocalStore.loadSessionRecord(id);
+      const target=arr(persisted?.messages).find(m=>m.id===msgId);
       const message=target?normalizeMessage(target):null;
       if(message&&candidate.baseContentDigest===await exactDigest({content:message.content,rawContent:message.rawContent,versions:message.versions}))
         return {id:candidate.id,sessionId:id,messageId:msgId,content:candidate.proposedContent,createdAt:candidate.createdAt,accepted:false,
@@ -4110,7 +4118,7 @@
     const c=await window.MimaLocalStore.getHtmlRepairCandidate(id,msgId);
     if(!c||c.id!==candidateId||c.state!=='pending')throw new ApiError('E_HTML_REPAIR_CANDIDATE_MISSING','候选不存在或已经结算。');
     // Read current canonical, not an obsolete UI snapshot; stale tabs fail closed.
-    state=normalizeState(await window.MimaLocalStore.loadState());
+    state=await refreshPersistedSession(id);
     const source=getSession(id),session=source?normalizeSession(clone(source)):null,message=session?.messages.find(x=>x.id===msgId);
     if(!message||message.role!=='assistant'||(message.branchId||'main')!==c.branchId||arr(message.versions).length!==c.baseMessageVersion||
       await exactDigest({content:message.content,rawContent:message.rawContent,versions:message.versions})!==c.baseContentDigest)
@@ -4144,12 +4152,8 @@
     message.tokenEstimate=estimateTokens(message.content);session.legacyMemoryQuarantined=true;
     const initialRecordRevision=Number(session.recordRevision)||0;
     const normalized=normalizeSession({...session,updatedAt:nowIso(),recordRevision:initialRecordRevision+1});
-    const persisted=clone(state),idx=persisted.sessions.findIndex(x=>x.id===id);
-    if(idx<0)throw new ApiError('E_STORY_SESSION_MISSING','剧情已不存在');
-    persisted.sessions[idx]=normalized;
-    const committed=await window.MimaLocalStore.commitHtmlRepair(persisted,Number(state.storeRevision)||0,id,msgId,c.id,initialRecordRevision);
-    state=normalizeState(committed);
-    return normalized;
+        const committed=await window.MimaLocalStore.commitHtmlRepair(normalized,Number(state.storeRevision)||0,id,msgId,c.id,initialRecordRevision);
+    return publishSession(normalizeSession(committed.session),committed.storeRevision);
   }
   // Edit only a detached canonical session. A display-regex Worker may yield;
   // leaking the edit into global state before CAS could let another save persist it.
@@ -4262,46 +4266,44 @@
       if(path==='/session-organization'&&method==='GET')return ok(await window.MimaLocalStore.loadSessionOrganization());
       if(path==='/session-organization/actions'&&method==='POST')return ok(await organizationAction(body||{}));
       if(path==='/sessions'&&method==='GET')return ok(sessionSummaries());
-      if(path==='/sessions/full'&&method==='GET')return ok(state.sessions);
+      if(path==='/sessions/full'&&method==='GET')return ok((await window.MimaLocalStore.loadState()).sessions);
       if(path==='/sessions'&&method==='POST'){if(body?.settingTemplateId)return ok(await createSessionUsingTemplate(body));const s=await saveSession(normalizeSession({...body,id:makeId('sess'),createdAt:nowIso(),updatedAt:nowIso(),messages:[]}),{allowCreate:true});return ok(s);}
       if(path==='/sessions/import'&&method==='POST'){const s=normalizeSession({...body,id:makeId('sess'),title:`${text(body?.title||'导入剧情')} · 导入`,createdAt:nowIso(),updatedAt:nowIso()});return ok(await saveSession(s,{allowCreate:true}));}
       let m=path.match(/^\/sessions\/([^/]+)\/canonical-view$/);
       if(m&&method==='GET'){
         // Normal GET uses the tab-local projected state. Regeneration requires
         // an independently confirmed canonical storage read instead.
-        const persisted=normalizeState(await window.MimaLocalStore.loadState());
-        const verified=persisted.sessions.find(s=>s.id===m[1]);
+        const verified=await window.MimaLocalStore.loadSessionRecord(m[1]);
         return verified?ok(clone(verified)):fail('canonical 剧情不存在',{code:'E_STORY_SESSION_MISSING'});
       }
-      m=path.match(/^\/sessions\/([^/]+)$/);if(m&&method==='GET'){const s=getSession(m[1]);return s?ok(s):fail('未找到剧本');}
+      m=path.match(/^\/sessions\/([^/]+)$/);if(m&&method==='GET'){await refreshPersistedSession(m[1]);const s=getSession(m[1]);return s?ok(s):fail('未找到剧本');}
       if(m&&method==='PATCH'){const s=getSession(m[1]);return s?ok(await saveSession({...s,...body,id:s.id,createdAt:s.createdAt})):fail('未找到剧本');}
-      m=path.match(/^\/sessions\/([^/]+)\/css-disable$/);if(m&&method==='POST')return ok(await commitLibraryEdit(stored=>{
-        const session=stored.sessions.find(x=>x.id===m[1]);if(!session)throw new ApiError('E_STORY_SESSION_MISSING','原剧情已不存在，未改变其他剧情');
+      m=path.match(/^\/sessions\/([^/]+)\/css-disable$/);if(m&&method==='POST'){
+        const session=getSession(m[1]);if(!session)throw new ApiError('E_STORY_SESSION_MISSING','原剧情不存在，未改变其他剧情');
         if(body?.expected&&(session.recordRevision!==body.expected.recordRevision||
           (session.customCssId||null)!==(body.expected.customCssId||null)||
           (session.customCssEnabled!==false)!==(body.expected.customCssEnabled!==false)))
-          throw new ApiError('E_CSS_SELECTION_STALE','剧情 CSS 已改变，本次取消未覆盖新选择');
-        if(body?.clearSelection)session.customCssId=null;
-        session.customCssEnabled=false;session.recordRevision++;session.updatedAt=nowIso();return clone(session);
-      }));
-      m=path.match(/^\/sessions\/([^/]+)\/css-selection$/);if(m&&method==='POST'){
-        const targetId=m[1],expected=body?.expected||{},candidate=body?.candidate||{};
-        return ok(await commitLibraryEdit(stored=>{
-          const session=stored.sessions.find(x=>x.id===targetId);
-          if(!session||session.recordRevision!==expected.recordRevision||session.customCssId!==expected.customCssId||session.customCssEnabled!==expected.customCssEnabled)
-            throw new ApiError('E_CSS_SELECTION_STALE','剧情 CSS 已被其他操作修改，本次不覆盖');
-          const actual=stored.cssPresets.find(x=>x.id===candidate.customCssId);
-          if(!actual||actual.scope==='app'||!body.identity||cssSelectionIdentity(actual)!==body.identity)throw new ApiError('E_CSS_CANDIDATE_CHANGED','候选 CSS 内容或作用域已改变，剧情 CSS 未提交');
-          session.customCssId=candidate.customCssId||null;session.customCssEnabled=!!candidate.customCssEnabled;session.recordRevision++;session.updatedAt=nowIso();return clone(session);
-        }));
+          throw new ApiError('E_CSS_SELECTION_STALE','原剧情 CSS 已改变，本次取消未覆盖新选择');
+        return ok(await saveSession({...session,customCssId:body?.clearSelection?null:session.customCssId,customCssEnabled:false}));
       }
-      if(m&&method==='DELETE')return ok(await deleteResource('sessions',m[1]));
+      m=path.match(/^\/sessions\/([^/]+)\/css-selection$/);if(m&&method==='POST'){
+        const id=m[1],result=await window.MimaLocalStore.commitSessionCssSelection(id,body?.expected||{},body?.candidate||{},body?.identity,
+          (actual,expectedIdentity)=>cssSelectionIdentity(actual)===expectedIdentity);
+        return ok(publishSession(normalizeSession(result.session),result.storeRevision));
+      }
+      if(m&&method==='DELETE'){
+        const id=m[1];
+        const change=async()=>{const current=getSession(id);if(!current)throw new ApiError('E_STORY_SESSION_MISSING','该剧情未在当前窗口加载，禁止无版本校验删除');const result=await window.MimaLocalStore.deleteSessionRecord(id,current.recordRevision);
+          if(result.deleted){state={...state,sessions:state.sessions.filter(x=>x.id!==id),sessionOrganizationV1:result.organization,storeRevision:result.storeRevision};}
+          return {deleted:result.deleted};};
+        const task=sessionSaveTail.then(change,change);sessionSaveTail=task.then(()=>{},()=>{});return ok(await task);
+      }
       m=path.match(/^\/sessions\/([^/]+)\/generation-abandon$/);if(m&&method==='POST')return ok(await abandonUnknownStoryGeneration(m[1],body||{}));
       m=path.match(/^\/sessions\/([^/]+)\/chat$/);if(m&&method==='POST')return ok(await processStoryTurn(m[1],body?.text,body?.action||'send',signal,body?.temperature,{directorNote:body?.directorNote||'',targetMessageId:body?.targetMessageId||null,expectedRecordRevision:body?.expectedRecordRevision??null,expectedSourceFingerprint:body?.expectedSourceFingerprint||null,diagnosticTurnId:body?.diagnosticTurnId||'',diagnosticTraceId:body?.diagnosticTraceId||'',regenerationContext:body?.regenerationContext||'original',retryParameters:body?.retryParameters==='current'?'current':'original',confirmUnknownTakeover:body?.confirmUnknownTakeover===true},progress));
       m=path.match(/^\/sessions\/([^/]+)\/recover-reply$/);if(m&&method==='POST')return ok(await restoreRejectedReply(m[1],body||{}));
       m=path.match(/^\/sessions\/([^/]+)\/recover-stream-ledger$/);if(m&&method==='POST')return ok(await restoreFailedStreamLedger(m[1],body||{}));
       m=path.match(/^\/sessions\/([^/]+)\/recover-reply\/html-repair$/);if(m&&method==='POST')return ok(await prepareRejectedHtmlRepair(m[1],body?.diagnosticId));
-      m=path.match(/^\/sessions\/([^/]+)\/prompt-preview$/);if(m&&method==='POST'){state=normalizeState(await window.MimaLocalStore.loadState());return ok(await previewPrompt(m[1],body||{}));}
+      m=path.match(/^\/sessions\/([^/]+)\/prompt-preview$/);if(m&&method==='POST'){await refreshPersistedSession(m[1]);return ok(await previewPrompt(m[1],body||{}));}
       m=path.match(/^\/sessions\/([^/]+)\/opening$/);if(m&&method==='POST')return ok(await addOpening(m[1],body?.content||''));
       m=path.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)\/html-repair\/inspect$/);if(m&&method==='GET')return ok(await inspectHtmlMessage(m[1],m[2]));
       m=path.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)\/html-repair\/draft$/);if(m&&method==='GET')return ok(await readHtmlRepairDraft(m[1],m[2]));
@@ -4317,7 +4319,7 @@
       if(m&&method==='DELETE')return ok(await deleteCoreMemory(m[1]));
       m=path.match(/^\/sessions\/([^/]+)\/memory\/rolling\/plan$/);if(m&&method==='POST')return ok(await previewMemoryPlan('rolling',m[1],body||{}));
       m=path.match(/^\/sessions\/([^/]+)\/memory\/rolling\/run$/);if(m&&method==='POST')return ok(await runRecordedMemory('rolling',m[1],body||{},signal,progress));
-      m=path.match(/^\/sessions\/([^/]+)\/memory\/rolling$/);if(m&&method==='POST'){const result=await window.MimaLocalStore.updateRollingMemory(m[1],body?.action||'revoke');await init();return ok(getSession(m[1])||result);}
+      m=path.match(/^\/sessions\/([^/]+)\/memory\/rolling$/);if(m&&method==='POST'){const result=await window.MimaLocalStore.updateRollingMemory(m[1],body?.action||'revoke');await refreshPersistedSession(m[1]);return ok(getSession(m[1])||result);}
       m=path.match(/^\/sessions\/([^/]+)\/memory\/facts\/merge-plan$/);if(m&&method==='POST')return ok(await previewFactMerge(m[1],{...(body||{}),planOnly:true},signal,null));
       m=path.match(/^\/sessions\/([^/]+)\/memory\/facts\/merge-preview$/);if(m&&method==='POST')return ok(await previewFactMerge(m[1],body||{},signal,progress));
       m=path.match(/^\/sessions\/([^/]+)\/memory\/facts\/merge-commit$/);if(m&&method==='POST')return ok(await commitFactMerge(m[1],body||{}));

@@ -4888,7 +4888,7 @@ function hideFailedStreamControls(){
 async function readFailedGenerationStream(){
  const id=r19FailedStreamIdentity;
  if(!id||currentSessionId!==id.sessionId)throw new Error('当前会话没有已核实的失败流式原文');
- const state=await MimaLocalStore.loadState(),pending=state.sessions?.find(s=>s.id===id.sessionId)?.pendingGeneration;
+ const pending=(await MimaLocalStore.loadSessionRecord(id.sessionId))?.pendingGeneration;
  if(!pending||pending.status!=='failed'||pending.id!==id.generationId||pending.attempt!==id.attempt)throw new Error('原任务已经改变；不能显示旧轮的流式正文');
  const draft=await MimaLocalStore.generationRead(id);
  if(!draft.complete||!draft.text.length||currentSessionId!==id.sessionId)throw new Error('本机流式记录不完整或会话已切换');
