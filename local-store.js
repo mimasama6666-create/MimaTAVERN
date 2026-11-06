@@ -6,13 +6,15 @@
   const DB_NAME = 'mimamao_tavern_standalone';
   // v2 fences older bundles: their v1 opens must fail rather than overwrite
   // the appearance overlay with an obsolete whole-library snapshot.
-  const DB_VERSION = 3;
+  const DB_VERSION = 4;
   const STORE = 'kv';
   const STATE_KEY = 'state';
   const APPEARANCE_KEY = 'appearance_v1';
   const PRESETS_KEY = 'presets_overlay_head_v1';
   const PRESET_RECORD_PREFIX = 'presets_overlay_record_v1:';
   const BASE_REVISION_KEY = 'canonical_base_revision_v1';
+  const ORG_KEY='session_organization_v1';
+  const SESSION_IDS_KEY='session_organization_session_ids_v1';
   const SETTINGS_SNAPSHOT_KEY = 'settings_snapshot_v1';
   const EMPTY_THEME = { theme: 'default', updatedAt: '' };
 
@@ -48,6 +50,73 @@
   }
   function blankState() {
     return {schemaVersion:4,storeRevision:0,sessions:[],masks:[],presets:[],worldbooks:[],cssPresets:[],cssCategoriesV1:[],resourceCategoriesV1:{presets:[],worldbook:[]},regexPacks:[],theaterCards:[],quickCommands:[],settingTemplates:[],novelProjects:[],themeSettings:{...EMPTY_THEME}};
+  }
+  // Small, independent directory. No History, Memory or CSS bytes in its CAS.
+  const blankSessionOrganization=()=>({version:1,revision:0,groups:[],placements:{},updatedAt:''});
+  function validateSessionOrganization(value,knownIds=null){
+    if(!value||typeof value!=='object'||Array.isArray(value)||value.version!==1||
+      !Number.isSafeInteger(value.revision)||value.revision<0||!Array.isArray(value.groups)||
+      !value.placements||typeof value.placements!=='object'||Array.isArray(value.placements)||
+      typeof value.updatedAt!=='string')throw Error('E_SESSION_ORGANIZATION_CORRUPT: 归档目录结构无法核实');
+    const ids=new Set(),names=new Set(),orders=new Set();
+    for(const g of value.groups){
+      if(!g||typeof g!=='object'||!/^sg_[a-zA-Z0-9_-]{3,80}$/.test(g.id||'')||
+        typeof g.name!=='string'||!g.name.trim()||g.name!==g.name.trim()||g.name.length>60||
+        !Number.isSafeInteger(g.order)||g.order<0||typeof g.createdAt!=='string'||typeof g.updatedAt!=='string'||
+        ids.has(g.id)||names.has(g.name.toLocaleLowerCase())||orders.has(g.order))
+        throw Error('E_SESSION_ORGANIZATION_CORRUPT: 归档分类无效或重名');
+      ids.add(g.id);names.add(g.name.toLocaleLowerCase());orders.add(g.order);
+    }
+    for(const [id,place] of Object.entries(value.placements)){
+      if(!id||id.length>256||knownIds&& !knownIds.has(id)||!place||typeof place!=='object'||
+        place.archived!==true||typeof place.archivedAt!=='string'||
+        !(place.groupId===null||typeof place.groupId==='string'&&ids.has(place.groupId)))
+        throw Error('E_SESSION_ORGANIZATION_CORRUPT: 归档会话引用无效');
+    }
+    return value;
+  }
+  function verifiedOrganization(value){return validateSessionOrganization(value===undefined?blankSessionOrganization():value);}
+  async function loadSessionOrganization(){return verifiedOrganization(await get(ORG_KEY));}
+  // All changes and the small session-id index are inspected in ONE IDB tx.
+  async function commitSessionOrganization(action,expectedRevision){
+    if(!Number.isSafeInteger(expectedRevision)||expectedRevision<0||!action||typeof action!=='object')throw Error('E_ORGANIZATION_INVALID_ACTION');
+    const db=await openDb();return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE),r=kv.get(ORG_KEY),i=kv.get(SESSION_IDS_KEY);
+      let issue,result,ready=0;
+      const fail=e=>{issue=e;try{tx.abort();}catch{}};
+      const work=()=>{if(++ready!==2)return;try{
+        const existing=verifiedOrganization(r.result);
+        if(existing.revision!==expectedRevision)throw Error('E_SESSION_ORGANIZATION_CONFLICT: 归档目录已在别处修改，请刷新后重试');
+        if(!Array.isArray(i.result)||i.result.some(x=>typeof x!=='string'))throw Error('E_SESSION_INDEX_UNAVAILABLE: 会话索引不可验证，归档未修改');
+        const known=new Set(i.result);
+        validateSessionOrganization(existing,known);
+        const next={...existing,groups:existing.groups.map(x=>({...x})),placements:{...existing.placements}};
+        const stamp=new Date().toISOString(),id=action.id;
+        const group=()=>next.groups.find(g=>g.id===id);
+        const name=()=>{const value=action.name;if(typeof value!=='string'||!value.trim()||value!==value.trim()||value.length>60)throw Error('分类名称需要 1–60 字且不可首尾留空');
+          if(next.groups.some(g=>g.id!==id&&g.name.toLocaleLowerCase()===value.toLocaleLowerCase()))throw Error('已有同名分类');return value;};
+        switch(action.type){
+          case 'create-group':{
+            if(typeof id!=='string'||!/^sg_[a-zA-Z0-9_-]{3,80}$/.test(id)||group())throw Error('E_ORGANIZATION_GROUP_ID');
+            const value=name();next.groups.push({id,name:value,order:next.groups.reduce((n,g)=>Math.max(n,g.order),-1)+1,createdAt:stamp,updatedAt:stamp});break;}
+          case 'rename-group':{const g=group();if(!g)throw Error('分类不存在');g.name=name();g.updatedAt=stamp;break;}
+          case 'delete-group':{if(!group())throw Error('分类不存在');next.groups=next.groups.filter(g=>g.id!==id);
+            for(const [sid,place] of Object.entries(next.placements))if(place.groupId===id)next.placements[sid]={...place,groupId:null};break;}
+          case 'place-session':{
+            if(typeof id!=='string'||!known.has(id))throw Error('剧情不存在或已经删除');
+            if(action.archived!==true&&action.archived!==false)throw Error('E_ORGANIZATION_ARCHIVED_INVALID');
+            if(action.archived){const gid=action.groupId??null;
+              if(gid!==null&&!next.groups.some(g=>g.id===gid))throw Error('目标分类不存在或已更改');
+              next.placements[id]={archived:true,groupId:gid,archivedAt:next.placements[id]?.archivedAt||stamp};
+            }else delete next.placements[id];break;}
+          default:throw Error('E_ORGANIZATION_ACTION_UNKNOWN');
+        }
+        next.revision++;next.updatedAt=stamp;validateSessionOrganization(next,known);
+        kv.put(next,ORG_KEY);result=next;
+      }catch(e){fail(e)}};
+      r.onsuccess=work;i.onsuccess=work;r.onerror=()=>fail(r.error);i.onerror=()=>fail(i.error);
+      tx.oncomplete=()=>{db.close();resolve(result)};tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_ORGANIZATION_TX_ABORT'))};
+    });
   }
   function appearanceFromState(value) {
     return {version:1,baseRevision:Number(value?.storeRevision)||0,storeRevision:Number(value?.storeRevision)||0,
@@ -143,8 +212,8 @@
   // Read base/CSS/head and every changed preset in the SAME transaction.
   // An incomplete/missing changed record is corruption, never an empty preset.
   function readCanonical(kv){
-    const request={},base=kv.get(STATE_KEY),appearance=kv.get(APPEARANCE_KEY),head=kv.get(PRESETS_KEY),records=new Map();
-    let pending=3,failed=false;
+    const request={},base=kv.get(STATE_KEY),appearance=kv.get(APPEARANCE_KEY),head=kv.get(PRESETS_KEY),organization=kv.get(ORG_KEY),records=new Map();
+    let pending=4,failed=false;
     const fail=error=>{if(failed)return;failed=true;request.error=error;request.onerror?.({target:request});};
     const done=()=>{if(--pending!==0||failed)return;try{
       if(base.result!==undefined&&!isCanonicalStateRecord(base.result))throw Error('E_CANONICAL_STATE_UNVERIFIED');
@@ -155,8 +224,9 @@
         if(!item||item.id!==id||typeof item.content!=='string')throw Error('E_PRESET_FRAGMENT_INCOMPLETE: 预设增量记录缺失');
       }
       request.result=mergePresets(base.result||blankState(),appearance.result,head.result,records);
+      request.result.sessionOrganizationV1=verifiedOrganization(organization.result);
     }catch(error){fail(error);return;}request.onsuccess?.({target:request});};
-    base.onsuccess=done;appearance.onsuccess=done;
+    base.onsuccess=done;appearance.onsuccess=done;organization.onsuccess=done;
     head.onsuccess=()=>{try{
       const value=assertPresetsOverlay(head.result);
       pending+=value.changes.length;
@@ -166,7 +236,7 @@
       }
       done();
     }catch(e){fail(e)}};
-    base.onerror=()=>fail(base.error);appearance.onerror=()=>fail(appearance.error);head.onerror=()=>fail(head.error);
+    base.onerror=()=>fail(base.error);appearance.onerror=()=>fail(appearance.error);organization.onerror=()=>fail(organization.error);head.onerror=()=>fail(head.error);
     return request;
   }
   function putCanonical(kv,value) {
@@ -179,7 +249,9 @@
       catch(_){try{kv.transaction.abort();}catch{}}
     };
     oldHead.onerror=()=>{try{kv.transaction.abort();}catch{}};
-    kv.put(value,STATE_KEY);kv.put(appearanceFromState(value),APPEARANCE_KEY);
+    // The directory has a separate authority; ordinary story writes never overwrite it.
+    const {sessionOrganizationV1:_sidecar,...canonicalValue}=value;
+    kv.put(canonicalValue,STATE_KEY);kv.put(value.sessions.map(x=>x.id),SESSION_IDS_KEY);kv.put(appearanceFromState(value),APPEARANCE_KEY);
     kv.put(presetsFromState(value),PRESETS_KEY);kv.put({revision:value.storeRevision},BASE_REVISION_KEY);
   }
   function openDb() {
@@ -198,6 +270,7 @@
           if(event.oldVersion<2)kv.put(appearanceFromState(old.result),APPEARANCE_KEY);
           if(event.oldVersion<3){kv.put(presetsFromState(old.result),PRESETS_KEY);
             kv.put({revision:Number(old.result?.storeRevision)||0},BASE_REVISION_KEY);}
+          if(event.oldVersion<4)kv.put((old.result?.sessions||[]).map(s=>s.id),SESSION_IDS_KEY);
         }catch(error){upgradeIssue=error;req.transaction.abort();}};
       };
       req.onsuccess = () => {const db=req.result;db.onversionchange=()=>db.close();if(rejected)db.close();else resolve(db);};
@@ -287,7 +360,7 @@
   }
   // Serialize compare-and-swap inside a single IndexedDB readwrite transaction.
   // Never treat a failed read as an empty library, and never silently overwrite a newer tab.
-  async function commitState(candidate, expectedRevision, {signal=null}={}) {
+  async function commitState(candidate, expectedRevision, {signal=null,organizationImport=false,expectedOrganizationRevision=null}={}) {
     assertWritableState(candidate);
     const db = await openDb();
     if(signal?.aborted){db.close();throw new DOMException('生成已取消，资料库未提交','AbortError');}
@@ -312,7 +385,28 @@
           problem = new Error('E_CANONICAL_CONFLICT: 其他窗口或任务已更新资料库，请刷新后重试，本次未覆盖新数据');
           tx.abort(); return;
         }
-        result = { ...candidate, storeRevision: revision + 1, schemaVersion: 4, savedAt: new Date().toISOString() };
+        let org=verifiedOrganization(current?.sessionOrganizationV1);
+        const sessionIds=new Set(candidate.sessions.map(x=>x.id));
+        if(organizationImport){
+          if(org.revision!==expectedOrganizationRevision){problem=Error('E_SESSION_ORGANIZATION_CONFLICT: 恢复时目录已被其它标签更改');tx.abort();return;}
+          try{
+            const imported=validateSessionOrganization(candidate.sessionOrganizationV1,sessionIds);
+            const revision=Math.max(org.revision,imported.revision);
+            if(revision>=Number.MAX_SAFE_INTEGER)throw Error('E_SESSION_ORGANIZATION_REVISION_OVERFLOW');
+            // Keep local CAS monotonic across full restores; the imported
+            // directory content is exact, but a stale tab cannot reuse an old
+            // revision after a backup with a smaller source revision arrives.
+            org={...imported,revision:revision+1};
+          }catch(error){problem=error;tx.abort();return;}
+          objectStore.put(org,ORG_KEY);
+        }else{
+          const placements=Object.fromEntries(Object.entries(org.placements).filter(([id])=>sessionIds.has(id)));
+          if(Object.keys(placements).length!==Object.keys(org.placements).length){
+            org={...org,placements,revision:org.revision+1,updatedAt:new Date().toISOString()};
+            objectStore.put(org,ORG_KEY);
+          }
+        }
+        result = { ...candidate,sessionOrganizationV1:org, storeRevision: revision + 1, schemaVersion: 4, savedAt: new Date().toISOString() };
         putCanonical(objectStore,result);
       };
       tx.oncomplete = () => { release();db.close();resolve(result); };
@@ -458,6 +552,7 @@
     for (const key of required) if (!Array.isArray(src[key])) invalid(key,'缺失必需数组字段，拒绝覆盖');
     if(version===4)mustRecord(src.themeSettings,'themeSettings',true);
     for (const key of ['sessions','masks','presets','worldbooks','cssPresets','regexPacks','novelProjects','settingTemplates','theaterCards','quickCommands']) mustArray(src[key], key, required.includes(key));
+    if(Object.prototype.hasOwnProperty.call(src,'sessionOrganizationV1'))validateSessionOrganization(src.sessionOrganizationV1,new Set(src.sessions.map(s=>s.id)));
     validateItems(src.sessions, 'sessions', {validate:(s,at)=>{
       persistedTextFields(s,['summary','rollingSummary','longSummary','sceneSummary','characterPsychSummary','relationshipSummary','lastScene','userNotes','aiNotes','directorNote'],at,version);
       validateMessages(mustArray(s.messages, `${at}.messages`, true), `${at}.messages`, version);
@@ -641,7 +736,11 @@
       novelProjects:Array.isArray(src.novelProjects)?src.novelProjects:[],
       themeSettings:src.themeSettings&&typeof src.themeSettings==='object'?src.themeSettings:{...EMPTY_THEME}
     };
-    const current=await loadState();return saveState(next, Number(current.storeRevision)||0);
+    const current=await loadState();
+    const sourceOrg=Object.prototype.hasOwnProperty.call(src,'sessionOrganizationV1')?src.sessionOrganizationV1:null;
+    next.sessionOrganizationV1=sourceOrg||{...current.sessionOrganizationV1,placements:Object.fromEntries(Object.entries(current.sessionOrganizationV1?.placements||{}).filter(([id])=>next.sessions.some(x=>x.id===id)))};
+    validateSessionOrganization(next.sessionOrganizationV1,new Set(next.sessions.map(x=>x.id)));
+    return saveState(next,Number(current.storeRevision)||0,{organizationImport:true,expectedOrganizationRevision:current.sessionOrganizationV1?.revision??0});
   }
   async function saveSettingsSnapshot(snapshot){ return set(SETTINGS_SNAPSHOT_KEY,{...(snapshot||{}),savedAt:new Date().toISOString()}); }
   async function loadSettingsSnapshot(){ const current=await loadSettingsSnapshotV2();if(current)return current;const existing=await get(SETTINGS_SNAPSHOT_KEY);return existing&&typeof existing==='object'?existing:null; }
@@ -1634,6 +1733,14 @@
       tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_GENERATION_FRAGMENT_ABORT'))};
     });
   }
+  async function generationStatus(id){
+    const identity=verifiedGenerationId(id),receipt=await get(generationKey(identity));
+    if(!receipt)return null;
+    if(receipt.sessionId!==identity.sessionId||receipt.generationId!==identity.generationId||receipt.attempt!==identity.attempt)
+      throw new Error('E_GENERATION_RECEIPT_CORRUPT');
+    return {...identity,stage:String(receipt.stage||''),fragmentCount:Number(receipt.fragmentCount)||0,
+      persistedChars:Number(receipt.persistedChars)||0,ownerId:String(receipt.ownerId||'')};
+  }
   async function generationRead(id){
     const identity=verifiedGenerationId(id),key=generationKey(identity),receipt=await get(key);
     if(!receipt)return {receipt:null,text:'',complete:false};
@@ -1649,5 +1756,5 @@
     if(text.length!==receipt.persistedChars)throw new Error('E_GENERATION_FRAGMENT_INCOMPLETE');
     return {receipt,text,complete:true};
   }
-  window.MimaLocalStore={commitPreset,putHtmlRepairDraft,getHtmlRepairDraft,loadAppearance,commitAppearance,mergeAppearance,exportPlayToolRecords,importPlayToolRecords,listPlayToolLocal,getPlayToolLocal:key=>get('play_tools_v1:'+key),putPlayToolLocal:(key,value)=>set('play_tools_v1:'+key,value),generationReceipt,generationAppendFragment,generationRead,getRollingPreflight,putRollingPreflight,clearRollingPreflight,commitHtmlRepair,putHtmlRepairCandidate,getHtmlRepairCandidate,setHtmlRepairCandidateState,listMemoryStages,inspectLegacyMemoryStages,putMemoryRejectedDraft,listMemoryRejectedDrafts,memoryReferenceContract,putFactRangeCandidate,listFactRangeCandidates,commitVerifiedFactRanges,getMergeStage,putMergeStage,getMergeDraft,createMergeDraft,updateMergeDraft,commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,loadSettingsSnapshotSummary,clearSettingsSnapshot,beginSettingsSnapshotV2,stageSettingsSnapshotFontV2,completeSettingsSnapshotV2,discardFailedSettingsSnapshotV2,hasIncompleteSettingsSnapshotV2,loadSettingsSnapshotFontV2,pruneOldSettingsSnapshotsV2,getMemoryJob,getMemoryStage,putMemoryStage,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
+  window.MimaLocalStore={validateSessionOrganization,loadSessionOrganization,commitSessionOrganization,commitPreset,putHtmlRepairDraft,getHtmlRepairDraft,loadAppearance,commitAppearance,mergeAppearance,exportPlayToolRecords,importPlayToolRecords,listPlayToolLocal,getPlayToolLocal:key=>get('play_tools_v1:'+key),putPlayToolLocal:(key,value)=>set('play_tools_v1:'+key,value),generationReceipt,generationAppendFragment,generationStatus,generationRead,getRollingPreflight,putRollingPreflight,clearRollingPreflight,commitHtmlRepair,putHtmlRepairCandidate,getHtmlRepairCandidate,setHtmlRepairCandidateState,listMemoryStages,inspectLegacyMemoryStages,putMemoryRejectedDraft,listMemoryRejectedDrafts,memoryReferenceContract,putFactRangeCandidate,listFactRangeCandidates,commitVerifiedFactRanges,getMergeStage,putMergeStage,getMergeDraft,createMergeDraft,updateMergeDraft,commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,loadSettingsSnapshotSummary,clearSettingsSnapshot,beginSettingsSnapshotV2,stageSettingsSnapshotFontV2,completeSettingsSnapshotV2,discardFailedSettingsSnapshotV2,hasIncompleteSettingsSnapshotV2,loadSettingsSnapshotFontV2,pruneOldSettingsSnapshotsV2,getMemoryJob,getMemoryStage,putMemoryStage,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
 })();

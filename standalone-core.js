@@ -412,6 +412,7 @@
       regexPacks: legacyRoot(raw.regexPacks,'legacy_regexpack',normalizeRegexPack),
       theaterCards:legacyRoot(raw.theaterCards,'legacy_theater',p=>normalizePlayResource(p,'theater')),quickCommands:legacyRoot(raw.quickCommands,'legacy_command',p=>normalizePlayResource(p,'command')),settingTemplates:legacyRoot(raw.settingTemplates,'legacy_template',normalizeSettingTemplate),
       novelProjects: arr(raw.novelProjects).map((p,index)=>{const x=stableLegacyNovel(p,index);return window.MimaNovelEngine?.normalizeProject?window.MimaNovelEngine.normalizeProject(x):x;}),
+      sessionOrganizationV1:raw.sessionOrganizationV1??null,
       themeSettings: window.MimaThemeEngine?.normalizeSettings?window.MimaThemeEngine.normalizeSettings(raw.themeSettings||{}):{theme:'default',updatedAt:'',...(raw.themeSettings||{})}
     };
   }
@@ -605,6 +606,13 @@
   function getRegexPack(id) { return state.regexPacks.find(x => x.id === id); }
   function getNovel(id) { return state.novelProjects.find(x => x.id === id); }
 
+  // Session organization is a separate small IDB sidecar, not session.status,
+  // archivedBranches, or a full canonical library save.
+  async function organizationAction(action){
+    const committed=await window.MimaLocalStore.commitSessionOrganization(action,action.expectedRevision);
+    state.sessionOrganizationV1=committed;
+    return committed;
+  }
   function sessionSummaries() {
     return state.sessions.map(s => ({ id:s.id,title:s.title,mode:s.mode,canonLevel:s.canonLevel,status:s.status,updatedAt:s.updatedAt,
       createdAt:s.createdAt,messageCount:s.messages.length,presetIds:s.presetIds,worldbookIds:s.worldbookIds,
@@ -1167,12 +1175,7 @@
   // Persona/Worldbook/recent History before the provider sees it.
   // The same exact model identity must govern plan, chunking and provider call.
   function memoryEffectiveConfig(base,model=''){
-    const effective={...base,model:String(model||base.model||'').trim()};
-    const identity=apiCapacityIdentity(effective);
-    const capacity=Number(base.modelCapacityProfiles?.[identity]);
-    effective.contextWindowTokens=Number.isSafeInteger(capacity)&&capacity>=4096?capacity:0;
-    effective.contextWindowIdentity=identity;
-    return effective;
+    return effectiveRequestConfig({...base,model:String(model||base.model||'').trim()});
   }
   function rollingCoverageStatus(session){
     const cursor=Math.max(0,Math.floor(Number(session.lastSummarizedIndex)||0));
@@ -1438,7 +1441,7 @@
   // ---------- API ----------
   // V1.0.2 patch: keep the old OpenAI-compatible route, but add strict empty-reply protection,
   // structured diagnostics, real streaming, and a persisted temperature setting.
-  function defaultApiConfig(){return{apiBase:'',apiKey:'',model:'',chatEndpoint:'',modelsEndpoint:'',extraHeaders:'',sendTemperature:true,temperature:0.85,sendTopP:false,topP:1,stream:false,maxTokens:0,contextWindowTokens:0,continuationMode:'assistant_tail',prefixReturnsSuffix:false,thinkingMode:'normal',showThinking:true,reasoningEffort:'inherit',requestGeminiThoughts:false};}
+  function defaultApiConfig(){return{apiBase:'',apiKey:'',model:'',chatEndpoint:'',modelsEndpoint:'',extraHeaders:'',sendTemperature:true,temperature:0.85,sendTopP:false,topP:1,stream:false,maxTokens:0,outputLimitMode:'global',globalMaxTokens:0,modelOutputProfiles:{},contextWindowTokens:0,continuationMode:'assistant_tail',prefixReturnsSuffix:false,thinkingMode:'normal',showThinking:true,reasoningEffort:'inherit',requestGeminiThoughts:false};}
   // An API window is a declaration for an exact endpoint + model, not a global
   // entitlement. Preserve the legacy configuration for its ORIGINAL identity.
   // Never silently carry a 1M window over to another channel or model.
@@ -1453,6 +1456,12 @@
     cfg.contextWindowTokens=Number.isSafeInteger(profile)&&profile>=4096?profile:
       Number.isSafeInteger(declared)&&declared>=4096?declared:0;
     cfg.contextWindowIdentity=identity;
+    // A model-local output ceiling must never inherit the last selected model's
+    // max_tokens when callers temporarily choose another model (e.g. Memory).
+    if(cfg.outputLimitMode==='model'){
+      const value=Number(cfg.modelOutputProfiles?.[identity]);
+      cfg.maxTokens=Number.isSafeInteger(value)&&value>=0&&value<=100000000?value:0;
+    }
     return cfg;
   }
 
@@ -1463,11 +1472,27 @@
     if(n>=4096&&Number.isSafeInteger(n)&&!Object.hasOwn(profiles,identity))profiles[identity]=n;
     return profiles;
   }
+  function apiOutputProfiles(raw){
+    const entries=raw?.modelOutputProfiles&&typeof raw.modelOutputProfiles==='object'&&!Array.isArray(raw.modelOutputProfiles)?raw.modelOutputProfiles:{};
+    return Object.fromEntries(Object.entries(entries).filter(([key,value])=>key.length<=1024&&Number.isSafeInteger(Number(value))&&Number(value)>=0&&Number(value)<=100000000).map(([key,value])=>[key,Number(value)]));
+  }
+  function outputLimitNumber(value){
+    const n=Number(value);
+    if(!Number.isSafeInteger(n)||n<0||n>100000000)throw new ApiError('E_API_OUTPUT_LIMIT_INVALID','最大输出 Tokens 必须是 0 至 100000000 的整数。');
+    return n;
+  }
   function getApiConfig(){
     try{
-      const raw=JSON.parse(localStorage.getItem(API_CONFIG_KEY)||'{}');const profiles=apiCapacityEntries(raw),identity=apiCapacityIdentity(raw);
-      const n=Number(profiles[identity]);return{...defaultApiConfig(),...raw,contextWindowTokens:Number.isSafeInteger(n)&&n>=4096?n:0,
-        contextWindowIdentity:identity,modelCapacityProfiles:profiles};
+      const raw=JSON.parse(localStorage.getItem(API_CONFIG_KEY)||'{}'),profiles=apiCapacityEntries(raw),identity=apiCapacityIdentity(raw);
+      const n=Number(profiles[identity]);
+      const mode=raw.outputLimitMode==='model'?'model':'global';
+      // Old installs only have maxTokens: it remains their explicit global value.
+      const globalMaxTokens=outputLimitNumber(raw.globalMaxTokens??raw.maxTokens??0);
+      const modelOutputProfiles=apiOutputProfiles(raw);
+      const maxTokens=mode==='model'?(modelOutputProfiles[identity]??0):globalMaxTokens;
+      return {...defaultApiConfig(),...raw,contextWindowTokens:Number.isSafeInteger(n)&&n>=4096?n:0,
+        contextWindowIdentity:identity,modelCapacityProfiles:profiles,
+        outputLimitMode:mode,globalMaxTokens,modelOutputProfiles,maxTokens};
     }catch(_){return defaultApiConfig();}
   }
   function saveApiConfig(cfg){
@@ -1481,6 +1506,20 @@
     }else if(identity===previousIdentity&&Number.isSafeInteger(submitted)&&submitted>=4096){profiles[identity]=submitted;}
     const known=Number(profiles[identity]);next.contextWindowTokens=Number.isSafeInteger(known)&&known>=4096?known:0;
     next.contextWindowIdentity=identity;next.modelCapacityProfiles=profiles;delete next.capacityExplicit;
+    next.outputLimitMode=cfg?.outputLimitMode==='model'?'model':'global';
+    const outputProfiles={...old.modelOutputProfiles,...apiOutputProfiles(cfg)};
+    const outputExplicit=cfg?.outputLimitExplicit===true||!localStorage.getItem(API_CONFIG_KEY);
+    if(outputExplicit){
+      const value=outputLimitNumber(next.maxTokens);
+      if(next.outputLimitMode==='model'){
+        outputProfiles[identity]=value;
+        next.globalMaxTokens=Object.hasOwn(cfg||{},'globalMaxTokens')?outputLimitNumber(cfg.globalMaxTokens):old.globalMaxTokens;
+      }else next.globalMaxTokens=value;
+    }else next.globalMaxTokens=old.globalMaxTokens;
+    next.globalMaxTokens=outputLimitNumber(next.globalMaxTokens??old.globalMaxTokens);
+    next.modelOutputProfiles=outputProfiles;
+    next.maxTokens=next.outputLimitMode==='model'?(outputProfiles[identity]??0):next.globalMaxTokens;
+    delete next.outputLimitExplicit;
     next.temperature=clampTemp(next.temperature);next.stream=!!next.stream;
     if(!Number.isFinite(Number(next.topP))||Number(next.topP)<0||Number(next.topP)>1)throw new ApiError('E_API_TOP_P_INVALID','Top-p 必须介于 0 到 1。');
     next.topP=Number(next.topP);next.sendTopP=next.sendTopP===true;
@@ -1489,6 +1528,61 @@
     next.showThinking=next.showThinking!==false;next.requestGeminiThoughts=next.requestGeminiThoughts===true;
     localStorage.setItem(API_CONFIG_KEY,JSON.stringify(next));return next;
   }
+  // Backup/file import is an authoritative whole-configuration replacement, NOT
+  // an ordinary settings control edit. Never merge the previous model profiles.
+  function validateApiConfigSnapshot(raw,{commit=false}={}){
+    if(!raw||typeof raw!=='object'||Array.isArray(raw))throw new ApiError('E_API_BACKUP_INVALID','接口配置备份必须是对象');
+    if(raw.outputLimitMode!==undefined&&!['global','model'].includes(raw.outputLimitMode))
+      throw new ApiError('E_API_BACKUP_INVALID','输出上限模式无效');
+    if(raw.modelOutputProfiles!==undefined&&(!raw.modelOutputProfiles||typeof raw.modelOutputProfiles!=='object'||Array.isArray(raw.modelOutputProfiles)))
+      throw new ApiError('E_API_BACKUP_INVALID','模型输出上限列表无效');
+    const entries=raw.modelOutputProfiles||{};
+    const modelOutputProfiles=Object.create(null);
+    for(const [key,value] of Object.entries(entries)){
+      if(!key||key.length>1024)throw new ApiError('E_API_BACKUP_INVALID','模型身份标识无效');
+      modelOutputProfiles[key]=outputLimitNumber(value);
+    }
+    const next={...defaultApiConfig(),...raw},identity=apiCapacityIdentity(next);
+    const hasTop=Object.prototype.hasOwnProperty.call(raw,'maxTokens');
+    const topValue=hasTop?outputLimitNumber(raw.maxTokens):null;
+    next.outputLimitMode=raw.outputLimitMode==='model'?'model':'global';
+    next.globalMaxTokens=outputLimitNumber(raw.globalMaxTokens??(next.outputLimitMode==='global'?raw.maxTokens:0)??0);
+    if(next.outputLimitMode==='model'){
+      if(topValue!==null&&Object.prototype.hasOwnProperty.call(modelOutputProfiles,identity)&&modelOutputProfiles[identity]!==topValue)
+        throw new ApiError('E_API_BACKUP_CONFLICT','当前模型输出上限与独立配置表冲突，未覆盖原设置');
+      if(topValue!==null&&!Object.prototype.hasOwnProperty.call(modelOutputProfiles,identity))modelOutputProfiles[identity]=topValue;
+    }
+    next.modelOutputProfiles={...modelOutputProfiles};
+    next.maxTokens=next.outputLimitMode==='model'?(modelOutputProfiles[identity]??0):next.globalMaxTokens;
+    if(raw.modelCapacityProfiles!==undefined&&(!raw.modelCapacityProfiles||typeof raw.modelCapacityProfiles!=='object'||Array.isArray(raw.modelCapacityProfiles)))
+      throw new ApiError('E_API_BACKUP_INVALID','上下文容量配置表无效');
+    const capacities=apiCapacityEntries(raw);
+    for(const [key,value] of Object.entries(capacities)){
+      if(!key||key.length>1024||!Number.isSafeInteger(Number(value))||Number(value)<4096||Number(value)>100000000)
+        throw new ApiError('E_API_BACKUP_INVALID','模型上下文容量无效');
+    }
+    next.modelCapacityProfiles=capacities;
+    const declared=Number(capacities[identity]);next.contextWindowTokens=Number.isSafeInteger(declared)&&declared>=4096?declared:0;
+    next.contextWindowIdentity=identity;
+    if(!Number.isFinite(Number(next.topP))||Number(next.topP)<0||Number(next.topP)>1)throw new ApiError('E_API_TOP_P_INVALID','Top-p 必须介于 0 到 1');
+    next.topP=Number(next.topP);next.sendTopP=next.sendTopP===true;
+    if(!Number.isFinite(Number(next.temperature)))throw new ApiError('E_API_BACKUP_INVALID','温度无效');
+    next.temperature=clampTemp(next.temperature);
+    next.stream=!!next.stream;next.showThinking=next.showThinking!==false;next.requestGeminiThoughts=next.requestGeminiThoughts===true;
+    next.thinkingMode=['normal','character','prose'].includes(next.thinkingMode)?next.thinkingMode:'normal';
+    next.reasoningEffort=['inherit','low','medium','high'].includes(next.reasoningEffort)?next.reasoningEffort:'inherit';
+    delete next.outputLimitExplicit;delete next.capacityExplicit;
+    if(!commit)return next;
+    localStorage.setItem(API_CONFIG_KEY,JSON.stringify(next));
+    const verified=getApiConfig();
+    if(verified.outputLimitMode!==next.outputLimitMode||verified.globalMaxTokens!==next.globalMaxTokens||
+      verified.maxTokens!==next.maxTokens||JSON.stringify(verified.modelOutputProfiles)!==JSON.stringify(next.modelOutputProfiles))
+      throw new ApiError('E_API_BACKUP_VERIFY','接口备份保存后核对失败，设置未确认');
+    return verified;
+  }
+  function replaceApiConfigSnapshot(raw){return validateApiConfigSnapshot(raw,{commit:true});}
+  function captureApiConfigBytes(){return localStorage.getItem(API_CONFIG_KEY);}
+  function restoreApiConfigBytes(bytes){if(bytes===null)localStorage.removeItem(API_CONFIG_KEY);else localStorage.setItem(API_CONFIG_KEY,bytes);}
   function baseWithoutSlash(s){return String(s||'').trim().replace(/\/+$/,'');}
 
   class ApiError extends Error {
@@ -1655,17 +1749,14 @@
     const reader=res.body.getReader(),decoder=new TextDecoder();
     let buffer='',reply='',eventCount=0,finalPayload=null,streamUsage=null,receivedDone=false,finishReason='',finishKind='unknown',badEvents=0,refusalSeen=false,terminalConflict=false,firstByteMarked=false,transportBytes=0;
     let thoughtText='',thoughtSource='',thoughtStart=null,firstContentAt=null,reasoningTokens=null,lastThoughtUiAt=-Infinity;
+    let lastReadAt=0,lastDeltaAt=0,readCount=0;
     // A provider may send complete reasoning snapshots instead of append-only deltas.
     // Count cumulative/replayed frames without adding their already-seen prefix again.
     let thoughtSnapshotsMerged=0;
     const startedAt=performance.now();
-    const publishMeta=()=>{if(onProgress?.resultMeta)Object.assign(onProgress.resultMeta,{finishReason:finishReason||'unknown',finishKind,receivedDone,refused:refusalSeen});};
-    let eventType='message';
-    const consumeLine=line=>{
-      const raw=String(line||'').trim();if(!raw)return;if(raw.startsWith(':'))return;
-      if(raw.startsWith('event:')){eventType=raw.slice(6).trim()||'message';return}
-      if(!raw.startsWith('data:')&&!raw.startsWith('{'))return;
-      const payloadText=raw.startsWith('data:')?raw.slice(5).trim():raw;
+    const publishMeta=()=>{if(onProgress?.resultMeta)Object.assign(onProgress.resultMeta,{finishReason:finishReason||'unknown',finishKind,receivedDone,refused:refusalSeen,transportBytes,eventCount,badEvents,lastReadAt,lastDeltaAt,readCount});};
+    let eventType='message',eventData=[];
+    const consumePayload=(payloadText,eventType='message')=>{
       if(payloadText==='[DONE]'){receivedDone=true;return}if(!payloadText)return;
       let payload;try{payload=JSON.parse(payloadText)}catch(_){badEvents++;return}
       if(eventType==='error'||payload?.error){throw new ApiError('E_API_UPSTREAM',String(payload?.error?.message||payload?.message||'上游通过 SSE 返回错误事件'),{status:Number(payload?.error?.status||payload?.status)||res.status,details:`stage: stream_event; events: ${eventCount}`})}
@@ -1706,22 +1797,54 @@
         thoughtSource=thoughtSource||thought.source;
         const uiNow=performance.now();if(uiNow-lastThoughtUiAt>=120){lastThoughtUiAt=uiNow;emitProgress(onProgress,{phase:'thinking',thinkingText:thoughtText,thinkingSource:thoughtSource,detail:thoughtSnapshotsMerged?'已合并上游重复/累计 Thinking 帧；继续等待剧情正文':'已收到上游 Thinking 内容（可能仅为摘要）'});}
       }
-      const piece=extractStreamDelta(payload);if(piece){if(firstContentAt===null)firstContentAt=performance.now();reply+=piece;emitProgress(onProgress,{phase:'streaming',percent:Math.min(90,58+Math.log10(reply.length+1)*12),receivedChars:reply.length,delta:piece,streamText:reply,detail:`已接收 ${reply.length} 个字符`});}
+      const piece=extractStreamDelta(payload);if(piece){lastDeltaAt=Date.now();if(firstContentAt===null)firstContentAt=performance.now();reply+=piece;emitProgress(onProgress,{phase:'streaming',percent:Math.min(90,58+Math.log10(reply.length+1)*12),receivedChars:reply.length,delta:piece,streamText:reply,detail:`已接收 ${reply.length} 个字符`});}
+    };
+    // SSE dispatch is defined by a blank line, not by each data: field.
+    // Some nonconforming relays omit the separators: preserve their former
+    // single-line behavior when every data field is independently valid JSON.
+    const flushEvent=()=>{
+      if(!eventData.length){eventType='message';return;}
+      const parts=eventData;const kind=eventType;eventData=[];eventType='message';
+      const joined=parts.join('\n');
+      if(parts.length>1){
+        let validTogether=false;try{JSON.parse(joined);validTogether=true;}catch(_){}
+        if(!validTogether&&parts.every(part=>part==='[DONE]'||(()=>{try{JSON.parse(part);return true}catch(_){return false}})())){
+          for(const part of parts)consumePayload(part,kind);return;
+        }
+      }
+      consumePayload(joined,kind);
+    };
+    const consumeLine=line=>{
+      const raw=String(line??'');if(raw===''){flushEvent();return;}
+      if(raw.startsWith(':'))return;
+      if(raw.startsWith('event:')){eventType=raw.slice(6).trim()||'message';return;}
+      if(raw.startsWith('data:')){eventData.push(raw.slice(5).replace(/^ /,''));return;}
+      if(raw.trimStart().startsWith('{')){flushEvent();consumePayload(raw.trim());}
     };
     try{
-      while(true){const {done,value}=await reader.read();if(done)break;transportBytes+=value?.byteLength||0;if(!firstByteMarked){firstByteMarked=true;onProgress?.onTiming?.('first_byte',{chunkBytes:value?.byteLength||0});emitProgress(onProgress,{phase:'stream_transport',percent:56,receivedChars:0,transportBytes,detail:'已收到响应体数据，仍等待第一段可见正文（0 字）'});}buffer+=decoder.decode(value,{stream:true});const lines=buffer.split(/\r?\n/);buffer=lines.pop()||'';for(const line of lines)consumeLine(line)}
-      buffer+=decoder.decode();if(buffer.trim())for(const line of buffer.split(/\r?\n/))consumeLine(line);
+      while(true){const {done,value}=await reader.read();lastReadAt=Date.now();readCount++;if(done)break;transportBytes+=value?.byteLength||0;if(!firstByteMarked){firstByteMarked=true;onProgress?.onTiming?.('first_byte',{chunkBytes:value?.byteLength||0});emitProgress(onProgress,{phase:'stream_transport',percent:56,receivedChars:0,transportBytes,detail:'已收到响应体数据，仍等待第一段可见正文（0 字）'});}buffer+=decoder.decode(value,{stream:true});const lines=buffer.split(/\r?\n/);buffer=lines.pop()||'';for(const line of lines)consumeLine(line)}
+      buffer+=decoder.decode();if(buffer)for(const line of buffer.split(/\r?\n/))consumeLine(line);
+      flushEvent();
     }catch(e){
       publishMeta();
       if(reply&&e&&typeof e==='object')e.partialDraft=reply.slice(0,24000);
       if(e?.name==='AbortError'||e instanceof ApiError)throw e;
+      // Some browsers throw TypeError from reader.read() even if our own
+      // AbortController initiated the shutdown. Keep user stop distinct.
+      if(onProgress?.signal?.aborted){
+        const aborted=new DOMException('已主动停止生成','AbortError');aborted.partialDraft=reply.slice(0,24000);throw aborted;
+      }
+      try{onProgress?.onTiming?.('stream_read_error',{transportStage:'stream_read',lastReadAt,lastDeltaAt,receivedChars:reply.length,
+        receivedBytes:transportBytes,eventCount,badEvents,readCount,signalAborted:false,
+        visibility:typeof document!=='undefined'?document.visibilityState:'unknown',
+        errorName:String(e?.name||'unknown').slice(0,60),errorMessage:String(e?.message||e).slice(0,160)});}catch(_){}
       // The response headers were already received. A later body read failure
       // is not evidence of a fetch-before-response CORS failure, even when
       // Safari reports the same TypeError('Load failed') for both situations.
       throw Object.assign(new ApiError('E_STREAM_INTERRUPTED',reply
         ?`流式连接在接收 ${reply.length} 字符后异常终止。未将部分文本当成角色回复。`
         :'已收到 HTTP 响应头，但流式正文未完整传输；本轮没有确认收到可恢复的正文字符。',{
-          status:res.status,details:`stage: stream_read; receivedChars: ${reply.length}; receivedBytes: ${transportBytes}; events: ${eventCount}; cause: ${e?.name||'unknown'}: ${e?.message||String(e)}`,
+          status:res.status,details:`stage: stream_read; receivedChars: ${reply.length}; receivedBytes: ${transportBytes}; events: ${eventCount}; malformedEvents: ${badEvents}; reads: ${readCount}; lastReadAt: ${lastReadAt||'unknown'}; lastDeltaAt: ${lastDeltaAt||'unknown'}; visibility: ${typeof document!=='undefined'?document.visibilityState:'unknown'}; signalAborted: ${!!onProgress?.signal?.aborted}; cause: ${String(e?.name||'unknown').slice(0,60)}: ${String(e?.message||String(e)).slice(0,160)}`,
           hint:'响应头成功不代表正文生成成功。请核对本机流式片段账本；没有片段时无法恢复文字。不要自动重复计费。'
         }),{partialDraft:reply.slice(0,24000)});
     }
@@ -1731,12 +1854,16 @@
     if(refusalSeen){const issue=new ApiError('E_API_REFUSAL','流式响应包含明确拒绝字段，未提交角色回复。',{status:res.status,details:JSON.stringify({stage:'provider_terminal_admission',finishKind,finishReason,eventCount})});issue.partialDraft=reply.slice(0,24000);throw issue;}
     if(terminalConflict){const issue=new ApiError('E_API_TERMINAL_CONFLICT','响应包含相互矛盾的终止状态，无法证明正文完整。',{status:res.status,details:JSON.stringify({stage:'provider_terminal_admission',finishKind,finishReason,eventCount})});issue.partialDraft=reply.slice(0,24000);throw issue;}
     if(!reply&&finishKind!=='unknown')assertFinishState({finishKind,finishReason},0);
-    if(!reply)throw new ApiError(badEvents?'E_STREAM_PARSE':'E_API_EMPTY_REPLY',badEvents?'模型流包含无法解析的数据，未获得正文。':'流式请求结束，但模型没有返回可见正文。',{status:res.status,details:`stream events: ${eventCount}; malformed events: ${badEvents}`});
+    if(!reply)throw new ApiError(badEvents?'E_STREAM_PARSE':'E_API_EMPTY_REPLY',badEvents?'模型流包含无法解析的数据，未获得正文。':'流式请求结束，但模型没有返回可见正文。',{status:res.status,details:`stage: ${badEvents?'stream_parse':'stream_eof'}; stream events: ${eventCount}; malformed events: ${badEvents}`});
     if(onProgress?.resultMeta){onProgress.resultMeta.finishReason=finishReason||'unknown';onProgress.resultMeta.finishKind=finishKind;onProgress.resultMeta.receivedDone=receivedDone;}
-    if(!receivedDone&&finishKind==='unknown')throw Object.assign(new ApiError('E_STREAM_INTERRUPTED','流式响应已结束，但缺少完成标记，未提交部分正文。',{status:res.status,details:`stage: stream_eof; receivedChars: ${reply.length}; events: ${eventCount}`}),{partialDraft:reply.slice(0,24000)});
-    // [DONE] only terminates transport. It does not turn length/safety/missing into success.
+    // A known malformed event must not be re-labelled as a clean EOF.
+    // A verified provider length/safety terminal, however, keeps its actual
+    // classification even when unrelated malformed auxiliary frames exist.
+    if(badEvents&&finishKind==='unknown')throw Object.assign(new ApiError('E_STREAM_PARSE','收到无法解析的流式事件；不能证明正文完整。',{status:res.status,details:`stage: stream_parse; malformedEvents: ${badEvents}; receivedChars: ${reply.length}; receivedBytes: ${transportBytes}; events: ${eventCount}; receivedDone: ${receivedDone}`}),{partialDraft:reply.slice(0,24000)});
+    if(!receivedDone&&finishKind==='unknown')throw Object.assign(new ApiError('E_STREAM_INTERRUPTED','流式响应已结束，但缺少完成标记，未提交部分正文。',{status:res.status,details:`stage: stream_eof; receivedChars: ${reply.length}; receivedBytes: ${transportBytes}; events: ${eventCount}; receivedDone: false`}),{partialDraft:reply.slice(0,24000)});
+    // [DONE] terminates transport, not provider admission.
     if(!(allowIncompleteDraft&&finishKind==='truncated'))try{assertFinishState({finishKind,finishReason},reply.length)}catch(e){e.partialDraft=reply.slice(0,24000);throw e;}
-    if(badEvents)throw Object.assign(new ApiError('E_STREAM_PARSE','收到无法解析的流式事件；不能证明正文完整。',{status:res.status,details:`malformedEvents: ${badEvents}; receivedChars: ${reply.length}`}),{partialDraft:reply.slice(0,24000)});
+    if(badEvents)throw Object.assign(new ApiError('E_STREAM_PARSE','收到无法解析的流式事件；不能证明正文完整。',{status:res.status,details:`stage: stream_parse; malformedEvents: ${badEvents}; receivedChars: ${reply.length}; receivedBytes: ${transportBytes}; receivedDone: ${receivedDone}`}),{partialDraft:reply.slice(0,24000)});
     if(thoughtText)emitProgress(onProgress,{phase:'thinking',thinkingText:thoughtText,thinkingSource:thoughtSource,detail:'上游 Thinking 内容接收完成'});
     if(streamUsage)emitProgress(onProgress,{phase:'cache_usage',percent:92,detail:streamUsage.cachedTokens>0?`上游报告缓存命中 ${streamUsage.cachedTokens} tokens`:'上游返回 usage',usage:clone(streamUsage)});
     if(onProgress?.resultMeta){onProgress.resultMeta.finishReason=finishReason||'unknown';onProgress.resultMeta.finishKind=finishKind;onProgress.resultMeta.receivedDone=receivedDone;
@@ -1902,7 +2029,7 @@
     const payloadShape=Array.isArray(body.messages)?body.messages.map(m=>({role:String(m.role||''),chars:typeof m.content==='string'?m.content.length:null})):[];
     const perfClock=()=>typeof performance!=='undefined'&&performance.now?performance.now():Date.now();
     const transportClock=perfClock();
-    const requestId=makeId('req'),diag={requestId,jobId:options.memoryContext?.jobId||null,attemptId:options.memoryContext?.attemptId||null,stage:options.memoryContext?.stage||'story',model:body.model,endpointOrigin:(()=>{try{return new URL(chat).origin}catch{return 'unknown'}})(),requestFields:Object.keys(body).sort(),messageCount:body.messages.length,messageShape:payloadShape,requestFingerprint:fingerprint(requestJson),temperaturePresent:Object.hasOwn(body,'temperature'),maxTokens:body.max_tokens||null,stream:streamEnabled,requestBytes,serializationElapsedMs:Date.now()-serializationStartedAt,
+    const requestId=makeId('req'),diag={requestId,jobId:options.memoryContext?.jobId||null,attemptId:options.memoryContext?.attemptId||null,stage:options.memoryContext?.stage||'story',model:body.model,endpointOrigin:(()=>{try{return new URL(chat).origin}catch{return 'unknown'}})(),requestFields:Object.keys(body).sort(),messageCount:body.messages.length,messageShape:payloadShape,requestFingerprint:fingerprint(requestJson),temperaturePresent:Object.hasOwn(body,'temperature'),maxTokens:body.max_tokens??null,topP:body.top_p??null,reasoningEffort:body.reasoning_effort??null,outputLimitMode:cfg.outputLimitMode||'global',geminiThoughts:body.extra_body?.google?.thinking_config?.include_thoughts===true,stream:streamEnabled,requestBytes,serializationElapsedMs:Date.now()-serializationStartedAt,
       generationId:options.storyContext?.generationId||null,generationAttempt:options.storyContext?.generationAttempt||null,preparationElapsedMs:options.storyContext?.preparationElapsedMs??null};
     const diagnostic=extra=>JSON.stringify({...diag,...extra});
     // Once HTTP response headers exist, a provider refusal, terminal filter or
@@ -1917,6 +2044,8 @@
         const previous=String(issue.details||'').slice(0,1200);
         let previousFinish={};try{previousFinish=JSON.parse(previous);}catch(_){/* Legacy text error; preserve as text only. */}
         if(!issue.status&&res)issue.status=res.status;
+        if(issue.code==='E_API_TRUNCATED'&&Number.isSafeInteger(body.max_tokens)&&body.max_tokens>0)
+          issue.hint=`本轮实际发送 max_tokens=${body.max_tokens}（${cfg.outputLimitMode==='model'?'按模型独立':'全局'}输出上限），服务端返回了非正常完成标记。请核对诊断中的 finishReason 与该模型已确认的输出容量；原文仍可从诊断账本手动恢复。`;
         if(issue.code==='E_API_REFUSAL')issue.hint=errorSource==='response_shape'
           ?'已收到模型/网关的 HTTP 响应，但其中含明确 refusal 拒绝字段；不是没有收到响应。旧剧情与记忆不会自动覆盖，是否产生计费请核对中转站对应 requestId。'
           :'已收到模型/网关的 HTTP 响应，终止状态表明内容被拦截；未把不完整的正文当作成功。是否产生计费需要核对请求记录。';
@@ -1987,7 +2116,7 @@
       emitProgress(options.onProgress,{phase:'stream_headers',percent:55,receivedChars:0,detail:`HTTP ${res.status} 响应头已收到；等待第一段模型正文（0 字）…`});
       let firstVisibleMarked=false,lastChars=0;
       const streamProgress=ev=>{if(ev.streamText!==undefined){lastChars=ev.streamText.length;if(!firstVisibleMarked&&lastChars){firstVisibleMarked=true;timing('first_visible_delta',{receivedChars:lastChars});}const projected=prefixResponseText(ev.streamText,body,cfg,true);options.onReceivedText?.(projected);options.onProgress?.({...ev,streamText:projected});}else options.onProgress?.(ev);};
-      streamProgress.resultMeta=options.resultMeta;streamProgress.onTiming=timing;try{
+      streamProgress.resultMeta=options.resultMeta;streamProgress.onTiming=timing;streamProgress.signal=signal;try{
         const received=await readStreamingReply(res,streamProgress,cfg.model,options.allowIncompleteDraft===true);
         timing('stream_finish',{receivedChars:received.length});
         const streamed=text(prefixResponseText(received,body,cfg));
@@ -2051,7 +2180,7 @@
   // ---------- Novel Studio ----------
   function novelSummaries(){return state.novelProjects.map(p=>({id:p.id,title:p.title,updatedAt:p.updatedAt,createdAt:p.createdAt,sourceName:p.sourceName,chapterCount:arr(p.chapterOrder).length,activeChapterId:p.activeChapterId,memoryStatus:p.memoryStatus?.status||'missing'})).sort((a,b)=>String(b.updatedAt).localeCompare(String(a.updatedAt)));}
   function getNovelProject(id){const p=getNovel(id);if(!p)throw new Error('未找到小说项目');return clone(p);}
-  function novelModelConfig(project){const base=getApiConfig(),n=project.modelSettings||{};return effectiveRequestConfig({...base,model:text(n.model)||base.model,sendTemperature:typeof n.sendTemperature==='boolean'?n.sendTemperature:base.sendTemperature,temperature:n.temperature!==null&&n.temperature!==undefined&&Number.isFinite(Number(n.temperature))?Number(n.temperature):base.temperature,stream:typeof n.streaming==='boolean'?n.streaming:base.stream,maxTokens:Number(n.maxTokens)>0?Number(n.maxTokens):base.maxTokens});}
+  function novelModelConfig(project){const base=getApiConfig(),n=project.modelSettings||{};const cfg=effectiveRequestConfig({...base,model:text(n.model)||base.model,sendTemperature:typeof n.sendTemperature==='boolean'?n.sendTemperature:base.sendTemperature,temperature:n.temperature!==null&&n.temperature!==undefined&&Number.isFinite(Number(n.temperature))?Number(n.temperature):base.temperature,stream:typeof n.streaming==='boolean'?n.streaming:base.stream});if(Number(n.maxTokens)>0){cfg.maxTokens=Number(n.maxTokens);cfg.outputLimitMode='global';}return cfg;}
   function createBlankNovel(body={}){const p=window.MimaNovelEngine.createProjectFromText({title:body.title||'未命名小说',sourceName:'',sourceEncoding:'utf-8',text:''});p.createdFrom='manual';return p;}
   async function patchNovelProject(id,body={}){const p=getNovelProject(id),allowed=['title','activeChapterId','presetIds','worldbookIds','modelSettings','generationSettings','appearance','macroUserMaskId','macroCharMaskId'];for(const k of allowed)if(Object.prototype.hasOwnProperty.call(body,k))p[k]=clone(body[k]);return saveNovelProject(p);}
   function novelAssets(){return{presets:state.presets,worldbooks:state.worldbooks,masks:state.masks,cssPresets:state.cssPresets,themeSettings:state.themeSettings};}
@@ -4112,6 +4241,8 @@
       let templateRoute=path.match(/^\/setting-templates\/([^/]+)$/);
       if(templateRoute&&method==='PATCH')return ok(await editSettingTemplate('save',{...(body||{}),id:templateRoute[1]}));
       if(templateRoute&&method==='DELETE')return ok(await editSettingTemplate('delete',{...(body||{}),id:templateRoute[1]}));
+      if(path==='/session-organization'&&method==='GET')return ok(await window.MimaLocalStore.loadSessionOrganization());
+      if(path==='/session-organization/actions'&&method==='POST')return ok(await organizationAction(body||{}));
       if(path==='/sessions'&&method==='GET')return ok(sessionSummaries());
       if(path==='/sessions/full'&&method==='GET')return ok(state.sessions);
       if(path==='/sessions'&&method==='POST'){if(body?.settingTemplateId)return ok(await createSessionUsingTemplate(body));const s=await saveSession(normalizeSession({...body,id:makeId('sess'),createdAt:nowIso(),updatedAt:nowIso(),messages:[]}),{allowCreate:true});return ok(s);}
@@ -4258,6 +4389,9 @@
     // Keep only permissions already granted locally for the identical source.
     for(const card of next.theaterCards){const old=before.theaterCards.find(x=>x.id===card.id);card.access=old&&old.content===card.content&&old.kind===card.kind?theaterAccess(old.access):theaterAccess();}
     if(!['replace','merge-new-only','empty-only'].includes(mergeMode))throw new ApiError('E_NATIVE_RESTORE_MODE','未知原生库恢复模式');
+    const incomingHasOrganization=Object.prototype.hasOwnProperty.call(verified,'sessionOrganizationV1');
+    const sourceOrganization=incomingHasOrganization?next.sessionOrganizationV1:null;
+    const previousOrganization=before.sessionOrganizationV1||{version:1,revision:0,groups:[],placements:{},updatedAt:''};
     if(mergeMode!=='replace'){
       const tables=['sessions','masks','presets','worldbooks','cssPresets','regexPacks','theaterCards','quickCommands','settingTemplates','novelProjects'];
       const currentHasData=tables.some(name=>before[name].length>0);
@@ -4268,7 +4402,7 @@
       const emptyTheme=normalizeState({}).themeSettings;
       const existingCustomizedTheme=themeAppearance(before.themeSettings)!==themeAppearance(emptyTheme);
       const existingCategories=before.cssCategoriesV1.length||before.resourceCategoriesV1.presets.length||before.resourceCategoriesV1.worldbook.length;
-      if(mergeMode==='empty-only'&&(currentHasData||existingCustomizedTheme||existingCategories))
+      if(mergeMode==='empty-only'&&(currentHasData||existingCustomizedTheme||existingCategories||previousOrganization.groups.length||Object.keys(previousOrganization.placements).length))
         throw new ApiError('E_NATIVE_RESTORE_NOT_EMPTY','原生资料库含剧情、资料或自定义外观；空库模式拒绝覆盖');
       if(mergeMode==='merge-new-only'){
         const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
@@ -4293,10 +4427,30 @@
         merged.cssCategoriesV1=mergeCategoryRecords(before.cssCategoriesV1,next.cssCategoriesV1,'css');
         merged.resourceCategoriesV1={presets:mergeCategoryRecords(before.resourceCategoriesV1.presets,next.resourceCategoriesV1.presets,'presets'),worldbook:mergeCategoryRecords(before.resourceCategoriesV1.worldbook,next.resourceCategoriesV1.worldbook,'worldbook')};
         merged.themeSettings=existingCustomizedTheme?before.themeSettings:next.themeSettings;
+        // Merging the archive directory is as strict as merging sessions: no
+        // silent category or placement overwrite for the same ID.
+        if(incomingHasOrganization){
+          const groups=new Map(previousOrganization.groups.map(g=>[g.id,g]));
+          for(const group of sourceOrganization.groups){const old=groups.get(group.id);if(old&&JSON.stringify(old)!==JSON.stringify(group))throw new ApiError('E_ORGANIZATION_IMPORT_CONFLICT','分类 ID 冲突：'+group.id);
+            if([...groups.values()].some(g=>g.id!==group.id&&g.name.toLocaleLowerCase()===group.name.toLocaleLowerCase()))throw new ApiError('E_ORGANIZATION_IMPORT_CONFLICT','分类重名：'+group.name);
+            groups.set(group.id,old||group);}
+          const placements={...previousOrganization.placements};
+          for(const [id,place] of Object.entries(sourceOrganization.placements)){if(placements[id]&&JSON.stringify(placements[id])!==JSON.stringify(place))throw new ApiError('E_ORGANIZATION_IMPORT_CONFLICT','会话归档位置冲突：'+id);placements[id]=place;}
+          const ordered=[...groups.values()].sort((a,b)=>a.order-b.order);
+          merged.sessionOrganizationV1={version:1,revision:Math.max(previousOrganization.revision,sourceOrganization.revision)+1,groups:ordered.map((g,i)=>({...g,order:i})),placements,updatedAt:nowIso()};
+        }
         next=merged;
       }
       validateLibrary(next);
     }
+    if(!incomingHasOrganization){
+      // Old backups never contained this field. Keep local placements only
+      // for sessions that still exist after the import; never empty the user's
+      // archive just because the old exporter did not know it existed.
+      const ids=new Set(next.sessions.map(x=>x.id));
+      next.sessionOrganizationV1={...previousOrganization,placements:Object.fromEntries(Object.entries(previousOrganization.placements).filter(([id])=>ids.has(id)))};
+    }else if(mergeMode!=='merge-new-only')next.sessionOrganizationV1=sourceOrganization;
+    window.MimaLocalStore.validateSessionOrganization(next.sessionOrganizationV1,new Set(next.sessions.map(x=>x.id)));
     if(templatePolicy==='preserve')next.settingTemplates=clone(before.settingTemplates);
     if(templatePolicy==='merge'){
       const combined=new Map(before.settingTemplates.map(t=>[t.id,t]));
@@ -4317,7 +4471,7 @@
         '恢复后模板依赖缺失，整份备份未写入：'+template.name,{details:JSON.stringify(missing)});
     }
     next.storeRevision=before.storeRevision;
-    return {next,beforeRevision:before.storeRevision,templatePolicy};
+    return {next,beforeRevision:before.storeRevision,beforeOrganizationRevision:previousOrganization.revision,templatePolicy};
   }
   async function previewLibraryImport(raw,options={}){
     const plan=await prepareLibraryImport(raw,options);
@@ -4326,7 +4480,7 @@
   async function importLibrary(raw,options={}){
     const plan=await prepareLibraryImport(raw,options);
     // The final CAS is the authority. A second tab may commit after preflight.
-    const committed=await window.MimaLocalStore.saveState(plan.next,plan.beforeRevision);
+    const committed=await window.MimaLocalStore.saveState(plan.next,plan.beforeRevision,{organizationImport:true,expectedOrganizationRevision:plan.beforeOrganizationRevision});
     state=normalizeState(committed);
     // The canonical transaction has already committed. A rendering error must
     // not be reported as a failed import (nor trigger rollback of other stores).
@@ -4340,5 +4494,5 @@
 
   window.MimaMemoryContracts=Object.freeze({normalizeManualMemory});
   // Normalized CSS presets contain scalar fields; copy their records without serializing History or immutable CSS strings.
-  window.MimaStandalone={getPlayTools:()=>({theaterCards:state.theaterCards.map(p=>({...p})),quickCommands:state.quickCommands.map(p=>({...p}))}),init,handle,previewMemoryPlan,memorySourceParts,memoryWorkPlan,runRecordedMemory,memorySourceFingerprint,memoryFactSignature,manualReplyFingerprint,isManuallyRecoveredReply,getApiConfig,saveApiConfig,apiCapacityIdentity,effectiveRequestConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,validateStoryReply,classifyStoryReply,applyRegexForSession,applyRegexForSessionAsync,applyRegexBatchForSessionAsync,hasActiveRegexForSession,resolveMacrosForSession,compileUserInputForPrompt,exportLibrary,importLibrary,previewLibraryImport,validateLibrary,assemble,getLastUsage,getPhoneResources:()=>({masks:clone(state.masks),presets:clone(state.presets),worldbooks:clone(state.worldbooks),themeSettings:clone(state.themeSettings),storeRevision:state.storeRevision}),getThemeSettings:()=>clone(state.themeSettings),cssSelectionIdentity,getResourceCategoryList:kind=>categorySpec[kind]?categoryView(state,kind):[],getStoreRevision:()=>state.storeRevision,getCssAppearance:()=>({themeSettings:clone(state.themeSettings),cssPresets:state.cssPresets.map(p=>({...p}))}),getState:()=>clone(state)};
+  window.MimaStandalone={getPlayTools:()=>({theaterCards:state.theaterCards.map(p=>({...p})),quickCommands:state.quickCommands.map(p=>({...p}))}),init,handle,previewMemoryPlan,memorySourceParts,memoryWorkPlan,runRecordedMemory,memorySourceFingerprint,memoryFactSignature,manualReplyFingerprint,isManuallyRecoveredReply,getApiConfig,saveApiConfig,validateApiConfigSnapshot,replaceApiConfigSnapshot,captureApiConfigBytes,restoreApiConfigBytes,apiCapacityIdentity,effectiveRequestConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,validateStoryReply,classifyStoryReply,applyRegexForSession,applyRegexForSessionAsync,applyRegexBatchForSessionAsync,hasActiveRegexForSession,resolveMacrosForSession,compileUserInputForPrompt,exportLibrary,importLibrary,previewLibraryImport,validateLibrary,assemble,getLastUsage,getPhoneResources:()=>({masks:clone(state.masks),presets:clone(state.presets),worldbooks:clone(state.worldbooks),themeSettings:clone(state.themeSettings),storeRevision:state.storeRevision}),getThemeSettings:()=>clone(state.themeSettings),cssSelectionIdentity,getResourceCategoryList:kind=>categorySpec[kind]?categoryView(state,kind):[],getStoreRevision:()=>state.storeRevision,getCssAppearance:()=>({themeSettings:clone(state.themeSettings),cssPresets:state.cssPresets.map(p=>({...p}))}),getState:()=>clone(state)};
 })();

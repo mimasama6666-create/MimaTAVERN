@@ -149,6 +149,11 @@ async function exitCssSafetyMode(){return queueCssSelection(async()=>{cssRecover
 let currentSessionId = null;
 let currentSessionData = null;
 let sessions = [];
+let sessionOrganization=null;
+let sessionListMode='active';
+let sessionSearchTerm='';
+const sessionOpenGroups=new Set(['ungrouped']);
+let sessionOrganizationBusy=false;
 let masks = [];
 let presets = [];
 let worldbooks = [];
@@ -249,7 +254,8 @@ function r19SavedReading(id,data){
 }
 function r19Lifecycle(kind,extra={}){
  try{const entry={kind,at:Date.now(),build:'r19-20261028-b8-css-memory-repair',sessionId:currentSessionId,
-  generationId:currentSessionData?.pendingGeneration?.id||null,attempt:currentSessionData?.pendingGeneration?.attempt||null,
+  generationId:generationOwners.get(currentSessionId)?.generationId||currentSessionData?.pendingGeneration?.id||null,
+  attempt:generationOwners.get(currentSessionId)?.generationAttempt||currentSessionData?.pendingGeneration?.attempt||null,
   persistedStage:currentSessionData?.pendingGeneration?.status||null,
   wasDiscarded:typeof document.wasDiscarded==='boolean'?document.wasDiscarded:null,
   navigationType:performance.getEntriesByType?.('navigation')?.[0]?.type||null,...extra};
@@ -385,7 +391,7 @@ function clearSubmittedDraft(owner){
         if(el?.value===owner.text){el.value='';autoResizeInput();}
     }
 }
-function restoreGenerationView(){
+function restoreGenerationView(){cancelGenerationHudPaint();r19FailedHudReadToken++;r19FailedHudIdentity=null;
     const owner=currentGenerationOwner();
     clearLiveStream();
     // A previously displayed error belongs only to the original session.
@@ -423,7 +429,7 @@ function restoreGenerationView(){
     }
     toggleUIState(generationOwners.size>0);
 }
-function openDrawer(){qs('session-drawer').classList.add('open');qs('drawer-scrim').classList.remove('hidden')}
+function openDrawer(){qs('session-drawer').classList.add('open');qs('drawer-scrim').classList.remove('hidden');refreshSessionOrganization().catch(e=>toast('归档目录刷新失败：'+e.message));}
 function closeDrawer(){qs('session-drawer').classList.remove('open');qs('drawer-scrim').classList.add('hidden')}
 function isSettingsOpen(){const modal=qs('settings-modal');return !!modal&&!modal.classList.contains('hidden')}
 function openSettings(tab='roles'){
@@ -511,7 +517,12 @@ function closeEditor(){
  const modal=qs('editor-modal');modal.querySelector('.editor-discard-confirm')?.remove();modal.classList.add('hidden');
  // An edited preset can contain megabytes of text. Release its hidden textarea
  // after closing instead of pinning an extra copy until the next editor opens.
- if(editorState?.type==='preset')qs('editor-body')?.replaceChildren();
+ if(editorState?.type==='preset'){
+  qs('editor-body')?.replaceChildren();
+  // Release the Save button before clearing the editor owner: otherwise the
+  // successful save's finally block cannot re-enable it on the next edit.
+  const saveButton=qs('editor-save');if(saveButton){saveButton.disabled=false;saveButton.textContent='保存';}
+ }
  editorState=null;editorInitialForm=null;editorInitialDraft=null;editorDraftStructureChanged=false;
 }
 function requestCloseEditor(reason='cancel'){
@@ -736,19 +747,30 @@ function toggleDirector(){qs('director-wrap').classList.toggle('collapsed')}
 
 async function loadAll() {
     const selectedAtStart=currentSessionId, navigationAtStart=sessionNavigationEpoch;
-    const results=await Promise.all([fetchStory('/sessions'),fetchStory('/masks'),fetchStory('/presets'),fetchStory('/worldbooks'),fetchStory('/css-presets'),fetchStory('/regex-packs')]);
+    const results=await Promise.all([fetchStory('/sessions'),fetchStory('/masks'),fetchStory('/presets'),fetchStory('/worldbooks'),fetchStory('/css-presets'),fetchStory('/regex-packs'),fetchStory('/session-organization')]);
     const names=['sessions','masks','presets','worldbooks','css-presets','regex-packs'];
     // A failed read is NOT a verified empty collection. Keep the previous UI
     // references untouched; callers must see the failure, not an empty library.
-    for(let i=0;i<results.length;i++){
+    for(let i=0;i<names.length;i++){
         const result=results[i];
         if(!result?.success||!Array.isArray(result.data))
             throw new Error(`E_LIBRARY_READ_UNVERIFIED: ${names[i]} · ${result?.msg||'返回值无法验证'}`);
     }
+    // The seventh response is a directory record, not a seventh resource array.
+    // Reuse the store's strict validator so malformed groups/placements cannot
+    // be accepted as an empty directory or silently replace the previous UI.
+    if(!results[6]?.success)
+        throw new Error('E_SESSION_ORGANIZATION_READ: '+(results[6]?.msg||'归档目录读取失败，本次没有覆盖旧数据'));
+    if(!window.MimaLocalStore?.validateSessionOrganization)
+        throw new Error('E_SESSION_ORGANIZATION_READ: 归档目录校验器不可用，本次没有覆盖旧数据');
+    let validatedOrganization;
+    try{validatedOrganization=window.MimaLocalStore.validateSessionOrganization(results[6].data);}
+    catch(e){throw new Error('E_SESSION_ORGANIZATION_READ: '+(e?.message||'归档目录结构无法核实，本次没有覆盖旧数据'));}
     // Fetches are fully validated above. Semantic versions change only when regex
     // content changes; ordinary CSS/Persona writes rehydrate a new array identity.
     r19AcceptRegexLibrary(results[5].data);
-    [sessions,masks,presets,worldbooks,cssPresets,regexPacks]=results.map(result=>result.data);
+    [sessions,masks,presets,worldbooks,cssPresets,regexPacks]=results.slice(0,6).map(result=>result.data);
+    sessionOrganization=validatedOrganization;
     renderSessions();
     // If the player switched sessions while these independent reads ran, no
     // stale loadAll continuation is allowed to navigate back to the old one.
@@ -773,14 +795,120 @@ async function loadAll() {
     if(!currentSessionId){await applyCustomCss();if(isSettingsOpen())await renderSettings();}
 }
 
-function renderSessions() {
-    const box=qs('session-list'); box.innerHTML='';
-    if(!sessions.length){box.innerHTML='<div class="row-sub">还没有剧情。新建一个独立宇宙吧。</div>';return}
-    sessions.forEach(s=>{
-        const div=document.createElement('div'); div.className=`session-item ${s.id===currentSessionId?'active':''}`;div.setAttribute('role','button');div.tabIndex=0;
-        div.innerHTML=`<div class="session-item-main"><div class="session-name">${escapeHtml(s.title)}</div><div class="session-meta">${escapeHtml(canonLabel(s.canonLevel||'alternate'))} · ${s.messageCount||0} 条 · 📚 ${(s.worldbookIds||[]).length}</div></div><div class="session-item-actions"><button class="session-mini-btn" onclick="event.stopPropagation();openSessionHistoryEditor('${s.id}')">编辑</button><button class="session-mini-btn danger" onclick="event.stopPropagation();deleteSessionFromHistory('${s.id}')">删除</button></div>`;
-        div.onclick=()=>openSession(s.id,true);div.onkeydown=e=>{if(e.target===div&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openSession(s.id,true)}}; box.appendChild(div);
-    });
+// Only the small directory is read for archive/category operations. This
+// must not navigate, rerender chat, cancel generation or load fonts/CSS.
+async function refreshSessionOrganization(){
+    const result=await fetchStory('/session-organization');
+    if(!result?.success||result.data?.version!==1||!Number.isInteger(result.data.revision))
+      throw Error(result?.msg||'归档目录未通过校验');
+    sessionOrganization=result.data;renderSessions();return result.data;
+}
+async function applySessionOrganizationAction(action){
+    if(sessionOrganizationBusy)return;
+    if(!sessionOrganization)throw Error('归档目录尚未加载，未保存');
+    sessionOrganizationBusy=true;
+    try{
+      const result=await fetchStory('/session-organization/actions','POST',{...action,expectedRevision:sessionOrganization.revision});
+      if(!result?.success||result.data?.version!==1)throw Error(result?.msg||'归档保存失败');
+      sessionOrganization=result.data;
+      renderSessions();return true;
+    }catch(e){toast('归档操作未保存：'+e.message);try{await refreshSessionOrganization();}catch(readError){console.error('归档冲突后刷新失败',readError);}return false;}
+    finally{sessionOrganizationBusy=false;}
+}
+function sessionGroupNameRequest(old=''){
+    const name=prompt(old?'重命名剧情分类':'新建剧情分类（不会改动剧情内容）',old);
+    if(name===null)return null;
+    const text=name.trim();if(!text||text.length>60){toast('分类名称为 1–60 个字');return null;}
+    return text;
+}
+async function addSessionGroup(){const name=sessionGroupNameRequest();if(name===null)return;
+    const id='sg_'+(globalThis.crypto?.randomUUID?.().replace(/-/g,'')||Date.now().toString(36)+Math.random().toString(36).slice(2));
+    if(await applySessionOrganizationAction({type:'create-group',id,name}))sessionOpenGroups.add(id);
+    renderSessions();
+}
+async function renameSessionGroup(group){const name=sessionGroupNameRequest(group.name);if(name!==null)await applySessionOrganizationAction({type:'rename-group',id:group.id,name});}
+async function deleteSessionGroup(group){if(!confirm(`删除「${group.name}」分类？\n分类里的所有剧情仍保留为已归档，并转入「未分类」。`))return;
+    await applySessionOrganizationAction({type:'delete-group',id:group.id});}
+function sessionMaskTag(id,type){
+    const prefix=type==='user'?'User':'Char';
+    if(!id)return `${prefix}：未挂载`;
+    const mask=masks.find(x=>x.id===id);
+    if(!mask)return `${prefix}：面具已失效`;
+    if(mask.type!==type)return `${prefix}：类型不匹配（${mask.name}）`;
+    return `${prefix}：${mask.name}${mask.enabled===false?'（已停用）':''}`;
+}
+function renderSessions(){
+    const box=qs('session-list');if(!box)return;
+    box.replaceChildren();
+    const org=sessionOrganization||{version:1,revision:0,groups:[],placements:{}};
+    const archivedOf=s=>org.placements[s.id]?.archived===true;
+    const countArchived=sessions.filter(archivedOf).length;
+    const modeActive=qs('session-tab-active'),modeArchive=qs('session-tab-archived');
+    if(modeActive){modeActive.textContent=`进行中 ${sessions.length-countArchived}`;modeActive.setAttribute('aria-pressed',String(sessionListMode==='active'));}
+    if(modeArchive){modeArchive.textContent=`已归档 ${countArchived}`;modeArchive.setAttribute('aria-pressed',String(sessionListMode==='archived'));}
+    const query=sessionSearchTerm.trim().toLocaleLowerCase();
+    const visible=sessions.filter(s=>(archivedOf(s)===(sessionListMode==='archived'))&&
+        (!query||[s.title,sessionMaskTag(s.loadedUserMaskId,'user'),sessionMaskTag(s.loadedCharMaskId,'character')].join(' ').toLocaleLowerCase().includes(query)));
+    function item(s){
+        const archived=archivedOf(s),place=org.placements[s.id]||{},row=document.createElement('article');
+        row.className='session-item'+(s.id===currentSessionId?' active':'');
+        const open=document.createElement('button');open.type='button';open.className='session-open';
+        open.setAttribute('aria-label',`打开剧情：${s.title}`);
+        const userTag=sessionMaskTag(s.loadedUserMaskId,'user'),charTag=sessionMaskTag(s.loadedCharMaskId,'character');
+        open.innerHTML=`<span class="session-name">${escapeHtml(s.title)}</span><span class="session-mask-label" title="${escapeHtml(userTag)}">${escapeHtml(userTag)}</span><span class="session-mask-label" title="${escapeHtml(charTag)}">${escapeHtml(charTag)}</span><span class="session-meta">${escapeHtml(canonLabel(s.canonLevel||'alternate'))} · ${s.messageCount||0} 条 · 📚 ${(s.worldbookIds||[]).length}${archived?' · 已归档':''}</span>`;
+        open.onclick=()=>openSession(s.id,true);
+        const actions=document.createElement('div');actions.className='session-actions';
+        const more=document.createElement('button');more.type='button';more.className='session-more';more.textContent='⋯';
+        more.setAttribute('aria-label',`管理剧情：${s.title}`);more.setAttribute('aria-expanded','false');
+        const menu=document.createElement('div');menu.className='session-action-menu hidden';
+        const close=()=>{menu.classList.add('hidden');more.setAttribute('aria-expanded','false');};
+        more.onclick=()=>{const next=menu.classList.toggle('hidden');more.setAttribute('aria-expanded',String(!next));};
+        menu.onkeydown=e=>{if(e.key==='Escape'){close();more.focus();}};
+        const command=(label,fn)=>{const b=document.createElement('button');b.type='button';b.textContent=label;b.onclick=()=>{close();fn();};menu.appendChild(b);};
+        command('编辑标题',()=>openSessionHistoryEditor(s.id));
+        command(archived?'取消归档':'归档剧情',()=>applySessionOrganizationAction({type:'place-session',id:s.id,archived:!archived,groupId:null}));
+        if(archived){
+          const label=document.createElement('label');label.className='session-group-select-label';label.textContent='移动到分类';
+          const select=document.createElement('select');select.setAttribute('aria-label',`移动「${s.title}」到分类`);
+          const groups=[{id:'',name:'未分类'},...org.groups];
+          for(const g of groups){const opt=document.createElement('option');opt.value=g.id;opt.textContent=g.name;select.appendChild(opt);}
+          select.value=place.groupId||'';
+          select.onchange=async()=>{const groupId=select.value||null;close();await applySessionOrganizationAction({type:'place-session',id:s.id,archived:true,groupId});};
+          label.appendChild(select);menu.appendChild(label);
+        }
+        command('删除剧情…',()=>deleteSessionFromHistory(s.id));
+        actions.append(more,menu);row.append(open,actions);
+        row.addEventListener('focusout',e=>{if(!row.contains(e.relatedTarget))close();});
+        return row;
+    }
+    if(sessionListMode==='active'){
+      for(const s of visible)box.appendChild(item(s));
+    }else{
+      const groups=[...org.groups].sort((a,b)=>a.order-b.order).map(g=>({id:g.id,name:g.name,group:g}));
+      groups.push({id:'ungrouped',name:'未分类',group:null});
+      for(const group of groups){
+        const members=visible.filter(s=>(org.placements[s.id]?.groupId||'ungrouped')===group.id);
+        const allCount=sessions.filter(s=>archivedOf(s)&&(org.placements[s.id]?.groupId||'ungrouped')===group.id).length;
+        if(query&&!members.length)continue;
+        const section=document.createElement('section');section.className='session-folder';
+        const header=document.createElement('div');header.className='session-folder-header';
+        const toggle=document.createElement('button');toggle.type='button';toggle.className='session-folder-toggle';
+        const expanded=sessionOpenGroups.has(group.id)||(query&&members.length>0);
+        toggle.textContent=`${expanded?'▾':'▸'} ${group.name} (${allCount})`;
+        toggle.setAttribute('aria-expanded',String(!!expanded));
+        toggle.onclick=()=>{if(sessionOpenGroups.has(group.id))sessionOpenGroups.delete(group.id);else sessionOpenGroups.add(group.id);renderSessions();};
+        header.appendChild(toggle);
+        if(group.group){const rename=document.createElement('button');rename.type='button';rename.className='session-folder-tool';rename.textContent='改名';rename.setAttribute('aria-label',`重命名分类${group.name}`);rename.onclick=()=>renameSessionGroup(group.group);
+          const del=document.createElement('button');del.type='button';del.className='session-folder-tool';del.textContent='删除';del.setAttribute('aria-label',`删除分类${group.name}`);del.onclick=()=>deleteSessionGroup(group.group);header.append(rename,del);}
+        section.appendChild(header);
+        if(expanded){const contents=document.createElement('div');contents.className='session-folder-items';for(const s of members)contents.appendChild(item(s));
+          if(!members.length){const empty=document.createElement('p');empty.className='session-empty';empty.textContent=query?'这个分类没有匹配的剧情':'这个分类还没有剧情';contents.appendChild(empty);}
+          section.appendChild(contents);}
+        box.appendChild(section);
+      }
+      const add=document.createElement('button');add.className='session-new-folder';add.type='button';add.textContent='＋ 新建归档分类';add.onclick=addSessionGroup;box.appendChild(add);
+    }
+    if(!visible.length){const empty=document.createElement('p');empty.className='session-empty';empty.textContent=query?'没有匹配的剧情，可清除搜索重试':sessionListMode==='archived'?'还没有归档剧情。进行中列表里可将旧剧情归档。':'还没有进行中的剧情，可新建或到已归档查看。';box.prepend(empty);}
 }
 async function createSession(){
     const title=qs('new-session-title').value.trim()||'未命名咪嘛宇宙';
@@ -1086,7 +1214,7 @@ function setupImmersiveReading(){
 }
 // User-facing release notes: once per distinct production release by default.
 // Avoid touching Store/History or making automatic announcements mandatory.
-const MIMA_RELEASE_NOTES_VERSION='R19-20261105-V5.62-PRESET-STREAM-TOP-P';
+const MIMA_RELEASE_NOTES_VERSION='R19-20261106-V5.71-PRESET-EDITOR-SAVE-STATE';
 const MIMA_RELEASE_NOTES_SEEN='mima-release-notes-seen:'+MIMA_RELEASE_NOTES_VERSION;
 const MIMA_RELEASE_NOTES_OPTOUT='mima-release-notes-disable-auto-v1';
 function openMimaReleaseNotice(){
@@ -2400,6 +2528,8 @@ async function applyFullSettingsBackup(raw,{fromSnapshot=false,templatePolicy='r
     validateFontAppearanceBackupPrefs(src.localPrefs||{});
     if(src.fonts!==undefined&&!Array.isArray(src.fonts))throw new Error('fonts 结构无效');
     if(src.personalSounds!==undefined)MimaInteraction.validateSounds(src.personalSounds);
+    // Verify the incoming API snapshot before importing any external assets.
+    if(src.api!==undefined)MimaStandalone.validateApiConfigSnapshot(src.api);
     const atelierPlan=src.atelier?await MimaAtelierCore.previewRecordImport(src.atelier):null;
     if(src.wallpapers)await MimaChatWallpaper.previewRecordImport(src.wallpapers);
     // Validate canonical template preservation/merge against the CURRENT DB,
@@ -2424,7 +2554,7 @@ async function applyFullSettingsBackup(raw,{fromSnapshot=false,templatePolicy='r
             await MimaFontManager.planBinaryFontRestore({...row,buffer:blob});
         }
     }
-    const previousApi=MimaStandalone.getApiConfig(),previousPrefs=collectPortableLocalPrefs();
+    const previousApiBytes=MimaStandalone.captureApiConfigBytes(),previousPrefs=collectPortableLocalPrefs();
     let fontReceipts=[],atelierReceipt=null,canonicalCommitted=false,restoreWarnings=[];
     const selected={ui:MimaFontManager.getSelected('ui'),story:MimaFontManager.getSelected('story')};
     try{
@@ -2457,7 +2587,7 @@ async function applyFullSettingsBackup(raw,{fromSnapshot=false,templatePolicy='r
             // same provider; the user must explicitly configure them again.
             incoming.apiKey=typeof incoming.apiKey==='string'?incoming.apiKey:'';
             incoming.extraHeaders=typeof incoming.extraHeaders==='string'?incoming.extraHeaders:'';
-            MimaStandalone.saveApiConfig({...previousApi,...incoming});
+            MimaStandalone.replaceApiConfigSnapshot(incoming);
         }
         restorePortableLocalPrefs(src.localPrefs||{});
         if(src.selectedFonts?.ui!==undefined)MimaFontManager.setSelected('ui',src.selectedFonts.ui||'');
@@ -2475,7 +2605,7 @@ async function applyFullSettingsBackup(raw,{fromSnapshot=false,templatePolicy='r
         }
         let rollbackError=null;
         for(const receipt of fontReceipts.reverse())try{await MimaFontManager.rollbackPortablePlan(receipt);}catch(issue){rollbackError=issue;}
-        MimaStandalone.saveApiConfig(previousApi);
+        MimaStandalone.restoreApiConfigBytes(previousApiBytes);
         for(const key of FULL_SETTINGS_KEYS){if(Object.prototype.hasOwnProperty.call(previousPrefs,key))localStorage.setItem(key,previousPrefs[key]);else localStorage.removeItem(key)}
         MimaFontManager.setSelected('ui',selected.ui||'');MimaFontManager.setSelected('story',selected.story||'');
         applyStoryTypography();applyFontWeightPrefs();applyMimaUiDensity();restoreLegacyFont();window.MimaInteraction?.reloadPreferences?.();window.MimaAssistantStudio?.reloadState?.();
@@ -3736,7 +3866,7 @@ function renderApiTab(box){
     <div class="form-full"><label class="form-label">Model（模型）</label><div class="model-picker-stack"><div class="inline-field-row"><select id="api-model-select" class="field" onchange="syncApiModelSelect()"><option value="">先点“拉取模型”，然后从这里展开选择</option>${c.model?`<option value="${escapeHtml(c.model)}" selected>${escapeHtml(c.model)} · 当前</option>`:''}</select><button class="ghost-btn" onclick="loadApiModels()">拉取模型</button></div><input id="api-model" class="field" oninput="apiIdentityDraftChanged()" placeholder="也可以手动填写模型名" value="${escapeHtml(c.model||'')}"><div class="row-sub">iPhone / iPad（苹果移动设备）会使用原生下拉选择器；选择后会自动同步到下方模型名输入框。</div></div></div>
     <div class="form-full"><label class="form-label">Temperature（温度） <span id="api-temp-value" class="value-pill">${temp.toFixed(2)}</span></label><div class="temperature-row"><input id="api-temp-range" class="temp-range" type="range" min="0.1" max="2" step="0.05" value="${temp}" oninput="syncTemperature('range')"><input id="api-temperature" class="field temp-number" type="number" min="0.1" max="2" step="0.05" value="${temp}" oninput="syncTemperature('number')"></div><div class="row-sub">数值越高通常越发散，越低通常越稳定。具体有效范围以模型/中转站为准。</div></div>
     <div class="form-full"><label class="form-label">Top-p（核采样） <span id="api-top-p-value" class="value-pill">${Number(c.topP??1).toFixed(2)}</span></label><div class="temperature-row"><input id="api-top-p-range" class="temp-range" type="range" min="0" max="1" step="0.01" value="${Number(c.topP??1)}" oninput="syncTopP('range')"><input id="api-top-p" class="field temp-number" type="number" min="0" max="1" step="0.01" value="${Number(c.topP??1)}" oninput="syncTopP('number')"></div><label class="check-row"><input id="api-send-top-p" type="checkbox" ${c.sendTopP===true?'checked':''}> 发送 top_p 参数</label><div class="row-sub">默认不发送。勾选后向兼容 OpenAI Chat Completions 的接口附加 top_p；具体模型不支持时会直接提示 API 错误，不修改其它采样参数。</div></div>
-    <div><label class="form-label">模型上下文窗口（Tokens，0=未知，不假设硬上限）</label><input id="api-context-window" class="field" type="number" min="0" value="${Number(c.contextWindowTokens||0)}"><div class="row-sub">这是整个输入+输出共享的上下文容量，不等于下方 Max Tokens（只控制输出）。填写服务商确认的容量后会进行预算检查和按需有凭据地规划剧情；留 0 表示容量未知，仍发送完整剧情，由服务商决定能否接收。不用虚构的 32K 限制拦截请求，也不会删除本地 History。</div></div><div><label class="form-label">Max Tokens（最大输出 Tokens，0=不发送）</label><input id="api-max-tokens" class="field" type="number" min="0" value="${Number(c.maxTokens||0)}"></div>
+    <div><label class="form-label">模型上下文窗口（Tokens，0=未知，不假设硬上限）</label><input id="api-context-window" class="field" type="number" min="0" value="${Number(c.contextWindowTokens||0)}"><div class="row-sub">这是整个输入+输出共享的上下文容量，不等于下方 Max Tokens（只控制输出）。填写服务商确认的容量后会进行预算检查和按需有凭据地规划剧情；留 0 表示容量未知，仍发送完整剧情，由服务商决定能否接收。不用虚构的 32K 限制拦截请求，也不会删除本地 History。</div></div><div><label class="form-label">最大输出 Tokens（0=不发送）</label><select id="api-output-mode" class="field" onchange="apiIdentityDraftChanged()"><option value="global" ${c.outputLimitMode!=='model'?'selected':''}>全局输出上限（沿用旧设置）</option><option value="model" ${c.outputLimitMode==='model'?'selected':''}>按模型和接口单独设置</option></select><input id="api-max-tokens" class="field" type="number" min="0" max="100000000" step="1" value="${Number(c.maxTokens||0)}"><div class="row-sub">切换模型时显示对应的输出上限。独立模式中，新模型默认 0（不发送），不会借用其它模型的限制；旧全局值仍保留，切回全局即可使用。</div></div>
     <div class="form-full"><label class="form-label">续写接口方式</label><select id="api-continuation-mode" class="field"><option value="assistant_tail" ${c.continuationMode!=='deepseek_prefix'?'selected':''}>普通 Chat：生成后续 assistant 段落</option><option value="deepseek_prefix" ${c.continuationMode==='deepseek_prefix'?'selected':''}>已确认支持 DeepSeek prefix 的端点</option></select><div class="row-sub">普通 Chat 保留真实 assistant 尾文，不保证原文前缀补全。prefix 模式仅适用于支持该字段的端点；部分模型要求请求以 user 结束，可能不支持无伪玩家消息的续写。失败会保留原文，不自动换端点或追加指令。</div><label class="check-row"><input id="api-prefix-suffix" type="checkbox" ${c.prefixReturnsSuffix===true?'checked':''}> 前缀接口仅回新后缀（仅在接口确实如此时选择；默认按完整前缀响应校验）</label></div>
     <div class="form-full"><h4>🧠 Thinking（模型思考显示）</h4><div class="row-sub">普通剧情不自动插入任何角色表达、思考或创作方式提示词，包括旧版保存的“角色意识／纯正文”配置。你的预设、面具与世界书原文保持不变。若服务商返回 Thinking 文本或摘要，咪嘛馆会与剧情正文分开保存。</div>
     <label class="form-label">推理强度（只在服务商支持时发送）</label><select id="api-reasoning-effort" class="field"><option value="inherit" ${!c.reasoningEffort||c.reasoningEffort==='inherit'?'selected':''}>默认（不传额外参数）</option><option value="high" ${c.reasoningEffort==='high'?'selected':''}>High</option><option value="medium" ${c.reasoningEffort==='medium'?'selected':''}>Medium</option><option value="low" ${c.reasoningEffort==='low'?'selected':''}>Low</option></select>
@@ -3754,6 +3884,9 @@ function apiIdentityDraftChanged(){
     const identity=MimaStandalone.apiCapacityIdentity(draft);
     const known=Number(c.modelCapacityProfiles?.[identity]);
     const field=qs('api-context-window');if(field)field.value=Number.isSafeInteger(known)&&known>=4096?String(known):'0';
+    const mode=qs('api-output-mode')?.value==='model'?'model':'global';
+    const cap=mode==='model'?Number(c.modelOutputProfiles?.[identity]??0):Number(c.globalMaxTokens??c.maxTokens??0);
+    const output=qs('api-max-tokens');if(output)output.value=String(cap);
     const status=qs('api-status');if(status)status.textContent=identity===c.contextWindowIdentity
       ?'模型身份未变。修改后仍需点击「保存 API」。'
       :'已切换模型或渠道（尚未保存）。该模型的上下文窗口独立设置，未确认时为 0；填写后点击「保存 API」。';
@@ -3762,7 +3895,7 @@ function syncApiModelSelect(){const sel=qs('api-model-select'),input=qs('api-mod
 function syncTemperature(source){const range=qs('api-temp-range'),num=qs('api-temperature'),pill=qs('api-temp-value');let v=Number(source==='range'?range?.value:num?.value);if(!Number.isFinite(v))v=.85;v=Math.max(.1,Math.min(2,v));if(range&&source!=='range')range.value=v;if(num&&source!=='number')num.value=v.toFixed(2);if(pill)pill.textContent=v.toFixed(2)}
 function syncTopP(source){const range=qs('api-top-p-range'),num=qs('api-top-p'),pill=qs('api-top-p-value');const raw=source==='range'?range?.value:num?.value;const v=Number(raw);if(!Number.isFinite(v)||v<0||v>1)return;if(range&&source!=='range')range.value=String(v);if(num&&source!=='number')num.value=v.toFixed(2);if(pill)pill.textContent=v.toFixed(2)}
 function populateApiModelSelect(models){const sel=qs('api-model-select');if(!sel)return;const current=qs('api-model')?.value.trim()||'';sel.innerHTML='<option value="">请选择 Model（模型）</option>'+models.map(x=>`<option value="${escapeHtml(x)}" ${x===current?'selected':''}>${escapeHtml(x)}</option>`).join('');if(current&&!models.includes(current)){const opt=document.createElement('option');opt.value=current;opt.textContent=`${current} · 手动`;opt.selected=true;sel.appendChild(opt)}}
-function collectApiForm(){const temp=Math.max(.1,Math.min(2,Number(qs('api-temperature')?.value||.85)));return{apiBase:qs('api-base').value.trim(),apiKey:qs('api-key').value.trim(),model:qs('api-model').value.trim(),chatEndpoint:qs('api-chat-endpoint').value.trim(),modelsEndpoint:qs('api-models-endpoint').value.trim(),extraHeaders:qs('api-extra-headers').value.trim(),sendTemperature:qs('api-send-temp').checked,temperature:temp,sendTopP:qs('api-send-top-p')?.checked===true,topP:Number(qs('api-top-p')?.value),stream:qs('api-stream').checked,maxTokens:Number(qs('api-max-tokens').value||0),contextWindowTokens:Number(qs('api-context-window')?.value||0),continuationMode:qs('api-continuation-mode')?.value||'assistant_tail',prefixReturnsSuffix:qs('api-prefix-suffix')?.checked===true,thinkingMode:'normal',showThinking:qs('api-show-thinking')?.checked!==false,reasoningEffort:qs('api-reasoning-effort')?.value||'inherit',requestGeminiThoughts:qs('api-request-gemini-thoughts')?.checked===true}}
+function collectApiForm(){const temp=Math.max(.1,Math.min(2,Number(qs('api-temperature')?.value||.85)));return{apiBase:qs('api-base').value.trim(),apiKey:qs('api-key').value.trim(),model:qs('api-model').value.trim(),chatEndpoint:qs('api-chat-endpoint').value.trim(),modelsEndpoint:qs('api-models-endpoint').value.trim(),extraHeaders:qs('api-extra-headers').value.trim(),sendTemperature:qs('api-send-temp').checked,temperature:temp,sendTopP:qs('api-send-top-p')?.checked===true,topP:Number(qs('api-top-p')?.value),stream:qs('api-stream').checked,maxTokens:Number(qs('api-max-tokens').value||0),outputLimitMode:qs('api-output-mode')?.value==='model'?'model':'global',outputLimitExplicit:true,contextWindowTokens:Number(qs('api-context-window')?.value||0),continuationMode:qs('api-continuation-mode')?.value||'assistant_tail',prefixReturnsSuffix:qs('api-prefix-suffix')?.checked===true,thinkingMode:'normal',showThinking:qs('api-show-thinking')?.checked!==false,reasoningEffort:qs('api-reasoning-effort')?.value||'inherit',requestGeminiThoughts:qs('api-request-gemini-thoughts')?.checked===true}}
 function saveApiSettings(){
     try{
         // Invalid numbers must not be silently clamped or saved as defaults.
@@ -3790,7 +3923,7 @@ async function testApiConnection(){if(!saveApiSettings())return;const status=qs(
 function describeApiError(e){const message=e?.message||e?.msg||(typeof e==='string'?e:'未知 API 错误');const code=e?.code||(/Failed to fetch|NetworkError|Load failed|CORS/i.test(message)?'E_API_NETWORK_CORS':'E_API_UNKNOWN');const status=Number(e?.status)||0;let hint=e?.hint||'';if(!hint&&code==='E_API_NETWORK_CORS')hint='浏览器 Fetch 在拿不到响应时无法可靠区分 CORS、网络断线、证书错误或“网关错误响应缺少 CORS 头”。如果同一配置一会成功一会失败，更像中转/CDN 节点抖动，而不是你的剧情数据坏了。';if(!hint&&code==='E_STREAM_INTERRUPTED')hint='流式连接已建立后中断。不要自动重复计费；可点击“仅重试本轮”手动重试，玩家消息不会重复写入。';if(!hint&&code==='E_API_REFUSAL_CONTENT')hint='模型把拒绝文本当普通回复返回；正文已拦截且不会进入角色历史或旧版本。可手动重试，不会自动重复计费。';if(!hint)hint='请检查 API（接口）地址、密钥、模型名、参数兼容性以及中转站状态。';return{message,code,status,hint,details:e?.details||'',partialDraft:typeof e?.partialDraft==='string'?e.partialDraft.slice(0,24000):''}}
 function friendlyApiError(e){const i=describeApiError(e);return `${i.code}${i.status?` · HTTP（状态码） ${i.status}`:''} · ${i.message}\n可能原因：${i.hint}`}
 function chooseApiImport(){qs('api-config-file-input').value='';qs('api-config-file-input').click()}
-async function importApiConfigFile(file){if(!file)return;try{const raw=JSON.parse(await file.text()),src=raw.data||raw;const temperature=Number(src.temperature??localStorage.getItem(TEMP_KEY)??.85);MimaStandalone.saveApiConfig({apiBase:src.apiBase||src.baseUrl||src.base_url||'',apiKey:src.apiKey||src.api_key||src.key||'',model:src.model||'',chatEndpoint:src.chatEndpoint||'',modelsEndpoint:src.modelsEndpoint||'',extraHeaders:typeof src.extraHeaders==='string'?src.extraHeaders:src.extraHeaders?JSON.stringify(src.extraHeaders):'',sendTemperature:src.sendTemperature!==false,temperature,sendTopP:src.sendTopP===true,topP:src.topP??src.top_p??1,stream:!!(src.stream??src.streaming),maxTokens:Number(src.maxTokens||0),contextWindowTokens:Number(src.contextWindowTokens??src.context_window??0),capacityExplicit:true,continuationMode:src.continuationMode==='deepseek_prefix'?'deepseek_prefix':'assistant_tail',prefixReturnsSuffix:src.prefixReturnsSuffix===true,thinkingMode:src.thinkingMode||'normal',showThinking:src.showThinking!==false,reasoningEffort:src.reasoningEffort||'inherit',requestGeminiThoughts:src.requestGeminiThoughts===true});localStorage.setItem(TEMP_KEY,String(temperature));renderApiTab(qs('settings-content'));toast('API（接口）配置已导入到当前浏览器')}catch(e){toast(`API（接口）配置导入失败：${e.message}`)}}
+async function importApiConfigFile(file){if(!file)return;try{const raw=JSON.parse(await file.text()),src=raw.data||raw;const temperature=Number(src.temperature??localStorage.getItem(TEMP_KEY)??.85);MimaStandalone.replaceApiConfigSnapshot({apiBase:src.apiBase||src.baseUrl||src.base_url||'',outputLimitMode:src.outputLimitMode==='model'?'model':'global',globalMaxTokens:src.globalMaxTokens??src.maxTokens??0,modelOutputProfiles:src.modelOutputProfiles||{},modelCapacityProfiles:src.modelCapacityProfiles||{},contextWindowIdentity:src.contextWindowIdentity||'',outputLimitExplicit:true,apiKey:src.apiKey||src.api_key||src.key||'',model:src.model||'',chatEndpoint:src.chatEndpoint||'',modelsEndpoint:src.modelsEndpoint||'',extraHeaders:typeof src.extraHeaders==='string'?src.extraHeaders:src.extraHeaders?JSON.stringify(src.extraHeaders):'',sendTemperature:src.sendTemperature!==false,temperature,sendTopP:src.sendTopP===true,topP:src.topP??src.top_p??1,stream:!!(src.stream??src.streaming),...(Object.prototype.hasOwnProperty.call(src,'maxTokens')?{maxTokens:src.maxTokens}:{}),contextWindowTokens:Number(src.contextWindowTokens??src.context_window??0),capacityExplicit:true,continuationMode:src.continuationMode==='deepseek_prefix'?'deepseek_prefix':'assistant_tail',prefixReturnsSuffix:src.prefixReturnsSuffix===true,thinkingMode:src.thinkingMode||'normal',showThinking:src.showThinking!==false,reasoningEffort:src.reasoningEffort||'inherit',requestGeminiThoughts:src.requestGeminiThoughts===true});localStorage.setItem(TEMP_KEY,String(temperature));renderApiTab(qs('settings-content'));toast('API（接口）配置已导入到当前浏览器')}catch(e){toast(`API（接口）配置导入失败：${e.message}`)}}
 
 function renderPromptTab(box){box.innerHTML=`<section class="settings-section"><h3>🔬 Prompt Inspector（提示词检查器）</h3><p class="helper">只预览、不调用 LLM。咪嘛馆在模型上下文容量允许时优先提供完整原始剧情；每轮各注入一份已启用 Persona / Preset 与预算内命中的 Worldbook。模型窗口不足时按完整轮次分批裁剪，默认每批10轮且至少保留最新20轮；未有可信来源范围的滚动摘要时暂停，不请求 Provider。原始 History 永远完整保留。v1.1.4 还会显示上游返回的缓存命中统计；没有统计不等于没有缓存。</p><div class="toolbar"><button class="primary-btn" onclick="refreshPromptInspector()">扫描本轮 Prompt（提示词）</button><button class="ghost-btn" onclick="switchSettingsTab('diagnostics')">查看真实请求和异常日志</button></div><div id="prompt-inspector"><div class="row-sub">点击上方按钮生成预览。</div></div></section>`}
 async function refreshPromptInspector(){
@@ -3856,7 +3989,7 @@ function renderPerformanceTab(box){
 }
 
 // Independent diagnostics viewer. No route into canonical History or Memory.
-const diagnosticViewState={scope:'session',kind:'all',selectedId:null};
+const diagnosticViewState={scope:'session',kind:'all',selectedId:null,page:0};
 let diagnosticViewRefreshSequence=0;
 function renderDiagnosticsTab(box){
     box.innerHTML=`<section class="settings-section"><h3>🧾 生成诊断日志（独立保存）</h3>
@@ -3873,8 +4006,8 @@ function renderDiagnosticsTab(box){
     const scope=qs('diag-scope'),kind=qs('diag-kind');
     if(!currentSessionId){diagnosticViewState.scope='all';scope.querySelector('option[value="session"]').disabled=true;}
     scope.value=diagnosticViewState.scope;kind.value=diagnosticViewState.kind;
-    scope.onchange=()=>{diagnosticViewState.scope=scope.value;diagnosticViewState.selectedId=null;void refreshDiagnosticsView();};
-    kind.onchange=()=>{diagnosticViewState.kind=kind.value;diagnosticViewState.selectedId=null;void refreshDiagnosticsView();};
+    scope.onchange=()=>{diagnosticViewState.scope=scope.value;diagnosticViewState.selectedId=null;diagnosticViewState.page=0;void refreshDiagnosticsView();};
+    kind.onchange=()=>{diagnosticViewState.kind=kind.value;diagnosticViewState.selectedId=null;diagnosticViewState.page=0;void refreshDiagnosticsView();};
     qs('diag-refresh').onclick=()=>void refreshDiagnosticsView();
     qs('diag-clear-session').disabled=!currentSessionId;
     qs('diag-clear-session').onclick=async()=>{
@@ -3926,6 +4059,7 @@ async function recoverDiagnosticReply(diagnosticId){
         toast((result.alreadyRestored?'这条回复已经手动恢复，没有重复写入':record.recoveryIsPartial?'已恢复现有片段，缺失部分未补写，没有请求模型':'已手动恢复到原剧情，没有重新请求模型')+notice);
     }catch(e){toast((restored?'回复已保存，后续操作失败：':'无法恢复：')+e.message);}
     finally{diagnosticRecoveryBusy.delete(diagnosticId);if(settingsTab==='diagnostics')await refreshDiagnosticsView();}
+    return restored;
 }
 async function reviewRejectedDiagnosticHtml(record){
     if(!record?.id||String(record.action||'').startsWith('compat_'))return toast('本入口仅支持原生剧情的失败输出。');
@@ -3970,83 +4104,133 @@ function diagnosticRecoveryButton(record){
     b.title='恢复已收到的文本，不重新请求模型；空文本、诊断被裁剪或原任务变化时会说明原因。';
     b.onclick=()=>void recoverDiagnosticReply(record.id);return b;
 }
-async function refreshDiagnosticsView(){
-    const refreshId=++diagnosticViewRefreshSequence;
-    const epoch=settingsRenderEpoch,sessionId=diagnosticViewState.scope==='session'?currentSessionId:null;
+async function refreshDiagnosticsView({openRetainedId=null}={}){
+    const refreshId=++diagnosticViewRefreshSequence,epoch=settingsRenderEpoch;
+    const sessionId=diagnosticViewState.scope==='session'?currentSessionId:null;
     const root=qs('diag-list'),status=qs('diag-status'),detail=qs('diag-detail');
     if(!root||!status||!detail)return;
-    let records;
-    try{records=await MimaDiagnosticJournal.list({sessionId,errorsOnly:diagnosticViewState.kind==='errors'});}
-    catch(e){if(refreshId===diagnosticViewRefreshSequence&&settingsTab==='diagnostics'&&epoch===settingsRenderEpoch&&root===qs('diag-list')){status.textContent=`独立日志读取失败：${e.message}。原生剧情数据未修改。`;root.textContent='';detail.textContent='';}console.error('诊断日志读取失败',e);return;}
-    if(refreshId!==diagnosticViewRefreshSequence||settingsTab!=='diagnostics'||epoch!==settingsRenderEpoch||root!==qs('diag-list'))return;
-    const policy=MimaDiagnosticJournal.status(),error=policy.error;
-    status.textContent=`${records.length} 条记录 · 自动保留最近 ${policy.limitCount} 条、最长 ${policy.limitDays} 天、约 ${Math.round(policy.limitBytes/1048576)} MB。${error?'最近存储故障：'+error:'日志写入与清理不会修改剧情数据。'}`;
-    root.innerHTML='';
-    let selectedRow=null;
-    for(const record of records){
+    const fresh=()=>refreshId===diagnosticViewRefreshSequence&&settingsTab==='diagnostics'&&epoch===settingsRenderEpoch&&
+      root===qs('diag-list')&&sessionId===(diagnosticViewState.scope==='session'?currentSessionId:null);
+    let page;
+    try{page=await MimaDiagnosticJournal.listSummaries({sessionId,errorsOnly:diagnosticViewState.kind==='errors',cursor:diagnosticViewState.page*20,limit:20});}
+    catch(e){if(fresh()){status.textContent=`独立日志读取失败：${e.message}。未删除诊断或剧情资料。`;root.textContent='';detail.textContent='';}console.error('诊断日志读取失败',e);return;}
+    if(!fresh())return;
+    if(page.total>0&&!page.items.length&&diagnosticViewState.page>0){diagnosticViewState.page=0;return refreshDiagnosticsView();}
+    const {items:records,total,nextCursor}=page,policy=MimaDiagnosticJournal.status();
+    status.textContent=`共 ${total} 条 · 第 ${diagnosticViewState.page+1} 页 · 每页最多 20 条 · 自动保留 ${policy.limitCount} 条、${policy.limitDays} 天、约 ${Math.round(policy.limitBytes/1048576)} MB。${policy.error?'最近存储错误：'+policy.error:'仅在点开详情时读取大 Prompt 和完整正文。'}`;
+    root.replaceChildren();detail.replaceChildren();let selectedRow=null;
+    for(const summary of records){
         const b=document.createElement('button');b.type='button';b.className='ghost-btn diag-list-item';
-        b.setAttribute('aria-pressed',String(diagnosticViewState.selectedId===record.id));
-        let label={committed:'✅ 已提交',rejected:'⛔ 已拒绝',aborted:'⏹ 已取消',conflict:'⚠️ 提交冲突',requesting:'⏳ 请求中或异常退出',provider_returned:'⏳ 已返回，待结算',preparing:'⏳ 准备中'}[record.status]||record.status;
-        if(record.status==='rejected'){
-            const code=record.error?.code||'',http=record.transport?.httpStatus||record.error?.status;
-            label=record.phase==='preflight'?'🧮 发送前已拦截 · 0 次模型请求':record.finishKind==='blocked'||/REFUSAL/.test(code)?'⛔ 拒绝类回复':record.finishKind==='truncated'||/TRUNCATED/.test(code)?'✂ 回复被截断':/STREAM_INTERRUPTED/.test(code)?'⚠ 连接中断':http>=400?'⚠ 请求失败 · HTTP '+http:'⚠ 未通过提交';
-        }
-
-        b.textContent=`${label} · ${new Date(record.createdAt).toLocaleString()} · ${record.action||'send'} · ${record.model||(record.phase==='preflight'?'预检未发送':'模型名称未记入日志')} · ${record.error?.code||record.finishReason||''}`;
-        b.onclick=()=>{diagnosticViewState.selectedId=record.id;void refreshDiagnosticsView();};
+        b.setAttribute('aria-pressed',String(diagnosticViewState.selectedId===summary.id));
+        let label={committed:'✅ 已提交',rejected:'⛔ 已拒绝',aborted:'⏹ 已取消',conflict:'⚠️ 提交冲突',requesting:'⏳ 请求中或异常退出',provider_returned:'⏳ 已返回，待结算',preparing:'⏳ 准备中'}[summary.status]||summary.status;
+        const code=summary.errorCode||'',http=summary.httpStatus||0;
+        if(summary.status==='rejected')label=summary.phase==='preflight'?'🧮 发送前已拦截 · 0 次模型请求':summary.finishKind==='blocked'||/REFUSAL/.test(code)?'⛔ 拒绝类回复':summary.finishKind==='truncated'||/TRUNCATED/.test(code)?'✂ 回复被截断':/STREAM_INTERRUPTED/.test(code)?'⚠ 连接中断':http>=400?'⚠ 请求失败 · HTTP '+http:'⚠ 未通过提交';
+        b.textContent=`${label} · ${new Date(summary.createdAt).toLocaleString()} · ${summary.action||'send'} · ${summary.model||(summary.phase==='preflight'?'预检未发送':'模型名称未记入日志')} · ${code||summary.finishReason||''}`;
+        b.onclick=()=>{diagnosticViewState.selectedId=summary.id;void refreshDiagnosticsView();};
         const row=document.createElement('div');row.className='diag-list-row';row.appendChild(b);
-        if(diagnosticViewState.selectedId===record.id)selectedRow=row;
-        if(['rejected','aborted','conflict'].includes(record.status)){const view=document.createElement('button');view.type='button';view.className='ghost-btn';view.textContent='👁 查看保存正文';view.onclick=()=>{diagnosticViewState.selectedId=record.id;void refreshDiagnosticsView();};row.appendChild(view);}
-        if(['rejected','aborted','conflict'].includes(record.status)){if(record.requestSent!==false)row.appendChild(diagnosticRecoveryButton(record));if(['E_HTML_STRUCTURE_MISSING','E_HTML_REQUIRED_NODE_MISSING','E_STORY_OUTPUT_INCOMPLETE'].includes(record.error?.code))row.appendChild(diagnosticHtmlCodeRepairButton(record));}
+        if(diagnosticViewState.selectedId===summary.id)selectedRow=row;
+        if(['rejected','aborted','conflict'].includes(summary.status)){
+            const view=document.createElement('button');view.type='button';view.className='ghost-btn';view.textContent='👁 查看保存正文';
+            view.onclick=()=>{diagnosticViewState.selectedId=summary.id;void refreshDiagnosticsView({openRetainedId:summary.id});};row.appendChild(view);
+            if(summary.requestSent!==false)row.appendChild(diagnosticRecoveryButton(summary));
+            if(['E_HTML_STRUCTURE_MISSING','E_HTML_REQUIRED_NODE_MISSING','E_STORY_OUTPUT_INCOMPLETE'].includes(code)){
+                const repair=document.createElement('button');repair.type='button';repair.className='ghost-btn';repair.textContent='HTML 免 API 补全';
+                repair.disabled=summary.manualRecovery===true;
+                repair.onclick=async()=>{try{const full=await MimaDiagnosticJournal.get(summary.id);if(full)await reviewRejectedDiagnosticHtml(full);else toast('诊断已被其它窗口删除');}catch(e){toast('读取原诊断失败：'+e.message);}};
+                row.appendChild(repair);
+            }
+        }
         root.appendChild(row);
     }
-    if(!records.length)root.textContent='当前范围没有诊断记录。正常剧情可继续使用；只有真实生成操作才会产生记录。';
-    const record=records.find(x=>x.id===diagnosticViewState.selectedId);
-    detail.innerHTML='';if(!record)return;
-    let retained=null,retainedError='';
-    if(record.error||['provider_returned','requesting'].includes(record.status))try{retained=await MimaDiagnosticJournal.candidatePreview(record.id);}catch(e){retainedError=e.message;}
-    if(refreshId!==diagnosticViewRefreshSequence||settingsTab!=='diagnostics'||epoch!==settingsRenderEpoch||root!==qs('diag-list')||record.id!==diagnosticViewState.selectedId)return;
-    const wrap=document.createElement('div');wrap.className='diag-detail entry-card';
-    const request=record.request;
-    const responseHttp=Number(record.transport?.httpStatus||record.error?.status||0);
-    const fmt=request?.messages?.map((m,i)=>`#${i} ${m.role}${m.prefix===true?' · prefix=true':''} · ${record.messageSources?.[i]?.kind||'未记录来源'} / ${record.messageSources?.[i]?.sourceId||record.messageSources?.[i]?.messageId||''}\n${m.content}`).join('\n\n')||'';
-    wrap.innerHTML=`<h4>诊断详情 · ${escapeHtml(record.action)}</h4>
-      <div class="row-sub">会话：${escapeHtml(record.sessionId)} · Turn：${escapeHtml(record.turnId)} · Request：${escapeHtml(record.requestId||(record.phase==='preflight'?'预检阶段':'请求 ID 未记录'))}<br>
-      结果：${escapeHtml(record.status)} · Model：${escapeHtml(record.model||(record.phase==='preflight'?'预检未发送':'模型名称未记入日志'))} · 结束：${escapeHtml(record.finishKind||'—')} / ${escapeHtml(record.finishReason||'—')} · HTTP：${responseHttp||'—'}</div>
-      <div class="toolbar"><button class="ghost-btn" id="diag-delete-one">删除这条</button><button class="ghost-btn" id="diag-copy-one">复制此条 JSON</button><button class="ghost-btn" id="diag-download-one">下载此条 JSON</button></div>
-      <div class="row-sub">请求体：${record.requestBytes?Number(record.requestBytes).toLocaleString()+' bytes':'未记录'} · 准备：${record.preparationElapsedMs==null?'未记录':Number(record.preparationElapsedMs)+' ms'} · 等待响应头：${record.transport?Number(record.transport.fetchElapsedMs)+' ms':'未记录'}${record.transport?.providerRequestId?` · 服务端请求 ID：${escapeHtml(record.transport.providerRequestId)}`:''}${record.transport?.cfRay?` · CF-Ray：${escapeHtml(record.transport.cfRay)}`:''}</div>
-      ${record.requestSent===false?`<div class="row-sub">本地预检拦截，零出站：当前模型已绑定窗口 ${Number(record.configuredWindow||0).toLocaleString()} Tokens；无 HTTP 请求。</div>`:''}<h4>真实请求内容（不包含 API Key 和请求头）</h4>
-      ${record.requestTruncated?'<div class="row-sub">本轮请求超过日志单条上限，未保留完整正文。实际发送不受影响；本条不能作为完整 Prompt 证据。</div>':''}
-      ${request?`<div class="row-sub">${request.messages.length} 条消息 · 模型 ${escapeHtml(request.model)} · stream=${request.stream} · max_tokens=${escapeHtml(request.max_tokens??'未设置')}</div><details><summary>展开实际 messages</summary><pre class="prompt-pre">${escapeHtml(fmt)}</pre></details>`:'<div class="row-sub">没有保存完整请求：可能在发送前失败，或超出日志容量上限。</div>'}
-      ${record.error?`<h4>错误与拒绝/截断诊断</h4><pre class="prompt-pre">${escapeHtml(JSON.stringify(record.error,null,2))}</pre><h4>未采纳的模型文本（可手动恢复）</h4><div class="row-sub">${retainedError?'留存正文读取失败：'+escapeHtml(retainedError):retained?.raw?`${retained.rawChars} 字符 · ${retained.complete?'完整留存；服务端结束标记仍以上方记录为准':'仅有现存片段，后半段可能缺失；可确认后恢复片段'}`:'没有收到可恢复的正文。'}</div><pre class="prompt-pre">${escapeHtml(retained?.raw||record.rawRejectedReply||'没有可保存的失败正文。')}</pre>`:`<div class="row-sub">${retainedError?'本机留存读取失败：'+escapeHtml(retainedError):retained?.raw?`本机已保存 ${retained.rawChars} 字符（${retained.complete?'当前可核实为完整接收':'仅为现存片段'}），可复制或下载；未确认提交到剧情。`:'本条未找到可核实的留存正文；请打开当前剧情的「上轮状态」核对。'}</div>${retained?.raw?`<pre class="prompt-pre">${escapeHtml(retained.raw)}</pre>`:''}`}`;
-    if(retained?.raw){
-        const copy=document.createElement('button');copy.type='button';copy.className='ghost-btn';copy.textContent='复制留存正文';copy.onclick=async()=>{try{await copyTextPortable(retained.raw);toast('已复制'+retained.rawChars+'字符的留存正文');}catch(e){toast('复制失败：'+e.message);}};
-        const download=document.createElement('button');download.type='button';download.className='ghost-btn';download.textContent='下载留存正文';download.onclick=()=>downloadText('咪嘛馆-未采纳正文.txt',retained.raw);
-        wrap.querySelector('.toolbar').append(copy,download);
+    if(!records.length)root.textContent='当前范围没有诊断记录。若正在升级旧日志，读取失败会明确报错而不是清空记录。';
+    if(diagnosticViewState.page>0||nextCursor!==null){
+        const bar=document.createElement('div');bar.className='toolbar';
+        const previous=document.createElement('button');previous.type='button';previous.className='ghost-btn';previous.textContent='上一页';previous.disabled=diagnosticViewState.page===0;
+        previous.onclick=()=>{diagnosticViewState.page--;diagnosticViewState.selectedId=null;void refreshDiagnosticsView();};
+        const next=document.createElement('button');next.type='button';next.className='ghost-btn';next.textContent='下一页';next.disabled=nextCursor===null;
+        next.onclick=()=>{diagnosticViewState.page++;diagnosticViewState.selectedId=null;void refreshDiagnosticsView();};
+        bar.append(previous,next);root.appendChild(bar);
     }
-    if(['rejected','aborted','conflict'].includes(record.status)){
-        if(record.requestSent!==false)wrap.querySelector('.toolbar').appendChild(diagnosticRecoveryButton(record));
-        if(['E_HTML_STRUCTURE_MISSING','E_HTML_REQUIRED_NODE_MISSING','E_STORY_OUTPUT_INCOMPLETE'].includes(record.error?.code))wrap.querySelector('.toolbar').appendChild(diagnosticHtmlCodeRepairButton(record));
-        const note=document.createElement('p');note.className='helper';
-        note.textContent=record.requestSent===false?'本轮仅在本地预检中被拦截，没有调用 Provider，也没有可恢复的模型正文；请检查当前 API 身份和窗口配置。':record.manualRecovery?'这条文本已由你手动恢复。上面的原始错误与结束标记仍作为证据保留。':'可免费恢复已留存正文；只剩片段时会明确提示并再次确认。原失败任务已被新请求替换时不会覆盖新剧情，仍可复制或下载留存文字。';
-        wrap.querySelector('.toolbar').after(note);
+    const summary=records.find(r=>r.id===diagnosticViewState.selectedId);
+    if(!summary)return;
+    let record;
+    try{record=await MimaDiagnosticJournal.get(summary.id);}
+    catch(error){if(fresh())status.textContent='单条诊断读取失败（原文保留）：'+error.message;return;}
+    if(!fresh()||summary.id!==diagnosticViewState.selectedId)return;
+    if(!record){status.textContent='所选诊断已经被其他窗口删除。';return;}
+    const wrap=document.createElement('div');wrap.className='diag-detail entry-card',toolbar=document.createElement('div');toolbar.className='toolbar';
+    const heading=document.createElement('h4');heading.textContent='诊断详情 · '+record.action;wrap.appendChild(heading);
+    const info=document.createElement('div');info.className='row-sub';
+    info.textContent=`会话：${record.sessionId||'—'} · Turn：${record.turnId||'—'} · Request：${record.requestId||'—'} · ${record.status} · ${record.model||'模型未记录'} · ${record.finishKind||'—'}/${record.finishReason||'—'} · HTTP：${Number(record.transport?.httpStatus||record.error?.status)||'—'}`;
+    wrap.append(info,toolbar);
+    function actionButton(label,fn){const b=document.createElement('button');b.type='button';b.className='ghost-btn';b.textContent=label;b.onclick=fn;toolbar.appendChild(b);return b;}
+    let retained=null,retainedLoaded=false;
+    async function readRetained(){
+        if(retainedLoaded)return retained;
+        const value=await MimaDiagnosticJournal.candidatePreview(record.id);
+        if(!fresh()||record.id!==diagnosticViewState.selectedId)throw Error('已切换剧情或诊断条目，请重新打开');
+        retained=value;retainedLoaded=true;return value;
     }
-    // Keep the text directly below its diagnostic row. Previously the detail
-    // appeared after all 30 rows, making the retained body effectively hidden
-    // on a narrow phone despite being present in IndexedDB.
-    (selectedRow||detail).appendChild(wrap);
-    qs('diag-delete-one').onclick=async()=>{
+    async function fullExport(){let candidate=null,recoveryReadError='';try{candidate=await readRetained();}catch(e){recoveryReadError=String(e?.message||e);}
+      return {...record,...(candidate?.raw?{recoveryPreview:candidate}:{}),...(recoveryReadError?{recoveryReadError}:{})};}
+    actionButton('删除这条',async()=>{
         if(!confirm('删除这条诊断记录？不会删除剧情消息。'))return;
-        try{await MimaDiagnosticJournal.remove(record.id);diagnosticViewState.selectedId=null;await refreshDiagnosticsView();}catch(e){toast(`删除日志失败：${e.message}`)}
-    };
-    qs('diag-copy-one').onclick=async()=>{
+        try{await MimaDiagnosticJournal.remove(record.id);diagnosticViewState.selectedId=null;await refreshDiagnosticsView();}catch(e){toast(`删除日志失败：${e.message}`);}
+    });
+    actionButton('复制此条 JSON',async()=>{
         if(!confirm('本记录可能含完整私人 Prompt。确定复制到剪贴板？'))return;
-        try{await copyTextPortable(JSON.stringify({...record,...(retained?{recoveryPreview:retained}:{})},null,2));toast('诊断记录已复制。')}catch(e){toast(`复制失败：${e.message}`)}
-    };
-    qs('diag-download-one').onclick=()=>downloadJson(`咪嘛馆_诊断_${String(record.requestId||record.id).replace(/[^\w.-]/g,'_')}.json`,{...record,...(retained?{recoveryPreview:retained}:{})});
+        try{await copyTextPortable(JSON.stringify(await fullExport(),null,2));toast('诊断记录已复制。');}catch(e){toast('复制失败：'+e.message);}
+    });
+    actionButton('下载此条 JSON',async()=>{
+        try{downloadJson(`咪嘛馆_诊断_${String(record.requestId||record.id).replace(/[^\w.-]/g,'_')}.json`,await fullExport());}
+        catch(e){toast('导出失败：'+e.message);}
+    });
+    const stats=document.createElement('p');stats.className='row-sub';
+    stats.textContent=`请求体：${record.requestBytes?Number(record.requestBytes).toLocaleString()+' bytes':'未记录'} · 准备：${record.preparationElapsedMs==null?'未记录':Number(record.preparationElapsedMs)+' ms'} · 等待响应头：${record.transport?Number(record.transport.fetchElapsedMs)+' ms':'未记录'}`;
+    wrap.appendChild(stats);
+    const meta=document.createElement('div');meta.className='row-sub';meta.textContent='采样元信息：'+JSON.stringify(record.requestMeta||{});wrap.appendChild(meta);
+    if(record.requestTruncated){const warning=document.createElement('p');warning.className='helper';warning.textContent='请求超过诊断保存上限，未保存完整 Prompt。实际发送不受影响。';wrap.appendChild(warning);}
+    const request=record.request;
+    if(request){
+        const details=document.createElement('details'),summary=document.createElement('summary');summary.textContent=`展开实际 messages（${request.messages?.length||0} 条）`;details.appendChild(summary);
+        details.addEventListener('toggle',()=>{if(details.open&&!details.querySelector('pre')){
+          const pre=document.createElement('pre');pre.className='prompt-pre';
+          pre.textContent=(request.messages||[]).map((m,i)=>`#${i} ${m.role}${m.prefix===true?' · prefix=true':''} · ${record.messageSources?.[i]?.kind||'未记录来源'} / ${record.messageSources?.[i]?.sourceId||record.messageSources?.[i]?.messageId||''}\n${m.content}`).join('\n\n');details.appendChild(pre);
+        }else if(!details.open)details.querySelector('pre')?.remove();});
+        wrap.appendChild(details);
+    }else{const none=document.createElement('p');none.className='helper';none.textContent='没有保存完整请求，或在发送前失败。';wrap.appendChild(none);}
+    if(record.error){const error=document.createElement('pre');error.className='prompt-pre';error.textContent=JSON.stringify(record.error,null,2);wrap.appendChild(error);}
+    const textStatus=document.createElement('p');textStatus.className='helper';textStatus.textContent='完整失败正文按需读取。打开之前不会加载大型原文或生成隐藏 DOM。';wrap.appendChild(textStatus);
+    // Both entry points use the same on-demand reader. A stale selection/tab may never paint its result.
+    async function showRetainedReply(){
+        textStatus.textContent='正在读取留存正文…';
+        try{
+            const candidate=await readRetained();
+            if(!fresh()||record.id!==diagnosticViewState.selectedId||!wrap.isConnected)return;
+            textStatus.textContent=candidate?.raw?`已留存 ${candidate.rawChars} 字符 · ${candidate.complete?'接收完整':'仅有现存片段'}`:'本条未找到可恢复的正文。';
+            let pre=wrap.querySelector('[data-diagnostic-reply]');
+            if(!pre){pre=document.createElement('pre');pre.className='prompt-pre';pre.setAttribute('data-diagnostic-reply','');wrap.appendChild(pre);}
+            pre.textContent=candidate?.raw||'没有可保存的失败正文。';
+        }catch(e){
+            if(fresh()&&record.id===diagnosticViewState.selectedId&&wrap.isConnected)
+                textStatus.textContent='留存正文读取失败，原件未被删除：'+e.message;
+        }
+    }
+    const viewBody=actionButton('查看保存正文',()=>void showRetainedReply());
+    viewBody.title='只在主动查看时读取保存正文';
+    actionButton('复制留存正文',async()=>{try{const c=await readRetained();if(!c.raw)throw Error('没有可复制的正文');await copyTextPortable(c.raw);toast('已复制留存正文');}catch(e){toast('复制失败：'+e.message);}});
+    actionButton('下载留存正文',async()=>{try{const c=await readRetained();if(!c.raw)throw Error('没有可下载的正文');downloadText('咪嘛馆-未采纳正文.txt',c.raw);}catch(e){toast('下载失败：'+e.message);}});
+    if(['rejected','aborted','conflict'].includes(record.status)){
+        if(record.requestSent!==false)toolbar.appendChild(diagnosticRecoveryButton(record));
+        if(['E_HTML_STRUCTURE_MISSING','E_HTML_REQUIRED_NODE_MISSING','E_STORY_OUTPUT_INCOMPLETE'].includes(record.error?.code))toolbar.appendChild(diagnosticHtmlCodeRepairButton(record));
+        const note=document.createElement('p');note.className='helper';note.textContent=record.manualRecovery?'这条已手动恢复；原始诊断仍保留。':'手动恢复时仍会核对原请求身份和 History 版本，不重发模型请求。';wrap.appendChild(note);
+    }
+    (selectedRow||detail).appendChild(wrap);
+    // A list-row “view saved reply” click means view now, not a second identical click in details.
+    if(openRetainedId===record.id&&fresh()&&record.id===diagnosticViewState.selectedId)
+        void showRetainedReply();
 }
-
-function setupEditorButtons(deleteFn,saveFn){editorInitialForm=editorFormSnapshot();editorInitialDraft=JSON.stringify(editorState?.draft??null);editorDraftStructureChanged=false;qs('editor-save').textContent='保存';const del=qs('editor-delete');if(deleteFn){del.classList.remove('hidden');del.onclick=deleteFn}else{del.classList.add('hidden');del.onclick=null}qs('editor-save').onclick=saveFn}
+function setupEditorButtons(deleteFn,saveFn){editorInitialForm=editorFormSnapshot();editorInitialDraft=JSON.stringify(editorState?.draft??null);editorDraftStructureChanged=false;const save=qs('editor-save');save.disabled=false;save.textContent='保存';const del=qs('editor-delete');if(deleteFn){del.classList.remove('hidden');del.onclick=deleteFn}else{del.classList.add('hidden');del.onclick=null}save.onclick=saveFn}
 function downloadText(name,text,type='text/plain;charset=utf-8'){return window.MimaFileExport.save(name,String(text??''),type)}
 function downloadJson(name,obj){downloadText(name,JSON.stringify(obj,null,2),'application/json;charset=utf-8')}
 function toast(text){let t=document.getElementById('mima-toast');if(!t){t=document.createElement('div');t.id='mima-toast';t.style.cssText='position:fixed;z-index:2000;left:50%;bottom:120px;transform:translateX(-50%);background:rgba(48,51,56,.92);color:white;padding:10px 14px;border-radius:999px;font-size:13px;max-width:85vw;text-align:center;transition:.2s';document.body.appendChild(t)}t.textContent=text;t.style.opacity='1';clearTimeout(t._timer);t._timer=setTimeout(()=>t.style.opacity='0',2200)}
@@ -4130,8 +4314,7 @@ async function openGenerationTaskViewer(){
    }
    if(entry.status==='prepared'&&!localActive&&!draftProblem){
      const identity={sessionId,generationId:entry.id,attempt:entry.attempt};
-     const records=await MimaDiagnosticJournal.list({sessionId});
-     const record=records.find(r=>r.generationId===entry.id&&r.generationAttempt===entry.attempt&&r.action===entry.action&&['requesting','provider_returned'].includes(r.status));
+     const record=await MimaDiagnosticJournal.findGeneration({sessionId,generationId:entry.id,attempt:entry.attempt,action:entry.action,statuses:['requesting','provider_returned']});
      if(record&&currentSessionId===sessionId&&nav===sessionNavigationEpoch&&readToken===r19TaskViewerReadToken&&!viewer.classList.contains('hidden')){
        const candidate=await MimaDiagnosticJournal.candidatePreview(record.id);
        if(currentSessionId!==sessionId||nav!==sessionNavigationEpoch||readToken!==r19TaskViewerReadToken||viewer.classList.contains('hidden'))return;
@@ -4288,20 +4471,8 @@ function hideFailedStreamControls(){
  r19FailedStreamIdentity=null;
  for(const id of ['generation-view-failed-stream','generation-copy-failed-stream'])qs(id)?.classList.add('hidden');
 }
-async function refreshFailedStreamControls(){
- hideFailedStreamControls();
- const sessionId=currentSessionId;
- if(!sessionId||!qs('generation-panel')?.classList.contains('error'))return;
- try{
-  const state=await MimaLocalStore.loadState(),pending=state.sessions?.find(s=>s.id===sessionId)?.pendingGeneration;
-  if(pending?.status!=='failed')return;
-  const identity={sessionId,generationId:pending.id,attempt:pending.attempt};
-  const draft=await MimaLocalStore.generationRead(identity);
-  if(!draft.complete||!draft.text.length||currentSessionId!==sessionId||!qs('generation-panel')?.classList.contains('error'))return;
-  r19FailedStreamIdentity=identity;
-  qs('generation-view-failed-stream')?.classList.remove('hidden');
- }catch(e){console.warn('已失败生成的本机流式原文尚不可核对；不假称已保存',{sessionId,error:e});}
-}
+// Failed-stream buttons share the same identity-checked HUD refresh as the
+// diagnostic recovery button. Never start a second full canonical read here.
 async function readFailedGenerationStream(){
  const id=r19FailedStreamIdentity;
  if(!id||currentSessionId!==id.sessionId)throw new Error('当前会话没有已核实的失败流式原文');
@@ -4390,12 +4561,12 @@ function setGenerationProgress(payload={}){const panel=qs('generation-panel'),ba
     }
     if(payload.label)label.textContent=payload.label;if(payload.detail)detail.textContent=payload.detail}
 function setGenerationRetryVisible(visible){for(const id of ['generation-retry','generation-retry-current'])qs(id)?.classList.toggle('hidden',!visible);}
-function beginGenerationProgress(action){
+function beginGenerationProgress(action){r19FailedHudReadToken++;r19FailedHudIdentity=null;cancelGenerationHudPaint();
  // Old failure recovery controls belong to the PREVIOUS task.  Never expose
  // them as actions for the newly generating turn; the journal remains intact.
  r19HudRecoveryDiagnosticId=null;
  for(const id of ['generation-owner-preview','generation-owner-recover','generation-owner-html-repair','generation-view-draft','generation-copy-draft'])qs(id)?.classList.add('hidden');
- qs('generation-owner-raw-preview')?.remove();
+ qs('generation-owner-raw-preview')?.remove();qs('generation-hud-recovery-error')?.remove();
  toggleUnknownGenerationActions(false);
  hideFailedStreamControls();qs('generation-recovery-draft')?.classList.add('hidden');qs('generation-copy-failed-stream')?.classList.add('hidden');deferredGenerationProgress=null;currentGenerationAction=action;lastGenerationFailure=null;contextRecoveryReceipt=null;setGenerationRetryVisible(false);setGenerationPanelMinimized(false);qs('generation-capacity-recovery')?.classList.add('hidden');qs('generation-resume-unanswered')?.classList.add('hidden');const panel=qs('generation-panel');panel?.classList.remove('hidden','error','done');setGenerationProgress({percent:4,label:`🤍 ${generationActionLabel(action)}`,detail:'正在准备本轮剧情…'})}
 function isStoryNearBottom(box,threshold=96){return !box||((box.scrollHeight-box.scrollTop-box.clientHeight)<=threshold)}
@@ -4439,7 +4610,13 @@ function persistStoryUiTiming(owner,phase,st=null){
     if(!owner||!MimaDiagnosticJournal?.uiTiming)return;
     const timing={sessionId:owner.sessionId,turnId:String(owner.turnId),traceId:owner.traceId,phase,
       elapsedSinceUiSubmitMs:Math.round((performance.now()-owner.uiStartedAt)*100)/100,
-      paintDurationMs:st?.lastPaintDurationMs||0,paintCount:st?.paints||0,chars:st?.displayText?.length||0};
+      paintDurationMs:st?.lastPaintDurationMs||0,paintCount:st?.paints||0,chars:st?.displayText?.length||0,
+      maxPaintDurationMs:st?.maxPaintDurationMs||0,totalPaintDurationMs:st?.totalPaintDurationMs||0,
+      lastVisibility:typeof document!=='undefined'?document.visibilityState:'unknown',
+      receivedChars:owner.streamText?.length||0,
+      regexParsedChars:st?.regexParsedChars||0,htmlSanitizedChars:st?.htmlSanitizedChars||0,
+      htmlCachedChars:st?.htmlCachedChars||0,stableHtmlNodes:st?.safeHtmlStream?.prefixNodes||0,
+      fullDomPatches:st?.fullDomPatches||0};
     void MimaDiagnosticJournal.uiTiming(timing).catch(e=>console.error('剧情 UI 时间诊断持久化失败',{sessionId:owner.sessionId,turnId:owner.turnId,phase,error:e}));
 }
 // Keep unchanged streamed DOM branches stable across paints. Every update still
@@ -4477,19 +4654,123 @@ function patchPlainStreamSuffix(st,raw,token){
  const normalized=raw.includes('\r')?raw.replace(/\r\n?/g,'\n'):raw;
  let cache=st.plainStream;
  if(!cache||cache.token!==token||!normalized.startsWith(cache.previous)){
-  st.contentNode.replaceChildren();cache={token,previous:'',tailOffset:0,lastNode:null};st.plainStream=cache;
+  st.contentNode.replaceChildren();
+  cache={token,previous:'',tailOffset:0,lastNode:null,appendSafe:true,trailing:''};
+  st.plainStream=cache;
  }
+ const delta=normalized.slice(cache.previous.length);
+ if(!delta)return;
+ // renderStoryInline() treats the ENTIRE prose paragraph as literal text only
+ // when it contains neither * nor backslash. We can append those plain text
+ // deltas without reparsing; Markdown-bearing paragraphs must always use the
+ // original renderer because even later plain letters can change tokenization.
+ // Single newlines remain inside the same DOM paragraph, as in final rendering.
+ const pending=(cache.trailing||'')+delta;
+ const newParagraph=/\n{2,}/.test(pending);
+ const syntaxChange=/[\\*]/.test(delta);
+ const liveText=cache.lastNode?.lastChild;
+ const canAppend=cache.appendSafe&&!newParagraph&&!syntaxChange&&
+  (!cache.lastNode||(cache.lastNode.isConnected&&liveText?.nodeType===Node.TEXT_NODE));
+ if(canAppend){
+  const hasNode=!!cache.lastNode;
+  const incoming=hasNode?pending:pending.trimStart();
+  const visible=incoming.trimEnd();
+  cache.trailing=incoming.slice(visible.length);
+  if(visible){
+   if(hasNode)liveText.appendData(visible);
+   else{
+    const paragraph=document.createElement('div');
+    paragraph.className='story-prose story-paragraph';
+    paragraph.textContent=visible;
+    st.contentNode.appendChild(paragraph);cache.lastNode=paragraph;
+   }
+  }
+  cache.previous=normalized;
+  return;
+ }
+ // A syntax change may reinterpret earlier emphasis, escaped punctuation or
+ // literal HTML. Rebuild only the unfinished paragraph through the ORIGINAL
+ // Markdown renderer; do not split on single newlines or change final output.
  const tail=normalized.slice(cache.tailOffset),previousStart=cache.tailOffset;
  if(cache.lastNode?.isConnected)cache.lastNode.remove();
  const before=st.contentNode.childElementCount;
  appendProseText(st.contentNode,tail,true);
- // Last paragraph is provisional, earlier paragraphs are immutable until a
- // non-append update, in which case the cache is discarded above.
  const separators=/\n{2,}/g;let separator;
  while((separator=separators.exec(tail)))cache.tailOffset=previousStart+separator.index+separator[0].length;
- const pending=normalized.slice(cache.tailOffset);
- cache.lastNode=pending.trim()&&st.contentNode.childElementCount>before?st.contentNode.lastElementChild:null;
+ const unfinished=normalized.slice(cache.tailOffset);
+ cache.lastNode=unfinished.trim()&&st.contentNode.childElementCount>before?st.contentNode.lastElementChild:null;
+ const trailingMatch=/\s*$/.exec(unfinished);
+ cache.trailing=trailingMatch?trailingMatch[0]:'';
+ // A paragraph containing any Markdown marker cannot be extended without
+ // re-running the parser: tokenization can change even on ordinary letters.
+ cache.appendSafe=!/[\\*]/.test(unfinished);
  cache.previous=normalized;
+}
+// Conservative Safe HTML stable-root caching. Only independently balanced
+// top-level elements with ordinary, well-formed HTML are committed. All
+// incomplete/mixed/ambiguous content falls back to the original whole-text
+// sanitizer; arbitrary display regex is NEVER assumed incrementally safe.
+function r19SafeHtmlStableBoundary(tail){
+ if(/<\s*(?:style|script|template|table|tbody|thead|tfoot|tr|td|th|select|svg|math|iframe|textarea|noscript)\b/i.test(tail)||/<!--[\s\S]*?-->|<!/i.test(tail))return null;
+ const tags=/<(\/)?([a-z][a-z0-9-]*)(?:\s+(?:[^\"'<>]|\"[^\"<>]*\"|'[^'<>]*')*)?\s*(\/?)>/gi;
+ const rootTags=new Set(['DIV','SECTION','ARTICLE','ASIDE','DETAILS','P','HEADER','FOOTER','NAV']);
+ const voidTags=new Set(['BR','HR']);
+ const allowed=new Set(['DIV','SECTION','ARTICLE','ASIDE','DETAILS','SUMMARY','P','HEADER','FOOTER','NAV','SPAN','STRONG','B','EM','I','SMALL','MARK','S','U','SUB','SUP','KBD','BLOCKQUOTE','PRE','CODE','H1','H2','H3','H4','H5','H6','UL','OL','LI','DL','DT','DD','BR','HR','PROGRESS','METER']);
+ let stack=[],lastEnd=0,lastTagEnd=0,seenRoot=false,tag;
+ while((tag=tags.exec(tail))){
+   const name=tag[2].toUpperCase();
+   if(!allowed.has(name)||((tag[3]||tag[1])&&voidTags.has(name))||(tag[3]&&!voidTags.has(name)))return null;
+   if(!tag[1]&&stack.includes('P')&&rootTags.has(name))return null;
+   const between=tail.slice(lastTagEnd,tag.index);
+   // An unrecognised '<' may be an unfinished tag or malformed markup whose
+   // repair by the browser could change preceding nodes. Never cache it.
+   if(between.includes('<')||(!stack.length&&between.trim()))return null;
+   if(!stack.length&&!tag[1]&&!rootTags.has(name))return null;
+   if(tag[1]){
+     if(stack.pop()!==name)return null;
+   }else if(!voidTags.has(name)&&!tag[3]){
+     if(stack.at(-1)==='P'&&rootTags.has(name))return null;
+     stack.push(name);
+   }
+   if(!stack.length){lastEnd=tags.lastIndex;seenRoot=true;}
+   lastTagEnd=tags.lastIndex;
+ }
+ // A trailing partial tag or unfinished element stays in the re-rendered tail;
+ // only already closed top-level roots are cached across paints.
+ if(!seenRoot)return 0;
+ return lastEnd;
+}
+function r19PatchSafeHtmlSuffix(st,raw,token){
+ let cache=st.safeHtmlStream;
+ if(!cache||cache.token!==token||!raw.startsWith(cache.previous)){
+   st.contentNode.replaceChildren();
+   const scope='mima_'+Math.random().toString(36).slice(2,12);
+   st.contentNode.dataset.mimaHtmlScope=scope;
+   cache={token,previous:'',committedChars:0,prefixNodes:0,scope};st.safeHtmlStream=cache;
+ }
+ const tail=raw.slice(cache.committedChars),cut=r19SafeHtmlStableBoundary(tail);
+ if(cut===null){st.safeHtmlStream=null;return false;}
+ if(raw===cache.previous)return true;
+ // Remove only the mutable suffix; completed HTML nodes (incl. expanded
+ // details, CSS animation state and DOM references) remain untouched.
+ while(st.contentNode.childNodes.length>cache.prefixNodes)st.contentNode.lastChild.remove();
+ if(cut){
+   const staged=document.createElement('div');staged.dataset.mimaHtmlScope=cache.scope;
+   st.htmlSanitizedChars=(st.htmlSanitizedChars||0)+cut;
+   appendRenderedContent(staged,tail.slice(0,cut),true,true);
+   while(staged.firstChild)st.contentNode.appendChild(staged.firstChild);
+   cache.committedChars+=cut;cache.prefixNodes=st.contentNode.childNodes.length;
+ }
+ const unfinished=raw.slice(cache.committedChars);
+ if(unfinished){
+   const staged=document.createElement('div');staged.dataset.mimaHtmlScope=cache.scope;
+   st.htmlSanitizedChars=(st.htmlSanitizedChars||0)+unfinished.length;
+   appendRenderedContent(staged,unfinished,true,true);
+   while(staged.firstChild)st.contentNode.appendChild(staged.firstChild);
+ }
+ st.htmlCachedChars=(st.htmlCachedChars||0)+cache.committedChars;
+ cache.previous=raw;
+ return true;
 }
 // Latest-snapshot rendering: decouple SSE arrival from the browser's paint budget.
 // A completed generation still goes through the original full renderer unchanged.
@@ -4514,13 +4795,30 @@ async function renderLiveStreamText(){
           patchPlainStreamSuffix(st,raw,token);
           st.paints=(st.paints||0)+1;
           st.lastPaintDurationMs=Math.round((performance.now()-started)*100)/100;
+          st.totalPaintDurationMs=(st.totalPaintDurationMs||0)+st.lastPaintDurationMs;
+          st.maxPaintDurationMs=Math.max(st.maxPaintDurationMs||0,st.lastPaintDurationMs);
           if(st.paints===1)persistStoryUiTiming(st.owner,'ui_first_visible',st);
           const box=qs('story-chat-box');if(box&&st.followTail!==false&&!readingMode)box.scrollTop=box.scrollHeight;
           updateStoryFollowButton();return;
         }
         st.plainStream=null;
+        const canReuseHtml=renderMode==='safe_html'&&
+          !MimaStandalone.hasActiveRegexForSession(st.owner.sessionId,'display')&&!raw.includes('{');
+        if(canReuseHtml){
+          st.contentNode.className='msg-content tavern-story-content live-stream-content safe-html-content';
+          if(r19PatchSafeHtmlSuffix(st,raw,token)){
+            st.paints=(st.paints||0)+1;
+            st.lastPaintDurationMs=Math.round((performance.now()-started)*100)/100;
+            st.totalPaintDurationMs=(st.totalPaintDurationMs||0)+st.lastPaintDurationMs;
+            st.maxPaintDurationMs=Math.max(st.maxPaintDurationMs||0,st.lastPaintDurationMs);
+            if(st.paints===1)persistStoryUiTiming(st.owner,'ui_first_visible',st);
+            const box=qs('story-chat-box');if(box&&st.followTail!==false&&!readingMode)box.scrollTop=box.scrollHeight;
+            updateStoryFollowButton();return;
+          }
+        }else st.safeHtmlStream=null;
         st.regexController=new AbortController();
         let rendered;
+        st.regexParsedChars=(st.regexParsedChars||0)+raw.length;
         try{rendered=await MimaStandalone.applyRegexForSessionAsync(st.owner.sessionId,raw,'display',null,{signal:st.regexController.signal});}
         catch(e){
           if(liveStreamState===st&&ownsVisibleGeneration(st.owner)&&token===r19RegexRenderToken()&&!st.regexDirty&&st.displayText===raw)st.contentNode.textContent=`正则未执行（${e.code||'E_REGEX_WORKER_FAILED'}）：${e.message}。本轮原始流仍保留。`;
@@ -4537,11 +4835,15 @@ async function renderLiveStreamText(){
         const allowHtml=currentSessionData?.renderMode==='safe_html';
         st.contentNode.className=`msg-content tavern-story-content live-stream-content${allowHtml?' safe-html-content':''}`;
         const perfDomAt=window.MimaPerfDiagnostics?.isRunning()?performance.now():0;
-        const staged=document.createElement('div');appendRenderedContent(staged,rendered,allowHtml,true);
+        st.fullDomPatches=(st.fullDomPatches||0)+1;
+        if(allowHtml)st.htmlSanitizedChars=(st.htmlSanitizedChars||0)+rendered.length;
+        const staged=document.createElement('div');if(allowHtml){if(!st.contentNode.dataset.mimaHtmlScope)st.contentNode.dataset.mimaHtmlScope='mima_'+Math.random().toString(36).slice(2,12);staged.dataset.mimaHtmlScope=st.contentNode.dataset.mimaHtmlScope;}appendRenderedContent(staged,rendered,allowHtml,true);
         patchLiveRenderedChildren(st.contentNode,staged);
         if(perfDomAt)window.MimaPerfDiagnostics?.mark('stream_dom_patch',performance.now()-perfDomAt);
         const box=qs('story-chat-box');if(box&&st.followTail!==false&&!readingMode)box.scrollTop=box.scrollHeight;
         st.lastPaintDurationMs=Math.round((performance.now()-started)*100)/100;
+          st.totalPaintDurationMs=(st.totalPaintDurationMs||0)+st.lastPaintDurationMs;
+          st.maxPaintDurationMs=Math.max(st.maxPaintDurationMs||0,st.lastPaintDurationMs);
         st.paints=(st.paints||0)+1;
         if(st.paints===1)persistStoryUiTiming(st.owner,'ui_first_visible',st);
         updateStoryFollowButton();
@@ -4632,7 +4934,8 @@ function pumpLiveStream(){
         if(st.targetText===st.displayText)return;
         const expensive=currentSessionData?.renderMode==='safe_html'||MimaStandalone.hasActiveRegexForSession(st.owner.sessionId,'display');
         const minPaintInterval=expensive?Math.min(1250,250+Math.floor(st.targetText.length/3500)*85):Math.min(160,60+Math.floor(st.targetText.length/10000)*15);
-        const remaining=minPaintInterval-(now-st.lastPaintAt);
+        const adaptive=expensive?Math.min(1250,Math.max(minPaintInterval,Math.ceil((st.lastPaintDurationMs||0)*4))):minPaintInterval;
+        const remaining=adaptive-(now-st.lastPaintAt);
         if(remaining>0){st.waitTimer=setTimeout(()=>{st.waitTimer=null;if(liveStreamState===st)pumpLiveStream()},remaining);return;}
         if(MimaStandalone.classifyStoryReply?.(st.targetText)?.blocked===true){
           st.displayText=st.targetText;st.lastPaintAt=now;
@@ -4644,9 +4947,26 @@ function pumpLiveStream(){
         if(st.targetText!==st.displayText)pumpLiveStream();
     });
 }
+let r19HudFrame=0,r19HudPayload=null;
+function cancelGenerationHudPaint(){
+ if(r19HudFrame)cancelAnimationFrame(r19HudFrame);
+ r19HudFrame=0;r19HudPayload=null;
+}
+function scheduleGenerationHudPaint(owner,payload){
+ // Only small UI metadata is retained; streamText and Thinking stay in the
+ // independent owner/live-bubble path and are never copied into HUD state.
+ r19HudPayload={owner,payload};
+ if(r19HudFrame)return;
+ r19HudFrame=requestAnimationFrame(()=>{
+   r19HudFrame=0;
+   const next=r19HudPayload;r19HudPayload=null;
+   if(next&&ownsVisibleGeneration(next.owner)&&!isSettingsOpen())setGenerationProgress(next.payload);
+ });
+}
 function handleGenerationProgress(payload,owner=currentGenerationOwner()){
     if(!owner||generationOwners.get(owner.sessionId)!==owner)return;
-    owner.lastProgress=payload;
+    const hudPayload={phase:payload?.phase,percent:payload?.percent,label:payload?.label,detail:payload?.detail};
+    owner.lastProgress=hudPayload;
     if(payload?.generationId&&Number.isFinite(Number(payload.attempt))){
         owner.generationId=payload.generationId;owner.generationAttempt=Number(payload.attempt);
     }
@@ -4663,7 +4983,7 @@ function handleGenerationProgress(payload,owner=currentGenerationOwner()){
         owner.streamText=String(payload.streamText||'');
     }
     if(!ownsVisibleGeneration(owner))return;
-    if(isSettingsOpen())deferredGenerationProgress={owner,payload};else setGenerationProgress(payload);
+    if(isSettingsOpen())deferredGenerationProgress={owner,payload:hudPayload};else scheduleGenerationHudPaint(owner,hudPayload);
     if((payload?.streamText!==undefined&&!blocked)||payload?.thinkingText!==undefined){
         const st=ensureLiveStreamBubble(owner);
         if(st&&MimaStandalone.getApiConfig()?.showThinking!==false&&payload?.thinkingText!==undefined){
@@ -4690,6 +5010,7 @@ function clearLiveStream(){
     liveStreamState=null;updateStoryFollowButton();
 }
 function finishGenerationProgress(owner=null){
+    cancelGenerationHudPaint();
     if(owner&&!ownsVisibleGeneration(owner))return;
     deferredGenerationProgress=null;lastGenerationFailure=null;currentGenerationAction=null;
     setGenerationRetryVisible(false);
@@ -4699,7 +5020,15 @@ function finishGenerationProgress(owner=null){
     const sessionId=currentSessionId;
     setTimeout(()=>{if(!currentGenerationOwner()&&currentSessionId===sessionId){panel?.classList.add('hidden');qs('generation-minimized-badge')?.classList.add('hidden');}},650);
 }
-function showGenerationError(err,action=currentGenerationAction,fromRestore=false,receivedText=''){
+function showGenerationError(err,action=currentGenerationAction,fromRestore=false,receivedText='',generationHint=null){
+    cancelGenerationHudPaint();r19FailedHudReadToken++;
+    // Read-only HUD eligibility uses the exact owning attempt and keyed
+    // generation receipt; it does not clone the entire canonical state.
+    const savedPending=currentSessionData?.pendingGeneration;
+    const hint=generationHint?.sessionId===currentSessionId?generationHint:
+      (fromRestore&&savedPending?.status==='failed'?{sessionId:currentSessionId,generationId:savedPending.id,attempt:savedPending.attempt,action:savedPending.action}:null);
+    r19FailedHudIdentity=hint?.generationId&&Number.isSafeInteger(Number(hint.attempt))&&Number(hint.attempt)>0?
+      {sessionId:currentSessionId,generationId:hint.generationId,attempt:Number(hint.attempt),action:hint.action||action}:null;
     deferredGenerationProgress=null;
     setGenerationPanelMinimized(false);
     const info=describeApiError(err),panel=qs('generation-panel'),bar=qs('generation-progress-bar'),label=qs('generation-label'),pct=qs('generation-percent'),detail=qs('generation-detail'),retry=qs('generation-retry');
@@ -4708,25 +5037,27 @@ function showGenerationError(err,action=currentGenerationAction,fromRestore=fals
     if(!fromRestore&&currentSessionId)generationFailures.set(currentSessionId,lastGenerationFailure);
     panel.classList.remove('hidden','done');panel.classList.add('error');bar.style.width='100%';
     pct.textContent=info.status?`HTTP（状态码） ${info.status}`:'ERROR（错误）';label.textContent=`生成失败 · ${info.code}`;
+    qs('generation-hud-recovery-error')?.remove();
     detail.textContent=`${info.message}\n可能原因：${info.hint}`;
-    if(info.details){
-        const evidence=document.createElement('details'),caption=document.createElement('summary'),content=document.createElement('pre');
-        caption.textContent='展开完整错误诊断（不影响关闭和重试）';
-        content.textContent=info.details;content.className='generation-error-diagnostic';
-        evidence.append(caption,content);detail.appendChild(evidence);
-    }
-    if(receivedText){
-        const evidence=document.createElement('details'),caption=document.createElement('summary'),content=document.createElement('pre');
-        evidence.open=true;caption.textContent='⚠ 本轮已接收但未正式保存的正文（可复制；刷新后请从生成诊断查看）';
-        content.textContent=receivedText;content.className='generation-error-diagnostic';content.style.maxHeight='32vh';content.style.overflow='auto';
-        evidence.append(caption,content);detail.appendChild(evidence);
-    }
-    if(info.partialDraft){
-        const evidence=document.createElement('details'),caption=document.createElement('summary'),content=document.createElement('pre');
-        caption.textContent='查看本轮未完成片段（仅诊断，未写入剧情或记忆）';
-        content.textContent=info.partialDraft;content.style.whiteSpace='pre-wrap';content.style.overflowWrap='anywhere';
-        evidence.append(caption,content);detail.appendChild(evidence);
-    }
+    const addLazyEvidence=(summary,source,openInitially=false)=>{
+      if(!source)return;
+      const disclosure=document.createElement('details'),caption=document.createElement('summary');
+      caption.textContent=summary;disclosure.appendChild(caption);
+      let pre=null;
+      disclosure.addEventListener('toggle',()=>{
+        if(disclosure.open){
+          if(!pre){pre=document.createElement('pre');pre.className='generation-error-diagnostic';
+            pre.style.maxHeight='32vh';pre.style.overflow='auto';pre.style.whiteSpace='pre-wrap';pre.style.overflowWrap='anywhere';
+            pre.textContent=source;disclosure.appendChild(pre);}
+        }else if(pre){pre.remove();pre=null;}
+      });
+      detail.appendChild(disclosure);
+      if(openInitially)disclosure.open=true;
+    };
+    addLazyEvidence('展开完整错误诊断（不影响关闭和重试）',info.details);
+    addLazyEvidence('⚠ 查看本轮已接收但未正式保存的正文（可复制）',receivedText);
+    if(info.partialDraft&&(!receivedText||!receivedText.startsWith(info.partialDraft)))
+      addLazyEvidence('查看本轮未完成片段（仅诊断，未写入剧情或记忆）',info.partialDraft);
     const retryable=info.code==='E_API_NETWORK_CORS'||info.code==='E_STREAM_INTERRUPTED'||[408,409,429,502,503,504].includes(info.status)||info.status>=500;
     setGenerationRetryVisible(retryable);
     const recover=qs('generation-capacity-recovery'),status=qs('generation-capacity-status'),input=qs('generation-context-tokens');
@@ -4740,36 +5071,81 @@ function showGenerationError(err,action=currentGenerationAction,fromRestore=fals
     qs('generation-resume-unanswered')?.classList.add('hidden');
     contextRecoveryReceipt=null;
     void refreshFailedGenerationRecovery();
-    void refreshFailedStreamControls();
 }
 let r19HudRecoveryDiagnosticId=null;
+let r19FailedHudIdentity=null;
+let r19FailedHudReadToken=0;
 async function refreshFailedGenerationRecovery(){
+ const token=++r19FailedHudReadToken;
  const preview=qs('generation-owner-preview'),recover=qs('generation-owner-recover'),repair=qs('generation-owner-html-repair');
  if(!preview||!recover)return;
- r19HudRecoveryDiagnosticId=null;preview.classList.add('hidden');recover.classList.add('hidden');repair?.classList.add('hidden');
- const sessionId=currentSessionId;if(!sessionId||!qs('generation-panel')?.classList.contains('error'))return;
+ r19HudRecoveryDiagnosticId=null;hideFailedStreamControls();
+ preview.classList.add('hidden');recover.classList.add('hidden');repair?.classList.add('hidden');
+ const sessionId=currentSessionId,nav=sessionNavigationEpoch,panel=qs('generation-panel'),identity=r19FailedHudIdentity;
+ if(!sessionId||!identity||identity.sessionId!==sessionId||!panel?.classList.contains('error')||panel.classList.contains('hidden'))return;
+ const valid=()=>token===r19FailedHudReadToken&&currentSessionId===sessionId&&
+   nav===sessionNavigationEpoch&&panel===qs('generation-panel')&&panel.classList.contains('error')&&!panel.classList.contains('hidden');
  try{
-   const persisted=await MimaLocalStore.loadState(),session=persisted.sessions.find(s=>s.id===sessionId);
-   const pending=session?.pendingGeneration;
-   if(!pending||pending.status!=='failed')return;
-   const records=await MimaDiagnosticJournal.list({sessionId});
-   const record=records.find(r=>r.generationId===pending.id&&r.generationAttempt===pending.attempt&&r.action===pending.action&&['rejected','aborted','conflict'].includes(r.status));
-   if(!record||currentSessionId!==sessionId)return;
-   const candidate=await MimaDiagnosticJournal.candidatePreview(record.id);
-   if(!candidate.raw?.trim())return;
-   r19HudRecoveryDiagnosticId=record.id;preview.classList.remove('hidden');recover.classList.remove('hidden');recover.textContent=candidate.complete?'手动恢复正文':'恢复现有片段';if(candidate.complete&&record.action&&!record.action.startsWith('compat_'))repair?.classList.remove('hidden');
- }catch(e){console.warn('拒收原文现场入口暂不可用，保留诊断与 canonical 数据',{sessionId,error:e});}
+   // A tiny keyed receipt is sufficient to show read-only recovery actions.
+   // Actual view/restore still checks canonical generation, owner, attempt and
+   // History revision in its original authoritative transaction. Do not
+   // touch History/Memory/other sessions merely to open an error panel.
+   const currentPending=currentSessionData?.pendingGeneration;
+   if(currentPending?.status==='prepared'&&currentPending.id!==identity.generationId)return;
+   const receipt=await MimaLocalStore.generationStatus(identity);
+   if(!valid()||receipt?.stage==='CANONICAL_COMMITTED')return;
+   if(receipt?.fragmentCount>0&&receipt.persistedChars>0){
+     r19FailedStreamIdentity=identity;
+     qs('generation-view-failed-stream')?.classList.remove('hidden');
+   }
+   // Use a cursor on the existing diagnostics session index. Do not invoke
+   // list() (which prunes and scans huge saved Prompt/candidate records) or
+   // candidatePreview() (which assembles full text) on popup appearance.
+   const record=await MimaDiagnosticJournal.findFailedGeneration(identity);
+   if(!valid()||!record)return;
+   r19HudRecoveryDiagnosticId=record.id;
+   preview.textContent='核对并查看留存正文';preview.classList.remove('hidden');
+ }catch(e){
+   if(valid()){
+     let note=qs('generation-hud-recovery-error');
+     if(!note){note=document.createElement('div');note.id='generation-hud-recovery-error';note.className='generation-detail';panel.appendChild(note);}
+     note.textContent='本机恢复记录核验失败：'+String(e.message||e).slice(0,180)+'。原始记录未被清理，可从诊断中心重新核对。';
+     console.error('生成失败 HUD 记录核验失败（未清理数据）',{sessionId,error:e});
+   }
+ }
 }
 async function previewFailedGenerationRaw(){
- const id=r19HudRecoveryDiagnosticId;if(!id)return toast('当前没有经核实的完整失败正文');
- try{const c=await MimaDiagnosticJournal.candidatePreview(id);const panel=qs('generation-detail');
-   let details=qs('generation-owner-raw-preview');if(details)details.remove();details=document.createElement('details');details.id='generation-owner-raw-preview';details.open=true;
-   const sum=document.createElement('summary');sum.textContent=(c.complete?'完整留存正文':'现存正文片段 · 后半段可能缺失')+' · 纯文本展示（非执行 HTML）';
-   const pre=document.createElement('pre');pre.className='generation-error-diagnostic';pre.style.maxHeight='35vh';pre.style.overflow='auto';pre.textContent=c.raw;
+ const id=r19HudRecoveryDiagnosticId,identity=r19FailedHudIdentity,token=r19FailedHudReadToken;
+ if(!id||!identity)return toast('当前没有对应的失败正文记录');
+ const sessionId=currentSessionId,nav=sessionNavigationEpoch,button=qs('generation-owner-preview');
+ const valid=()=>currentSessionId===sessionId&&sessionNavigationEpoch===nav&&
+   token===r19FailedHudReadToken&&r19HudRecoveryDiagnosticId===id&&
+   r19FailedHudIdentity===identity&&qs('generation-panel')?.classList.contains('error');
+ if(button){button.disabled=true;button.textContent='正在核对本机原文…';}
+ try{
+   const candidate=await MimaDiagnosticJournal.candidatePreview(id);
+   if(!valid())return;
+   if(!candidate.raw?.trim())throw Error('本机没有可核实的已收到正文；原记录仍保留');
+   const panel=qs('generation-detail');
+   let details=qs('generation-owner-raw-preview');if(details)details.remove();
+   details=document.createElement('details');details.id='generation-owner-raw-preview';details.open=true;
+   const sum=document.createElement('summary');sum.textContent=(candidate.complete?'完整留存正文':'现存正文片段 · 后半段可能缺失')+' · 纯文本展示（非执行 HTML）';
+   const pre=document.createElement('pre');pre.className='generation-error-diagnostic';pre.style.maxHeight='35vh';pre.style.overflow='auto';pre.textContent=candidate.raw;
    details.append(sum,pre);panel.append(details);
- }catch(e){toast('无法预览：'+e.message);}
+   const recover=qs('generation-owner-recover'),repair=qs('generation-owner-html-repair');
+   if(recover){recover.textContent=candidate.complete?'手动恢复正文':'恢复现存片段（需确认）';recover.classList.remove('hidden');}
+   if(candidate.complete&&identity.action&&!identity.action.startsWith('compat_'))repair?.classList.remove('hidden');
+ }catch(e){if(valid()){toast('本机正文核验失败：'+e.message);console.error('生成原文按需核验失败，未删除任何数据',{sessionId,diagnosticId:id,error:e});}}
+ finally{if(valid()&&button){button.disabled=false;button.textContent='再次核对并查看留存正文';}}
 }
-async function recoverFailedGenerationRaw(){const id=r19HudRecoveryDiagnosticId;if(!id)return toast('没有可恢复的完整原文');await recoverDiagnosticReply(id);await refreshFailedGenerationRecovery();}
+async function recoverFailedGenerationRaw(){
+ const id=r19HudRecoveryDiagnosticId;if(!id)return toast('没有经核验可恢复的原文');
+ const restored=await recoverDiagnosticReply(id);
+ if(restored){r19FailedHudReadToken++;r19FailedHudIdentity=null;r19HudRecoveryDiagnosticId=null;hideFailedStreamControls();
+   for(const name of ['generation-owner-preview','generation-owner-recover','generation-owner-html-repair'])qs(name)?.classList.add('hidden');
+   return;}
+ await refreshFailedGenerationRecovery();
+}
 async function repairFailedGenerationHtml(){const id=r19HudRecoveryDiagnosticId;if(!id)return toast('没有可修复的已核验原文');try{const record=await MimaDiagnosticJournal.recoveryCandidate(id);await reviewRejectedDiagnosticHtml(record);}catch(e){toast('免费 HTML 补全不可用：'+e.message);}}
 function currentRecoverySnapshot(){const session=MimaStandalone.getState()?.sessions?.find(s=>s.id===currentSessionId);return session?{
     sessionId:session.id,recordRevision:session.recordRevision,lastId:session.messages?.at(-1)?.id||'',
@@ -4825,7 +5201,7 @@ function retryFailedGeneration(parameters='original'){
     setGenerationRetryVisible(false);
     return triggerChat('','retry',{retryParameters:parameters==='current'?'current':'original'});
 }
-function dismissGenerationPanel(){qs('generation-panel')?.classList.add('hidden');qs('generation-minimized-badge')?.classList.add('hidden');generationPanelMinimized=false;}
+function dismissGenerationPanel(){r19FailedHudReadToken++;r19FailedHudIdentity=null;qs('generation-panel')?.classList.add('hidden');qs('generation-minimized-badge')?.classList.add('hidden');generationPanelMinimized=false;}
 // Read from canonical IndexedDB, never the possibly stale UI/standalone in-memory cache.
 // Failed reads are a DEGRADED state: do not infer an empty transcript or send a model request.
 async function reconcileCanonicalGenerationSession(sessionId){
@@ -4980,7 +5356,7 @@ async function triggerChat(text,actionType='send',generationOptions={}){
                 requestAnimationFrame(()=>{if(currentSessionId===targetSessionId)persistStoryUiTiming(owner,'ui_final_stable');});
                 refreshHeader();finishGenerationProgress();
             }else{
-                showGenerationError(res,actionType,false,owner.streamText);toast(`生成失败 · ${res.code||'E_UNKNOWN'}`);
+                showGenerationError(res,actionType,false,owner.streamText,{sessionId:targetSessionId,generationId:owner.generationId,attempt:owner.generationAttempt,action:actionType});toast(`生成失败 · ${res.code||'E_UNKNOWN'}`);
                 await reconcileCanonicalGenerationSession(targetSessionId);
             }
             if(preserveReading&&!finalStreamView&&!preservedReaderAnchor&&storyBox&&preservedScrollTop!==null)
@@ -4999,7 +5375,7 @@ async function triggerChat(text,actionType='send',generationOptions={}){
         generationReconcileStates.set(targetSessionId,{status:'checking',sessionId:targetSessionId});
         if(generationOwners.get(targetSessionId)===owner)generationOwners.delete(targetSessionId);
         generationFailures.set(targetSessionId,{...describeApiError(e),action:actionType});
-        if(currentSessionId===targetSessionId){clearLiveStream();toggleUIState(false);showGenerationError(e,actionType,false,owner?.streamText||'');toast(`生成失败 · ${e?.code||'E_UNKNOWN'}`);}
+        if(currentSessionId===targetSessionId){clearLiveStream();toggleUIState(false);showGenerationError(e,actionType,false,owner?.streamText||'',owner?{sessionId:targetSessionId,generationId:owner.generationId,attempt:owner.generationAttempt,action:actionType}:null);toast(`生成失败 · ${e?.code||'E_UNKNOWN'}`);}
         else console.error('其他剧情请求异常，原会话仍持有错误信息',{targetSessionId,turnId:owner.turnId,error:e});
         await reconcileCanonicalGenerationSession(targetSessionId);
     }finally{
