@@ -1597,3 +1597,18 @@ html.mima-settings-paint-guard .app-shell *::after{animation-play-state:paused!i
 .mima-appearance-fold>summary,.mima-css-category-title{min-height:calc(48px / var(--mima-ui-scale,1))}
 .mima-font-settings-card .field,.mima-font-settings-card button,.mima-font-row-sample{box-sizing:border-box}
 @media(max-width:620px){.mima-font-quick-preview{padding:10px}.session-item{gap:4px}.session-more{min-width:calc(44px / var(--mima-ui-scale,1));min-height:calc(44px / var(--mima-ui-scale,1))}}
+
+/* V5.83: keep the story composer compact while the iOS software keyboard is
+   visible. Preserve the normal 170px multiline height outside keyboard mode.
+   Longer drafts scroll *inside* the textarea; never truncate or rewrite text. */
+@media (max-width:700px){
+  html.mima-composer-keyboard .app-shell > .composer-shell .composer-row textarea#story-input{
+    /* Keyboard-only sizing wins over oversized custom-theme textarea rules;
+       all theme colors, images, borders and fonts remain untouched. */
+    min-height:0!important;
+    max-height:calc(92px / var(--mima-ui-scale,1))!important;
+    overflow-y:auto;
+    overscroll-behavior:contain;
+    -webkit-overflow-scrolling:touch;
+  }
+}
