@@ -1296,7 +1296,7 @@ function setupImmersiveReading(){
 }
 // User-facing release notes: once per distinct production release by default.
 // Avoid touching Store/History or making automatic announcements mandatory.
-const MIMA_RELEASE_NOTES_VERSION='R19-20261106-V5.78-RELEASE-UX-PROMPT-STATUS';
+const MIMA_RELEASE_NOTES_VERSION='R19-20261106-V5.80-APPEARANCE-ACCESS';
 const MIMA_RELEASE_NOTES_SEEN='mima-release-notes-seen:'+MIMA_RELEASE_NOTES_VERSION;
 const MIMA_RELEASE_NOTES_OPTOUT='mima-release-notes-disable-auto-v1';
 function openMimaReleaseNotice(){
@@ -1317,7 +1317,7 @@ function maybeShowMimaReleaseNotice(){
    openMimaReleaseNotice();
  }catch(e){console.warn('更新公告读取失败，未阻碍咪嘛馆启动',e)}
 }
-function renderMimaUpdatesTab(box){box.innerHTML=`<section class="settings-section"><h3>咪嘛馆更新说明</h3><p class="helper">当前版本：V5.78 · 2026年11月6日。这里介绍实际会影响使用的变化，不再展示开发日志。</p><button class="ghost-btn" onclick="openMimaReleaseNotice()">看看这次更新了什么</button><label class="check-row"><input type="checkbox" ${localStorage.getItem(MIMA_RELEASE_NOTES_OPTOUT)==='1'?'checked':''} onchange="setMimaReleaseNoticeOptOut(this.checked)">以后不再自动弹出更新公告</label></section>`}
+function renderMimaUpdatesTab(box){box.innerHTML=`<section class="settings-section"><h3>咪嘛馆更新说明</h3><p class="helper">当前版本：V5.80 · 2026年11月6日。这里介绍实际会影响使用的变化，不再展示开发日志。</p><button class="ghost-btn" onclick="openMimaReleaseNotice()">看看这次更新了什么</button><label class="check-row"><input type="checkbox" ${localStorage.getItem(MIMA_RELEASE_NOTES_OPTOUT)==='1'?'checked':''} onchange="setMimaReleaseNoticeOptOut(this.checked)">以后不再自动弹出更新公告</label></section>`}
 function renderSettings(){return renderSettingsContent().catch(error=>{r19Lifecycle('settings_render_error',{tab:settingsTab,message:String(error?.message||error).slice(0,250)});console.error('设置渲染失败',error);toast('设置显示失败：'+error.message);return false;});}
 async function renderSettingsContent(){
     const renderEpoch=++settingsRenderEpoch;
@@ -3020,6 +3020,13 @@ function mimaAppearanceFoldOpen(name,defaultOpen=false){
   return defaultOpen;
 }
 function mimaAppearanceFoldAttr(name,defaultOpen=false){return mimaAppearanceFoldOpen(name,defaultOpen)?'open':'';}
+function mimaOpenAppearanceSection(name){
+  const id={'font-settings':'mima-font-settings','local-fonts':'mima-local-fonts','remote-fonts':'mima-remote-fonts','css-presets':'mima-css-presets'}[name];
+  const target=id?document.getElementById(id):null;
+  if(!target){toast('对应设置尚未显示，请重新打开外观页');return;}
+  if(target.tagName==='DETAILS'&&!target.open)target.open=true;
+  target.scrollIntoView({block:'start',behavior:'auto'});
+}
 function mimaAppearanceFoldChanged(name,element){
   const open=!!element?.open;
   try{localStorage.setItem(MIMA_APPEARANCE_FOLD_PREFIX+name,open?'1':'0');}catch(_){}
@@ -3094,7 +3101,7 @@ async function renderAppearanceTab(box,renderEpoch=++settingsRenderEpoch){
     if(!settingsRenderIsCurrent('appearance',renderEpoch,box))return;
     window.MimaInteraction?.ready?.then(updateAppearanceSoundRows).catch(error=>console.warn('[Appearance] 个人音效读取失败，原始数据未修改',error));
     if(!fontReadError)fontRecords=records;
-    const ui=MimaFontManager.getSelected('ui'),story=MimaFontManager.getSelected('story'),typo=getStoryTypography();const opts=localFontOptions(fontReadError?[]:fontRecords);const themeState=MimaStandalone.getThemeSettings?.()||{theme:'default'},themeCards=(MimaThemeEngine?.getBuiltins?.()||[]).map(t=>`<button class="novel-theme-card ${themeState.theme===t.id?'active':''}" data-theme-choice="${t.id}" onclick="setBuiltInTheme('${t.id}')"><strong>${escapeHtml(t.name)}</strong><span>${escapeHtml(t.description)}</span></button>`).join('');box.innerHTML=`${appearanceFeedbackHtml()}<section class="settings-section"><h3>🌓 Built-in Theme（内置主题）</h3><p class="helper">Default 保留原始外观；深色、电子墨水、暖纸与韩系柔色主题覆盖聊天、设置、小说及助手的常用组件。启用全局 CSS 时内置皮肤暂停；停用全局 CSS 后恢复这里选择的主题。基础布局始终保留。</p><div class="novel-theme-grid">${themeCards}</div></section><section class="settings-section"><h3>📐 界面显示大小</h3><p class="helper">单独控制咪嘛馆的按钮、面板和小手机尺寸，不改变剧情正文字号设置，也不删除你现有的主题 CSS。默认 80%，相当于之前觉得舒服的紧凑尺寸；浏览器缩放建议恢复 100% 使用。</p><label class="form-label" for="mima-ui-density">界面显示比例</label><select id="mima-ui-density" class="field" style="max-width:240px" onchange="changeMimaUiDensity(this.value)"><option value="70">70% · 更紧凑</option><option value="80">80% · 推荐</option><option value="90">90%</option><option value="100">100% · 原始大小</option><option value="110">110% · 较大</option></select></section><section class="settings-section mima-appearance-group"><details class="mima-appearance-fold" ${mimaAppearanceFoldAttr('local-fonts',false)} ontoggle="mimaAppearanceFoldChanged('local-fonts',this)"><summary>🎨 本地字体库 <span class="mima-fold-hint">${fontRecords.length} 款 · 点击展开/收起</span></summary><div class="mima-appearance-fold-body"><p class="helper">直接导入 TTF / OTF / WOFF / WOFF2（字体文件格式）。文件保存在当前浏览器 IndexedDB，不需要转 URL（链接），也不会上传到服务器。剧情正文字体会作用于普通小说正文；开启 Safe HTML（安全 HTML）后，未自行指定字体的 HTML 正文也会继承它。状态栏若有自己的 CSS 字体设置，仍以状态栏自己的设置为准。</p><div class="toolbar"><button class="primary-btn" onclick="chooseFontImport()">＋ 导入字体文件</button><button class="ghost-btn" type="button" onclick="exportReadableFonts()">⇩ 分卷备份本地字体</button><button class="ghost-btn" type="button" onclick="exportReadableFontsToFolder()" ${typeof window.showDirectoryPicker==='function'?'':'hidden'}>⇩ 一键保存到文件夹</button><button class="ghost-btn" type="button" onclick="importLocalFontBackup()">⇧ 导入本地字体备份</button></div><div id="font-volume-export-status" class="row-sub" role="status" style="margin:8px 0;display:flex;flex-wrap:wrap;align-items:center;gap:8px"></div><p class="helper">单独字体备份每卷最多 16 MiB；支持的浏览器可以一键保存到选定文件夹，手机上可逐卷保存并在刷新后继续；恢复时一次选择同轮清单和所有分卷。旧版 JSON 仍可导入。未完成全部卷不能视为完整备份。异常字体若保留了原始字节，也会正常备份。若存在真正无法读取的文件，单独备份会明确列出缺失记录；这不是完整字体备份。旧版导入字体移除后原始字节暂时保留，不会立即腾出旧库存储。</p><div class="form-grid"><div><label class="form-label">UI（界面）字体</label><select id="font-ui-select" class="field" onchange="changeFont('ui',this.value)">${opts}</select></div><div><label class="form-label">剧情正文字体</label><select id="font-story-select" class="field" onchange="changeFont('story',this.value)">${opts}</select></div></div><div class="mima-weight-grid">${fontWeightControlsHtml('ui')}${fontWeightControlsHtml('story')}</div><div id="font-bundle-status" class="mima-bundle-status"></div><label class="form-label" for="mima-font-test-text">自定义字形测试句（按需检查，不会扫描全部字体）</label><input id="mima-font-test-text" class="field" value="咪嘛馆 中文简体 你好 天束影 日本語 あいうえお 漢字 Aa 0123"><pre id="mima-font-coverage-output" class="mima-font-coverage" hidden aria-live="polite"></pre><div id="font-application-status" class="mima-font-load-status" role="status" aria-live="polite"></div><div id="font-list" style="margin-top:14px"></div><div id="font-preview-sample" class="row-sub" aria-live="polite">每一行在滚动到可见区域时使用对应字体预览；离开视野后释放预览资源，选择不会改变。</div><div style="margin-top:10px"><button type="button" class="ghost-btn" onclick="mimaAuditFontData()">🛟 本地字体紧急检查（只读）</button><button type="button" class="ghost-btn" onclick="mimaInspectFontFailure()">🔎 检查字体为什么没生效（只读）</button><button type="button" class="ghost-btn" onclick="mimaCopyFontReport()">复制字体诊断</button><pre id="mima-font-diagnostic-output" hidden style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:42vh;overflow:auto;padding:10px;margin-top:8px;border:1px solid var(--line);border-radius:12px;font:12px/1.55 ui-monospace,monospace;background:var(--surface,white)"></pre></div></div></details></section>
+    const ui=MimaFontManager.getSelected('ui'),story=MimaFontManager.getSelected('story'),typo=getStoryTypography();const opts=localFontOptions(fontReadError?[]:fontRecords);const themeState=MimaStandalone.getThemeSettings?.()||{theme:'default'},themeCards=(MimaThemeEngine?.getBuiltins?.()||[]).map(t=>`<button class="novel-theme-card ${themeState.theme===t.id?'active':''}" data-theme-choice="${t.id}" onclick="setBuiltInTheme('${t.id}')"><strong>${escapeHtml(t.name)}</strong><span>${escapeHtml(t.description)}</span></button>`).join('');box.innerHTML=`${appearanceFeedbackHtml()}<nav class="mima-appearance-jumps" aria-label="外观设置快捷入口"><button type="button" onclick="mimaOpenAppearanceSection('font-settings')">🔤 字体设置</button><button type="button" onclick="mimaOpenAppearanceSection('local-fonts')">📁 本地字体管理</button><button type="button" onclick="mimaOpenAppearanceSection('remote-fonts')">🔗 网络字体管理</button><button type="button" onclick="mimaOpenAppearanceSection('css-presets')">🎨 CSS 列表</button></nav><section class="settings-section"><h3>🌓 Built-in Theme（内置主题）</h3><p class="helper">Default 保留原始外观；深色、电子墨水、暖纸与韩系柔色主题覆盖聊天、设置、小说及助手的常用组件。启用全局 CSS 时内置皮肤暂停；停用全局 CSS 后恢复这里选择的主题。基础布局始终保留。</p><div class="novel-theme-grid">${themeCards}</div></section><section class="settings-section"><h3>📐 界面显示大小</h3><p class="helper">单独控制咪嘛馆的按钮、面板和小手机尺寸，不改变剧情正文字号设置，也不删除你现有的主题 CSS。默认 80%，相当于之前觉得舒服的紧凑尺寸；浏览器缩放建议恢复 100% 使用。</p><label class="form-label" for="mima-ui-density">界面显示比例</label><select id="mima-ui-density" class="field" style="max-width:240px" onchange="changeMimaUiDensity(this.value)"><option value="70">70% · 更紧凑</option><option value="80">80% · 推荐</option><option value="90">90%</option><option value="100">100% · 原始大小</option><option value="110">110% · 较大</option></select></section><section class="settings-section mima-font-settings-card" id="mima-font-settings"><h3>🔤 字体设置 <span class="mima-fold-hint">界面和正文分别选择，随时可改</span></h3><p class="helper">这里始终显示当前正在使用的字体、字重和补字组合；管理字体文件请使用下方的「本地字体管理」或「网络字体管理」。收起字体库不会停用已选字体。</p><div class="form-grid"><div><label class="form-label">UI（界面）字体</label><select id="font-ui-select" class="field" onchange="changeFont('ui',this.value)">${opts}</select></div><div><label class="form-label">剧情正文字体</label><select id="font-story-select" class="field" onchange="changeFont('story',this.value)">${opts}</select></div></div><div class="mima-weight-grid">${fontWeightControlsHtml('ui')}${fontWeightControlsHtml('story')}</div><div id="font-bundle-status" class="mima-bundle-status"></div><div id="font-application-status" class="mima-font-load-status" role="status" aria-live="polite"></div><div class="toolbar mima-font-manager-shortcuts"><button type="button" class="ghost-btn" onclick="mimaOpenAppearanceSection('local-fonts')">📁 管理本地字体（${fontRecords.length} 款）</button><button type="button" class="ghost-btn" onclick="mimaOpenAppearanceSection('remote-fonts')">🔗 管理网络字体（${MimaFontManager.urlFonts().length} 款）</button></div></section><section class="settings-section mima-appearance-group"><details id="mima-local-fonts" class="mima-appearance-fold" ${mimaAppearanceFoldAttr('local-fonts',false)} ontoggle="mimaAppearanceFoldChanged('local-fonts',this)"><summary>📁 本地字体管理 <span class="mima-fold-hint">${fontRecords.length} 款 · 导入 / 预览 / 补字 / 删除 / 备份</span></summary><div class="mima-appearance-fold-body"><p class="helper">直接导入 TTF / OTF / WOFF / WOFF2（字体文件格式）。文件保存在当前浏览器 IndexedDB，不需要转 URL（链接），也不会上传到服务器。剧情正文字体会作用于普通小说正文；开启 Safe HTML（安全 HTML）后，未自行指定字体的 HTML 正文也会继承它。状态栏若有自己的 CSS 字体设置，仍以状态栏自己的设置为准。</p><div class="toolbar"><button class="primary-btn" onclick="chooseFontImport()">＋ 导入字体文件</button><button class="ghost-btn" type="button" onclick="exportReadableFonts()">⇩ 分卷备份本地字体</button><button class="ghost-btn" type="button" onclick="exportReadableFontsToFolder()" ${typeof window.showDirectoryPicker==='function'?'':'hidden'}>⇩ 一键保存到文件夹</button><button class="ghost-btn" type="button" onclick="importLocalFontBackup()">⇧ 导入本地字体备份</button></div><div id="font-volume-export-status" class="row-sub" role="status" style="margin:8px 0;display:flex;flex-wrap:wrap;align-items:center;gap:8px"></div><p class="helper">单独字体备份每卷最多 16 MiB；支持的浏览器可以一键保存到选定文件夹，手机上可逐卷保存并在刷新后继续；恢复时一次选择同轮清单和所有分卷。旧版 JSON 仍可导入。未完成全部卷不能视为完整备份。异常字体若保留了原始字节，也会正常备份。若存在真正无法读取的文件，单独备份会明确列出缺失记录；这不是完整字体备份。旧版导入字体移除后原始字节暂时保留，不会立即腾出旧库存储。</p><label class="form-label" for="mima-font-test-text">自定义字形测试句（按需检查，不会扫描全部字体）</label><input id="mima-font-test-text" class="field" value="咪嘛馆 中文简体 你好 天束影 日本語 あいうえお 漢字 Aa 0123"><pre id="mima-font-coverage-output" class="mima-font-coverage" hidden aria-live="polite"></pre><div id="font-list" style="margin-top:14px"></div><div id="font-preview-sample" class="row-sub" aria-live="polite">每一行在滚动到可见区域时使用对应字体预览；离开视野后释放预览资源，选择不会改变。</div><div style="margin-top:10px"><button type="button" class="ghost-btn" onclick="mimaAuditFontData()">🛟 本地字体紧急检查（只读）</button><button type="button" class="ghost-btn" onclick="mimaInspectFontFailure()">🔎 检查字体为什么没生效（只读）</button><button type="button" class="ghost-btn" onclick="mimaCopyFontReport()">复制字体诊断</button><pre id="mima-font-diagnostic-output" hidden style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:42vh;overflow:auto;padding:10px;margin-top:8px;border:1px solid var(--line);border-radius:12px;font:12px/1.55 ui-monospace,monospace;background:var(--surface,white)"></pre></div></div></details></section>
 <section class="settings-section"><h3>📖 Novel Typography（小说正文排版）</h3><p class="helper">进入本页会自动打开上方实时预览。字号、正文字体、行高与字间距也会作为 Safe HTML 的基础继承值；段间距与首行缩进仍只作用于咪嘛馆识别出的普通小说段落，不会强行挤压 &lt;system&gt; / &lt;details&gt; / 表格等状态栏结构。</p>
 <div class="typography-grid">
 ${typographyControlHtml('字号','fontSize',12,26,.5,typo.fontSize,'px')}
@@ -3103,9 +3110,9 @@ ${typographyControlHtml('段间距','paragraphGap',0,3,.05,typo.paragraphGap,'em
 ${typographyControlHtml('字间距','letterSpacing',-.04,.18,.005,typo.letterSpacing,'em')}
 ${typographyControlHtml('首行缩进','firstLineIndent',0,4,.25,typo.firstLineIndent,'em')}
 </div><div class="typography-indent-hint"><span>中文小说推荐：<strong>2em</strong>（约两个汉字宽）</span><div class="typography-quick-buttons"><button class="tool-mini" onclick="updateStoryTypography('firstLineIndent',0)">0</button><button class="tool-mini" onclick="updateStoryTypography('firstLineIndent',1)">1em</button><button class="tool-mini" onclick="updateStoryTypography('firstLineIndent',2)">2em</button><button class="tool-mini" onclick="updateStoryTypography('firstLineIndent',3)">3em</button></div></div><div class="toolbar typography-actions"><button class="ghost-btn" onclick="resetStoryTypography()">恢复默认排版</button></div></section>
-<section class="settings-section mima-appearance-group"><details class="mima-appearance-fold" ${mimaAppearanceFoldAttr('remote-fonts',false)} ontoggle="mimaAppearanceFoldChanged('remote-fonts',this)"><summary>🔗 网络字体收藏库 <span class="mima-fold-hint">${MimaFontManager.urlFonts().length} 款 · 支持批量导入</span></summary><div class="mima-appearance-fold-body"><p class="helper">字体文件链接可点「下载离线」，校验成功后保存到本机字体库；CSS（例如 Google Fonts）链接仍在线加载，想离线使用请导入完整字体文件。离线副本不占用临时 HTTP 缓存，普通清理缓存通常不影响它；但清除网站数据仍可能删除 IndexedDB。为了真正防丢，请到「数据备份」勾选字体文件，导出完整备份 JSON 到「文件」App。</p><div class="toolbar" role="group" aria-label="网络字体添加方式" style="display:flex;flex-wrap:wrap;gap:9px;margin:12px 0 14px"><button type="button" id="url-font-mode-single" class="primary-btn" aria-pressed="true" style="min-height:44px" onclick="setUrlFontImportMode('single')">单条添加</button><button type="button" id="url-font-mode-batch" class="ghost-btn" aria-pressed="false" style="min-height:44px" onclick="setUrlFontImportMode('batch')">＋ 批量导入字体链接</button></div><div id="url-font-single-panel" class="form-grid"><div><label class="form-label">收藏名称</label><input id="url-font-name" class="field" placeholder="例如：我的日文字体"></div><div><label class="form-label">字体族名（Google Fonts CSS 需要与其声明一致）</label><input id="url-font-family" class="field" placeholder="例如：Noto Sans JP"></div><div class="form-full"><label class="form-label">HTTPS 字体文件或 CSS 地址</label><input id="url-font-address" type="url" class="field" inputmode="url" placeholder="https://…/font.woff2"></div><div class="form-full"><button type="button" class="ghost-btn" onclick="saveUrlFont()">＋ 保存到字体库（不启用）</button></div></div><div id="url-font-batch-panel" class="mima-font-batch" style="display:none;margin:13px 0;padding:12px;border:1px solid var(--line);border-radius:13px"><p class="helper">一次粘贴多条 HTTPS 链接（每行一条，也支持空格分隔）。字体文件自动命名为「自定义字体1、2……」并生成 CSS；Google Fonts 的 CSS 会自动识别字体族名，其他 CSS 地址需允许跨站读取才能识别。链接只收藏，选择时才加载，不更改当前字体。最多收藏 100 个。</p><label class="form-label" for="url-font-batch-links">字体链接（可一次粘贴多条）</label><textarea id="url-font-batch-links" class="field textarea mono" rows="5" style="min-height:110px" spellcheck="false" placeholder="https://example.com/font1.woff2&#10;https://example.com/font2.ttf&#10;https://fonts.googleapis.com/css2?family=Noto+Sans+JP&amp;display=swap"></textarea><div class="toolbar" style="margin-top:9px"><button id="url-font-batch-import" type="button" class="primary-btn" style="min-height:56px" onclick="batchImportUrlFonts()">＋ 批量导入到字体库</button></div><div id="url-font-batch-status" class="row-sub" role="status" aria-live="polite" style="white-space:pre-wrap;overflow-wrap:anywhere;margin-top:8px"></div></div><div class="toolbar"><button type="button" class="ghost-btn" onclick="exportUrlFontRaw()">⇩ 导出链接字体收藏原始数据（救援）</button></div><div id="url-font-list" class="mima-url-font-list">${mimaAppearanceFoldOpen('remote-fonts',false)?urlFontItemsHtml():''}</div><details class="mima-legacy-font"><summary>旧版单链接字体（兼容保留）</summary><div class="form-grid"><div><label class="form-label">旧 URL</label><input id="legacy-font-url" class="field" value="${escapeHtml(localStorage.getItem(LEGACY_FONT_URL_KEY)||'')}"></div><div><label class="form-label">字体族名</label><input id="legacy-font-family" class="field" value="${escapeHtml(localStorage.getItem(LEGACY_FONT_FAMILY_KEY)||'')}"></div><div class="form-full"><button type="button" class="ghost-btn" onclick="applyLegacyUrlFont()">应用旧版链接</button></div></div></details></div></details></section>
-${window.MimaChatWallpaper?.markup?.()||''}<section class="settings-section mima-appearance-group"><details class="mima-appearance-fold" ${mimaAppearanceFoldAttr('css-presets',true)} ontoggle="mimaAppearanceFoldChanged('css-presets',this)"><summary>🪄 CSS 预设库 <span class="mima-fold-hint">${cssPresets.length} 款 · 分类折叠管理</span></summary><div class="mima-appearance-fold-body"><p class="helper">支持直接粘贴或导入<strong>纯 CSS</strong>，不需要手动包 &lt;style&gt;。CSS 可以只美化模型输出的自定义 HTML，也可以覆盖剧情区域，或选择“咪嘛馆全局”直接二改整个 UI（界面）。模型输出本身仍经过 Safe HTML sanitizer（安全 HTML 清洗器），不会执行 &lt;script&gt; / &lt;style&gt;。</p><div class="toolbar css-default-tools"><button class="primary-btn" onclick="openCssPresetEditor()">＋ 新建 CSS（样式）</button><button class="ghost-btn" onclick="chooseCssImport()">⇧ 导入 .css（样式文件）</button><button class="ghost-btn" onclick="copyDefaultCss()">⧉ 一键复制默认 CSS（样式）</button><button class="ghost-btn" onclick="exportDefaultCss()">⇩ 导出默认 CSS（样式）</button><button class="ghost-btn" onclick="forkDefaultCss()">✦ 默认 CSS 二改</button><button class="ghost-btn" onclick="MimaAssistantStudio.open('css')">✦ CSS 美化助手</button><button class="danger-btn" onclick="emergencyDisableCss()">🚑 临时禁用自定义 CSS（样式）</button></div><div class="toolbar"><button class="ghost-btn" onclick="stopAtelierAndRestoreCss()">停用工坊全局主题（保留旧 CSS）</button></div><div class="row-sub css-scope-note">Scope（作用域）：自定义 HTML / Chat / Novel / Assistant / 咪嘛馆全局。Novel 与 Assistant 使用稳定公开 selector；全局 CSS 仍拥有最高覆盖能力。</div><div id="css-recovery-status">${cssRecoveryMarkup()}</div><div id="css-current-status" class="row-sub" style="margin:8px 0 12px">当前聊天：${currentCssPreset()?escapeHtml(currentCssPreset().name):'未挂载'} · ${currentSessionData?.customCssEnabled===false?'已禁用':'已启用'}</div><div id="css-session-actions" class="toolbar">${currentSessionData?.customCssId?'<button class="ghost-btn" onclick="unapplyCss()">取消应用</button>':''}${currentSessionData?.customCssId&&currentSessionData?.customCssEnabled===false?'<button class="ghost-btn" onclick="reenableCss()">重新启用</button>':''}</div><button class="ghost-btn" onclick="unapplyGlobalCssPreset()">取消全局 CSS</button><div id="css-library-toolbar">${mimaLibraryToolbar('css',cssPresets)}</div><div id="css-preset-list" class="mima-css-group-list" style="margin-top:12px"></div></div></details></section>
-<section class="settings-section"><h3>显示</h3><label class="check-row"><input id="render-html-setting" type="checkbox" ${currentSessionData?.renderMode==='safe_html'?'checked':''} onchange="toggleSafeHtml(this.checked)"> 允许 Safe HTML（安全 HTML）状态栏渲染</label><p class="helper">开启后会保留正文原有换行与空格，并支持 &lt;system&gt;、&lt;details&gt;、&lt;summary&gt;、区块、表格等安全结构，方便 CSS 状态栏直接生效。</p></section>`;applyMimaUiDensity();qs('font-ui-select').value=ui;qs('font-story-select').value=story;stopUrlFontPreview();stopVisibleFontPreviews();applyFontWeightPrefs();updateFontApplicationStatus();renderFontBundleStatus();const root=qs('font-list');if(fontReadError){stopVisibleFontPreviews();root.textContent='字体库读取失败，原字体和选择均未更改：'+(fontReadError.message||String(fontReadError));}else if(mimaAppearanceFoldOpen('local-fonts',false)){renderLocalFontRows(root,fontRecords);root.dataset.loaded='1';}if(mimaAppearanceFoldOpen('css-presets',true))renderCssPresetLibrary(qs('css-preset-list'));syncStoryTypographyControls(typo);window.MimaFontBackup?.refresh?.()}
+<section class="settings-section mima-appearance-group"><details id="mima-remote-fonts" class="mima-appearance-fold" ${mimaAppearanceFoldAttr('remote-fonts',false)} ontoggle="mimaAppearanceFoldChanged('remote-fonts',this)"><summary>🔗 网络字体管理 <span class="mima-fold-hint">${MimaFontManager.urlFonts().length} 款 · 添加 / 批量导入 / 下载离线</span></summary><div class="mima-appearance-fold-body"><p class="helper">字体文件链接可点「下载离线」，校验成功后保存到本机字体库；CSS（例如 Google Fonts）链接仍在线加载，想离线使用请导入完整字体文件。离线副本不占用临时 HTTP 缓存，普通清理缓存通常不影响它；但清除网站数据仍可能删除 IndexedDB。为了真正防丢，请到「数据备份」勾选字体文件，导出完整备份 JSON 到「文件」App。</p><div class="toolbar" role="group" aria-label="网络字体添加方式" style="display:flex;flex-wrap:wrap;gap:9px;margin:12px 0 14px"><button type="button" id="url-font-mode-single" class="primary-btn" aria-pressed="true" style="min-height:44px" onclick="setUrlFontImportMode('single')">单条添加</button><button type="button" id="url-font-mode-batch" class="ghost-btn" aria-pressed="false" style="min-height:44px" onclick="setUrlFontImportMode('batch')">＋ 批量导入字体链接</button></div><div id="url-font-single-panel" class="form-grid"><div><label class="form-label">收藏名称</label><input id="url-font-name" class="field" placeholder="例如：我的日文字体"></div><div><label class="form-label">字体族名（Google Fonts CSS 需要与其声明一致）</label><input id="url-font-family" class="field" placeholder="例如：Noto Sans JP"></div><div class="form-full"><label class="form-label">HTTPS 字体文件或 CSS 地址</label><input id="url-font-address" type="url" class="field" inputmode="url" placeholder="https://…/font.woff2"></div><div class="form-full"><button type="button" class="ghost-btn" onclick="saveUrlFont()">＋ 保存到字体库（不启用）</button></div></div><div id="url-font-batch-panel" class="mima-font-batch" style="display:none;margin:13px 0;padding:12px;border:1px solid var(--line);border-radius:13px"><p class="helper">一次粘贴多条 HTTPS 链接（每行一条，也支持空格分隔）。字体文件自动命名为「自定义字体1、2……」并生成 CSS；Google Fonts 的 CSS 会自动识别字体族名，其他 CSS 地址需允许跨站读取才能识别。链接只收藏，选择时才加载，不更改当前字体。最多收藏 100 个。</p><label class="form-label" for="url-font-batch-links">字体链接（可一次粘贴多条）</label><textarea id="url-font-batch-links" class="field textarea mono" rows="5" style="min-height:110px" spellcheck="false" placeholder="https://example.com/font1.woff2&#10;https://example.com/font2.ttf&#10;https://fonts.googleapis.com/css2?family=Noto+Sans+JP&amp;display=swap"></textarea><div class="toolbar" style="margin-top:9px"><button id="url-font-batch-import" type="button" class="primary-btn" style="min-height:56px" onclick="batchImportUrlFonts()">＋ 批量导入到字体库</button></div><div id="url-font-batch-status" class="row-sub" role="status" aria-live="polite" style="white-space:pre-wrap;overflow-wrap:anywhere;margin-top:8px"></div></div><div class="toolbar"><button type="button" class="ghost-btn" onclick="exportUrlFontRaw()">⇩ 导出链接字体收藏原始数据（救援）</button></div><div id="url-font-list" class="mima-url-font-list">${mimaAppearanceFoldOpen('remote-fonts',false)?urlFontItemsHtml():''}</div><details class="mima-legacy-font"><summary>旧版单链接字体（兼容保留）</summary><div class="form-grid"><div><label class="form-label">旧 URL</label><input id="legacy-font-url" class="field" value="${escapeHtml(localStorage.getItem(LEGACY_FONT_URL_KEY)||'')}"></div><div><label class="form-label">字体族名</label><input id="legacy-font-family" class="field" value="${escapeHtml(localStorage.getItem(LEGACY_FONT_FAMILY_KEY)||'')}"></div><div class="form-full"><button type="button" class="ghost-btn" onclick="applyLegacyUrlFont()">应用旧版链接</button></div></div></details></div></details></section>
+${window.MimaChatWallpaper?.markup?.()||''}<section class="settings-section mima-appearance-group mima-css-manager" id="mima-css-presets"><h3>🎨 CSS 样式管理 <span class="mima-fold-hint">${cssPresets.length} 款 · 分类可单独展开或收起</span></h3><p class="helper">支持直接粘贴或导入<strong>纯 CSS</strong>，不需要手动包 &lt;style&gt;。CSS 可以只美化模型输出的自定义 HTML，也可以覆盖剧情区域，或选择“咪嘛馆全局”直接二改整个 UI（界面）。模型输出本身仍经过 Safe HTML sanitizer（安全 HTML 清洗器），不会执行 &lt;script&gt; / &lt;style&gt;。</p><div id="css-current-status" class="row-sub" style="margin:8px 0 12px">当前聊天：${currentCssPreset()?escapeHtml(currentCssPreset().name):'未挂载'} · ${currentSessionData?.customCssEnabled===false?'已禁用':'已启用'}</div><div class="mima-css-list-head"><strong>已保存的 CSS · 点击分类标题展开或收起</strong><span class="row-sub">可按分类整理，不用逐张滑动</span></div><div class="toolbar mima-css-list-quick-actions"><button type="button" class="primary-btn" onclick="openCssPresetEditor()">＋ 新建 CSS</button><button type="button" class="ghost-btn" onclick="chooseCssImport()">⇧ 导入 CSS</button><button type="button" class="ghost-btn" onclick="mimaCssFoldAll(true)">全部展开分类</button><button type="button" class="ghost-btn" onclick="mimaCssFoldAll(false)">全部收起分类</button></div><div id="css-library-toolbar">${mimaLibraryToolbar('css',cssPresets)}</div><div id="css-preset-list" class="mima-css-group-list" style="margin-top:12px"></div><div class="toolbar css-default-tools"><button class="ghost-btn" onclick="copyDefaultCss()">⧉ 一键复制默认 CSS（样式）</button><button class="ghost-btn" onclick="exportDefaultCss()">⇩ 导出默认 CSS（样式）</button><button class="ghost-btn" onclick="forkDefaultCss()">✦ 默认 CSS 二改</button><button class="ghost-btn" onclick="MimaAssistantStudio.open('css')">✦ CSS 美化助手</button><button class="danger-btn" onclick="emergencyDisableCss()">🚑 临时禁用自定义 CSS（样式）</button></div><div class="toolbar"><button class="ghost-btn" onclick="stopAtelierAndRestoreCss()">停用工坊全局主题（保留旧 CSS）</button></div><div class="row-sub css-scope-note">Scope（作用域）：自定义 HTML / Chat / Novel / Assistant / 咪嘛馆全局。Novel 与 Assistant 使用稳定公开 selector；全局 CSS 仍拥有最高覆盖能力。</div><div id="css-recovery-status">${cssRecoveryMarkup()}</div><div id="css-session-actions" class="toolbar">${currentSessionData?.customCssId?'<button class="ghost-btn" onclick="unapplyCss()">取消应用</button>':''}${currentSessionData?.customCssId&&currentSessionData?.customCssEnabled===false?'<button class="ghost-btn" onclick="reenableCss()">重新启用</button>':''}</div><button class="ghost-btn" onclick="unapplyGlobalCssPreset()">取消全局 CSS</button></section>
+<section class="settings-section"><h3>显示</h3><label class="check-row"><input id="render-html-setting" type="checkbox" ${currentSessionData?.renderMode==='safe_html'?'checked':''} onchange="toggleSafeHtml(this.checked)"> 允许 Safe HTML（安全 HTML）状态栏渲染</label><p class="helper">开启后会保留正文原有换行与空格，并支持 &lt;system&gt;、&lt;details&gt;、&lt;summary&gt;、区块、表格等安全结构，方便 CSS 状态栏直接生效。</p></section>`;applyMimaUiDensity();qs('font-ui-select').value=ui;qs('font-story-select').value=story;stopUrlFontPreview();stopVisibleFontPreviews();applyFontWeightPrefs();updateFontApplicationStatus();renderFontBundleStatus();const root=qs('font-list');if(fontReadError){stopVisibleFontPreviews();root.textContent='字体库读取失败，原字体和选择均未更改：'+(fontReadError.message||String(fontReadError));}else if(mimaAppearanceFoldOpen('local-fonts',false)){renderLocalFontRows(root,fontRecords);root.dataset.loaded='1';}renderCssPresetLibrary(qs('css-preset-list'));syncStoryTypographyControls(typo);window.MimaFontBackup?.refresh?.()}
 
 // Legacy font indexing can finish after the settings sheet is opened. Refresh
 // ONLY the font-picker rows and choices; never discard in-progress CSS edits.
@@ -3114,10 +3121,11 @@ window.addEventListener('mima-font-library-change',()=>{
         if(settingsTab!=='appearance'||!isSettingsOpen())return;
         const root=qs('font-list');if(!root)return;
         const records=await MimaFontManager.listMetadata();
-        if(settingsTab!=='appearance'||!isSettingsOpen()||qs('font-list')!==root||!mimaAppearanceFoldOpen('local-fonts',false))return;
+        if(settingsTab!=='appearance'||!isSettingsOpen()||qs('font-list')!==root)return;
         fontRecords=records;
         refreshFontSelectors(records);
-        renderLocalFontRows(root,records);
+        const summary=document.querySelector('#mima-local-fonts .mima-fold-hint');if(summary)summary.textContent=records.length+' 款 · 导入 / 预览 / 补字 / 删除 / 备份';
+        if(mimaAppearanceFoldOpen('local-fonts',false)){renderLocalFontRows(root,records);root.dataset.loaded='1';}
         updateFontApplicationStatus();
     })().catch(e=>console.warn('字体列表更新失败；原选择保留',e));
 });
@@ -3426,8 +3434,7 @@ function renderCssPresetLibrary(root){
    const button=document.createElement('button');button.type='button';button.className='ghost-btn';button.textContent=label;
    button.addEventListener('click',()=>mimaCssFoldAll(open));actions.appendChild(button);
  }
- const counter=document.createElement('span');counter.className='row-sub';counter.textContent=`${list.length} 款 CSS · ${ordered.length} 组`;actions.appendChild(counter);root.appendChild(actions);
- let first=true;
+ const counter=document.createElement('span');counter.className='row-sub';counter.textContent=`${list.length} 款 CSS · ${ordered.length} 个分类（点分类名称展开）`;actions.appendChild(counter);root.appendChild(actions);
  const drawCards=(container,items)=>{
   container.replaceChildren();
   for(const p of items){
@@ -3440,9 +3447,9 @@ function renderCssPresetLibrary(root){
  for(const [name,items] of ordered){
    const detail=document.createElement('details');detail.className='mima-css-category-fold';detail.dataset.cssGroup=name;
    const selected=items.some(p=>p.id===active||p.id===globalId);
-   const defaultOpen=selected||first;
+   const defaultOpen=selected;
    detail.open=searching||mimaLibraryView.css.category!=='all'||mimaCssFoldOpen(name,defaultOpen);
-   const summary=document.createElement('summary');summary.className='mima-css-category-title';
+   const summary=document.createElement('summary');summary.className='mima-css-category-title';summary.title='点击展开或收起这一分类';
    const label=document.createElement('strong');label.textContent=name;
    const count=document.createElement('span');count.className='mima-css-category-count';count.textContent=`${items.length} 款`;
    summary.append(label,count);
@@ -3455,7 +3462,7 @@ function renderCssPresetLibrary(root){
      if(detail.open){if(!cards.childElementCount)drawCards(cards,items);}
      else cards.replaceChildren();
    });
-   root.appendChild(detail);first=false;
+   root.appendChild(detail);
  }
 }
 function openCssPresetEditor(id=null){const p=id?cssPresets.find(x=>x.id===id):{name:'',css:'',scope:'story'};const giant=String(p?.css||'').length>200000;editorState={type:'css-preset',id,giant,loaded:!giant};qs('editor-title').textContent=id?`编辑 CSS · ${p?.name||''}`:'新建 CSS Preset（CSS 预设）';qs('editor-eyebrow').textContent='CSS PRESET（CSS 预设）';qs('editor-body').innerHTML=`<div class="form-grid"><div class="form-full"><label class="form-label">名称</label><input id="css-pre-name" class="field" value="${escapeHtml(p?.name||'')}"></div><div class="form-full"><label class="form-label">分类</label><input id="css-pre-category" class="field" list="mima-css-category-choices" value="${escapeHtml(p?.category||'未分类')}"><datalist id="mima-css-category-choices">${mimaCategoryEntries('css').map(c=>`<option value="${escapeHtml(c.name)}"></option>`).join('')}</datalist></div><div class="form-full"><label class="form-label">Scope（作用域）</label><select id="css-pre-scope" class="field"><option value="story" ${p?.scope==='story'||!p?.scope?'selected':''}>自定义 HTML / 剧情内容（最安全）</option><option value="global" ${p?.scope==='global'?'selected':''}>剧情聊天区域</option><option value="app" ${p?.scope==='app'?'selected':''}>咪嘛馆全局 UI + HTML（全局二改）</option><option value="novel" ${p?.scope==='novel'?'selected':''}>Novel Studio（小说）</option><option value="assistant" ${p?.scope==='assistant'?'selected':''}>Assistant Studio（助手）</option></select><div class="row-sub">“咪嘛馆全局”会按原样应用 CSS，可修改顶栏、设置中心、输入框和剧情 HTML；若样式把 UI 隐藏，请重新打开页面后在外观里点“🚑 临时禁用”；极端情况下可在网址末尾加 <code>?noCss=1</code> 进入 CSS 安全模式。</div></div><div class="form-full">${giant?`<div class="row-sub" style="padding:12px;border:1px solid currentColor">这个 CSS 有 ${String(p.css).length.toLocaleString()} 字符，默认不加载正文以保护手机。可以直接修改名称、分类或作用域并保存，CSS 原文保持不变。<button type="button" class="ghost-btn" onclick="mimaLoadLargeCssForEdit()">确认后加载巨型 CSS</button></div>`:''}<label class="form-label">CSS（样式）</label><textarea id="css-pre-code" class="field textarea tall css-code-editor" spellcheck="false" ${giant?'disabled':''} placeholder="/* 直接写 CSS，不用 <style> */&#10;system, .status-card { padding: 12px; border-radius: 16px; }">${giant?'':escapeHtml(p?.css||'')}</textarea></div></div>`;setupEditorButtons(id?()=>deleteCssPreset(id):null,saveCssPresetEditor);qs('editor-modal').classList.remove('hidden')}
@@ -4381,7 +4388,7 @@ function diagnosticRecoveryButton(record){
     b.title='恢复已收到的文本，不重新请求模型；空文本、诊断被裁剪或原任务变化时会说明原因。';
     b.onclick=()=>void recoverDiagnosticReply(record.id);return b;
 }
-async function refreshDiagnosticsView({openRetainedId=null}={}){
+async function refreshDiagnosticsView(){
     const refreshId=++diagnosticViewRefreshSequence,epoch=settingsRenderEpoch;
     const sessionId=diagnosticViewState.scope==='session'?currentSessionId:null;
     const root=qs('diag-list'),status=qs('diag-status'),detail=qs('diag-detail');
@@ -4394,21 +4401,20 @@ async function refreshDiagnosticsView({openRetainedId=null}={}){
     if(!fresh())return;
     if(page.total>0&&!page.items.length&&diagnosticViewState.page>0){diagnosticViewState.page=0;return refreshDiagnosticsView();}
     const {items:records,total,nextCursor}=page,policy=MimaDiagnosticJournal.status();
-    status.textContent=`共 ${total} 条 · 第 ${diagnosticViewState.page+1} 页 · 每页最多 20 条 · 自动保留 ${policy.limitCount} 条、${policy.limitDays} 天、约 ${Math.round(policy.limitBytes/1048576)} MB。${policy.error?'最近存储错误：'+policy.error:'仅在点开详情时读取大 Prompt 和完整正文。'}`;
+    status.textContent=`共 ${total} 条 · 第 ${diagnosticViewState.page+1} 页 · 每页最多 20 条 · 自动保留 ${policy.limitCount} 条、${policy.limitDays} 天、约 ${Math.round(policy.limitBytes/1048576)} MB。${policy.error?'最近存储错误：'+policy.error:'点击任一记录即可在原位置查看已收到的正文；只读取展开的这一条。'}`;
     root.replaceChildren();detail.replaceChildren();let selectedRow=null;
     for(const summary of records){
         const b=document.createElement('button');b.type='button';b.className='ghost-btn diag-list-item';
         b.setAttribute('aria-pressed',String(diagnosticViewState.selectedId===summary.id));
+        b.setAttribute('aria-expanded',String(diagnosticViewState.selectedId===summary.id));
         let label={committed:'✅ 已提交',rejected:'⛔ 已拒绝',aborted:'⏹ 已取消',conflict:'⚠️ 提交冲突',requesting:'⏳ 请求中或异常退出',provider_returned:'⏳ 已返回，待结算',preparing:'⏳ 准备中'}[summary.status]||summary.status;
         const code=summary.errorCode||'',http=summary.httpStatus||0;
         if(summary.status==='rejected')label=summary.phase==='preflight'?'🧮 发送前已拦截 · 0 次模型请求':summary.finishKind==='blocked'||/REFUSAL/.test(code)?'⛔ 拒绝类回复':summary.finishKind==='truncated'||/TRUNCATED/.test(code)?'✂ 回复被截断':/STREAM_INTERRUPTED/.test(code)?'⚠ 连接中断':http>=400?'⚠ 请求失败 · HTTP '+http:'⚠ 未通过提交';
         b.textContent=`${label} · ${new Date(summary.createdAt).toLocaleString()} · ${summary.action||'send'} · ${summary.model||(summary.phase==='preflight'?'预检未发送':'模型名称未记入日志')} · ${code||summary.finishReason||''}`;
-        b.onclick=()=>{diagnosticViewState.selectedId=summary.id;void refreshDiagnosticsView();};
+        b.onclick=()=>{diagnosticViewState.selectedId=diagnosticViewState.selectedId===summary.id?null:summary.id;void refreshDiagnosticsView();};
         const row=document.createElement('div');row.className='diag-list-row';row.appendChild(b);
         if(diagnosticViewState.selectedId===summary.id)selectedRow=row;
         if(['rejected','aborted','conflict'].includes(summary.status)){
-            const view=document.createElement('button');view.type='button';view.className='ghost-btn';view.textContent='👁 查看保存正文';
-            view.onclick=()=>{diagnosticViewState.selectedId=summary.id;void refreshDiagnosticsView({openRetainedId:summary.id});};row.appendChild(view);
             if(summary.requestSent!==false)row.appendChild(diagnosticRecoveryButton(summary));
             if(['E_HTML_STRUCTURE_MISSING','E_HTML_REQUIRED_NODE_MISSING','E_STORY_OUTPUT_INCOMPLETE'].includes(code)){
                 const repair=document.createElement('button');repair.type='button';repair.className='ghost-btn';repair.textContent='HTML 免 API 补全';
@@ -4439,7 +4445,12 @@ async function refreshDiagnosticsView({openRetainedId=null}={}){
     const heading=document.createElement('h4');heading.textContent='诊断详情 · '+record.action;wrap.appendChild(heading);
     const info=document.createElement('div');info.className='row-sub';
     info.textContent=`会话：${record.sessionId||'—'} · Turn：${record.turnId||'—'} · Request：${record.requestId||'—'} · ${record.status} · ${record.model||'模型未记录'} · ${record.finishKind||'—'}/${record.finishReason||'—'} · HTTP：${Number(record.transport?.httpStatus||record.error?.status)||'—'}`;
-    wrap.append(info,toolbar);
+    const replyBox=document.createElement('section');replyBox.className='diag-reply-panel';
+    const replyHead=document.createElement('strong');replyHead.textContent='本次收到的正文';
+    const textStatus=document.createElement('p');textStatus.className='helper';textStatus.textContent='正在读取这条诊断的留存正文…';
+    const replyPre=document.createElement('pre');replyPre.className='prompt-pre diag-reply-text';replyPre.hidden=true;
+    replyBox.append(replyHead,textStatus,replyPre);
+    wrap.append(info,replyBox,toolbar);
     function actionButton(label,fn){const b=document.createElement('button');b.type='button';b.className='ghost-btn';b.textContent=label;b.onclick=fn;toolbar.appendChild(b);return b;}
     let retained=null,retainedLoaded=false;
     async function readRetained(){
@@ -4482,36 +4493,38 @@ async function refreshDiagnosticsView({openRetainedId=null}={}){
         }else if(!details.open)details.querySelector('pre')?.remove();});
         wrap.appendChild(details);
     }else{const none=document.createElement('p');none.className='helper';none.textContent='没有留存完整请求，或在组装请求前失败；不能据此判断服务商是否收到。';wrap.appendChild(none);}
-    if(record.error){const error=document.createElement('pre');error.className='prompt-pre';error.textContent=JSON.stringify(record.error,null,2);wrap.appendChild(error);}
-    const textStatus=document.createElement('p');textStatus.className='helper';textStatus.textContent='完整失败正文按需读取。打开之前不会加载大型原文或生成隐藏 DOM。';wrap.appendChild(textStatus);
-    // Both entry points use the same on-demand reader. A stale selection/tab may never paint its result.
+    if(record.error){
+        const errorDetails=document.createElement('details'),summary=document.createElement('summary');summary.textContent='技术错误详情（需要时展开）';
+        const error=document.createElement('pre');error.className='prompt-pre';error.textContent=JSON.stringify(record.error,null,2);
+        errorDetails.append(summary,error);wrap.appendChild(errorDetails);
+    }
+    // Selection is the explicit read action: one selected record, one retained-text read.
+    // Retain the same identity/epoch guards; never auto-load all diagnostics or expose HTML.
     async function showRetainedReply(){
-        textStatus.textContent='正在读取留存正文…';
         try{
             const candidate=await readRetained();
             if(!fresh()||record.id!==diagnosticViewState.selectedId||!wrap.isConnected)return;
-            textStatus.textContent=candidate?.raw?`已留存 ${candidate.rawChars} 字符 · ${candidate.complete?'接收完整':'仅有现存片段'}`:'本条未找到可恢复的正文。';
-            let pre=wrap.querySelector('[data-diagnostic-reply]');
-            if(!pre){pre=document.createElement('pre');pre.className='prompt-pre';pre.setAttribute('data-diagnostic-reply','');wrap.appendChild(pre);}
-            pre.textContent=candidate?.raw||'没有可保存的失败正文。';
+            textStatus.textContent=candidate?.raw?`已收到 ${candidate.rawChars} 字符 · ${candidate.complete?'本机完整留存（不代表模型正常写完）':'现存片段，可能缺少后文'}`:record.status==='committed'?'本轮已保存到剧情 History；成功回复不另外留在失败正文仓库。':'本条没有留存可恢复的回复正文，原诊断仍保留。';
+            replyPre.hidden=false;
+            replyPre.textContent=candidate?.raw||(record.status==='committed'?'请回到剧情查看已保存回复。':'本条没有留存回复正文。');
         }catch(e){
-            if(fresh()&&record.id===diagnosticViewState.selectedId&&wrap.isConnected)
-                textStatus.textContent='留存正文读取失败，原件未被删除：'+e.message;
+            if(fresh()&&record.id===diagnosticViewState.selectedId&&wrap.isConnected){
+                textStatus.textContent='正文读取失败，原诊断未被删除：'+e.message;
+                replyPre.hidden=true;replyPre.textContent='';
+            }
         }
     }
-    const viewBody=actionButton('查看保存正文',()=>void showRetainedReply());
-    viewBody.title='只在主动查看时读取保存正文';
     actionButton('复制留存正文',async()=>{try{const c=await readRetained();if(!c.raw)throw Error('没有可复制的正文');await copyTextPortable(c.raw);toast('已复制留存正文');}catch(e){toast('复制失败：'+e.message);}});
     actionButton('下载留存正文',async()=>{try{const c=await readRetained();if(!c.raw)throw Error('没有可下载的正文');downloadText('咪嘛馆-未采纳正文.txt',c.raw);}catch(e){toast('下载失败：'+e.message);}});
     if(['rejected','aborted','conflict'].includes(record.status)){
-        if(record.requestSent!==false)toolbar.appendChild(diagnosticRecoveryButton(record));
-        if(['E_HTML_STRUCTURE_MISSING','E_HTML_REQUIRED_NODE_MISSING','E_STORY_OUTPUT_INCOMPLETE'].includes(record.error?.code))toolbar.appendChild(diagnosticHtmlCodeRepairButton(record));
+        // Keep recovery and HTML repair in the row itself; no duplicated buttons
+        // after expanding the very same record.
         const note=document.createElement('p');note.className='helper';note.textContent=record.manualRecovery?'这条已手动恢复；原始诊断仍保留。':'手动恢复时仍会核对原请求身份和 History 版本，不重发模型请求。';wrap.appendChild(note);
     }
     (selectedRow||detail).appendChild(wrap);
-    // A list-row “view saved reply” click means view now, not a second identical click in details.
-    if(openRetainedId===record.id&&fresh()&&record.id===diagnosticViewState.selectedId)
-        void showRetainedReply();
+    // A single click on the diagnostic status expands its actual saved text.
+    // Only the selected record is read, preserving the lightweight summary list.
+    if(fresh()&&record.id===diagnosticViewState.selectedId)void showRetainedReply();
 }
 function releaseEditorKeyboardForSave(){
  // The form values have already been captured; release the active iOS input before
@@ -5455,10 +5468,10 @@ async function refreshFailedGenerationRecovery(){
    // Metadata-only lookup established the original failed attempt. Expose the
    // action now; the click handler does the authoritative full-text, identity,
    // partial-capture and History checks before offering confirmation.
-   recover.textContent='♻ 快速手动恢复（不重发模型）';
-   recover.title='点击后核对已留存原文与原任务，再确认是否恢复；不请求模型，不把片段伪装成完整回复';
+   recover.textContent='♻ 直接手动恢复（免费）';
+   recover.title='直接恢复本轮实际留存的文字，点击后自动验证原任务和正文；不会请求模型，片段须确认';
    recover.classList.remove('hidden');
-   preview.textContent='核对并查看留存正文';preview.classList.remove('hidden');
+   preview.textContent='查看原文（可选）';preview.classList.remove('hidden');
  }catch(e){
    if(valid()){
      let note=qs('generation-hud-recovery-error');
@@ -5490,14 +5503,14 @@ async function previewFailedGenerationRaw(){
    if(recover){recover.textContent=candidate.complete?'手动恢复正文':'恢复现存片段（需确认）';recover.classList.remove('hidden');}
    if(candidate.complete&&identity.action&&!identity.action.startsWith('compat_'))repair?.classList.remove('hidden');
  }catch(e){if(valid()){toast('本机正文核验失败：'+e.message);console.error('生成原文按需核验失败，未删除任何数据',{sessionId,diagnosticId:id,error:e});}}
- finally{if(valid()&&button){button.disabled=false;button.textContent='再次核对并查看留存正文';}}
+ finally{if(valid()&&button){button.disabled=false;button.textContent='查看原文（可选）';}}
 }
 async function recoverFailedGenerationRaw(){
  const id=r19HudRecoveryDiagnosticId,owner=r19FailedHudIdentity,nav=sessionNavigationEpoch;
  if(!id||!owner||currentSessionId!==owner.sessionId)return toast('原失败任务未核验，请先查看诊断日志');
  if(diagnosticRecoveryBusy.has(id))return;
  const button=qs('generation-owner-recover');
- if(button){button.disabled=true;button.textContent='正在核验本机原文…';}
+ if(button){button.disabled=true;button.textContent='正在核验并恢复…';}
  try{
    const restored=await recoverDiagnosticReply(id,{...owner,navigationEpoch:nav,owner});
    if(restored){r19FailedHudReadToken++;r19FailedHudIdentity=null;r19HudRecoveryDiagnosticId=null;hideFailedStreamControls();
@@ -5507,7 +5520,7 @@ async function recoverFailedGenerationRaw(){
    // Cancellation/error leaves the local bytes untouched; restore a usable
    // button only when the same popup is still current.
    if(button&&r19HudRecoveryDiagnosticId===id&&r19FailedHudIdentity===owner){
-     button.disabled=false;button.textContent='♻ 快速手动恢复（不重发模型）';
+     button.disabled=false;button.textContent='♻ 直接手动恢复（免费）';
    }
  }
  if(r19HudRecoveryDiagnosticId===id&&r19FailedHudIdentity===owner)await refreshFailedGenerationRecovery();
