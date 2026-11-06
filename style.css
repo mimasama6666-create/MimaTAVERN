@@ -1453,3 +1453,35 @@ html.mima-settings-paint-guard .app-shell *::after{animation-play-state:paused!i
 
 /* iOS Safari: avoid automatic zoom when focusing the session search box. */
 @supports (-webkit-touch-callout:none){.session-drawer .session-search:focus{font-size:max(calc(16px / var(--mima-ui-scale)),1em)}}
+
+/* Appearance library accordions: compact on mobile, preserve original controls. */
+.mima-appearance-group{padding-block:10px}
+.mima-appearance-fold>summary{display:flex;align-items:center;flex-wrap:wrap;gap:8px;min-height:46px;cursor:pointer;font-weight:720;font-size:1.02em;line-height:1.4;padding:9px 3px;list-style-position:inside;touch-action:manipulation}
+.mima-appearance-fold>summary::marker{color:var(--muted)}
+.mima-appearance-fold>summary:focus-visible,.mima-css-category-title:focus-visible{outline:2px solid var(--accent,#8a9bad);outline-offset:3px;border-radius:9px}
+.mima-fold-hint{font-size:.74em;color:var(--muted);font-weight:500;margin-left:auto}
+.mima-appearance-fold-body{padding:5px 0 8px;min-width:0}
+.mima-css-group-list{display:grid;gap:10px;min-width:0}
+.mima-css-fold-controls{align-items:center;gap:8px}
+.mima-css-category-fold{border-radius:16px;border:1px solid var(--line);background:var(--surface,rgba(255,255,255,.5));min-width:0;overflow:hidden}
+.mima-css-category-title{display:flex;align-items:center;gap:9px;min-height:48px;padding:12px 14px;cursor:pointer;list-style-position:inside;touch-action:manipulation}
+.mima-css-category-title strong{min-width:0;overflow-wrap:anywhere;flex:1}
+.mima-css-category-count{font-size:.76em;color:var(--muted);white-space:nowrap}
+.mima-css-category-cards{padding:10px;min-width:0}
+.mima-css-category-fold[open]>.mima-css-category-title{border-bottom:1px solid var(--line)}
+@media(max-width:520px){.mima-css-category-cards{padding:7px}.mima-fold-hint{margin-left:0}.mima-css-category-title{padding:12px 10px}}
+
+/* R19 V5.74: batch archive touch areas compensate the existing density zoom. */
+.session-bulk-toggle{min-height:calc(44px / var(--mima-ui-scale,1));border-radius:12px;font-size:.85rem;text-align:center}
+.session-bulk-toggle[aria-pressed="true"]{background:var(--accent-soft);color:var(--text);border-color:var(--accent,var(--line));font-weight:750}
+.session-bulk-actions{display:grid;gap:9px;min-width:0;padding:11px;border-radius:15px;background:var(--accent-soft,rgba(245,242,247,.84));border:1px solid var(--line)}
+.session-bulk-actions.hidden,.session-actions.hidden{display:none}
+.session-bulk-count{font-size:.8rem;color:var(--muted)}
+.session-bulk-tools{display:flex;flex-wrap:wrap;gap:7px;min-width:0}
+.session-bulk-tools>button{flex:1 1 120px;min-height:calc(44px / var(--mima-ui-scale,1));padding:7px;font-size:.81rem;white-space:normal}
+.session-bulk-group-label{display:grid;gap:5px;color:var(--muted);font-size:.79rem}
+.session-bulk-group-label select{width:100%;min-height:calc(44px / var(--mima-ui-scale,1));border-radius:11px;border:1px solid var(--line);background:var(--panel-solid,var(--panel));color:var(--text);font:inherit;padding:8px}
+.session-bulk-choice{display:flex;align-items:center;justify-content:center;min-width:calc(44px / var(--mima-ui-scale,1));min-height:calc(44px / var(--mima-ui-scale,1));align-self:center;cursor:pointer}
+.session-bulk-checkbox{width:19px;height:19px;accent-color:var(--accent,#a989ac);cursor:pointer}
+.session-bulk-checkbox:focus-visible,.session-bulk-toggle:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+@media(max-width:440px){.session-bulk-actions{padding:9px}.session-bulk-tools>button{flex-basis:100px}}

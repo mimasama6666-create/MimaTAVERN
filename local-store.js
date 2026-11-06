@@ -6,12 +6,13 @@
   const DB_NAME = 'mimamao_tavern_standalone';
   // v2 fences older bundles: their v1 opens must fail rather than overwrite
   // the appearance overlay with an obsolete whole-library snapshot.
-  const DB_VERSION = 4;
+  const DB_VERSION = 5;
   const STORE = 'kv';
   const STATE_KEY = 'state';
   const APPEARANCE_KEY = 'appearance_v1';
   const PRESETS_KEY = 'presets_overlay_head_v1';
   const PRESET_RECORD_PREFIX = 'presets_overlay_record_v1:';
+  const TEMPLATE_OVERLAY_KEY = 'setting_templates_overlay_v1';
   const BASE_REVISION_KEY = 'canonical_base_revision_v1';
   const ORG_KEY='session_organization_v1';
   const SESSION_IDS_KEY='session_organization_session_ids_v1';
@@ -102,13 +103,21 @@
           case 'rename-group':{const g=group();if(!g)throw Error('分类不存在');g.name=name();g.updatedAt=stamp;break;}
           case 'delete-group':{if(!group())throw Error('分类不存在');next.groups=next.groups.filter(g=>g.id!==id);
             for(const [sid,place] of Object.entries(next.placements))if(place.groupId===id)next.placements[sid]={...place,groupId:null};break;}
-          case 'place-session':{
-            if(typeof id!=='string'||!known.has(id))throw Error('剧情不存在或已经删除');
+          case 'place-session':
+          case 'place-sessions':{
+            const ids=action.type==='place-session'?[id]:action.ids;
+            if(!Array.isArray(ids)||ids.length<1||ids.length>10000||ids.some(sid=>typeof sid!=='string'||!known.has(sid))||new Set(ids).size!==ids.length)
+              throw Error('E_ORGANIZATION_SESSION_IDS: 剧情不存在、重复选择或已经删除');
             if(action.archived!==true&&action.archived!==false)throw Error('E_ORGANIZATION_ARCHIVED_INVALID');
-            if(action.archived){const gid=action.groupId??null;
-              if(gid!==null&&!next.groups.some(g=>g.id===gid))throw Error('目标分类不存在或已更改');
-              next.placements[id]={archived:true,groupId:gid,archivedAt:next.placements[id]?.archivedAt||stamp};
-            }else delete next.placements[id];break;}
+            const gid=action.archived?(action.groupId??null):null;
+            if(gid!==null&&!next.groups.some(g=>g.id===gid))throw Error('目标分类不存在或已更改');
+            // All selected placements are validated before this one revision
+            // commits. No partial batch, no History/Memory reserialization.
+            for(const sid of ids){
+              if(action.archived)next.placements[sid]={archived:true,groupId:gid,archivedAt:next.placements[sid]?.archivedAt||stamp};
+              else delete next.placements[sid];
+            }
+            break;}
           default:throw Error('E_ORGANIZATION_ACTION_UNKNOWN');
         }
         next.revision++;next.updatedAt=stamp;validateSessionOrganization(next,known);
@@ -188,14 +197,15 @@
       throw Error('E_PRESET_EDIT_INVALID');
     const db=await openDb();return new Promise((resolve,reject)=>{
       const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE);
-      const a=kv.get(PRESETS_KEY),b=kv.get(BASE_REVISION_KEY),c=kv.get(APPEARANCE_KEY);
+      const a=kv.get(PRESETS_KEY),b=kv.get(BASE_REVISION_KEY),c=kv.get(APPEARANCE_KEY),t=kv.get(TEMPLATE_OVERLAY_KEY);
       let issue,result,ready=0;
       const fail=e=>{issue=e;try{tx.abort();}catch{}};
-      const settle=()=>{if(++ready!==3)return;try{
+      const settle=()=>{if(++ready!==4)return;try{
         const head=assertPresetsOverlay(a.result),base=b.result,appearance=assertAppearance(c.result);
         if(!base||!Number.isInteger(base.revision)||base.revision!==head.baseRevision||appearance.baseRevision!==base.revision)
           throw Error('E_PRESETS_BASE_CONFLICT: 资料库基线已经改变，本次未覆盖');
-        const globalRevision=base.revision+(appearance.storeRevision-base.revision)+(head.storeRevision-base.revision);
+        const templateHead=verifiedTemplateOverlay(t.result,base.revision);
+        const globalRevision=base.revision+(appearance.storeRevision-base.revision)+(head.storeRevision-base.revision)+(templateHead?templateHead.storeRevision-base.revision:0);
         if(expectedRevision!==globalRevision)throw Error('E_CANONICAL_CONFLICT: 资料在其他窗口或任务已更新，请刷新后重新编辑，旧数据未覆盖');
         const next={...head,changes:head.changes.includes(id)?head.changes:[...head.changes,id],
           storeRevision:head.storeRevision+1,savedAt:new Date().toISOString()};
@@ -204,16 +214,68 @@
         kv.put(record,PRESET_RECORD_PREFIX+id);kv.put(next,PRESETS_KEY);
         result={value:record,storeRevision:globalRevision+1};
       }catch(e){fail(e)}};
-      for(const req of [a,b,c]){req.onsuccess=settle;req.onerror=()=>fail(req.error);}
+      for(const req of [a,b,c,t]){req.onsuccess=settle;req.onerror=()=>fail(req.error);}
       tx.oncomplete=()=>{db.close();resolve(result)};
       tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_PRESET_COMMIT_ABORTED'))};
+    });
+  }
+  function verifiedTemplateOverlay(value,baseRevision){
+    if(value===undefined)return null;
+    if(!value||value.version!==1||value.baseRevision!==baseRevision||
+       !Number.isSafeInteger(value.storeRevision)||value.storeRevision<baseRevision||
+       !Array.isArray(value.templates))throw Error('E_SETTING_TEMPLATE_OVERLAY_CORRUPT: 模板增量记录无法核实');
+    const ids=new Set();
+    for(const t of value.templates){
+      if(!t||typeof t!=='object'||typeof t.id!=='string'||!t.id||ids.has(t.id)||
+         !Number.isSafeInteger(t.revision)||t.revision<0||typeof t.name!=='string'||
+         !t.config||typeof t.config!=='object'||Array.isArray(t.config))
+        throw Error('E_SETTING_TEMPLATE_OVERLAY_CORRUPT: 模板条目不完整');
+      ids.add(t.id);
+    }
+    return value;
+  }
+  // A template save must never clone/rewrite a long History/Memory document.
+  // Version and cross-tab CAS use the SAME global revision as canonical saves.
+  async function commitSettingTemplates(edit,expectedRevision,initialTemplates){
+    if(typeof edit!=='function'||!Number.isSafeInteger(expectedRevision)||expectedRevision<0||
+       !Array.isArray(initialTemplates))throw Error('E_SETTING_TEMPLATE_EDIT_INVALID');
+    const db=await openDb();return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE);
+      const b=kv.get(BASE_REVISION_KEY),a=kv.get(APPEARANCE_KEY),p=kv.get(PRESETS_KEY),t=kv.get(TEMPLATE_OVERLAY_KEY);
+      let ready=0,issue,result;
+      const fail=e=>{issue=e;try{tx.abort()}catch{}};
+      const commit=()=>{if(++ready!==4)return;try{
+        const base=b.result,app=assertAppearance(a.result),presets=assertPresetsOverlay(p.result);
+        if(!base||!Number.isSafeInteger(base.revision)||base.revision<0||
+           app.baseRevision!==base.revision||presets.baseRevision!==base.revision)
+          throw Error('E_SETTING_TEMPLATE_BASE_CONFLICT: 主库版本无法核实');
+        const prior=verifiedTemplateOverlay(t.result,base.revision);
+        const globalRevision=base.revision+(app.storeRevision-base.revision)+
+          (presets.storeRevision-base.revision)+(prior?prior.storeRevision-base.revision:0);
+        if(globalRevision!==expectedRevision)
+          throw Error('E_CANONICAL_CONFLICT: 资料已在其它窗口或任务修改，请刷新后重试');
+        // Initial templates come from the verified in-memory canonical snapshot,
+        // fenced by the composite global revision above; no large base read.
+        const records=(prior?prior.templates:initialTemplates).map(row=>({...row}));
+        const value=edit(records);if(value&&typeof value.then==='function')throw Error('E_SETTING_TEMPLATE_ASYNC_EDIT');
+        if(globalRevision>=Number.MAX_SAFE_INTEGER)throw Error('E_CANONICAL_REVISION_OVERFLOW');
+        const next={version:1,baseRevision:base.revision,
+          storeRevision:base.revision+(prior?prior.storeRevision-base.revision:0)+1,
+          templates:records,savedAt:new Date().toISOString()};
+        verifiedTemplateOverlay(next,base.revision);
+        kv.put(next,TEMPLATE_OVERLAY_KEY);
+        result={value,templates:records,storeRevision:globalRevision+1};
+      }catch(e){fail(e)}};
+      for(const req of [b,a,p,t]){req.onsuccess=commit;req.onerror=()=>fail(req.error)}
+      tx.oncomplete=()=>{db.close();resolve(result)};
+      tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_SETTING_TEMPLATE_TX_ABORT'))};
     });
   }
   // Read base/CSS/head and every changed preset in the SAME transaction.
   // An incomplete/missing changed record is corruption, never an empty preset.
   function readCanonical(kv){
-    const request={},base=kv.get(STATE_KEY),appearance=kv.get(APPEARANCE_KEY),head=kv.get(PRESETS_KEY),organization=kv.get(ORG_KEY),records=new Map();
-    let pending=4,failed=false;
+    const request={},base=kv.get(STATE_KEY),appearance=kv.get(APPEARANCE_KEY),head=kv.get(PRESETS_KEY),organization=kv.get(ORG_KEY),templates=kv.get(TEMPLATE_OVERLAY_KEY),records=new Map();
+    let pending=5,failed=false;
     const fail=error=>{if(failed)return;failed=true;request.error=error;request.onerror?.({target:request});};
     const done=()=>{if(--pending!==0||failed)return;try{
       if(base.result!==undefined&&!isCanonicalStateRecord(base.result))throw Error('E_CANONICAL_STATE_UNVERIFIED');
@@ -224,9 +286,16 @@
         if(!item||item.id!==id||typeof item.content!=='string')throw Error('E_PRESET_FRAGMENT_INCOMPLETE: 预设增量记录缺失');
       }
       request.result=mergePresets(base.result||blankState(),appearance.result,head.result,records);
+      const overlay=verifiedTemplateOverlay(templates.result,Number(base.result?.storeRevision)||0);
+      if(overlay){
+        const removed=new Set(appearance.result.deletedCssIds||[]);
+        request.result.settingTemplates=overlay.templates.map(t=>removed.has(t.config?.customCssId)?
+          {...t,config:{...t.config,customCssId:null,customCssEnabled:false}}:t);
+        request.result.storeRevision+=overlay.storeRevision-overlay.baseRevision;
+      }
       request.result.sessionOrganizationV1=verifiedOrganization(organization.result);
     }catch(error){fail(error);return;}request.onsuccess?.({target:request});};
-    base.onsuccess=done;appearance.onsuccess=done;organization.onsuccess=done;
+    base.onsuccess=done;appearance.onsuccess=done;organization.onsuccess=done;templates.onsuccess=done;
     head.onsuccess=()=>{try{
       const value=assertPresetsOverlay(head.result);
       pending+=value.changes.length;
@@ -236,7 +305,7 @@
       }
       done();
     }catch(e){fail(e)}};
-    base.onerror=()=>fail(base.error);appearance.onerror=()=>fail(appearance.error);organization.onerror=()=>fail(organization.error);head.onerror=()=>fail(head.error);
+    base.onerror=()=>fail(base.error);appearance.onerror=()=>fail(appearance.error);organization.onerror=()=>fail(organization.error);templates.onerror=()=>fail(templates.error);head.onerror=()=>fail(head.error);
     return request;
   }
   function putCanonical(kv,value) {
@@ -253,6 +322,7 @@
     const {sessionOrganizationV1:_sidecar,...canonicalValue}=value;
     kv.put(canonicalValue,STATE_KEY);kv.put(value.sessions.map(x=>x.id),SESSION_IDS_KEY);kv.put(appearanceFromState(value),APPEARANCE_KEY);
     kv.put(presetsFromState(value),PRESETS_KEY);kv.put({revision:value.storeRevision},BASE_REVISION_KEY);
+    kv.delete(TEMPLATE_OVERLAY_KEY); // Fold the template sidecar into this verified base.
   }
   function openDb() {
     return new Promise((resolve, reject) => {
@@ -1756,5 +1826,5 @@
     if(text.length!==receipt.persistedChars)throw new Error('E_GENERATION_FRAGMENT_INCOMPLETE');
     return {receipt,text,complete:true};
   }
-  window.MimaLocalStore={validateSessionOrganization,loadSessionOrganization,commitSessionOrganization,commitPreset,putHtmlRepairDraft,getHtmlRepairDraft,loadAppearance,commitAppearance,mergeAppearance,exportPlayToolRecords,importPlayToolRecords,listPlayToolLocal,getPlayToolLocal:key=>get('play_tools_v1:'+key),putPlayToolLocal:(key,value)=>set('play_tools_v1:'+key,value),generationReceipt,generationAppendFragment,generationStatus,generationRead,getRollingPreflight,putRollingPreflight,clearRollingPreflight,commitHtmlRepair,putHtmlRepairCandidate,getHtmlRepairCandidate,setHtmlRepairCandidateState,listMemoryStages,inspectLegacyMemoryStages,putMemoryRejectedDraft,listMemoryRejectedDrafts,memoryReferenceContract,putFactRangeCandidate,listFactRangeCandidates,commitVerifiedFactRanges,getMergeStage,putMergeStage,getMergeDraft,createMergeDraft,updateMergeDraft,commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,loadSettingsSnapshotSummary,clearSettingsSnapshot,beginSettingsSnapshotV2,stageSettingsSnapshotFontV2,completeSettingsSnapshotV2,discardFailedSettingsSnapshotV2,hasIncompleteSettingsSnapshotV2,loadSettingsSnapshotFontV2,pruneOldSettingsSnapshotsV2,getMemoryJob,getMemoryStage,putMemoryStage,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
+  window.MimaLocalStore={commitSettingTemplates,validateSessionOrganization,loadSessionOrganization,commitSessionOrganization,commitPreset,putHtmlRepairDraft,getHtmlRepairDraft,loadAppearance,commitAppearance,mergeAppearance,exportPlayToolRecords,importPlayToolRecords,listPlayToolLocal,getPlayToolLocal:key=>get('play_tools_v1:'+key),putPlayToolLocal:(key,value)=>set('play_tools_v1:'+key,value),generationReceipt,generationAppendFragment,generationStatus,generationRead,getRollingPreflight,putRollingPreflight,clearRollingPreflight,commitHtmlRepair,putHtmlRepairCandidate,getHtmlRepairCandidate,setHtmlRepairCandidateState,listMemoryStages,inspectLegacyMemoryStages,putMemoryRejectedDraft,listMemoryRejectedDrafts,memoryReferenceContract,putFactRangeCandidate,listFactRangeCandidates,commitVerifiedFactRanges,getMergeStage,putMergeStage,getMergeDraft,createMergeDraft,updateMergeDraft,commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,loadSettingsSnapshotSummary,clearSettingsSnapshot,beginSettingsSnapshotV2,stageSettingsSnapshotFontV2,completeSettingsSnapshotV2,discardFailedSettingsSnapshotV2,hasIncompleteSettingsSnapshotV2,loadSettingsSnapshotFontV2,pruneOldSettingsSnapshotsV2,getMemoryJob,getMemoryStage,putMemoryStage,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
 })();

@@ -656,7 +656,10 @@
     return task;
   }
   async function editSettingTemplate(action,body={}){
-    return commitLibraryEdit(stored=>{
+    const commit=async()=>{try{
+      const committed=await window.MimaLocalStore.commitSettingTemplates(templates=>{
+        // Only the small independent list is changed. Canonical readers merge it.
+        const stored={settingTemplates:templates,sessions:state.sessions};
       let result=null;
       if(action==='save'){
         const existing=stored.settingTemplates.find(x=>x.id===body.id);
@@ -664,7 +667,7 @@
         if(body.id&&!existing)throw new ApiError('E_SETTINGS_TEMPLATE_MISSING','模板已不存在，不能复活旧记录');
         const cfg=body.fromSessionId?templateFromSession(stored.sessions.find(s=>s.id===body.fromSessionId)||(()=>{throw new ApiError('E_STORY_SESSION_MISSING','模板来源剧情不存在')})(),body.include||{}):body.config;
         const next=normalizeSettingTemplate({id:existing?.id,name:body.name||existing?.name,config:cfg,createdAt:existing?.createdAt,isDefault:existing?.isDefault===true,updatedAt:nowIso(),revision:(existing?.revision||0)+1});
-        if(existing)stored.settingTemplates=stored.settingTemplates.map(x=>x.id===next.id?next:x);else stored.settingTemplates.push(next);
+        if(existing)stored.settingTemplates.splice(stored.settingTemplates.findIndex(x=>x.id===next.id),1,next);else stored.settingTemplates.push(next);
         result=next;
       }else if(action==='default'){
         if(body.id&&!stored.settingTemplates.some(x=>x.id===body.id))throw new ApiError('E_SETTINGS_TEMPLATE_MISSING','指定模板已不存在');
@@ -674,10 +677,20 @@
         const existing=stored.settingTemplates.find(x=>x.id===body.id);
         if(!existing)throw new ApiError('E_SETTINGS_TEMPLATE_MISSING','指定模板已不存在');
         if(existing.revision!==Number(body.expectedRevision))throw new ApiError('E_SETTINGS_TEMPLATE_STALE','模板版本已经变化');
-        stored.settingTemplates=stored.settingTemplates.filter(x=>x.id!==body.id);result={deleted:true};
+        stored.settingTemplates.splice(stored.settingTemplates.findIndex(x=>x.id===body.id),1);result={deleted:true};
       }else throw new ApiError('E_SETTINGS_TEMPLATE_ACTION','无效模板操作');
-      return result;
-    });
+        return result;
+      },state.storeRevision,state.settingTemplates);
+      state={...state,settingTemplates:committed.templates,storeRevision:committed.storeRevision};
+      return committed.value;
+    }catch(error){
+      try{state=normalizeState(await window.MimaLocalStore.loadState());}
+      catch(readError){console.error('E_TEMPLATE_REFRESH_FAILED_AFTER_WRITE',readError);}
+      throw error;
+    }};
+    const task=sessionSaveTail.then(commit,commit);
+    sessionSaveTail=task.then(()=>{},()=>{});
+    return task;
   }
   async function createSessionUsingTemplate(body){
     return commitLibraryEdit(stored=>{
