@@ -4331,7 +4331,7 @@ function renderDiagnosticsTab(box){
     <div id="diag-status" class="row-sub" role="status">正在读取独立日志……</div><div id="diag-list" class="hit-list"></div><div id="diag-detail"></div>
     </section>`;
     const log=qs('mima-lifecycle-log');
-    if(log){try{const rows=JSON.parse(localStorage.getItem('mima-r19-lifecycle-v1')||'[]');log.textContent=(Array.isArray(rows)?rows:[]).map(x=>`${new Date(x.at).toLocaleString()} · ${x.kind} · ${x.navigationType||'?'} · ${x.persistedStage||'无任务'} · ${x.tab||''}`).join('\n')||'没有本地生命周期记录。'}catch(e){log.textContent='生命周期记录读取失败：'+e.message;}}
+    if(log){try{const rows=JSON.parse(localStorage.getItem('mima-r19-lifecycle-v1')||'[]');log.textContent=(Array.isArray(rows)?rows:[]).map(x=>`${new Date(x.at).toLocaleString()} · ${x.kind} · ${x.navigationType||'?'} · ${x.persistedStage||'无任务'} · ${x.tab||x.action||''}`).join('\n')||'没有本地生命周期记录。'}catch(e){log.textContent='生命周期记录读取失败：'+e.message;}}
     const scope=qs('diag-scope'),kind=qs('diag-kind');
     if(!currentSessionId){diagnosticViewState.scope='all';scope.querySelector('option[value="session"]').disabled=true;}
     scope.value=diagnosticViewState.scope;kind.value=diagnosticViewState.kind;
@@ -4625,7 +4625,7 @@ function setupEditorButtons(deleteFn,saveFn){
  };
  save.onclick=async()=>{
   if(pending||deleting||owner.__editorDeletePending||editorState!==owner)return;
-  pending=true;owner.__editorSavePending=true;qs('mima-editor-save-notice')?.classList.remove('visible');save.disabled=true;del.disabled=true;save.textContent='正在保存…';editorSaveStatus('正在提交，请勿重复点击…','saving');
+  pending=true;owner.__editorSavePending=true;r19Lifecycle('editor_save_begin',{tab:owner?.type||'unknown'});qs('mima-editor-save-notice')?.classList.remove('visible');save.disabled=true;del.disabled=true;save.textContent='正在保存…';editorSaveStatus('正在提交，请勿重复点击…','saving');
   let unlockFields=()=>{};
   try{
    // The save handler captures the original values synchronously before its first
@@ -4640,7 +4640,7 @@ function setupEditorButtons(deleteFn,saveFn){
     // Another editor was opened, do not overwrite its status.
    }else if(owner?.type!=='mask'&&owner?.type!=='preset')editorSaveNotice('操作已完成 ✓');
   }catch(e){console.error('E_EDITOR_SAVE',e);if(editorState===owner)editorSaveStatus('保存未完成：'+String(e?.message||e),'error');}
-  finally{unlockFields();pending=false;owner.__editorSavePending=false;if(editorState===owner){save.disabled=false;del.disabled=false;save.textContent='保存';}}
+  finally{r19Lifecycle('editor_save_end',{tab:owner?.type||'unknown'});unlockFields();pending=false;owner.__editorSavePending=false;if(editorState===owner){save.disabled=false;del.disabled=false;save.textContent='保存';}}
  };
 }
 function downloadText(name,text,type='text/plain;charset=utf-8'){return window.MimaFileExport.save(name,String(text??''),type)}
@@ -5743,7 +5743,7 @@ async function triggerChat(text,actionType='send',generationOptions={}){
     try{owner={turnId:++generationSerial,traceId:newGenerationTraceId(),sessionId:targetSessionId,action:actionType,text:String(text||''),
         controller:new AbortController(),lastProgress:null,streamText:'',userSaved:false,preserveComposer:generationOptions.preserveComposer===true,inputCleared:false,onAccepted:generationOptions.onAccepted,uiStartedAt:performance.now()};}
     catch(e){generationFailures.set(targetSessionId,{...describeApiError(e),action:actionType});showGenerationError(e,actionType);return blocked(e.message||'无法开始发送');}
-    generationOwners.set(targetSessionId,owner);generationFailures.delete(targetSessionId);toggleUnknownGenerationActions(false);
+    generationOwners.set(targetSessionId,owner);r19Lifecycle('generation_begin',{action:actionType});generationFailures.delete(targetSessionId);toggleUnknownGenerationActions(false);
     try{
         clearLiveStream();
         if(actionType==='send'&&owner.text.trim())renderPendingUserMessage(owner.text);
@@ -5816,6 +5816,7 @@ async function triggerChat(text,actionType='send',generationOptions={}){
         else console.error('其他剧情请求异常，原会话仍持有错误信息',{targetSessionId,turnId:owner.turnId,error:e});
         await reconcileCanonicalGenerationSession(targetSessionId);
     }finally{
+        r19Lifecycle('generation_end',{action:actionType,status:receipt.status});
         if(generationOwners.get(targetSessionId)===owner)generationOwners.delete(targetSessionId);
         toggleUIState(false);
     }
@@ -5839,7 +5840,21 @@ function regenerateCurrentMsg(){triggerChat('','regenerate',{regenerationContext
 function continueMsg(){triggerChat('','continue')}
 function autoAdvance(){triggerChat(qs('director-note').value,'auto_advance')}
 function syncComposerContentState(){const el=qs('story-input');if(el)el.classList.toggle('has-content',!!el.value)}
-function autoResizeInput(){const el=qs('story-input');el.style.height='auto';el.style.height=Math.min(170,Math.max(46,el.scrollHeight))+'px';syncComposerContentState()}
+// Keystrokes and composition events may arrive several times in one frame.
+// Keep the original synchronous API for drafts, session changes and send/clear;
+// only coalesce input-event geometry work to avoid forced layout during IME.
+let r19ComposerResizeFrame=0;
+function scheduleComposerResize(){
+ if(r19ComposerResizeFrame)return;
+ r19ComposerResizeFrame=requestAnimationFrame(()=>{r19ComposerResizeFrame=0;autoResizeInput();});
+}
+function autoResizeInput(){
+ if(r19ComposerResizeFrame){cancelAnimationFrame(r19ComposerResizeFrame);r19ComposerResizeFrame=0;}
+ const el=qs('story-input');if(!el)return;
+ el.style.height='auto';
+ el.style.height=Math.min(170,Math.max(46,el.scrollHeight))+'px';
+ syncComposerContentState();
+}
 
 // UI reconciliation never mutates canonical History. Store render snapshots outside session data.
 let r19RenderState={sessionId:null,renderMode:null,roleNames:'',regexToken:'',nodes:new Map()};
@@ -6528,7 +6543,7 @@ async function mimaBoot(){
             restoreLegacyFont({syncSelection:false});
             // Font indexing is deliberately not awaited before input controls are bound.
             void MimaFontManager.init().then(records=>{fontRecords=records;}).catch(e=>console.warn('本地字体库启动失败',e));
-            qs('story-input').addEventListener('input',()=>{autoResizeInput();r19ComposerInput();});
+            qs('story-input').addEventListener('input',()=>{r19ComposerInput();scheduleComposerResize();});
     qs('director-note').addEventListener('input',r19ComposerInput);
     qs('story-chat-box')?.addEventListener('scroll',()=>{if(r19ScrollTimer)clearTimeout(r19ScrollTimer);r19ScrollTimer=setTimeout(()=>{r19ScrollTimer=null;r19PersistReading();},320);},{passive:true});
     bindStoryStreamScroll();setupImmersiveReading();

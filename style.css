@@ -1271,11 +1271,13 @@ html.mima-composer-keyboard .app-shell>.composer-shell{padding-bottom:10px}
 .app-shell>.composer-shell .composer-row textarea{font-size:1rem;line-height:1.45}
 
 @supports (-webkit-touch-callout:none){
- /* V5.85: the iOS focus zoom guard previously enlarged the typed text only
-    AFTER focus (16px -> 20px at 80% UI scale). Keep a single readable size
-    across idle/focus/keyboard, without changing shell zoom or text contents. */
+ /* V5.86: V5.85 fixed the focus jump by making BOTH states 20px at
+    the default 80% UI density. That preserved the regression permanently.
+    Use the original 16 CSS-px input type size for idle/focus/keyboard; let
+    the existing app-shell zoom produce the user's compact text without
+    changing theme fonts, entire-UI density, or the 92px keyboard height cap. */
  .app-shell>.composer-shell>.composer-row textarea#story-input,
- .app-shell>.composer-shell>.composer-row textarea#story-input:focus{font-size:max(calc(16px / var(--mima-ui-scale,1)),1rem)}
+ .app-shell>.composer-shell>.composer-row textarea#story-input:focus{font-size:16px}
  #settings-modal .settings-content :is(input.field,textarea.field,select.field):focus{font-size:max(calc(16px / var(--mima-ui-scale)),1rem)}
 }
 .app-shell>.composer-shell>.quick-actions{gap:5px;scroll-snap-type:x proximity}
