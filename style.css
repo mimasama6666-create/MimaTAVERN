@@ -1612,28 +1612,3 @@ html.mima-settings-paint-guard .app-shell *::after{animation-play-state:paused!i
     -webkit-overflow-scrolling:touch;
   }
 }
-
-
-/* V5.84 · Keyboard background continuation: paint the SAME global theme in
-   the unzoomed canvas beneath the fixed composer. Nothing here is a new theme,
-   and the existing iOS input-height/viewport code is intentionally unchanged. */
-#mima-keyboard-theme-underlay{display:none;pointer-events:none;user-select:none}
-html.mima-composer-keyboard{
-  background-color:var(--mima-kb-canvas-color,var(--bg-deep));
-  background-image:var(--mima-kb-canvas-image,none);
-  background-size:var(--mima-kb-canvas-size,cover);
-  background-position:var(--mima-kb-canvas-position,center);
-  background-repeat:var(--mima-kb-canvas-repeat,no-repeat);
-}
-html.mima-composer-keyboard body > #mima-keyboard-theme-underlay{
-  display:block;position:fixed;inset:0 auto auto 0;width:100%;
-  height:100lvh;min-height:100dvh;max-height:none;
-  /* Inheritance keeps the original global CSS picture, gradient and switches,
-     with no second encoded image and no new texture/asset. */
-  background:inherit;
-  z-index:0;overflow:hidden;pointer-events:none;
-}
-html.mima-composer-keyboard body > #mima-keyboard-theme-underlay > .mima-keyboard-theme-overlay{
-  position:absolute;inset:0;pointer-events:none;
-}
-html.mima-composer-keyboard body > .app-shell{z-index:1}
