@@ -10,6 +10,7 @@ let keyboardBacking=null,keyboardBackingOverlay=null,keyboardBackingObserver=nul
 // One visible backing session may outlive a focused composer while the keyboard
 // closes. Viewport geometry is observed separately from the backing lifetime.
 let keyboardThemeActive=false,keyboardGeometryActive=false,keyboardSession=0;
+let keyboardGeometryReviewedSession=0;
 let keyboardPhase='idle'; // idle | focused-unconfirmed | keyboard-obscured | closing
 let keyboardDismissPending=false,keyboardViewportWasObscured=false;
 let keyboardViewportPreviouslyObscured=false,keyboardViewportRecovered=false;
@@ -106,6 +107,25 @@ function toggleKeyboardTheme(visible){
   if(keyboardBackingOverlay)keyboardBackingOverlay.style.backgroundImage='none';
  }
 }
+// An already-active wallpaper can belong to a closing focus session. Repair
+// its DOM ownership on later focus/geometry transitions, but only resample
+// theme styles when the surface was actually missing or wrongly attached.
+// Theme mutations have their own observer and keep the existing RAF coalescing.
+function reconcileKeyboardSurface(){
+ if(!keyboardThemeActive)return;
+ const root=doc.documentElement;
+ let repaired=false;
+ if(!root.classList.contains('mima-keyboard-theme-active')){
+  root.classList.add('mima-keyboard-theme-active');repaired=true;
+ }
+ const previous=keyboardBacking;
+ const backing=getKeyboardBacking();
+ if(backing && (!previous || backing!==previous))repaired=true;
+ if(backing && backing.parentElement!==doc.body){
+  doc.body.appendChild(backing);repaired=true;
+ }
+ if(repaired)scheduleKeyboardTheme();
+}
 function isComposerControl(element){
  return !!element?.matches?.('#story-input,#director-note') &&
   !!element.closest?.('.app-shell > .composer-shell');
@@ -120,7 +140,9 @@ function beginKeyboardSession(){
  keyboardExitIntentSession=0;
  // The new focus owns a new session. Do not let an older scheduled close
  // clear this background, even if WebKit still reports the previous viewport.
+ const wasActive=keyboardThemeActive;
  toggleKeyboardTheme(true);
+ if(wasActive)reconcileKeyboardSurface();
 }
 function endKeyboardSession(){
  if(keyboardPhase==='idle')return;
@@ -182,6 +204,10 @@ function viewport(){
  if(geometry!==keyboardGeometryActive){
   keyboardGeometryActive=geometry;
   root.classList.toggle('mima-composer-keyboard',geometry);
+ }
+ if(geometry && focused && keyboardGeometryReviewedSession!==keyboardSession){
+  keyboardGeometryReviewedSession=keyboardSession;
+  reconcileKeyboardSurface();
  }
  if(keyboardThemeActive && !focused && keyboardDismissPending){
   const viewportClosed=referenceHeight-height<=55 && Math.abs(top)<=20;
