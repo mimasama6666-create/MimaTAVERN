@@ -910,7 +910,9 @@ function renderSessions(){
       for(const groupButton of box.querySelectorAll('[data-bulk-group-select]'))groupButton.disabled=sessionOrganizationBusy;
     };
     const bulkToggle=qs('session-bulk-toggle'),bulkActions=qs('session-bulk-actions');
-    if(bulkToggle){bulkToggle.setAttribute('aria-pressed',String(sessionBulkMode));bulkToggle.textContent=sessionBulkMode?'✓ 结束批量整理':'☑ 批量整理';bulkToggle.onclick=toggleSessionBulkMode;}
+    qs('session-bulk-selection')?.classList.toggle('hidden',!sessionBulkMode);
+    qs('session-drawer')?.classList.toggle('bulk-active',sessionBulkMode);
+    if(bulkToggle){bulkToggle.setAttribute('aria-pressed',String(sessionBulkMode));bulkToggle.textContent=sessionBulkMode?'✓ 退出批量':'☑ 批量';bulkToggle.onclick=toggleSessionBulkMode;}
     if(bulkActions){
       bulkActions.classList.toggle('hidden',!sessionBulkMode);
       const all=qs('session-bulk-all'),inverse=qs('session-bulk-invert'),clear=qs('session-bulk-clear'),group=qs('session-bulk-group'),apply=qs('session-bulk-apply'),restore=qs('session-bulk-restore');
@@ -964,10 +966,7 @@ function renderSessions(){
         command('删除剧情…',()=>deleteSessionFromHistory(s.id));
         actions.append(more,menu);
         row.append(open);
-        if(sessionBulkMode){
-          const go=document.createElement('button');go.type='button';go.className='session-go';go.textContent='打开';
-          go.setAttribute('aria-label',`打开剧情：${s.title}`);go.onclick=()=>openSession(s.id,true);row.append(go);
-        }
+        if(sessionBulkMode)command('打开剧情',()=>openSession(s.id,true));
         row.append(actions);
         row.addEventListener('click',e=>{if(sessionBulkMode&&e.target===row)choose();});
         row.addEventListener('focusout',e=>{if(!row.contains(e.relatedTarget))close();});
@@ -1373,6 +1372,11 @@ function renderSettings(){return renderSettingsContent().catch(error=>{r19Lifecy
 async function renderSettingsContent(){
     const renderEpoch=++settingsRenderEpoch;
     qsa('.settings-tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===settingsTab));
+    // Auto-reveal the selected tab without scrolling the dialog vertically.
+    const tabStrip=qs('settings-modal')?.querySelector('.settings-tabs');
+    const activeTab=tabStrip?.querySelector('button.active');
+    if(activeTab){const outer=tabStrip.getBoundingClientRect(),inner=activeTab.getBoundingClientRect();
+      tabStrip.scrollLeft+=inner.left-outer.left-(outer.width-inner.width)/2;}
     syncAppearancePreviewMode(settingsTab==='appearance');
     const box=qs('settings-content');
     if(settingsTab==='png-resources'){renderPngResourcesTab(box);return;}
@@ -1785,15 +1789,15 @@ function fillPresets(root){if(!root)return;root.innerHTML='';const active=new Se
  ordered.forEach(p=>{const r=document.createElement('div');r.className='preset-row';r.innerHTML=`<label class="mima-resource-select"><input type="checkbox" ${mimaCategorySelected.presets.has(p.id)?'checked':''} onchange="mimaCategorySelect('presets','${p.id}',this.checked)"> 批量移动</label><input type="checkbox" aria-label="挂载剧情预设" ${active.has(p.id)?'checked':''} onchange="togglePreset('${p.id}',this.checked)"><div class="row-main"><div class="row-title">${escapeHtml(p.name)}</div><div class="row-sub">${escapeHtml(p.category||'未分类')} · ${escapeHtml(presetTypeLabel(p.type||'style'))} · 顺序 ${p.priority??50}${p.enabled===false?(active.has(p.id)?' · ⚠ 已挂载但未生效（预设停用）':' · 已停用'):''}</div></div><button class="ghost-btn" title="收藏预设" onclick="mimaToggleFavorite('presets','${p.id}')">${p.favorite?'★':'☆'}</button><button class="ghost-btn" onclick="openPresetEditor('${p.id}')">编辑</button>`;root.appendChild(r);});
 }
 async function togglePreset(id,on){const set=new Set(currentSessionData.presetIds||[]);on?set.add(id):set.delete(id);await patchCurrent({presetIds:[...set]},true);renderSettings()}
-function openPresetEditor(id=null){const p=id?presets.find(x=>x.id===id):{name:'',type:'style',description:'',content:'',priority:50};editorState={type:'preset',id,saving:false,nonce:newGenerationTraceId()};qs('editor-title').textContent=id?`编辑预设 · ${p.name}`:'新建预设';qs('editor-eyebrow').textContent='PRESET（预设）';qs('editor-body').innerHTML=`<div class="form-grid"><div><label class="form-label">名称</label><input id="pre-name" class="field" value="${escapeHtml(p.name||'')}"></div><div><label class="form-label">类型</label><select id="pre-type" class="field">${['style','format','behavior','model'].map(x=>`<option value="${x}" ${p.type===x?'selected':''}>${presetTypeLabel(x)}</option>`).join('')}</select></div><div><label class="form-label">Priority（发送顺序，小值先发）</label><input id="pre-priority" type="number" class="field" value="${Number(p.priority??50)}"></div><div><label class="form-label">分类</label><input id="pre-category" class="field" value="${escapeHtml(p.category||'未分类')}"></div><div class="form-full"><label class="form-label">说明</label><input id="pre-desc" class="field" value="${escapeHtml(p.description||'')}"></div><div class="form-full"><label class="check-row"><input id="pre-enabled" type="checkbox" ${p.enabled!==false?'checked':''}> 启用这份预设</label><p class="helper">关闭后即使在剧情里勾选了挂载，也不会发给模型。开启后仍需要在目标剧情挂载。</p></div><div class="form-full"><label class="form-label">内容</label><textarea id="pre-content" class="field textarea tall">${escapeHtml(p.content||'')}</textarea></div></div>`;setupEditorButtons(id?()=>deletePreset(id):null,savePresetEditor);qs('editor-modal').classList.remove('hidden')}
+function openPresetEditor(id=null){const p=id?presets.find(x=>x.id===id):{name:'',type:'style',description:'',content:'',priority:50};if(!p){toast('预设已不存在，不能打开旧编辑器');return;}editorState={type:'preset',id,saving:false,nonce:newGenerationTraceId(),expectedToken:id?window.MimaLocalStore.presetCasToken(p):null};qs('editor-title').textContent=id?`编辑预设 · ${p.name}`:'新建预设';qs('editor-eyebrow').textContent='PRESET（预设）';qs('editor-body').innerHTML=`<div class="form-grid"><div><label class="form-label">名称</label><input id="pre-name" class="field" value="${escapeHtml(p.name||'')}"></div><div><label class="form-label">类型</label><select id="pre-type" class="field">${['style','format','behavior','model'].map(x=>`<option value="${x}" ${p.type===x?'selected':''}>${presetTypeLabel(x)}</option>`).join('')}</select></div><div><label class="form-label">Priority（发送顺序，小值先发）</label><input id="pre-priority" type="number" class="field" value="${Number(p.priority??50)}"></div><div><label class="form-label">分类</label><input id="pre-category" class="field" value="${escapeHtml(p.category||'未分类')}"></div><div class="form-full"><label class="form-label">说明</label><input id="pre-desc" class="field" value="${escapeHtml(p.description||'')}"></div><div class="form-full"><label class="check-row"><input id="pre-enabled" type="checkbox" ${p.enabled!==false?'checked':''}> 启用这份预设</label><p class="helper">关闭后即使在剧情里勾选了挂载，也不会发给模型。开启后仍需要在目标剧情挂载。</p></div><div class="form-full"><label class="form-label">内容</label><textarea id="pre-content" class="field textarea tall">${escapeHtml(p.content||'')}</textarea></div></div>`;setupEditorButtons(id?()=>deletePreset(id):null,savePresetEditor);qs('editor-modal').classList.remove('hidden')}
 async function savePresetEditor(){
  const edit=editorState;if(edit?.type!=='preset'||edit.saving||edit.__editorDeletePending)return;
- const body={name:qs('pre-name').value||'未命名预设',type:qs('pre-type').value,priority:Number(qs('pre-priority').value === '' ? 50 : qs('pre-priority').value),description:qs('pre-desc').value,category:(qs('pre-category').value||'未分类').trim().slice(0,60),enabled:qs('pre-enabled').checked,content:qs('pre-content').value};
+ const body={expectedToken:edit.expectedToken,name:qs('pre-name').value||'未命名预设',type:qs('pre-type').value,priority:Number(qs('pre-priority').value === '' ? 50 : qs('pre-priority').value),description:qs('pre-desc').value,category:(qs('pre-category').value||'未分类').trim().slice(0,60),enabled:qs('pre-enabled').checked,content:qs('pre-content').value};
  edit.saving=true;const saveButton=qs('editor-save');if(saveButton){saveButton.disabled=true;saveButton.textContent='正在保存…';}
  editorSaveStatus('正在安全保存预设…','saving');releaseEditorKeyboardForSave();
  try{
   const res=await fetchStory(edit.id?`/presets/${edit.id}`:'/presets',edit.id?'PATCH':'POST',body);
-  if(!res.success){editorSaveStatus('预设未保存：'+(res.msg||'旧内容未覆盖'),'error');return;}
+  if(!res.success){editorSaveStatus('预设未保存：'+(res.msg||'旧内容未覆盖'),'error');if(edit.id&&/CONFLICT|冲突|更新|旧编辑/i.test(String(res.code||'')+' '+String(res.msg||'')))showPresetConflictActions(edit);return;}
   // Only the saved preset is patched. Never loadAll/openSession/renderChat
   // or rebuild currently displayed HTML, CSS, fonts and History.
   const saved=res.data,index=presets.findIndex(p=>p.id===saved.id);
@@ -1804,6 +1808,90 @@ async function savePresetEditor(){
  finally{
   edit.saving=false;if(editorState===edit&&saveButton){saveButton.disabled=false;saveButton.textContent='保存';}
  }
+}
+function showPresetConflictActions(edit){
+ if(editorState!==edit||!qs('editor-body'))return;
+ let controls=qs('preset-conflict-actions');
+ if(!controls){controls=document.createElement('div');controls.id='preset-conflict-actions';controls.className='mima-preset-conflict-actions';qs('editor-body').appendChild(controls);}
+ controls.replaceChildren();
+ const add=(label,action)=>{const b=document.createElement('button');b.type='button';b.className='ghost-btn';b.textContent=label;b.addEventListener('click',action);controls.appendChild(b);};
+ add('复制我的草稿',()=>{const draft=qs('pre-content')?.value||'';if(navigator.clipboard?.writeText)navigator.clipboard.writeText(draft).then(()=>toast('草稿已复制')).catch(()=>{qs('pre-content')?.focus();toast('无法访问剪贴板，请长按正文复制');});else{qs('pre-content')?.focus();toast('请选择正文复制');}});
+ add('另存为新预设',async()=>{
+  if(editorState!==edit||edit.saving)return;
+  const body={name:(qs('pre-name')?.value||'未命名预设')+' · 新副本',type:qs('pre-type')?.value||'style',priority:Number(qs('pre-priority')?.value||50),description:qs('pre-desc')?.value||'',category:qs('pre-category')?.value||'未分类',enabled:!!qs('pre-enabled')?.checked,content:qs('pre-content')?.value||''};
+  edit.saving=true;
+  try{const result=await fetchStory('/presets','POST',body);if(!result?.success)throw Error(result?.msg||'保存失败');const saved=result.data;presets.push(saved);if(editorState===edit){closeEditor();if(settingsTab==='presets'&&isSettingsOpen())renderPresetsTab(qs('settings-content'));}editorSaveNotice('草稿已另存为新预设，旧预设未覆盖 ✓');}
+  catch(e){editorSaveStatus('另存失败：'+String(e?.message||e),'error');}
+  finally{edit.saving=false;}
+ });
+ add('查看并对照最新版本',async()=>{
+  if(editorState!==edit||!edit.id)return;
+  const requestedId=edit.id;
+  const requestSeq=edit.latestViewSequence=(edit.latestViewSequence||0)+1;
+  const validEditor=()=>editorState===edit&&!edit.saving&&edit.id===requestedId&&edit.latestViewSequence===requestSeq&&
+    !qs('editor-modal')?.classList.contains('hidden')&&
+    qs('editor-body')?.contains(controls);
+  try{
+    const result=await fetchStory('/presets/'+encodeURIComponent(requestedId)+'/latest');
+    // A slow reply from preset A must not paint itself inside preset B's editor.
+    if(!validEditor())return;
+    if(!result?.success)throw Error(result?.msg||'最新预设加载失败');
+    const latest=result.data;
+    if(!latest)throw Error('这份预设已被删除；草稿仍在，可另存为新预设');
+    let compare=qs('preset-conflict-comparison');
+    if(!compare){compare=document.createElement('section');compare.id='preset-conflict-comparison';compare.className='mima-preset-compare';
+      controls.after(compare);}
+    compare.replaceChildren();
+    const heading=document.createElement('strong');heading.textContent='对照最新保存版本';compare.appendChild(heading);
+    const helper=document.createElement('p');helper.className='mima-preset-compare-hint';helper.textContent='只标记有差异的字段。左边是你正在编辑的草稿，右边是其他窗口已保存的版本；点击「采用保存版」只替换该字段。';compare.appendChild(helper);
+    const fields=[['名称','pre-name','name'],['类型','pre-type','type'],['优先级','pre-priority','priority'],
+      ['分类','pre-category','category'],['说明','pre-desc','description'],['启用','pre-enabled','enabled'],['完整正文','pre-content','content']];
+    const rows=[];
+    for(const [label,id,key] of fields){
+      const field=qs(id);if(!field)continue;
+      const yourValue=id==='pre-enabled'?(field.checked?'启用':'停用'):String(field.value??'');
+      const serverValue=key==='enabled'?(latest.enabled!==false?'启用':'停用'):String(latest[key]??'');
+      const different=yourValue!==serverValue;
+      const row=document.createElement('section');row.className='mima-preset-compare-row'+(different?' is-different':'');
+      const title=document.createElement('strong');title.className='mima-preset-compare-label';title.textContent=label+(different?' · 有差异':' · 相同');row.appendChild(title);
+      const columns=document.createElement('div');columns.className='mima-preset-compare-cols';
+      let updateDraftPreview=null;
+      for(const [side,value] of [['我的草稿',yourValue],['已保存版本',serverValue]]){
+        const cell=document.createElement('div');cell.className='mima-preset-compare-cell';
+        const cellTitle=document.createElement('span');cellTitle.className='mima-preset-compare-side';cellTitle.textContent=side;cell.appendChild(cellTitle);
+        const pre=document.createElement('pre');cell.appendChild(pre);
+        let shownValue=value,expanded=false,toggle=null;
+        const renderPreview=()=>{
+          const large=id==='pre-content'&&shownValue.length>700;
+          pre.textContent=large&&!expanded?shownValue.slice(0,400)+'\n…（原文保留，点展开查看）':shownValue;
+          if(toggle){toggle.hidden=!large;toggle.textContent=expanded?'折叠正文':'展开全文（'+shownValue.length.toLocaleString()+' 字）';}
+        };
+        if(id==='pre-content'){
+          toggle=document.createElement('button');toggle.type='button';toggle.className='ghost-btn mima-compare-expand';
+          toggle.onclick=()=>{if(!validEditor())return;expanded=!expanded;renderPreview();};cell.appendChild(toggle);
+        }
+        if(side==='我的草稿')updateDraftPreview=newValue=>{shownValue=newValue;expanded=false;renderPreview();};
+        renderPreview();columns.appendChild(cell);
+      }
+      row.appendChild(columns);
+      if(different){const adopt=document.createElement('button');adopt.type='button';adopt.className='ghost-btn';adopt.textContent='采用保存版「'+label+'」';
+        adopt.addEventListener('click',()=>{if(!validEditor())return;
+          if(id==='pre-enabled')field.checked=latest.enabled!==false;
+          else field.value=String(latest[key]??'');
+          updateDraftPreview?.(id==='pre-enabled'?(field.checked?'启用':'停用'):String(field.value??''));
+          editorSaveStatus('已替换「'+label+'」，其他草稿字段保留','info');});
+        row.appendChild(adopt);}
+      rows.push({row,different});
+    }
+    for(const entry of rows.filter(x=>x.different).concat(rows.filter(x=>!x.different)))compare.appendChild(entry.row);
+    const updateBase=document.createElement('button');updateBase.type='button';updateBase.className='primary-btn';
+    updateBase.textContent='以最新版本为基线，保留我的草稿';
+    updateBase.onclick=()=>{if(!validEditor())return;
+      edit.expectedToken=window.MimaLocalStore.presetCasToken(latest);
+      editorSaveStatus('已更新编辑基线，草稿保留。再次保存仍会校验其他窗口的修改。','info');};
+    compare.appendChild(updateBase);
+  }catch(e){if(validEditor())editorSaveStatus('读取最新版本失败：'+String(e?.message||e),'error');}
+ });
 }
 async function deletePreset(id){
  if(editorState?.__editorSavePending||editorState?.saving)return toast('预设正在保存，暂不能删除');
@@ -3075,12 +3163,88 @@ function mimaAppearanceFoldOpen(name,defaultOpen=false){
   return defaultOpen;
 }
 function mimaAppearanceFoldAttr(name,defaultOpen=false){return mimaAppearanceFoldOpen(name,defaultOpen)?'open':'';}
+let mimaAppearanceActivePanel='theme';
+function mimaShowAppearancePanel(panel){
+  const root=qs('settings-content');if(!root||settingsTab!=='appearance')return;
+  const previous=mimaAppearanceActivePanel;
+  mimaAppearanceActivePanel=panel;
+  for(const el of root.querySelectorAll('[data-appearance-panel]'))el.hidden=el.dataset.appearancePanel!==panel;
+  for(const b of root.querySelectorAll('.mima-appearance-jumps button[data-appearance-target]'))b.setAttribute('aria-pressed',String(b.dataset.appearanceTarget===panel));
+  // CSS cards are a heavy subtree; release only their DOM, not saved CSS,
+  // categories, selection, session state or edit data, when this tab is hidden.
+  if(previous==='css-presets'&&panel!=='css-presets'){
+    const list=qs('css-preset-list');if(list){list.replaceChildren();delete list.dataset.loaded;}
+  }
+  root.scrollTop=0;
+}
+async function mimaEnsureAppearanceFontInventory(){
+  if(settingsTab!=='appearance'||!['font-settings','local-fonts'].includes(mimaAppearanceActivePanel))return;
+  const box=qs('settings-content');if(!box||box.dataset.fontInventoryLoaded==='1')return;
+  if(box.dataset.fontInventoryLoading==='1')return;
+  box.dataset.fontInventoryLoading='1';
+  try{
+    const records=await MimaFontManager.listMetadata();
+    if(settingsTab!=='appearance'||qs('settings-content')!==box||!['font-settings','local-fonts'].includes(mimaAppearanceActivePanel))return;
+    fontRecords=records;refreshFontSelectors(records);
+    box.dataset.fontInventoryLoaded='1';
+    const list=qs('font-list');
+    if(list&&mimaAppearanceFoldOpen('local-fonts',false)){
+      renderLocalFontRows(list,records);list.dataset.loaded='1';
+    }
+    const hint=qs('mima-local-fonts')?.querySelector('.mima-fold-hint');
+    if(hint)hint.textContent=records.length+' 款 · 导入 / 预览 / 补字 / 删除 / 备份';
+    const shortcut=box.querySelector('.mima-font-manager-shortcuts button[onclick*="local-fonts"]');
+    if(shortcut)shortcut.textContent='📁 管理本地字体（'+records.length+' 款）';
+    updateFontApplicationStatus();renderFontBundleStatus();
+  }catch(error){
+    console.error('外观字体库读取失败，原字体数据与设置均未更改',error);
+    const list=qs('font-list');if(list)list.textContent='字体库读取失败，原文件未改变：'+(error?.message||error);
+  }finally{if(qs('settings-content')===box)delete box.dataset.fontInventoryLoading;}
+}
+function mimaCompactAppearance(box){
+  const nav=box.querySelector('.mima-appearance-jumps');if(!nav)return;
+  nav.classList.add('mima-appearance-subnav');
+  nav.innerHTML=[['theme','主题'],['font-settings','字体'],['css-presets','CSS'],['display','显示'],['motion','动效'],['sound','声音'],['local-fonts','本地字体'],['remote-fonts','网络字体']].map(([id,name])=>`<button type="button" data-appearance-target="${id}" aria-pressed="false" onclick="mimaOpenAppearanceSection('${id}')">${name}</button>`).join('');
+  // Preserve all original panels in DOM; only the visible one owns vertical room.
+  for(const child of [...box.children]){
+    if(child===nav||child.matches?.('.appearance-feedback'))continue;
+    if(child.classList?.contains('mima-appearance-jumps'))continue;
+    let panel='theme';
+    if(child.classList?.contains('mima-motion-settings'))panel='motion';
+    else if(child.classList?.contains('mima-sound-settings')){panel='sound';child.id='mima-sound-settings';}
+    else if(child.id==='mima-font-settings'||child.querySelector?.('#mima-font-settings')||child.querySelector?.('.typography-grid'))panel='font-settings';
+    else if(child.querySelector?.('#mima-local-fonts'))panel='local-fonts';
+    else if(child.querySelector?.('#mima-remote-fonts'))panel='remote-fonts';
+    else if(child.id==='mima-css-presets')panel='css-presets';
+    else if(child.classList?.contains('mima-appearance-display'))panel='display';
+    child.dataset.appearancePanel=panel;
+  }
+  const preview=box.querySelector('.mima-font-quick-preview');
+  if(preview){const d=document.createElement('details');d.className='mima-preview-details';const summary=document.createElement('summary');summary.textContent='实时字体预览（展开查看）';preview.before(d);d.append(summary,preview);}
+  const themeCards=box.querySelector('.novel-theme-grid');if(themeCards)themeCards.classList.add('mima-theme-palette');
+  for(const el of box.querySelectorAll('.mima-css-manager > .helper,.mima-css-manager > .css-scope-note,.mima-css-manager > .css-default-tools')){
+    if(el.closest('details'))continue;const d=document.createElement('details');d.className='mima-appearance-info';const summary=document.createElement('summary');summary.textContent=el.classList.contains('css-default-tools')?'更多 CSS 工具':'说明与高级选项';el.before(d);d.append(summary,el);
+  }
+  mimaShowAppearancePanel(mimaAppearanceActivePanel);
+}
 function mimaOpenAppearanceSection(name){
-  const id={'font-settings':'mima-font-settings','local-fonts':'mima-local-fonts','remote-fonts':'mima-remote-fonts','css-presets':'mima-css-presets'}[name];
+  mimaShowAppearancePanel(name);
+  if(name==='theme')return;
+  // Only mount the heavyweight resource widgets when their panel is visible.
+  if(name==='css-presets'){
+    const list=qs('css-preset-list');
+    if(list&&list.dataset.loaded!=='1'){renderCssPresetLibrary(list);list.dataset.loaded='1';}
+  }
+  if(name==='font-settings'||name==='local-fonts')void mimaEnsureAppearanceFontInventory();
+  const id={'font-settings':'mima-font-settings','local-fonts':'mima-local-fonts','remote-fonts':'mima-remote-fonts',
+    'css-presets':'mima-css-presets','display':'mima-appearance-display',
+    'motion':'mima-motion-settings','sound':'mima-sound-settings'}[name];
   const target=id?document.getElementById(id):null;
   if(!target){toast('对应设置尚未显示，请重新打开外观页');return;}
   if(target.tagName==='DETAILS'&&!target.open)target.open=true;
-  target.scrollIntoView({block:'start',behavior:'auto'});
+  // The panel navigation is already visible; avoid scrolling a hidden parent
+  // or moving the entire modal after clicking a tab.
+  qs('settings-content').scrollTop=0;
 }
 function mimaAppearanceFoldChanged(name,element){
   const open=!!element?.open;
@@ -3152,11 +3316,14 @@ function renderLocalFontRows(root,records){
     startVisibleFontPreviews(root,records);
 }
 async function renderAppearanceTab(box,renderEpoch=++settingsRenderEpoch){
-    let fontReadError=null,records;
-    try{records=await MimaFontManager.listMetadata()}catch(error){fontReadError=error;records=[];console.error('外观字体库读取失败，未更改字体存储或偏好',error)}
+    let fontReadError=null,records=[];
+    const needsFontInventory=['font-settings','local-fonts'].includes(mimaAppearanceActivePanel);
+    if(needsFontInventory){
+      try{records=await MimaFontManager.listMetadata()}catch(error){fontReadError=error;console.error('外观字体库读取失败，未更改字体存储或偏好',error)}
+    }
     if(!settingsRenderIsCurrent('appearance',renderEpoch,box))return;
     window.MimaInteraction?.ready?.then(updateAppearanceSoundRows).catch(error=>console.warn('[Appearance] 个人音效读取失败，原始数据未修改',error));
-    if(!fontReadError)fontRecords=records;
+    if(needsFontInventory&&!fontReadError)fontRecords=records;
     const ui=MimaFontManager.getSelected('ui'),story=MimaFontManager.getSelected('story'),typo=getStoryTypography();const opts=localFontOptions(fontReadError?[]:fontRecords);const themeState=MimaStandalone.getThemeSettings?.()||{theme:'default'},themeCards=(MimaThemeEngine?.getBuiltins?.()||[]).map(t=>`<button class="novel-theme-card ${themeState.theme===t.id?'active':''}" data-theme-choice="${t.id}" onclick="setBuiltInTheme('${t.id}')"><strong>${escapeHtml(t.name)}</strong><span>${escapeHtml(t.description)}</span></button>`).join('');box.innerHTML=`${appearanceFeedbackHtml()}<nav class="mima-appearance-jumps" aria-label="外观设置快捷入口"><button type="button" onclick="mimaOpenAppearanceSection('font-settings')">🔤 字体设置</button><button type="button" onclick="mimaOpenAppearanceSection('local-fonts')">📁 本地字体管理</button><button type="button" onclick="mimaOpenAppearanceSection('remote-fonts')">🔗 网络字体管理</button><button type="button" onclick="mimaOpenAppearanceSection('css-presets')">🎨 CSS 列表</button></nav><section class="settings-section"><h3>🌓 Built-in Theme（内置主题）</h3><p class="helper">Default 保留原始外观；深色、电子墨水、暖纸与韩系柔色主题覆盖聊天、设置、小说及助手的常用组件。启用全局 CSS 时内置皮肤暂停；停用全局 CSS 后恢复这里选择的主题。基础布局始终保留。</p><div class="novel-theme-grid">${themeCards}</div></section><section class="settings-section"><h3>📐 界面显示大小</h3><p class="helper">单独控制咪嘛馆的按钮、面板和小手机尺寸，不改变剧情正文字号设置，也不删除你现有的主题 CSS。默认 80%，相当于之前觉得舒服的紧凑尺寸；浏览器缩放建议恢复 100% 使用。</p><label class="form-label" for="mima-ui-density">界面显示比例</label><select id="mima-ui-density" class="field" style="max-width:240px" onchange="changeMimaUiDensity(this.value)"><option value="70">70% · 更紧凑</option><option value="80">80% · 推荐</option><option value="90">90%</option><option value="100">100% · 原始大小</option><option value="110">110% · 较大</option></select></section><section class="settings-section mima-font-settings-card" id="mima-font-settings"><h3>🔤 字体设置 <span class="mima-fold-hint">界面和正文分别选择，随时可改</span></h3><p class="helper">这里始终显示当前正在使用的字体、字重和补字组合；管理字体文件请使用下方的「本地字体管理」或「网络字体管理」。收起字体库不会停用已选字体。</p><div class="form-grid"><div><label class="form-label">UI（界面）字体</label><select id="font-ui-select" class="field" onchange="changeFont('ui',this.value)">${opts}</select></div><div><label class="form-label">剧情正文字体</label><select id="font-story-select" class="field" onchange="changeFont('story',this.value)">${opts}</select></div></div><div class="mima-weight-grid">${fontWeightControlsHtml('ui')}${fontWeightControlsHtml('story')}</div><div class="mima-font-quick-preview" aria-label="正在使用的界面与正文实时字体预览"><div class="mima-preview-label">实时预览 · 当前选中字体与字重</div><div class="mima-font-quick-ui"><small>界面 / 菜单</small><div class="mima-font-quick-menu"><strong>✦ 咪嘛馆</strong><span class="mima-font-quick-button">保存设置</span><span class="mima-font-quick-button">剧情列表</span></div></div><div class="mima-font-quick-story"><small>剧情正文 / 中日英文</small><p class="story-prose story-paragraph">雨停了，她轻声说：「おかえり、咪嘛。」The moon is beautiful.</p><p class="story-prose story-paragraph">第二段用来观察字号、行高、字重与段落间距。</p></div><button type="button" class="ghost-btn mima-preview-full" onclick="mimaExpandAppearancePreview()">展开完整聊天 / 小说 / 助手预览 ↗</button></div><div id="font-bundle-status" class="mima-bundle-status"></div><div id="font-application-status" class="mima-font-load-status" role="status" aria-live="polite"></div><div class="toolbar mima-font-manager-shortcuts"><button type="button" class="ghost-btn" onclick="mimaOpenAppearanceSection('local-fonts')">📁 管理本地字体（${fontRecords.length} 款）</button><button type="button" class="ghost-btn" onclick="mimaOpenAppearanceSection('remote-fonts')">🔗 管理网络字体（${MimaFontManager.urlFonts().length} 款）</button></div></section><section class="settings-section mima-appearance-group"><details id="mima-local-fonts" class="mima-appearance-fold" ${mimaAppearanceFoldAttr('local-fonts',false)} ontoggle="mimaAppearanceFoldChanged('local-fonts',this)"><summary>📁 本地字体管理 <span class="mima-fold-hint">${fontRecords.length} 款 · 导入 / 预览 / 补字 / 删除 / 备份</span></summary><div class="mima-appearance-fold-body"><p class="helper">直接导入 TTF / OTF / WOFF / WOFF2（字体文件格式）。文件保存在当前浏览器 IndexedDB，不需要转 URL（链接），也不会上传到服务器。剧情正文字体会作用于普通小说正文；开启 Safe HTML（安全 HTML）后，未自行指定字体的 HTML 正文也会继承它。状态栏若有自己的 CSS 字体设置，仍以状态栏自己的设置为准。</p><div class="toolbar"><button class="primary-btn" onclick="chooseFontImport()">＋ 导入字体文件</button><button class="ghost-btn" type="button" onclick="exportReadableFonts()">⇩ 分卷备份本地字体</button><button class="ghost-btn" type="button" onclick="exportReadableFontsToFolder()" ${typeof window.showDirectoryPicker==='function'?'':'hidden'}>⇩ 一键保存到文件夹</button><button class="ghost-btn" type="button" onclick="importLocalFontBackup()">⇧ 导入本地字体备份</button></div><div id="font-volume-export-status" class="row-sub" role="status" style="margin:8px 0;display:flex;flex-wrap:wrap;align-items:center;gap:8px"></div><p class="helper">单独字体备份每卷最多 16 MiB；支持的浏览器可以一键保存到选定文件夹，手机上可逐卷保存并在刷新后继续；恢复时一次选择同轮清单和所有分卷。旧版 JSON 仍可导入。未完成全部卷不能视为完整备份。异常字体若保留了原始字节，也会正常备份。若存在真正无法读取的文件，单独备份会明确列出缺失记录；这不是完整字体备份。旧版导入字体移除后原始字节暂时保留，不会立即腾出旧库存储。</p><label class="form-label" for="mima-font-test-text">自定义字形测试句（按需检查，不会扫描全部字体）</label><input id="mima-font-test-text" class="field" value="咪嘛馆 中文简体 你好 天束影 日本語 あいうえお 漢字 Aa 0123"><pre id="mima-font-coverage-output" class="mima-font-coverage" hidden aria-live="polite"></pre><div id="font-list" style="margin-top:14px"></div><div id="font-preview-sample" class="row-sub" aria-live="polite">每一行在滚动到可见区域时使用对应字体预览；离开视野后释放预览资源，选择不会改变。</div><div style="margin-top:10px"><button type="button" class="ghost-btn" onclick="mimaAuditFontData()">🛟 本地字体紧急检查（只读）</button><button type="button" class="ghost-btn" onclick="mimaInspectFontFailure()">🔎 检查字体为什么没生效（只读）</button><button type="button" class="ghost-btn" onclick="mimaCopyFontReport()">复制字体诊断</button><pre id="mima-font-diagnostic-output" hidden style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:42vh;overflow:auto;padding:10px;margin-top:8px;border:1px solid var(--line);border-radius:12px;font:12px/1.55 ui-monospace,monospace;background:var(--surface,white)"></pre></div></div></details></section>
 <section class="settings-section"><h3>📖 Novel Typography（小说正文排版）</h3><p class="helper">进入本页会自动打开上方实时预览。字号、正文字体、行高与字间距也会作为 Safe HTML 的基础继承值；段间距与首行缩进仍只作用于咪嘛馆识别出的普通小说段落，不会强行挤压 &lt;system&gt; / &lt;details&gt; / 表格等状态栏结构。</p>
 <div class="typography-grid">
@@ -3167,8 +3334,14 @@ ${typographyControlHtml('字间距','letterSpacing',-.04,.18,.005,typo.letterSpa
 ${typographyControlHtml('首行缩进','firstLineIndent',0,4,.25,typo.firstLineIndent,'em')}
 </div><div class="typography-indent-hint"><span>中文小说推荐：<strong>2em</strong>（约两个汉字宽）</span><div class="typography-quick-buttons"><button class="tool-mini" onclick="updateStoryTypography('firstLineIndent',0)">0</button><button class="tool-mini" onclick="updateStoryTypography('firstLineIndent',1)">1em</button><button class="tool-mini" onclick="updateStoryTypography('firstLineIndent',2)">2em</button><button class="tool-mini" onclick="updateStoryTypography('firstLineIndent',3)">3em</button></div></div><div class="toolbar typography-actions"><button class="ghost-btn" onclick="resetStoryTypography()">恢复默认排版</button></div></section>
 <section class="settings-section mima-appearance-group"><details id="mima-remote-fonts" class="mima-appearance-fold" ${mimaAppearanceFoldAttr('remote-fonts',false)} ontoggle="mimaAppearanceFoldChanged('remote-fonts',this)"><summary>🔗 网络字体管理 <span class="mima-fold-hint">${MimaFontManager.urlFonts().length} 款 · 添加 / 批量导入 / 下载离线</span></summary><div class="mima-appearance-fold-body"><p class="helper">字体文件链接可点「下载离线」，校验成功后保存到本机字体库；CSS（例如 Google Fonts）链接仍在线加载，想离线使用请导入完整字体文件。离线副本不占用临时 HTTP 缓存，普通清理缓存通常不影响它；但清除网站数据仍可能删除 IndexedDB。为了真正防丢，请到「数据备份」勾选字体文件，导出完整备份 JSON 到「文件」App。</p><div class="toolbar" role="group" aria-label="网络字体添加方式" style="display:flex;flex-wrap:wrap;gap:9px;margin:12px 0 14px"><button type="button" id="url-font-mode-single" class="primary-btn" aria-pressed="true" style="min-height:44px" onclick="setUrlFontImportMode('single')">单条添加</button><button type="button" id="url-font-mode-batch" class="ghost-btn" aria-pressed="false" style="min-height:44px" onclick="setUrlFontImportMode('batch')">＋ 批量导入字体链接</button></div><div id="url-font-single-panel" class="form-grid"><div><label class="form-label">收藏名称</label><input id="url-font-name" class="field" placeholder="例如：我的日文字体"></div><div><label class="form-label">字体族名（Google Fonts CSS 需要与其声明一致）</label><input id="url-font-family" class="field" placeholder="例如：Noto Sans JP"></div><div class="form-full"><label class="form-label">HTTPS 字体文件或 CSS 地址</label><input id="url-font-address" type="url" class="field" inputmode="url" placeholder="https://…/font.woff2"></div><div class="form-full"><button type="button" class="ghost-btn" onclick="saveUrlFont()">＋ 保存到字体库（不启用）</button></div></div><div id="url-font-batch-panel" class="mima-font-batch" style="display:none;margin:13px 0;padding:12px;border:1px solid var(--line);border-radius:13px"><p class="helper">一次粘贴多条 HTTPS 链接（每行一条，也支持空格分隔）。字体文件自动命名为「自定义字体1、2……」并生成 CSS；Google Fonts 的 CSS 会自动识别字体族名，其他 CSS 地址需允许跨站读取才能识别。链接只收藏，选择时才加载，不更改当前字体。最多收藏 100 个。</p><label class="form-label" for="url-font-batch-links">字体链接（可一次粘贴多条）</label><textarea id="url-font-batch-links" class="field textarea mono" rows="5" style="min-height:110px" spellcheck="false" placeholder="https://example.com/font1.woff2&#10;https://example.com/font2.ttf&#10;https://fonts.googleapis.com/css2?family=Noto+Sans+JP&amp;display=swap"></textarea><div class="toolbar" style="margin-top:9px"><button id="url-font-batch-import" type="button" class="primary-btn" style="min-height:56px" onclick="batchImportUrlFonts()">＋ 批量导入到字体库</button></div><div id="url-font-batch-status" class="row-sub" role="status" aria-live="polite" style="white-space:pre-wrap;overflow-wrap:anywhere;margin-top:8px"></div></div><div class="toolbar"><button type="button" class="ghost-btn" onclick="exportUrlFontRaw()">⇩ 导出链接字体收藏原始数据（救援）</button></div><div id="url-font-list" class="mima-url-font-list">${mimaAppearanceFoldOpen('remote-fonts',false)?urlFontItemsHtml():''}</div><details class="mima-legacy-font"><summary>旧版单链接字体（兼容保留）</summary><div class="form-grid"><div><label class="form-label">旧 URL</label><input id="legacy-font-url" class="field" value="${escapeHtml(localStorage.getItem(LEGACY_FONT_URL_KEY)||'')}"></div><div><label class="form-label">字体族名</label><input id="legacy-font-family" class="field" value="${escapeHtml(localStorage.getItem(LEGACY_FONT_FAMILY_KEY)||'')}"></div><div class="form-full"><button type="button" class="ghost-btn" onclick="applyLegacyUrlFont()">应用旧版链接</button></div></div></details></div></details></section>
-${window.MimaChatWallpaper?.markup?.()||''}<section class="settings-section mima-appearance-group mima-css-manager" id="mima-css-presets"><h3>🎨 CSS 样式管理 <span class="mima-fold-hint">${cssPresets.length} 款 · 分类可单独展开或收起</span></h3><p class="helper">支持直接粘贴或导入<strong>纯 CSS</strong>，不需要手动包 &lt;style&gt;。CSS 可以只美化模型输出的自定义 HTML，也可以覆盖剧情区域，或选择“咪嘛馆全局”直接二改整个 UI（界面）。模型输出本身仍经过 Safe HTML sanitizer（安全 HTML 清洗器），不会执行 &lt;script&gt; / &lt;style&gt;。</p><div id="css-current-status" class="row-sub" style="margin:8px 0 12px">当前聊天：${currentCssPreset()?escapeHtml(currentCssPreset().name):'未挂载'} · ${currentSessionData?.customCssEnabled===false?'已禁用':'已启用'}</div><div class="mima-css-list-head"><strong>已保存的 CSS · 点击分类标题展开或收起</strong><span class="row-sub">可按分类整理，不用逐张滑动</span></div><div class="toolbar mima-css-list-quick-actions"><button type="button" class="primary-btn" onclick="openCssPresetEditor()">＋ 新建 CSS</button><button type="button" class="ghost-btn" onclick="chooseCssImport()">⇧ 导入 CSS</button><button type="button" class="ghost-btn" onclick="mimaCssFoldAll(true)">全部展开分类</button><button type="button" class="ghost-btn" onclick="mimaCssFoldAll(false)">全部收起分类</button></div><div id="css-library-toolbar">${mimaLibraryToolbar('css',cssPresets)}</div><div id="css-preset-list" class="mima-css-group-list" style="margin-top:12px"></div><div class="toolbar css-default-tools"><button class="ghost-btn" onclick="copyDefaultCss()">⧉ 一键复制默认 CSS（样式）</button><button class="ghost-btn" onclick="exportDefaultCss()">⇩ 导出默认 CSS（样式）</button><button class="ghost-btn" onclick="forkDefaultCss()">✦ 默认 CSS 二改</button><button class="ghost-btn" onclick="MimaAssistantStudio.open('css')">✦ CSS 美化助手</button><button class="danger-btn" onclick="emergencyDisableCss()">🚑 临时禁用自定义 CSS（样式）</button></div><div class="toolbar"><button class="ghost-btn" onclick="stopAtelierAndRestoreCss()">停用工坊全局主题（保留旧 CSS）</button></div><div class="row-sub css-scope-note">Scope（作用域）：自定义 HTML / Chat / Novel / Assistant / 咪嘛馆全局。Novel 与 Assistant 使用稳定公开 selector；全局 CSS 仍拥有最高覆盖能力。</div><div id="css-recovery-status">${cssRecoveryMarkup()}</div><div id="css-session-actions" class="toolbar">${currentSessionData?.customCssId?'<button class="ghost-btn" onclick="unapplyCss()">取消应用</button>':''}${currentSessionData?.customCssId&&currentSessionData?.customCssEnabled===false?'<button class="ghost-btn" onclick="reenableCss()">重新启用</button>':''}</div><button class="ghost-btn" onclick="unapplyGlobalCssPreset()">取消全局 CSS</button></section>
-<section class="settings-section"><h3>显示</h3><label class="check-row"><input id="render-html-setting" type="checkbox" ${currentSessionData?.renderMode==='safe_html'?'checked':''} onchange="toggleSafeHtml(this.checked)"> 允许 Safe HTML（安全 HTML）状态栏渲染</label><p class="helper">开启后会保留正文原有换行与空格，并支持 &lt;system&gt;、&lt;details&gt;、&lt;summary&gt;、区块、表格等安全结构，方便 CSS 状态栏直接生效。</p></section>`;applyMimaUiDensity();qs('font-ui-select').value=ui;qs('font-story-select').value=story;stopUrlFontPreview();stopVisibleFontPreviews();applyFontWeightPrefs();updateFontApplicationStatus();renderFontBundleStatus();const root=qs('font-list');if(fontReadError){stopVisibleFontPreviews();root.textContent='字体库读取失败，原字体和选择均未更改：'+(fontReadError.message||String(fontReadError));}else if(mimaAppearanceFoldOpen('local-fonts',false)){renderLocalFontRows(root,fontRecords);root.dataset.loaded='1';}renderCssPresetLibrary(qs('css-preset-list'));syncStoryTypographyControls(typo);window.MimaFontBackup?.refresh?.()}
+${window.MimaChatWallpaper?.markup?.()||''}<section class="settings-section mima-appearance-group mima-css-manager" id="mima-css-presets"><h3>🎨 CSS 样式管理 <span class="mima-fold-hint">${cssPresets.length} 款 · 分类可单独展开或收起</span></h3><p class="helper">支持直接粘贴或导入<strong>纯 CSS</strong>，不需要手动包 &lt;style&gt;。CSS 可以只美化模型输出的自定义 HTML，也可以覆盖剧情区域，或选择“咪嘛馆全局”直接二改整个 UI（界面）。模型输出本身仍经过 Safe HTML sanitizer（安全 HTML 清洗器），不会执行 &lt;script&gt; / &lt;style&gt;。</p><div id="css-current-status" class="row-sub" style="margin:8px 0 12px">当前聊天：${currentCssPreset()?escapeHtml(currentCssPreset().name):'未挂载'} · ${currentSessionData?.customCssEnabled===false?'已禁用':'已启用'}</div><div class="mima-css-list-head"><strong>已保存的 CSS · 点击分类标题展开或收起</strong><span class="row-sub">可按分类整理，不用逐张滑动</span></div><div class="toolbar mima-css-list-quick-actions"><button type="button" class="primary-btn" onclick="openCssPresetEditor()">＋ 新建 CSS</button><button type="button" class="ghost-btn" onclick="chooseCssImport()">⇧ 导入 CSS</button></div><div id="css-library-toolbar">${mimaLibraryToolbar('css',cssPresets)}</div><div id="css-preset-list" class="mima-css-group-list" style="margin-top:12px"></div><div class="toolbar css-default-tools"><button class="ghost-btn" onclick="copyDefaultCss()">⧉ 一键复制默认 CSS（样式）</button><button class="ghost-btn" onclick="exportDefaultCss()">⇩ 导出默认 CSS（样式）</button><button class="ghost-btn" onclick="forkDefaultCss()">✦ 默认 CSS 二改</button><button class="ghost-btn" onclick="MimaAssistantStudio.open('css')">✦ CSS 美化助手</button><button class="danger-btn" onclick="emergencyDisableCss()">🚑 临时禁用自定义 CSS（样式）</button></div><div class="toolbar"><button class="ghost-btn" onclick="stopAtelierAndRestoreCss()">停用工坊全局主题（保留旧 CSS）</button></div><div class="row-sub css-scope-note">Scope（作用域）：自定义 HTML / Chat / Novel / Assistant / 咪嘛馆全局。Novel 与 Assistant 使用稳定公开 selector；全局 CSS 仍拥有最高覆盖能力。</div><div id="css-recovery-status">${cssRecoveryMarkup()}</div><div id="css-session-actions" class="toolbar">${currentSessionData?.customCssId?'<button class="ghost-btn" onclick="unapplyCss()">取消应用</button>':''}${currentSessionData?.customCssId&&currentSessionData?.customCssEnabled===false?'<button class="ghost-btn" onclick="reenableCss()">重新启用</button>':''}</div><button class="ghost-btn" onclick="unapplyGlobalCssPreset()">取消全局 CSS</button></section>
+<section class="settings-section mima-appearance-display" id="mima-appearance-display"><h3>显示与 Safe HTML</h3><label class="check-row"><input id="render-html-setting" type="checkbox" ${currentSessionData?.renderMode==='safe_html'?'checked':''} onchange="toggleSafeHtml(this.checked)"> 允许 Safe HTML（安全 HTML）状态栏渲染</label><p class="helper">开启后会保留正文原有换行与空格，并支持 &lt;system&gt;、&lt;details&gt;、&lt;summary&gt;、区块、表格等安全结构，方便 CSS 状态栏直接生效。</p></section>`;mimaCompactAppearance(box);applyMimaUiDensity();qs('font-ui-select').value=ui;qs('font-story-select').value=story;stopUrlFontPreview();stopVisibleFontPreviews();applyFontWeightPrefs();updateFontApplicationStatus();renderFontBundleStatus();const root=qs('font-list');if(fontReadError){stopVisibleFontPreviews();root.textContent='字体库读取失败，原字体和选择均未更改：'+(fontReadError.message||String(fontReadError));}
+else if(needsFontInventory&&mimaAppearanceFoldOpen('local-fonts',false)){renderLocalFontRows(root,fontRecords);root.dataset.loaded='1';}
+if(needsFontInventory)box.dataset.fontInventoryLoaded='1';
+if(mimaAppearanceActivePanel==='css-presets'){
+  const cssList=qs('css-preset-list');if(cssList){renderCssPresetLibrary(cssList);cssList.dataset.loaded='1';}
+}
+syncStoryTypographyControls(typo);window.MimaFontBackup?.refresh?.()}
 
 // Legacy font indexing can finish after the settings sheet is opened. Refresh
 // ONLY the font-picker rows and choices; never discard in-progress CSS edits.
@@ -3176,6 +3349,8 @@ window.addEventListener('mima-font-library-change',()=>{
     void (async()=>{
         if(settingsTab!=='appearance'||!isSettingsOpen())return;
         const root=qs('font-list');if(!root)return;
+        const box=qs('settings-content');if(box)delete box.dataset.fontInventoryLoaded;
+        if(!['font-settings','local-fonts'].includes(mimaAppearanceActivePanel))return;
         const records=await MimaFontManager.listMetadata();
         if(settingsTab!=='appearance'||!isSettingsOpen()||qs('font-list')!==root)return;
         fontRecords=records;
@@ -3496,14 +3671,30 @@ function renderCssPresetLibrary(root){
   for(const p of items){
    const global=p.scope==='app',mounted=global?p.id===globalId:p.id===active;
    const row=document.createElement('div');row.className=`library-card ${mounted?'mounted':''}`;
-   row.innerHTML=`<label class="mima-resource-select"><input type="checkbox" ${mimaCategorySelected.css.has(p.id)?'checked':''} onchange="mimaCategorySelect('css','${p.id}',this.checked)"> 选入批量移动</label><div class="card-title"><span>${escapeHtml(p.name)}</span>${mounted?`<span class="tag">${global?'全局挂载':'当前 Session'}</span>`:''}</div><div class="card-desc">${escapeHtml(p.category||'未分类')} · ${cssScopeLabel(p.scope)} · ${String(p.css||'').length} 字符</div><div class="card-actions"><button class="${mounted?'primary-btn':'ghost-btn'}" onclick="${global?'applyGlobalCssPreset':'applyCssPreset'}('${p.id}')">${global?'应用到全局':mounted?'重新启用':'应用到聊天'}</button><button class="ghost-btn" onclick="mimaToggleFavorite('css','${p.id}')">${p.favorite?'★ 已收藏':'☆ 收藏'}</button><button class="ghost-btn" onclick="openCssPresetEditor('${p.id}')">编辑</button>${String(p.css||'').length>200000&&mounted?`<button class="danger-btn" onclick="${global?'unapplyGlobalCssPreset':'unapplyCss'}()">停用大型 CSS</button>`:''}<button class="ghost-btn" onclick="duplicateCssPreset('${p.id}')">复制</button><button class="ghost-btn" onclick="exportCssPreset('${p.id}')">导出</button><button class="danger-btn" onclick="deleteCssPreset('${p.id}')">删除</button></div>`;
+   row.innerHTML=`<label class="mima-resource-select"><input type="checkbox" ${mimaCategorySelected.css.has(p.id)?'checked':''} onchange="mimaCategorySelect('css','${p.id}',this.checked)"> 选入批量移动</label><div class="card-title"><span>${escapeHtml(p.name)}</span>${mounted?`<span class="tag">${global?'全局挂载':'当前 Session'}</span>`:''}</div><div class="card-desc">${escapeHtml(p.category||'未分类')} · ${cssScopeLabel(p.scope)} · ${String(p.css||'').length} 字符</div><div class="card-actions mima-css-actions"><button class="${mounted?'primary-btn':'primary-btn'} mima-css-apply" onclick="${global?'applyGlobalCssPreset':'applyCssPreset'}('${p.id}')">${global?(mounted?'重新应用':'应用到全局'):mounted?(currentSessionData?.customCssEnabled===false?'启用':'重新应用'):'应用到聊天'}</button><button class="ghost-btn mima-css-edit" onclick="openCssPresetEditor('${p.id}')">编辑</button><button class="ghost-btn mima-css-star" title="${p.favorite?'取消收藏':'收藏'}" aria-label="${p.favorite?'取消收藏':'收藏'} ${escapeHtml(p.name)}" onclick="mimaToggleFavorite('css','${p.id}')">${p.favorite?'★':'☆'}</button><button type="button" class="ghost-btn mima-css-more" aria-expanded="false" aria-label="更多操作 ${escapeHtml(p.name)}">⋯</button><div class="mima-css-more-menu hidden"><button type="button" onclick="duplicateCssPreset('${p.id}')">复制预设</button><button type="button" onclick="exportCssPreset('${p.id}')">导出 CSS</button>${String(p.css||'').length>200000&&mounted?`<button type="button" onclick="${global?'unapplyGlobalCssPreset':'unapplyCss'}()">停用大型 CSS</button>`:''}<button type="button" class="mima-css-danger" onclick="deleteCssPreset('${p.id}')">删除 CSS…</button></div></div>`;
+   const more=row.querySelector('.mima-css-more'),menu=row.querySelector('.mima-css-more-menu');
+   const hide=()=>{menu.classList.add('hidden');menu.classList.remove('flip-up');menu.style.maxHeight='';more.setAttribute('aria-expanded','false');};
+   more.onclick=()=>{const shouldOpen=menu.classList.contains('hidden');
+     container.querySelectorAll('.mima-css-more-menu:not(.hidden)').forEach(x=>{x.classList.add('hidden');x.classList.remove('flip-up');x.style.maxHeight='';x.previousElementSibling?.setAttribute('aria-expanded','false');});
+     menu.classList.toggle('hidden',!shouldOpen);more.setAttribute('aria-expanded',String(shouldOpen));
+     if(!shouldOpen)return;
+     const viewport=qs('settings-content')?.getBoundingClientRect();
+     const bound=viewport||{top:0,bottom:window.innerHeight};
+     const rect=menu.getBoundingClientRect(),anchor=more.getBoundingClientRect();
+     const below=Math.min(bound.bottom,window.innerHeight)-anchor.bottom-8;
+     const above=anchor.top-Math.max(bound.top,0)-8;
+     if(rect.height>below&&above>below)menu.classList.add('flip-up');
+     menu.style.maxHeight=Math.max(88,Math.floor(Math.max(below,above)))+'px';
+   };
+   row.addEventListener('focusout',e=>{if(!row.contains(e.relatedTarget))hide();});
+   menu.addEventListener('keydown',e=>{if(e.key==='Escape'){hide();more.focus();}});
    container.appendChild(row);
   }
  };
  for(const [name,items] of ordered){
    const detail=document.createElement('details');detail.className='mima-css-category-fold';detail.dataset.cssGroup=name;
    const selected=items.some(p=>p.id===active||p.id===globalId);
-   const defaultOpen=selected;
+   const defaultOpen=selected||name===ordered[0]?.[0];
    detail.open=searching||mimaLibraryView.css.category!=='all'||mimaCssFoldOpen(name,defaultOpen);
    const summary=document.createElement('summary');summary.className='mima-css-category-title';summary.title='点击展开或收起这一分类';
    const label=document.createElement('strong');label.textContent=name;

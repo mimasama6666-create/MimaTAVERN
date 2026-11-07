@@ -421,6 +421,7 @@
   function normalizeState(raw = {}) {
     return {
       schemaVersion: 4, storeRevision: Math.max(0,Number(raw.storeRevision)||0),
+      __resourceSignature:typeof raw.__resourceSignature==='string'?raw.__resourceSignature:null,
       sessions: legacyRoot(raw.sessions,'legacy_session',normalizeSession), masks: legacyRoot(raw.masks,'legacy_mask',normalizeMask),
       presets: legacyRoot(raw.presets,'legacy_preset',normalizePreset), worldbooks: legacyRoot(raw.worldbooks,'legacy_worldbook',normalizeWorldbook), cssPresets: legacyRoot(raw.cssPresets,'legacy_css',normalizeCssPreset),
       cssCategoriesV1:normalizeCategoryRecords(raw.cssCategoriesV1),resourceCategoriesV1:normalizedCategoryGroups(raw.resourceCategoriesV1),
@@ -443,7 +444,7 @@
         const result=edit(stored);
         if(result&&result[NO_LIBRARY_WRITE]===true){state=stored;return result.value;}
         const committed=await window.MimaLocalStore.saveState(stored,stored.storeRevision);
-        state={...stored,storeRevision:committed.storeRevision};
+        state={...stored,storeRevision:committed.storeRevision,__resourceSignature:null};
         return result;
       }catch(error){
         // A real CAS refusal must not leave obsolete resources on screen. The
@@ -508,10 +509,10 @@
           if(result&&result[NO_LIBRARY_WRITE]===true){result=result.value;return false;}
           Object.assign(raw,stored);
         },{checkCanonical});
-        state=window.MimaLocalStore.mergeAppearance(state,normalizeAppearance(appearance));
+        state={...window.MimaLocalStore.mergeAppearance(state,normalizeAppearance(appearance)),__resourceSignature:null};
         return result;
       }catch(error){
-        try{state=window.MimaLocalStore.mergeAppearance(state,normalizeAppearance(await window.MimaLocalStore.loadAppearance()));}
+        try{state={...window.MimaLocalStore.mergeAppearance(state,normalizeAppearance(await window.MimaLocalStore.loadAppearance())),__resourceSignature:null};}
         catch(readError){console.error('E_APPEARANCE_REFRESH_FAILED_AFTER_WRITE',readError);}
         throw error;
       }
@@ -535,7 +536,7 @@
       '资料在其他窗口或任务中发生变化，请刷新后重新编辑：'+table+'/'+id);
     return current;
   }
-  function commitResource(table,value,expectedUpdatedAt){
+  function commitResource(table,value,expectedUpdatedAt,expectedPresetToken=undefined){
     const input=clone(value);
     const checkReference=table==='cssPresets'&&state.cssPresets.some(old=>old.id===input.id&&cssRendererChanged(old,input))?
       (base,appearance)=>{
@@ -551,14 +552,18 @@
       return clone(input);
     };
     if(table==='presets'){
+      // PATCH must bring the editor-open baseline, never borrow a freshly refreshed token.
+      if(!(expectedPresetToken===null||typeof expectedPresetToken==='string'))
+        throw new ApiError('E_PRESET_BASELINE_REQUIRED','预设编辑已过期：未带打开编辑器时的版本信息，原内容未覆盖');
       const commit=async()=>{
+        await refreshPersistedResources();
         const current=state.presets.find(item=>item.id===input.id)||null;
         if(current&&expectedUpdatedAt&&String(expectedUpdatedAt)!==String(current.updatedAt||''))
           throw new ApiError('E_CANONICAL_CONFLICT','资源已更新，旧编辑不能覆盖新内容：presets/'+input.id);
-        const saved=await window.MimaLocalStore.commitPreset(input.id,input,state.storeRevision);
+        const saved=await window.MimaLocalStore.commitPreset(input.id,input,state.storeRevision,expectedPresetToken);
         const index=state.presets.findIndex(item=>item.id===input.id);
         const next=state.presets.slice();if(index<0)next.push(input);else next[index]=input;
-        state={...state,presets:next,storeRevision:saved.storeRevision};
+        state={...state,presets:next,storeRevision:saved.storeRevision,__resourceSignature:null};
         return clone(input);
       };
       const task=sessionSaveTail.then(commit,commit);sessionSaveTail=task.then(()=>{},()=>{});return task;
@@ -639,18 +644,106 @@
   // single successful CAS. The selected row is the only History being cloned.
   function publishSession(session,storeRevision=null){
     const i=state.sessions.findIndex(x=>x.id===session.id);
+    const previous=i>=0?state.sessions[i]:null;
+    if(previous&&Number(previous.recordRevision||0)>Number(session.recordRevision||0))return previous;
     const sessions=state.sessions.slice();
     if(i<0)sessions.push(session);else sessions[i]=session;
-    state={...state,sessions,...(storeRevision===null?{}:{storeRevision})};
+    const revision=storeRevision===null?state.storeRevision:Math.max(state.storeRevision,storeRevision);
+    state={...state,sessions,storeRevision:revision};
     return session;
   }
+  // The durable resource signature consists of four monotone revision counters:
+  // base, appearance, presets, templates. A whole-library promotion raises the
+  // base to the latest global revision and resets overlays to that base; a
+  // targeted resource commit increments exactly its own overlay counter.
+  // A Session-only write never advances these four counters.
+  const RESOURCE_PUBLICATION_FIELDS=['masks','presets','worldbooks','cssPresets',
+    'cssCategoriesV1','resourceCategoriesV1','regexPacks','theaterCards',
+    'quickCommands','settingTemplates','novelProjects','themeSettings'];
+  function captureResourcePublication(){
+    return RESOURCE_PUBLICATION_FIELDS.map(key=>state[key]);
+  }
+  function resourcePublicationChanged(captured){
+    return RESOURCE_PUBLICATION_FIELDS.some((key,i)=>state[key]!==captured[i]);
+  }
+  function parseResourceSignature(signature){
+    if(typeof signature!=='string'||!/^\d+:\d+:\d+:\d+$/.test(signature))return null;
+    const values=signature.split(':').map(Number);
+    return values.every(n=>Number.isSafeInteger(n)&&n>=0)?values:null;
+  }
+  // Called synchronously immediately before publishing any snapshot. Never
+  // compare a signature as a string or use the global Session storeRevision.
+  // true = keep the already published resources; false = publish candidate.
+  function rejectLateResourcePublication(captured,incomingSignature){
+    if(!resourcePublicationChanged(captured))return false;
+    const candidate=parseResourceSignature(incomingSignature);
+    const current=parseResourceSignature(state.__resourceSignature);
+    if(!candidate||!current)throw new ApiError('E_RESOURCE_REFRESH_CONFLICT',
+      '本窗口有尚未同步的资料变更，旧读取未覆盖；请重新执行本次操作');
+    const candidateAtLeast=current.every((v,i)=>candidate[i]>=v);
+    const currentAtLeast=candidate.every((v,i)=>current[i]>=v);
+    if(currentAtLeast)return true; // equal or older: never re-publish it
+    if(candidateAtLeast)return false; // strictly newer: do not block a valid update
+    // Incomparable component revisions mean storage authority is ambiguous.
+    // Do not guess by Promise completion or perform an unbounded retry.
+    throw new ApiError('E_RESOURCE_REFRESH_CONFLICT',
+      '资料修订来源发生交错，未覆盖已加载资料；请重新执行本次操作');
+  }
   async function refreshPersistedSession(id){
+    const publicationAtStart=captureResourcePublication();
     const snapshot=await window.MimaLocalStore.loadSessionRecord(id,{withRevision:true});
-    const record=snapshot?.session||null;
+    let record=snapshot?.session?normalizeSession(snapshot.session):null;
+    let resources=null;
+    // A global revision includes Session commits. A Session refresh alone must
+    // NEVER mark the old Persona/Worldbook/Preset cache as current.
+    if(snapshot?.resourceSignature!==state.__resourceSignature){
+      // If a newer local commit completed while this snapshot was in flight,
+      // re-read rather than publishing older resource bytes to the prompt.
+      for(let attempt=0;attempt<2;attempt++){
+        resources=normalizeState(await window.MimaLocalStore.loadResourceSnapshot(id));
+        if(resources.storeRevision>=state.storeRevision)break;
+        if(attempt===1)throw new ApiError('E_RESOURCE_REFRESH_CONFLICT','资料正在更新，旧资料未用于生成，请重新操作');
+      }
+      record=resources.sessions.find(x=>x.id===id)||null;
+    }
+    if(resources){
+      const head=await window.MimaLocalStore.loadResourceRevision();
+      if(head.resourceSignature!==resources.__resourceSignature){
+        if(head.resourceSignature!==state.__resourceSignature)
+          throw new ApiError('E_RESOURCE_REFRESH_CONFLICT','资源在读取期间发生变化，请重新打开剧情；旧快照未覆盖');
+        resources=null;
+      }
+    }
+    if(resources&&rejectLateResourcePublication(publicationAtStart,resources.__resourceSignature))resources=null;
     const sessions=state.sessions.slice(),i=sessions.findIndex(x=>x.id===id);
-    if(record){const normalized=normalizeSession(record);if(i<0)sessions.push(normalized);else sessions[i]=normalized;}
+    const current=i>=0?sessions[i]:null;
+    // Never let a late GET erase a Session just published by a newer writer.
+    if(record&&current&&Number(current.recordRevision||0)>Number(record.recordRevision||0))record=current;
+    if(!record&&current&&Number(state.storeRevision)>Number(resources?.storeRevision??snapshot?.storeRevision??0))record=current;
+    if(record){if(i<0)sessions.push(record);else sessions[i]=record;}
     else if(i>=0)sessions.splice(i,1);
-    state={...state,sessions,storeRevision:snapshot?.storeRevision??state.storeRevision};
+
+    if(resources)state={...state,...resources,sessions,storeRevision:Math.max(state.storeRevision,resources.storeRevision)};
+    else state={...state,sessions,storeRevision:Math.max(state.storeRevision,snapshot?.storeRevision??0)};
+    return state;
+  }
+  async function refreshPersistedResources(){
+    const publicationAtStart=captureResourcePublication();
+    const head=await window.MimaLocalStore.loadResourceRevision();
+    if(head.resourceSignature===state.__resourceSignature){
+      state={...state,storeRevision:Math.max(state.storeRevision,head.storeRevision)};return state;
+    }
+    const resources=normalizeState(await window.MimaLocalStore.loadResourceSnapshot());
+    // Both asynchronous reads may finish out of order across tabs. The final
+    // lightweight IDB head is authoritative, never the completion order.
+    const verified=await window.MimaLocalStore.loadResourceRevision();
+    if(resources.__resourceSignature!==verified.resourceSignature){
+      if(state.__resourceSignature===verified.resourceSignature)return state;
+      throw new ApiError('E_RESOURCE_REFRESH_CONFLICT','资料在读取时发生更新，旧资料未覆盖内存；请重新操作');
+    }
+    if(rejectLateResourcePublication(publicationAtStart,resources.__resourceSignature))return state;
+    state={...state,...resources,sessions:state.sessions,
+      storeRevision:Math.max(state.storeRevision,resources.storeRevision,verified.storeRevision)};
     return state;
   }
   let sessionSaveTail=Promise.resolve();
@@ -678,6 +771,8 @@
   }
   async function editSettingTemplate(action,body={}){
     const commit=async()=>{try{
+      if(body.fromSessionId)await refreshPersistedSession(body.fromSessionId);
+      await refreshPersistedResources();
       const committed=await window.MimaLocalStore.commitSettingTemplates(templates=>{
         // Only the small independent list is changed. Canonical readers merge it.
         const stored={settingTemplates:templates,sessions:state.sessions};
@@ -702,7 +797,7 @@
       }else throw new ApiError('E_SETTINGS_TEMPLATE_ACTION','无效模板操作');
         return result;
       },state.storeRevision,state.settingTemplates);
-      state={...state,settingTemplates:committed.templates,storeRevision:committed.storeRevision};
+      state={...state,settingTemplates:committed.templates,storeRevision:committed.storeRevision,__resourceSignature:null};
       return committed.value;
     }catch(error){
       try{state=normalizeState(await window.MimaLocalStore.loadState());}
@@ -717,6 +812,7 @@
     // A template's resource references are protected by a global revision CAS,
     // while the newly created Session is the ONLY large record written.
     const commit=async()=>{try{
+      await refreshPersistedResources();
       const stored=state,id=String(body.settingTemplateId||'');
       const tpl=id==='default'?stored.settingTemplates.find(x=>x.isDefault):stored.settingTemplates.find(x=>x.id===id);
       if(!tpl)throw new ApiError('E_SETTINGS_TEMPLATE_MISSING','设置模板已删除，未创建剧情');
@@ -729,7 +825,7 @@
     const task=sessionSaveTail.then(commit,commit);sessionSaveTail=task.then(()=>{},()=>{});return task;
   }
   async function saveMask(m){return commitResource('masks',normalizeMask({...m,updatedAt:nowIso()}),m.updatedAt);}
-  async function savePreset(p){return commitResource('presets',normalizePreset({...p,updatedAt:nowIso()}),p.updatedAt);}
+  async function savePreset(p,expectedToken){return commitResource('presets',normalizePreset({...p,updatedAt:nowIso()}),p.updatedAt,expectedToken);}
   async function saveWorldbook(w){return commitResource('worldbooks',normalizeWorldbook({...w,updatedAt:nowIso()}),w.updatedAt);}
   async function saveCssPreset(p){return commitResource('cssPresets',normalizeCssPreset({...p,updatedAt:nowIso()}),p.updatedAt);}
   async function publishAtelierCss(body){
@@ -2223,7 +2319,7 @@
   function createBlankNovel(body={}){const p=window.MimaNovelEngine.createProjectFromText({title:body.title||'未命名小说',sourceName:'',sourceEncoding:'utf-8',text:''});p.createdFrom='manual';return p;}
   async function patchNovelProject(id,body={}){const p=getNovelProject(id),allowed=['title','activeChapterId','presetIds','worldbookIds','modelSettings','generationSettings','appearance','macroUserMaskId','macroCharMaskId'];for(const k of allowed)if(Object.prototype.hasOwnProperty.call(body,k))p[k]=clone(body[k]);return saveNovelProject(p);}
   function novelAssets(){return{presets:state.presets,worldbooks:state.worldbooks,masks:state.masks,cssPresets:state.cssPresets,themeSettings:state.themeSettings};}
-  async function novelPromptPreview(id,body={}){const p=getNovelProject(id);return (await window.MimaNovelPromptAssembler.assemble({project:p,presets:state.presets,worldbooks:state.worldbooks,masks:state.masks,directorNote:body.directorNote||'',mode:body.mode||'continue',draftText:body.draftText||''})).inspector;}
+  async function novelPromptPreview(id,body={}){await refreshPersistedResources();const p=getNovelProject(id);return (await window.MimaNovelPromptAssembler.assemble({project:p,presets:state.presets,worldbooks:state.worldbooks,masks:state.masks,directorNote:body.directorNote||'',mode:body.mode||'continue',draftText:body.draftText||''})).inspector;}
   function analysisPrompt(project,chapter){const body=window.MimaNovelEngine.getChapterText(chapter);return[
     {role:'system',content:'你是小说剧情档案整理器。只提取已经发生的事实，禁止预测未来、补写剧情或把本轮导演要求当事实。只输出严格 JSON，不要 Markdown。'},
     {role:'user',content:`请分析以下章节，并输出 {"summary":{"overview":"","events":[],"characterChanges":[],"revealedFacts":[],"openThreads":[],"foreshadowing":[],"endingState":""},"delta":{"storyOverview":"","currentSituation":"","characterStates":[],"relationships":[],"timeline":[],"openThreads":[],"foreshadowing":[],"revealedFacts":[],"locations":[],"closedThreads":[],"resolvedForeshadowing":[]}}。\n\n【${chapter.title}】\n${body}`}
@@ -2240,6 +2336,7 @@
     return chapter;
   }
   async function continueNovel(id,body={},signal=null,progress=null){
+    await refreshPersistedResources();
     const engine=window.MimaNovelEngine;let p=getNovelProject(id);
     const originalChapterId=p.activeChapterId,createNewChapter=body.newChapter===true&&!body.draftId;
     if(createNewChapter)p=engine.appendNewChapter(p,'');
@@ -2367,7 +2464,7 @@
   async function patchNovelDraft(id,draftId,body={}){const p=getNovelProject(id),d=findDraft(p,draftId);if(!d)throw new Error('未找到草稿');if(d.status==='accepted')throw new Error('已采纳草稿不能再编辑');d.content=String(body.content??d.content);d.updatedAt=nowIso();if(['interrupted','incomplete','generating'].includes(d.status)){d.status='ready';const g=findGeneration(p,d.generationId);if(g){g.runIdentity=window.MimaNovelEngine.makeId('novel-manual-edit');g.status='ready';}}return saveNovelProject(p);}
   async function rejectNovelDraft(id,draftId){const p=getNovelProject(id),d=findDraft(p,draftId);if(!d)throw new Error('未找到草稿');if(d.status==='accepted')throw new Error('已采纳草稿不能删除');d.status='rejected';d.updatedAt=nowIso();const g=findGeneration(p,d.generationId);if(g)g.status='rejected';return saveNovelProject(p);}
   async function regenerateNovelDraft(id,draftId,body={},signal=null,progress=null){
-    const p=getNovelProject(id),old=findDraft(p,draftId);if(!old)throw new Error('未找到草稿');
+    await refreshPersistedResources();const p=getNovelProject(id),old=findDraft(p,draftId);if(!old)throw new Error('未找到草稿');
     if(old.status==='accepted')throw new Error('已采纳草稿不能重写，请改为编辑原文或开启下一轮续写');
     // Regeneration is an alternate draft, not destructive replacement. Preserve the old candidate even on provider failure.
     const previous=findGeneration(p,old.generationId);
@@ -2639,7 +2736,7 @@
     return parts.get(graph.finalStage);
   }
   async function previewMemoryPlan(kind,id,opts={}){
-    const original=getSession(id);if(!original)throw new ApiError('E_STORY_SESSION_MISSING','剧情不存在');
+    await refreshPersistedSession(id);const original=getSession(id);if(!original)throw new ApiError('E_STORY_SESSION_MISSING','剧情不存在');
     const session=normalizeSession(clone(original)),{records:refs}=await memoryReferenceSnapshotAsync(session);
     const referenceMessages=referencePromptMessages(refs);
     const options={...opts,model:String(opts.model??session.manualMemory.settings.memoryModel??'').trim()};
@@ -2705,7 +2802,7 @@
     return latest;
   }
   async function runRecordedMemory(kind,id,opts={},signal=null,progress=null){
-    const store=window.MimaLocalStore;
+    await refreshPersistedSession(id);const store=window.MimaLocalStore;
     const snapshot=getSession(id);if(!snapshot)throw new ApiError('E_STORY_SESSION_MISSING','剧情已不存在');
     if(typeof store?.beginMemoryJob!=='function'||typeof store?.putMemoryStage!=='function'||typeof store?.commitMemoryJob!=='function')
       throw new ApiError('E_MEMORY_STORE_UNAVAILABLE','持久记忆事务不可用；已停止本次请求，不会用无记录的生成流程消耗额度。');
@@ -4334,9 +4431,11 @@
       m=path.match(/^\/masks\/([^/]+)$/);if(m&&method==='PATCH'){const old=getMask(m[1]);return old?ok(await saveMask({...old,...body,id:m[1]})):fail('未找到面具');}
       if(m&&method==='DELETE')return ok(await deleteResource('masks',m[1],(db,id)=>{for(const s of db.sessions){if(s.loadedCharMaskId===id||s.loadedUserMaskId===id){if(s.loadedCharMaskId===id)s.loadedCharMaskId=null;if(s.loadedUserMaskId===id)s.loadedUserMaskId=null;s.recordRevision++;}}for(const project of db.novelProjects){let changed=false;if(project.macroUserMaskId===id){project.macroUserMaskId=null;changed=true;}if(project.macroCharMaskId===id){project.macroCharMaskId=null;changed=true;}if(changed)project.recordRevision=(Number(project.recordRevision)||0)+1;}}));
 
+      m=path.match(/^\/presets\/([^/]+)\/latest$/);
+      if(m&&method==='GET'){await refreshPersistedResources();return ok(getPreset(m[1])||null);}
       if(path==='/presets'&&method==='GET')return ok(state.presets);
-      if(path==='/presets'&&method==='POST')return ok(await savePreset(body||{}));
-      m=path.match(/^\/presets\/([^/]+)$/);if(m&&method==='PATCH'){const old=getPreset(m[1]);return old?ok(await savePreset({...old,...body,id:m[1]})):fail('未找到预设');}
+      if(path==='/presets'&&method==='POST')return ok(await savePreset(body||{},null));
+      m=path.match(/^\/presets\/([^/]+)$/);if(m&&method==='PATCH'){const old=getPreset(m[1]);return old?ok(await savePreset({...old,...body,id:m[1]},body?.expectedToken)):fail('未找到预设');}
       if(m&&method==='DELETE')return ok(await deleteResource('presets',m[1],(db,id)=>{for(const s of db.sessions)if(s.presetIds.includes(id)){s.presetIds=s.presetIds.filter(x=>x!==id);s.recordRevision++;}for(const p of db.novelProjects)if(p.presetIds.includes(id)){p.presetIds=p.presetIds.filter(x=>x!==id);p.recordRevision++;}}));
 
       m=path.match(/^\/resource-categories\/(css|presets|worldbook)$/);if(m&&method==='GET')return ok({records:categoryView(state,m[1]),storeRevision:state.storeRevision});
@@ -4389,6 +4488,7 @@
     // schemaVersion=4 spans multiple historical release shapes; new backups
     // declare the independently versioned full-data contract on export.
     const snapshot=normalizeState(await window.MimaLocalStore.loadState());
+    delete snapshot.__resourceSignature; // internal cache stamp is not user backup data
     // Some historical/offline consumers supply only loadState/saveState. The
     // production store always has the validator; do not claim a modern
     // verified contract when that validator is not connected.

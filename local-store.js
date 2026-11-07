@@ -6,7 +6,7 @@
   const DB_NAME = 'mimamao_tavern_standalone';
   // V6 fences older bundles so they cannot write obsolete whole-library state
   // over independent Session records and appearance/preset overlays.
-  const DB_VERSION = 6;
+  const DB_VERSION = 7;
   const STORE = 'kv';
   const STATE_KEY = 'state';
   const SESSION_HEAD_KEY = 'session_partition_head_v1';
@@ -16,6 +16,7 @@
   const APPEARANCE_META_KEY = 'appearance_revision_head_v1';
   const PRESETS_KEY = 'presets_overlay_head_v1';
   const PRESET_RECORD_PREFIX = 'presets_overlay_record_v1:';
+  const PRESET_BASE_INDEX_KEY = 'presets_cas_baseline_v1';
   const TEMPLATE_OVERLAY_KEY = 'setting_templates_overlay_v1';
   const TEMPLATE_META_KEY = 'setting_templates_revision_head_v1';
   const BASE_REVISION_KEY = 'canonical_base_revision_v1';
@@ -198,6 +199,33 @@
       throw Error('E_PRESETS_OVERLAY_UNVERIFIED: 预设存储无法核实，拒绝覆盖');
     return value;
   }
+  // Stable, compact target-record CAS. The full preset text stays in its own
+  // original base or overlay record; the baseline index never duplicates it.
+  function presetCasToken(row){
+    if(!row)return null;
+    const serialized=JSON.stringify([row.id,row.updatedAt||row.createdAt||'',row.name||'未命名预设',row.content||'',
+      row.category||'未分类',row.enabled!==false,row.type||'style',row.description||'',
+      !!row.favorite,Number.isFinite(Number(row.priority))?Number(row.priority):50]);
+    let h1=0x811c9dc5,h2=0x9e3779b9;
+    for(let i=0;i<serialized.length;i++){
+      const c=serialized.charCodeAt(i);h1=Math.imul(h1^c,0x01000193);
+      h2=Math.imul(h2^c,0x5bd1e995);
+    }
+    return serialized.length+':'+(h1>>>0).toString(16)+':'+(h2>>>0).toString(16);
+  }
+  function presetBaseIndexFromState(state){
+    return {version:1,baseRevision:Number(state?.storeRevision)||0,
+      entries:Object.fromEntries((state?.presets||[]).map(row=>[row.id,presetCasToken(row)]))};
+  }
+  function verifiedPresetBaseIndex(value,baseRevision){
+    if(!value||value.version!==1||value.baseRevision!==baseRevision||
+       !value.entries||typeof value.entries!=='object'||Array.isArray(value.entries))
+      throw Error('E_PRESET_BASE_INDEX_UNVERIFIED');
+    return value;
+  }
+  function resourceSignature(baseRev,appearanceRev,presetRev,templateRev){
+    return [baseRev,appearanceRev,presetRev,templateRev].join(':');
+  }
   // Base snapshot owns every unmodified preset. Each modified preset has ONE
   // durable, ID-keyed record. No preset save rewrites a different preset.
   function mergePresets(base,appearance,head,changed){
@@ -223,30 +251,41 @@
   }
   // ONE preset ID + small CAS head in the same transaction. The global
   // revision checks protect concurrent edits and ensure old view cannot win.
-  async function commitPreset(id,record,expectedRevision){
+  async function commitPreset(id,record,expectedRevision,expectedToken){
     if(typeof id!=='string'||!id||!record||record.id!==id||typeof record.content!=='string'||
-       !Number.isSafeInteger(expectedRevision)||expectedRevision<0)
+       !Number.isSafeInteger(expectedRevision)||expectedRevision<0||
+       !(expectedToken===null||typeof expectedToken==='string'))
       throw Error('E_PRESET_EDIT_INVALID');
     const db=await openDb();return new Promise((resolve,reject)=>{
       const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE);
-      const a=kv.get(PRESETS_KEY),b=kv.get(BASE_REVISION_KEY),c=kv.get(APPEARANCE_META_KEY),t=kv.get(TEMPLATE_META_KEY),h=kv.get(SESSION_HEAD_KEY);
+      const a=kv.get(PRESETS_KEY),b=kv.get(BASE_REVISION_KEY),c=kv.get(APPEARANCE_META_KEY),
+        t=kv.get(TEMPLATE_META_KEY),h=kv.get(SESSION_HEAD_KEY),
+        i=kv.get(PRESET_BASE_INDEX_KEY),r=kv.get(PRESET_RECORD_PREFIX+id);
       let issue,result,ready=0;
       const fail=e=>{issue=e;try{tx.abort();}catch{}};
-      const settle=()=>{if(++ready!==5)return;try{
+      const settle=()=>{if(++ready!==7)return;try{
         const head=assertPresetsOverlay(a.result),base=b.result,appearance=assertAppearanceMeta(c.result);
         if(!base||!Number.isInteger(base.revision)||base.revision!==head.baseRevision||appearance.baseRevision!==base.revision)
           throw Error('E_PRESETS_BASE_CONFLICT: 资料库基线已经改变，本次未覆盖');
+        const index=verifiedPresetBaseIndex(i.result,base.revision);
+        const target=head.changes.includes(id)?r.result:undefined;
+        if(head.changes.includes(id)&&(!target||target.id!==id))
+          throw Error('E_PRESET_FRAGMENT_INCOMPLETE');
+        const actualToken=target?presetCasToken(target):
+          Object.prototype.hasOwnProperty.call(index.entries,id)?index.entries[id]:null;
+        if(actualToken!==expectedToken)
+          throw Error('E_PRESET_RECORD_CONFLICT: 这条预设已在其他窗口更新，旧编辑未覆盖，请重新打开预设');
         const templateHead=verifiedTemplateMeta(t.result,base.revision);
-        const globalRevision=base.revision+(appearance.storeRevision-base.revision)+(head.storeRevision-base.revision)+(templateHead?templateHead.storeRevision-base.revision:0)+(verifiedSessionHead(h.result,base.revision).storeRevision-base.revision);
-        if(expectedRevision!==globalRevision)throw Error('E_CANONICAL_CONFLICT: 资料在其他窗口或任务已更新，请刷新后重新编辑，旧数据未覆盖');
+        const globalRevision=globalRevisionLight(base.revision,appearance,head,templateHead,h.result);
+        if(expectedRevision!==globalRevision)
+          throw Error('E_CANONICAL_CONFLICT: 资料在其他窗口或任务已更新，旧编辑未覆盖');
         const next={...head,changes:head.changes.includes(id)?head.changes:[...head.changes,id],
           storeRevision:head.storeRevision+1,savedAt:new Date().toISOString()};
         assertPresetsOverlay(next);
-        // The only content written by this operation is the selected record.
         kv.put(record,PRESET_RECORD_PREFIX+id);kv.put(next,PRESETS_KEY);
         result={value:record,storeRevision:globalRevision+1};
       }catch(e){fail(e)}};
-      for(const req of [a,b,c,t,h]){req.onsuccess=settle;req.onerror=()=>fail(req.error);}
+      for(const req of [a,b,c,t,h,i,r]){req.onsuccess=settle;req.onerror=()=>fail(req.error);}
       tx.oncomplete=()=>{db.close();resolve(result)};
       tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_PRESET_COMMIT_ABORTED'))};
     });
@@ -362,6 +401,7 @@
         merged.settingTemplates=overlay.templates.map(t=>removed.has(t.config?.customCssId)?
           {...t,config:{...t.config,customCssId:null,customCssEnabled:false}}:t);}
       merged.storeRevision=globalRevision(baseRev,app,presets,templates,head);
+      merged.__resourceSignature=resourceSignature(baseRev,app.storeRevision,presets.storeRevision,overlay?.storeRevision??baseRev);
       merged.sessionOrganizationV1=org;result.result=merged;
       result.onsuccess?.({target:result});
     }catch(e){fail(e);}}
@@ -385,7 +425,7 @@
     oldHead.onsuccess=()=>{try{for(const id of assertPresetsOverlay(oldHead.result).changes)kv.delete(PRESET_RECORD_PREFIX+id);}
       catch(_){try{kv.transaction.abort();}catch{}}};
     oldHead.onerror=()=>{try{kv.transaction.abort();}catch{}};
-    const {sessionOrganizationV1:_organization,...canonicalValue}=value;
+    const {sessionOrganizationV1:_organization,__resourceSignature:_resourceSignature,...canonicalValue}=value;
     const ids=value.sessions.map(s=>s.id),revision=value.storeRevision;
     if(new Set(ids).size!==ids.length)throw Error('E_SESSION_DUPLICATE_IDS');
     if(prior)for(const s of prior.sessions||[])if(!ids.includes(s.id))kv.delete(SESSION_PREFIX+s.id);
@@ -397,6 +437,7 @@
     kv.put(appearanceFromState(value),APPEARANCE_KEY);
     kv.put(appearanceMeta(appearanceFromState(value)),APPEARANCE_META_KEY);
     kv.put(presetsFromState(value),PRESETS_KEY);
+    kv.put(presetBaseIndexFromState(value),PRESET_BASE_INDEX_KEY);
     kv.put({revision},BASE_REVISION_KEY);
     kv.delete(TEMPLATE_OVERLAY_KEY);
     kv.put({version:1,baseRevision:revision,storeRevision:revision},TEMPLATE_META_KEY);
@@ -443,15 +484,51 @@
       tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_SESSION_READ_ABORT'))};
       const inspect=()=>{if([h,r,a,b,p,t].some(req=>req.readyState!=='done'))return;try{
         const head=verifiedSessionHead(h.result),index=head.ids.indexOf(id),s=r.result;
-        if(index<0){if(s!==undefined)throw Error('E_SESSION_ORPHAN_RECORD');result=null;return;}
+        if(index<0){
+          if(s!==undefined)throw Error('E_SESSION_ORPHAN_RECORD');
+          result=withRevision?{session:null,
+            storeRevision:globalRevisionLight(b.result.revision,a.result,p.result,t.result,head),
+            resourceSignature:resourceSignature(b.result.revision,a.result.storeRevision,p.result.storeRevision,t.result.storeRevision)}:null;
+          return;
+        }
         if(!s||s.id!==id||Number(s.recordRevision||0)!==head.directory[index].recordRevision)
           throw Error('E_SESSION_PARTITION_RECORD_MISSING');
         const deleted=new Set(assertAppearanceMeta(a.result,head.baseRevision).deletedCssIds);
         const projected=deleted.has(s.customCssId)?{...s,customCssId:null,customCssEnabled:false,
           recordRevision:(Number(s.recordRevision)||0)+1}:s;
-        result=withRevision?{session:projected,storeRevision:globalRevisionLight(b.result.revision,a.result,p.result,t.result,head),baseRevision:head.baseRevision}:projected;
+        result=withRevision?{session:projected,storeRevision:globalRevisionLight(b.result.revision,a.result,p.result,t.result,head),baseRevision:head.baseRevision,
+          resourceSignature:resourceSignature(b.result.revision,a.result.storeRevision,p.result.storeRevision,t.result.storeRevision)}:projected;
       }catch(e){issue=e;tx.abort();}};
       for(const req of [h,r,a,b,p,t]){req.onsuccess=inspect;req.onerror=()=>{issue=req.error;tx.abort()}};
+    });
+  }
+  // One canonical resource snapshot, optionally with ONE requested Session.
+  // It never reads another Session's History/Memory, even on a cross-tab refresh.
+  async function loadResourceSnapshot(sessionId=undefined){
+    await ensureSessionPartition();const db=await openDb();return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readonly'),req=readCanonical(tx.objectStore(STORE),sessionId);
+      let result,issue;
+      req.onsuccess=()=>{result=req.result};req.onerror=()=>{issue=req.error;try{tx.abort()}catch{}};
+      tx.oncomplete=()=>{db.close();resolve(result)};
+      tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_RESOURCE_SNAPSHOT_ABORT'))};
+    });
+  }
+  // Version-only probe for rare resource-edit/template paths. No CSS/Persona bytes.
+  async function loadResourceRevision(){
+    await ensureSessionPartition();const db=await openDb();return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readonly'),kv=tx.objectStore(STORE),b=kv.get(BASE_REVISION_KEY),
+        a=kv.get(APPEARANCE_META_KEY),p=kv.get(PRESETS_KEY),t=kv.get(TEMPLATE_META_KEY),h=kv.get(SESSION_HEAD_KEY);
+      let result,issue;
+      const inspect=()=>{if([b,a,p,t,h].some(req=>req.readyState!=='done'))return;try{
+        const base=b.result?.revision;
+        result={resourceSignature:resourceSignature(base,
+          assertAppearanceMeta(a.result,base).storeRevision,assertPresetsOverlay(p.result).storeRevision,
+          verifiedTemplateMeta(t.result,base).storeRevision),
+          storeRevision:globalRevisionLight(base,a.result,p.result,t.result,h.result)};
+      }catch(e){issue=e;tx.abort()}};
+      for(const req of [b,a,p,t,h]){req.onsuccess=inspect;req.onerror=()=>{issue=req.error;tx.abort()}};
+      tx.oncomplete=()=>{db.close();resolve(result)};
+      tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_RESOURCE_REVISION_ABORT'))};
     });
   }
   async function loadSessionDirectory(){
@@ -622,6 +699,7 @@
           if(event.oldVersion<3){kv.put(presetsFromState(old.result),PRESETS_KEY);
             kv.put({revision:Number(old.result?.storeRevision)||0},BASE_REVISION_KEY);}
           if(event.oldVersion<4)kv.put((old.result?.sessions||[]).map(s=>s.id),SESSION_IDS_KEY);
+          if(event.oldVersion<7)kv.put(presetBaseIndexFromState(old.result),PRESET_BASE_INDEX_KEY);
         }catch(error){upgradeIssue=error;req.transaction.abort();}};
       };
       req.onsuccess = () => {const db=req.result;db.onversionchange=()=>db.close();if(rejected)db.close();else resolve(db);};
@@ -644,14 +722,17 @@
       // writes on the lightweight overlay-only path.
       const baseReq=typeof checkCanonical==='function'?kv.get(STATE_KEY):null;
       const sessionHeadReq=baseReq?kv.get(SESSION_HEAD_KEY):null;
+      const templateOverlayReq=baseReq?kv.get(TEMPLATE_OVERLAY_KEY):null;
       let ready=0;
-      const inspect=()=>{if(++ready!==(baseReq?3:1))return;try{
+      const inspect=()=>{if(++ready!==(baseReq?4:1))return;try{
         const value=assertAppearance(req.result),revision=value.storeRevision,baseRevision=value.baseRevision;
         if(baseReq){
           if(!isCanonicalStateRecord(baseReq.result)||Number(baseReq.result.storeRevision||0)!==baseRevision)
             throw Error('E_APPEARANCE_BASE_CONFLICT: CSS 引用基线无法核实，未覆盖');
           const directory=verifiedSessionHead(sessionHeadReq.result,baseRevision).directory;
-          const verdict=checkCanonical({...baseReq.result,sessions:directory},value);
+          const currentTemplates=verifiedTemplateOverlay(templateOverlayReq.result,baseRevision);
+          const verdict=checkCanonical({...baseReq.result,sessions:directory,
+            settingTemplates:currentTemplates?currentTemplates.templates:baseReq.result.settingTemplates},value);
           if(verdict&&typeof verdict.then==='function')throw Error('E_APPEARANCE_ASYNC_CHECK');
         }
         const outcome=edit(value);if(outcome&&typeof outcome.then==='function')throw Error('E_APPEARANCE_ASYNC_EDIT');
@@ -661,7 +742,8 @@
       }catch(error){issue=error;tx.abort();}};
       req.onerror=()=>{issue=req.error;tx.abort();};req.onsuccess=inspect;
       if(baseReq){baseReq.onerror=()=>{issue=baseReq.error;tx.abort();};baseReq.onsuccess=inspect;
-        sessionHeadReq.onerror=()=>{issue=sessionHeadReq.error;tx.abort()};sessionHeadReq.onsuccess=inspect;}
+        sessionHeadReq.onerror=()=>{issue=sessionHeadReq.error;tx.abort()};sessionHeadReq.onsuccess=inspect;
+        templateOverlayReq.onerror=()=>{issue=templateOverlayReq.error;tx.abort()};templateOverlayReq.onsuccess=inspect;}
       const close=()=>{signal?.removeEventListener?.('abort',abort);db.close();};
       tx.oncomplete=()=>{close();resolve(result);};
       tx.onabort=()=>{close();reject(issue||tx.error||Error('E_APPEARANCE_WRITE_ABORTED'));};
@@ -800,7 +882,7 @@
   // Backup contract revisions are separate from the on-disk schema: marking
   // a *new* export never retroactively marks an older IndexedDB snapshot.
   async function exportAll(){
-    const snapshot=await loadState();
+    const {__resourceSignature:_internalResourceRevision,...snapshot}=await loadState();
     validateLibrary(snapshot);
     const modern={...snapshot,theaterCards:snapshot.theaterCards||[],quickCommands:snapshot.quickCommands||[],backupContractRevision:2};
     if(snapshot.schemaVersion===4){
@@ -2116,5 +2198,5 @@
     if(text.length!==receipt.persistedChars)throw new Error('E_GENERATION_FRAGMENT_INCOMPLETE');
     return {receipt,text,complete:true};
   }
-  window.MimaLocalStore={loadSessionRecord,loadSessionDirectory,loadCssSelectionSnapshot,commitSessionRecord,deleteSessionRecord,commitSessionCssSelection,commitSettingTemplates,validateSessionOrganization,loadSessionOrganization,commitSessionOrganization,commitPreset,putHtmlRepairDraft,getHtmlRepairDraft,loadAppearance,commitAppearance,mergeAppearance,exportPlayToolRecords,importPlayToolRecords,listPlayToolLocal,getPlayToolLocal:key=>get('play_tools_v1:'+key),putPlayToolLocal:(key,value)=>set('play_tools_v1:'+key,value),generationReceipt,generationAppendFragment,generationStatus,generationRead,getRollingPreflight,putRollingPreflight,clearRollingPreflight,commitHtmlRepair,putHtmlRepairCandidate,getHtmlRepairCandidate,setHtmlRepairCandidateState,listMemoryStages,inspectLegacyMemoryStages,putMemoryRejectedDraft,listMemoryRejectedDrafts,memoryReferenceContract,putFactRangeCandidate,listFactRangeCandidates,commitVerifiedFactRanges,getMergeStage,putMergeStage,getMergeDraft,createMergeDraft,updateMergeDraft,commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,loadSettingsSnapshotSummary,clearSettingsSnapshot,beginSettingsSnapshotV2,stageSettingsSnapshotFontV2,completeSettingsSnapshotV2,discardFailedSettingsSnapshotV2,hasIncompleteSettingsSnapshotV2,loadSettingsSnapshotFontV2,pruneOldSettingsSnapshotsV2,getMemoryJob,getMemoryStage,putMemoryStage,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
+  window.MimaLocalStore={loadSessionRecord,loadResourceSnapshot,loadResourceRevision,presetCasToken,loadSessionDirectory,loadCssSelectionSnapshot,commitSessionRecord,deleteSessionRecord,commitSessionCssSelection,commitSettingTemplates,validateSessionOrganization,loadSessionOrganization,commitSessionOrganization,commitPreset,putHtmlRepairDraft,getHtmlRepairDraft,loadAppearance,commitAppearance,mergeAppearance,exportPlayToolRecords,importPlayToolRecords,listPlayToolLocal,getPlayToolLocal:key=>get('play_tools_v1:'+key),putPlayToolLocal:(key,value)=>set('play_tools_v1:'+key,value),generationReceipt,generationAppendFragment,generationStatus,generationRead,getRollingPreflight,putRollingPreflight,clearRollingPreflight,commitHtmlRepair,putHtmlRepairCandidate,getHtmlRepairCandidate,setHtmlRepairCandidateState,listMemoryStages,inspectLegacyMemoryStages,putMemoryRejectedDraft,listMemoryRejectedDrafts,memoryReferenceContract,putFactRangeCandidate,listFactRangeCandidates,commitVerifiedFactRanges,getMergeStage,putMergeStage,getMergeDraft,createMergeDraft,updateMergeDraft,commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,loadSettingsSnapshotSummary,clearSettingsSnapshot,beginSettingsSnapshotV2,stageSettingsSnapshotFontV2,completeSettingsSnapshotV2,discardFailedSettingsSnapshotV2,hasIncompleteSettingsSnapshotV2,loadSettingsSnapshotFontV2,pruneOldSettingsSnapshotsV2,getMemoryJob,getMemoryStage,putMemoryStage,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
 })();

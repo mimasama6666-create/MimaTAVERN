@@ -1626,26 +1626,147 @@ html.mima-settings-paint-guard .app-shell *::after{animation-play-state:paused!i
 }
 
 
-/* V5.84 · Keyboard background continuation: paint the SAME global theme in
-   the unzoomed canvas beneath the fixed composer. Nothing here is a new theme,
-   and the existing iOS input-height/viewport code is intentionally unchanged. */
+/* V5.92: The wallpaper has a lifetime independent of viewport geometry.
+   Contract themes directly reuse original CSS assets without JS cloning large
+   data: URLs. Unmodified themes receive a one-time computed legacy fallback. */
 #mima-keyboard-theme-underlay{display:none;pointer-events:none;user-select:none}
-html.mima-composer-keyboard{
-  background-color:var(--mima-kb-canvas-color,var(--bg-deep));
-  background-image:var(--mima-kb-canvas-image,none);
-  background-size:var(--mima-kb-canvas-size,cover);
-  background-position:var(--mima-kb-canvas-position,center);
-  background-repeat:var(--mima-kb-canvas-repeat,no-repeat);
+html.mima-keyboard-theme-active.mima-keyboard-theme-canvas{
+  background-color:var(--mima-keyboard-root-color,var(--mima-kb-canvas-color,var(--bg-deep)));
+  background-image:var(--mima-keyboard-root-image,var(--mima-kb-canvas-image,none));
+  background-size:var(--mima-keyboard-root-size,var(--mima-kb-canvas-size,cover));
+  background-position:var(--mima-keyboard-root-position,var(--mima-kb-canvas-position,center));
+  background-repeat:var(--mima-keyboard-root-repeat,var(--mima-kb-canvas-repeat,no-repeat));
 }
-html.mima-composer-keyboard body > #mima-keyboard-theme-underlay{
+html.mima-keyboard-theme-active body > #mima-keyboard-theme-underlay{
   display:block;position:fixed;inset:0 auto auto 0;width:100%;
   height:100lvh;min-height:100dvh;max-height:none;
-  /* Inheritance keeps the original global CSS picture, gradient and switches,
-     with no second encoded image and no new texture/asset. */
   background:inherit;
   z-index:0;overflow:hidden;pointer-events:none;
 }
-html.mima-composer-keyboard body > #mima-keyboard-theme-underlay > .mima-keyboard-theme-overlay{
+html.mima-keyboard-theme-active body > #mima-keyboard-theme-underlay > .mima-keyboard-theme-overlay{
   position:absolute;inset:0;pointer-events:none;
 }
-html.mima-composer-keyboard body > .app-shell{z-index:1}
+html.mima-keyboard-theme-active body > .app-shell{z-index:1}
+
+/* V5.89: usable mobile drawer at both 80% and 100% density.
+   The list owns the remaining room; batch operations never cover its rows. */
+.session-drawer{box-sizing:border-box;min-height:0;height:calc(var(--mima-viewport-height,100dvh) / var(--mima-ui-scale,1));bottom:auto;max-height:none}
+.session-drawer .session-organizer-toolbar{flex:0 0 auto;gap:5px;margin:3px 0 5px}
+.session-drawer .session-search{min-height:calc(40px / var(--mima-ui-scale,1));padding:6px 10px}
+.session-drawer .session-list-tabs{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,.9fr);gap:5px}
+.session-drawer .session-list-tabs>button{min-width:0;min-height:calc(42px / var(--mima-ui-scale,1));padding:5px 4px;font-size:.79rem;white-space:nowrap}
+.session-drawer #session-list{flex:1 1 0;min-height:0;margin:2px 0;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;align-content:start;padding:2px 1px 12px}
+.session-drawer .session-bulk-selection{display:flex;gap:4px;align-items:center;min-width:0;flex-wrap:nowrap;margin:0;padding:2px 0}
+.session-drawer .session-bulk-selection.hidden{display:none}
+.session-bulk-selection .session-bulk-count{min-width:0;flex:1 1 0;line-height:1.25;max-height:2.7em;overflow:hidden;font-size:.71rem}
+.session-bulk-selection>button{flex:0 0 auto;min-width:calc(40px / var(--mima-ui-scale,1));min-height:calc(42px / var(--mima-ui-scale,1));border-radius:9px;padding:3px 4px;font-size:.73rem}
+.session-drawer .session-bulk-actions{flex:0 0 auto;display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.2fr);align-items:end;gap:6px;padding:7px;border-radius:11px;margin-top:5px}
+.session-drawer .session-bulk-actions.hidden{display:none}
+.session-drawer .session-bulk-group-label{font-size:.73rem;gap:3px}
+.session-drawer .session-bulk-group-label select{min-width:0;min-height:calc(42px / var(--mima-ui-scale,1));font-size:.8rem;padding:4px 6px}
+.session-bulk-confirm{display:flex;min-width:0;gap:5px}
+.session-bulk-confirm>button{flex:1;min-width:0;min-height:calc(42px / var(--mima-ui-scale,1));font-size:.76rem;padding:5px 7px;white-space:normal;line-height:1.25}
+.session-bulk-confirm>button.hidden{display:none}
+.session-drawer.bulk-active .drawer-footer{display:none}
+.session-drawer .session-item{min-width:0;padding:7px;gap:4px}
+.session-drawer .session-bulk-choice{min-width:calc(40px / var(--mima-ui-scale,1));min-height:calc(44px / var(--mima-ui-scale,1))}
+.session-drawer .session-open{min-height:calc(44px / var(--mima-ui-scale,1))}
+.session-drawer .session-item.is-selected{border-color:var(--accent,var(--line));background:var(--accent-soft)}
+.session-drawer .drawer-footer{flex:0 0 auto}
+@media(max-width:370px){.session-drawer{padding-inline:9px}.session-bulk-selection .session-bulk-count{font-size:.67rem}.session-drawer .session-list-tabs>button{font-size:.74rem}}
+@media(max-height:740px){.session-drawer .drawer-head{margin-bottom:7px}.session-drawer>.toolbar{margin-top:2px;margin-bottom:3px}.session-drawer .standalone-note{display:none}}
+
+/* V5.89: appearance features are separate panes, not one endless page. */
+#settings-content [data-appearance-panel][hidden]{display:none!important}
+#settings-modal .settings-content .mima-appearance-subnav{display:flex;overflow-x:auto;scrollbar-width:thin;gap:4px;padding:4px 1px 8px;margin:0 0 9px;position:sticky;top:0;z-index:3;background:var(--panel-solid,var(--panel));border-radius:11px;white-space:nowrap;-webkit-overflow-scrolling:touch}
+#settings-modal .settings-content .mima-appearance-subnav button{flex:0 0 auto;min-height:calc(42px / var(--mima-ui-scale,1));min-width:calc(53px / var(--mima-ui-scale,1));padding:5px 10px!important;font-size:calc(13px / var(--mima-ui-scale,1))!important;line-height:1.2;border-radius:9px}
+#settings-modal .mima-appearance-subnav button[aria-pressed="true"]{background:var(--accent-soft);color:var(--text);border-color:var(--accent,var(--line));font-weight:750}
+#settings-modal .settings-content .settings-section[data-appearance-panel]{margin:0 0 9px;padding-block:7px}
+#settings-modal .settings-content .settings-section[data-appearance-panel]>h3{margin:0 0 6px;font-size:.95rem}
+#settings-modal .settings-content .settings-section[data-appearance-panel]>.helper{font-size:.74rem;line-height:1.48;margin:5px 0 8px}
+#settings-modal .settings-content{padding-inline:13px}
+#settings-modal .mima-font-settings-card{padding:10px 12px}
+#settings-modal .mima-font-settings-card .mima-font-manager-shortcuts{margin-top:6px;gap:5px}
+#settings-modal .mima-font-settings-card .mima-font-manager-shortcuts>button{font-size:.8rem;min-height:calc(42px / var(--mima-ui-scale,1));padding:5px 8px}
+#settings-modal .mima-preview-details{margin:7px 0;border:1px solid var(--line);border-radius:11px;padding:3px 8px}
+#settings-modal .mima-preview-details>summary{cursor:pointer;min-height:calc(40px / var(--mima-ui-scale,1));display:flex;align-items:center;font-size:.81rem}
+#settings-modal .mima-preview-details .mima-font-quick-preview{margin:3px 0 7px}
+#settings-modal .mima-theme-palette{display:grid;grid-template-columns:1fr 1fr;gap:5px}
+#settings-modal .mima-theme-palette>.novel-theme-card{min-height:calc(62px / var(--mima-ui-scale,1));display:flex;gap:4px;align-items:center;flex-wrap:wrap;padding:7px 9px;text-align:left}
+#settings-modal .mima-theme-palette .novel-theme-card strong{font-size:.82rem}
+#settings-modal .mima-theme-palette .novel-theme-card span{font-size:.7rem;line-height:1.28}
+#settings-modal .mima-appearance-info{border-top:1px solid var(--line);margin:8px 0;padding:4px 0}
+#settings-modal .mima-appearance-info>summary{min-height:calc(40px / var(--mima-ui-scale,1));display:flex;align-items:center;cursor:pointer;font-size:.79rem;color:var(--muted)}
+#settings-modal .mima-appearance-info>.helper{padding:7px 3px}
+#settings-modal .mima-css-manager .mima-css-list-head{font-size:.84rem;line-height:1.3;margin:8px 0}
+#settings-modal .mima-css-list-quick-actions{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:7px}
+#settings-modal .mima-css-list-quick-actions>button{flex:none;min-height:calc(42px / var(--mima-ui-scale,1));font-size:.8rem!important;padding:5px 8px}
+#settings-modal .mima-css-group-list{gap:6px}
+#settings-modal .mima-css-category-title{min-height:calc(44px / var(--mima-ui-scale,1));padding:6px 10px}
+#settings-modal .mima-css-category-cards{display:grid;grid-template-columns:minmax(0,1fr);gap:5px;padding:6px}
+#settings-modal .mima-css-category-cards .library-card{position:relative;min-width:0;display:grid;grid-template-columns:minmax(0,1fr);gap:3px;padding:8px 9px;border-radius:12px}
+#settings-modal .mima-css-category-cards .card-title{margin:0;font-size:.84rem;line-height:1.25;min-width:0;overflow-wrap:anywhere}
+#settings-modal .mima-css-category-cards .card-title>span:first-child{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+#settings-modal .mima-css-category-cards .card-desc{font-size:.72rem;line-height:1.3;margin:0}
+#settings-modal .mima-css-category-cards .mima-resource-select{margin:0;font-size:.7rem;min-height:calc(36px / var(--mima-ui-scale,1))}
+#settings-modal .mima-css-actions{display:flex;gap:5px;align-items:center;position:relative;margin-top:3px;flex-wrap:nowrap}
+#settings-modal .mima-css-actions>button{flex:0 0 auto;min-width:0;min-height:calc(44px / var(--mima-ui-scale,1));padding:5px 8px;font-size:.8rem;border-radius:9px}
+#settings-modal .mima-css-actions>.mima-css-apply{flex:1 1 auto;font-weight:700}
+#settings-modal .mima-css-actions>.mima-css-star,#settings-modal .mima-css-actions>.mima-css-more{flex:0 0 calc(42px / var(--mima-ui-scale,1));padding:3px;font-size:1.1rem}
+#settings-modal .mima-css-actions .mima-css-more-menu{position:absolute;z-index:10;right:0;top:calc(44px / var(--mima-ui-scale,1));display:grid;gap:3px;min-width:170px;max-width:min(260px,85vw);padding:7px;border:1px solid var(--line);border-radius:12px;background:var(--panel-solid,#fff);box-shadow:0 12px 30px rgba(25,20,31,.2)}
+#settings-modal .mima-css-more-menu.hidden{display:none!important}
+#settings-modal .mima-css-more-menu>button{width:100%;min-height:calc(42px / var(--mima-ui-scale,1));border:0;border-radius:8px;padding:5px 9px;font:inherit;font-size:.82rem;text-align:left;background:transparent;color:var(--text)}
+#settings-modal .mima-css-more-menu>button:focus-visible,#settings-modal .mima-css-more-menu>button:hover{background:var(--accent-soft)}
+#settings-modal .mima-css-more-menu>.mima-css-danger{color:var(--danger)}
+#settings-modal .mima-preset-conflict-actions{display:flex;gap:6px;flex-wrap:wrap;padding:10px 0}
+#settings-modal .mima-preset-conflict-actions>button{min-height:44px}
+.mima-preset-conflict-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+.mima-preset-conflict-actions>button{min-height:44px}
+@media(max-width:400px){#settings-modal .mima-css-actions>button{font-size:.76rem;padding:5px 6px}#settings-modal .mima-css-actions>.mima-css-edit{min-width:calc(46px / var(--mima-ui-scale,1))}#settings-modal .mima-theme-palette{grid-template-columns:1fr}}
+
+/* V5.89 compact CSS selection: one readable title row, not a wasted checkbox row. */
+#settings-modal .mima-css-category-cards .mima-resource-select{position:absolute;top:5px;left:5px;min-width:calc(42px / var(--mima-ui-scale,1));min-height:calc(44px / var(--mima-ui-scale,1));display:flex;align-items:center;justify-content:center;padding:0;gap:0;font-size:0;z-index:1}
+#settings-modal .mima-css-category-cards .mima-resource-select>input{width:18px;height:18px}
+#settings-modal .mima-css-category-cards .card-title{margin-left:calc(42px / var(--mima-ui-scale,1));min-height:calc(36px / var(--mima-ui-scale,1));display:flex;align-items:center;gap:4px}
+#settings-modal .mima-css-category-fold[open]{overflow:visible}
+
+/* V5.90: the CSS action menu stays fully inside the scrollable settings sheet. */
+#settings-modal .mima-css-actions .mima-css-more-menu.flip-up{
+  top:auto;
+  bottom:calc(44px / var(--mima-ui-scale,1));
+}
+#settings-modal .mima-css-actions .mima-css-more-menu{
+  overflow-y:auto;
+  overscroll-behavior:contain;
+}
+/* The top settings tab is a horizontal navigation strip, not a giant row
+   of buttons. Active tab is centered in the strip by app.js. */
+@media(max-width:620px){
+  #settings-modal .settings-panel .settings-tabs button{
+    min-height:44px;
+    padding:8px 11px;
+    font-size:.84rem;
+    flex:0 0 auto;
+  }
+  #settings-modal .settings-panel .settings-tabs{
+    scroll-padding-inline:12px;
+    min-height:0;
+  }
+}
+/* The preset editor is a sibling of settings-modal, not its descendant. */
+#editor-modal .mima-preset-compare{
+  margin:12px 0 6px;padding:12px;border:1px solid var(--line);
+  border-radius:13px;background:var(--panel);display:grid;gap:10px;min-width:0;
+}
+#editor-modal .mima-preset-compare-hint{margin:0;font-size:.83rem;line-height:1.55;opacity:.82}
+#editor-modal .mima-preset-compare-row{display:grid;gap:6px;padding:9px 0;border-bottom:1px solid var(--line);min-width:0}
+#editor-modal .mima-preset-compare-row.is-different{border-inline-start:3px solid var(--accent,#ce849c);padding-inline-start:9px}
+#editor-modal .mima-preset-compare-label{font-size:.86rem;font-weight:700}
+#editor-modal .mima-preset-compare-cols{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;min-width:0}
+#editor-modal .mima-preset-compare-cell{min-width:0;display:grid;align-content:start;gap:5px}
+#editor-modal .mima-preset-compare-side{font-size:.76rem;font-weight:700;opacity:.76}
+#editor-modal .mima-preset-compare-cols pre{white-space:pre-wrap;overflow-wrap:anywhere;min-width:0;max-height:190px;overflow:auto;margin:0;padding:9px;border:1px solid var(--line);border-radius:8px;background:var(--panel-solid,#fff);font:inherit;font-size:.8rem;line-height:1.5;user-select:text}
+#editor-modal .mima-preset-compare-row>button{min-height:44px;justify-self:start;white-space:normal}
+#editor-modal .mima-preset-compare>button{min-height:44px;white-space:normal}
+#editor-modal .mima-compare-expand{min-height:40px;white-space:normal;text-align:left}
+@media(max-width:420px){#editor-modal .mima-preset-compare-cols{grid-template-columns:minmax(0,1fr)}}
