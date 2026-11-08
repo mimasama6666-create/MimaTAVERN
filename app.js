@@ -968,9 +968,30 @@ function renderSessions(){
         const more=document.createElement('button');more.type='button';more.className='session-more';more.textContent='⋯';
         more.setAttribute('aria-label',`管理剧情：${s.title}`);more.setAttribute('aria-expanded','false');
         const menu=document.createElement('div');menu.className='session-action-menu hidden';
-        const close=()=>{menu.classList.add('hidden');more.setAttribute('aria-expanded','false');};
-        more.onclick=()=>{const next=menu.classList.toggle('hidden');more.setAttribute('aria-expanded',String(!next));};
-        menu.onkeydown=e=>{if(e.key==='Escape'){close();more.focus();}};
+        const closeMenu=target=>{
+          target.classList.add('hidden');target.classList.remove('flip-up');target.style.maxHeight='';
+          const parent=target.closest('.session-item');parent?.classList.remove('session-menu-open');
+          parent?.closest('.session-folder')?.classList.remove('session-menu-open');
+          parent?.querySelector('.session-more')?.setAttribute('aria-expanded','false');
+        };
+        const close=()=>closeMenu(menu);
+        more.onclick=()=>{
+          const opening=menu.classList.contains('hidden');
+          box.querySelectorAll('.session-action-menu:not(.hidden)').forEach(closeMenu);
+          if(!opening)return;
+          menu.classList.remove('hidden');more.setAttribute('aria-expanded','true');
+          row.classList.add('session-menu-open');
+          row.closest('.session-folder')?.classList.add('session-menu-open');
+          // The list scrollport clips absolutely positioned descendants. Prefer
+          // the side with room, and keep every action reachable by menu scrolling.
+          const listRect=box.getBoundingClientRect(),anchor=more.getBoundingClientRect();
+          const availableBelow=Math.max(0,Math.min(listRect.bottom,window.innerHeight)-anchor.bottom-6);
+          const availableAbove=Math.max(0,anchor.top-Math.max(listRect.top,0)-6);
+          const flip=menu.getBoundingClientRect().height>availableBelow&&availableAbove>availableBelow;
+          menu.classList.toggle('flip-up',flip);
+          menu.style.maxHeight=Math.max(28,Math.floor(flip?availableAbove:availableBelow))+'px';
+        };
+        actions.addEventListener('keydown',e=>{if(e.key==='Escape'&&!menu.classList.contains('hidden')){e.preventDefault();e.stopPropagation();close();more.focus();}});
         const command=(label,fn)=>{const b=document.createElement('button');b.type='button';b.textContent=label;b.onclick=()=>{close();fn();};menu.appendChild(b);};
         command('编辑标题',()=>openSessionHistoryEditor(s.id));
         command(archived?'取消归档':'归档剧情',()=>applySessionOrganizationAction({type:'place-session',id:s.id,archived:!archived,groupId:null}));
@@ -3976,11 +3997,19 @@ function renderCssPresetLibrary(root){
    row.innerHTML=`<label class="mima-resource-select"><input type="checkbox" ${mimaCategorySelected.css.has(p.id)?'checked':''} data-mima-action="select"> 选择</label><div class="card-title"><span>${escapeHtml(p.name)}</span>${mounted?`<span class="tag">${global?'全局挂载':'当前 Session'}</span>`:''}</div><div class="card-desc">${escapeHtml(p.category||'未分类')} · ${cssScopeLabel(p.scope)} · ${String(p.css||'').length} 字符</div><div class="card-actions mima-css-actions"><button class="${mounted?'primary-btn':'primary-btn'} mima-css-apply" data-mima-action="apply">${global?(mounted?'重新应用':'应用到全局'):mounted?(currentSessionData?.customCssEnabled===false?'启用':'重新应用'):'应用到聊天'}</button><button class="ghost-btn mima-css-edit" data-mima-action="edit">编辑</button><button class="ghost-btn mima-css-star" title="${p.favorite?'取消收藏':'收藏'}" aria-label="${p.favorite?'取消收藏':'收藏'} ${escapeHtml(p.name)}" data-mima-action="favorite">${p.favorite?'★':'☆'}</button><button type="button" class="ghost-btn mima-css-more" aria-expanded="false" aria-label="更多操作 ${escapeHtml(p.name)}">⋯</button><div class="mima-css-more-menu hidden"><button type="button" data-mima-action="duplicate">复制预设</button><button type="button" data-mima-action="export">导出 CSS</button>${String(p.css||'').length>200000&&mounted?`<button type="button" onclick="${global?'unapplyGlobalCssPreset':'unapplyCss'}()">停用大型 CSS</button>`:''}<button type="button" class="mima-css-danger" data-mima-action="delete">删除 CSS…</button></div></div>`;
    mimaBindResourceActions(row,{select:el=>mimaCategorySelect('css',p.id,el.checked),apply:()=>global?applyGlobalCssPreset(p.id):applyCssPreset(p.id),edit:()=>openCssPresetEditor(p.id),favorite:()=>mimaToggleFavorite('css',p.id),duplicate:()=>duplicateCssPreset(p.id),export:()=>exportCssPreset(p.id),delete:()=>deleteCssPreset(p.id)});
    const more=row.querySelector('.mima-css-more'),menu=row.querySelector('.mima-css-more-menu');
-   const hide=()=>{menu.classList.add('hidden');menu.classList.remove('flip-up');menu.style.maxHeight='';more.setAttribute('aria-expanded','false');};
+   const hideMenu=target=>{
+     target.classList.add('hidden');target.classList.remove('flip-up');target.style.maxHeight='';
+     const card=target.closest('.library-card');card?.classList.remove('mima-css-menu-open');
+     card?.closest('.mima-css-category-fold')?.classList.remove('mima-css-menu-open');
+     target.previousElementSibling?.setAttribute('aria-expanded','false');
+   };
+   const hide=()=>hideMenu(menu);
    more.onclick=()=>{const shouldOpen=menu.classList.contains('hidden');
-     container.querySelectorAll('.mima-css-more-menu:not(.hidden)').forEach(x=>{x.classList.add('hidden');x.classList.remove('flip-up');x.style.maxHeight='';x.previousElementSibling?.setAttribute('aria-expanded','false');});
-     menu.classList.toggle('hidden',!shouldOpen);more.setAttribute('aria-expanded',String(shouldOpen));
+     root.querySelectorAll('.mima-css-more-menu:not(.hidden)').forEach(hideMenu);
      if(!shouldOpen)return;
+     menu.classList.remove('hidden');more.setAttribute('aria-expanded','true');
+     row.classList.add('mima-css-menu-open');
+     row.closest('.mima-css-category-fold')?.classList.add('mima-css-menu-open');
      const viewport=qs('settings-content')?.getBoundingClientRect();
      const bound=viewport||{top:0,bottom:window.innerHeight};
      const rect=menu.getBoundingClientRect(),anchor=more.getBoundingClientRect();
@@ -3990,7 +4019,7 @@ function renderCssPresetLibrary(root){
      menu.style.maxHeight=Math.max(88,Math.floor(Math.max(below,above)))+'px';
    };
    row.addEventListener('focusout',e=>{if(!row.contains(e.relatedTarget))hide();});
-   menu.addEventListener('keydown',e=>{if(e.key==='Escape'){hide();more.focus();}});
+   row.addEventListener('keydown',e=>{if(e.key==='Escape'&&!menu.classList.contains('hidden')){e.preventDefault();e.stopPropagation();hide();more.focus();}});
    container.appendChild(row);
   }
  };

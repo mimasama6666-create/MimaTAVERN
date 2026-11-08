@@ -1467,8 +1467,13 @@ html.mima-settings-paint-guard .app-shell *::after{animation-play-state:paused!i
 .session-mask-label{max-width:100%;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:.72rem;line-height:1.5}
 .session-actions{flex:0 0 auto;position:relative}
 .session-more{min-width:44px;min-height:44px;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--text);font:inherit;font-size:1.25rem}
-.session-action-menu{position:absolute;right:0;top:45px;z-index:8;min-width:190px;max-width:min(270px,76vw);background:var(--panel-solid,#fff);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);color:var(--text);border:1px solid var(--line);border-radius:13px;padding:7px;box-shadow:0 12px 30px rgba(30,23,31,.17);display:grid;gap:4px}
-.session-action-menu.hidden{display:none}.session-action-menu button{width:100%;text-align:left;min-height:44px;border-radius:8px;background:transparent;color:inherit;padding:5px 9px;font:inherit;font-size:.82rem}
+.session-action-menu{position:absolute;right:0;top:calc(46px / var(--mima-ui-scale,1));z-index:8;min-width:190px;max-width:min(270px,76vw);overflow-y:auto;overscroll-behavior:contain;background:var(--panel-solid,#fff);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);color:var(--text);border:1px solid var(--line);border-radius:13px;padding:7px;box-shadow:0 12px 30px rgba(30,23,31,.17);display:grid;gap:4px}
+.session-action-menu.flip-up{top:auto;bottom:calc(46px / var(--mima-ui-scale,1))}
+/* Open cards and archive folders must paint above later glass cards. */
+.session-list>.session-item.session-menu-open,.session-folder .session-item.session-menu-open{z-index:12}
+.session-list>.session-folder{position:relative;z-index:0}
+.session-list>.session-folder.session-menu-open{z-index:11}
+.session-action-menu.hidden{display:none}.session-action-menu button{width:100%;text-align:left;min-height:calc(44px / var(--mima-ui-scale,1));border-radius:8px;background:transparent;color:inherit;padding:5px 9px;font:inherit;font-size:.82rem}
 .session-action-menu button:hover,.session-action-menu button:focus-visible{background:rgba(255,255,255,.35)}
 .session-group-select-label{font-size:.75rem;color:var(--muted);display:grid;gap:5px;padding:6px}
 .session-group-select-label select{font:inherit;background:rgba(255,255,255,.7);color:var(--text);border:1px solid var(--line);min-height:42px;border-radius:9px;max-width:230px;width:100%;padding:4px}
@@ -1727,6 +1732,11 @@ html.mima-keyboard-theme-active body > .app-shell{z-index:1}
 #settings-modal .mima-css-category-cards .mima-resource-select>input{width:18px;height:18px}
 #settings-modal .mima-css-category-cards .card-title{margin-left:calc(42px / var(--mima-ui-scale,1));min-height:calc(36px / var(--mima-ui-scale,1));display:flex;align-items:center;gap:4px}
 #settings-modal .mima-css-category-fold[open]{overflow:visible}
+/* A glass card can form its own stacking context. Raise both the open card and
+   its category so the following cards cannot paint over the action menu. */
+#settings-modal .mima-css-category-fold{position:relative;z-index:0}
+#settings-modal .mima-css-category-fold.mima-css-menu-open{z-index:12;overflow:visible}
+#settings-modal .mima-css-category-cards .library-card.mima-css-menu-open{z-index:13}
 
 /* V5.90: the CSS action menu stays fully inside the scrollable settings sheet. */
 #settings-modal .mima-css-actions .mima-css-more-menu.flip-up{
