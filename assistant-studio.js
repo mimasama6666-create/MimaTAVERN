@@ -11,8 +11,8 @@
   let saveQueue=Promise.resolve(),saveGuardDBPromise=null;
   const TYPES=['regex','preset','css'];
   const META={
-    regex:{title:'正则助手',icon:'🧬',quick:'HTML 状态栏 → 正则省 Token',placeholder:'把输出规范 / HTML 状态栏 / 正则需求贴给我……'},
-    preset:{title:'预设助手',icon:'🧩',quick:'生成可直接保存的预设',placeholder:'告诉我你想要的文风、行为规则、输出格式……'},
+    regex:{title:'正则助手',icon:'<img src="./assets/mima-gothic-regex.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false">',quick:'HTML 状态栏 → 正则省 Token',placeholder:'把输出规范 / HTML 状态栏 / 正则需求贴给我……'},
+    preset:{title:'预设助手',icon:'<img src="./assets/mima-gothic-preset.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false">',quick:'生成可直接保存的预设',placeholder:'告诉我你想要的文风、行为规则、输出格式……'},
     css:{title:'CSS 美化助手',icon:'🎨',quick:'设计可直接保存的 CSS',placeholder:'告诉我你想把咪嘛馆 / 状态栏美化成什么样……'}
   };
   const DEFAULTS={
@@ -385,8 +385,8 @@
     }
     const protocol=detail?.protocol==='v2'?'<span class="tag">V2 Zero-Escape</span>':'<span class="tag">Legacy V1</span>';
     const repaired=detail?.repaired?`<span class="tag">${detail.repairLevel==='self_heal'?'已自愈 JSON':'已自动修复 JSON 格式'}</span>`:'';
-    if(artifact.kind==='regex_bundle')return `<div class="assistant-artifact-card"><div class="assistant-artifact-title"><strong>🧬 已识别 Regex Bundle</strong>${protocol}${repaired}</div><div class="row-sub">包含配套预设 + 正则包，可一键保存并挂载到当前剧情。</div><div class="toolbar"><button class="primary-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'all')">一键保存 + 挂载</button><button class="ghost-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'regex')">只存正则</button><button class="ghost-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'preset')">只存预设</button></div><details><summary>查看解析后的 canonical 工件</summary><pre class="prompt-pre">${esc(JSON.stringify(artifact,null,2))}</pre></details></div>`;
-    if(artifact.kind==='preset')return `<div class="assistant-artifact-card"><div class="assistant-artifact-title"><strong>🧩 已识别 Preset</strong>${protocol}${repaired}</div><div class="toolbar"><button class="primary-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'preset')">保存并挂载预设</button></div><details><summary>查看解析后的 canonical 工件</summary><pre class="prompt-pre">${esc(JSON.stringify(artifact,null,2))}</pre></details></div>`;
+    if(artifact.kind==='regex_bundle')return `<div class="assistant-artifact-card"><div class="assistant-artifact-title"><strong><img src="./assets/mima-gothic-regex.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> 已识别 Regex Bundle</strong>${protocol}${repaired}</div><div class="row-sub">包含配套预设 + 正则包，可一键保存并挂载到当前剧情。</div><div class="toolbar"><button class="primary-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'all')">一键保存 + 挂载</button><button class="ghost-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'regex')">只存正则</button><button class="ghost-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'preset')">只存预设</button></div><details><summary>查看解析后的 canonical 工件</summary><pre class="prompt-pre">${esc(JSON.stringify(artifact,null,2))}</pre></details></div>`;
+    if(artifact.kind==='preset')return `<div class="assistant-artifact-card"><div class="assistant-artifact-title"><strong><img src="./assets/mima-gothic-preset.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> 已识别 Preset</strong>${protocol}${repaired}</div><div class="toolbar"><button class="primary-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'preset')">保存并挂载预设</button></div><details><summary>查看解析后的 canonical 工件</summary><pre class="prompt-pre">${esc(JSON.stringify(artifact,null,2))}</pre></details></div>`;
     if(artifact.kind==='css_preset')return `<div class="assistant-artifact-card"><div class="assistant-artifact-title"><strong>🎨 已识别 CSS Preset</strong>${protocol}${repaired}</div><div class="toolbar"><button class="primary-btn" onclick="MimaAssistantStudio.saveArtifact(${index},'css')">保存并按目标作用域处理</button></div><details><summary>查看解析后的 canonical 工件</summary><pre class="prompt-pre">${esc(JSON.stringify(artifact,null,2))}</pre></details></div>`;
     return `<div class="assistant-artifact-card assistant-artifact-error"><strong>⚠️ 未支持的工件类型</strong><div class="row-sub">kind = ${esc(artifact.kind||'(empty)')}。原文未删除。</div></div>`;
   }

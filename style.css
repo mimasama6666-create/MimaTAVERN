@@ -1658,7 +1658,7 @@ html.mima-keyboard-theme-active body > .app-shell{z-index:1}
 .session-drawer #session-list{flex:1 1 0;min-height:0;margin:2px 0;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;align-content:start;padding:2px 1px 12px}
 .session-drawer .session-bulk-selection{display:flex;gap:4px;align-items:center;min-width:0;flex-wrap:nowrap;margin:0;padding:2px 0}
 .session-drawer .session-bulk-selection.hidden{display:none}
-.session-bulk-selection .session-bulk-count{min-width:0;flex:1 1 0;line-height:1.25;max-height:2.7em;overflow:hidden;font-size:.71rem}
+.session-bulk-selection .session-bulk-count{min-width:0;flex:1 1 0;line-height:1.35;max-height:none;overflow-wrap:anywhere;font-size:.71rem}
 .session-bulk-selection>button{flex:0 0 auto;min-width:calc(40px / var(--mima-ui-scale,1));min-height:calc(42px / var(--mima-ui-scale,1));border-radius:9px;padding:3px 4px;font-size:.73rem}
 .session-drawer .session-bulk-actions{flex:0 0 auto;display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.2fr);align-items:end;gap:6px;padding:7px;border-radius:11px;margin-top:5px}
 .session-drawer .session-bulk-actions.hidden{display:none}
@@ -1779,5 +1779,52 @@ html.mima-keyboard-theme-active body > .app-shell{z-index:1}
 .mima-gothic-inline-icon{width:1.23em;height:1.23em;}
 .mima-gothic-empty-icon{width:1.85em;height:1.85em;vertical-align:middle;}
 #story-chat-box .mima-gothic-empty-icon{width:2.2em;height:2.2em;}
-#generation-label::before{content:'';display:inline-block;width:1.3em;height:1.3em;vertical-align:-.26em;margin-right:.26em;background:url('./assets/mima-gothic-heart.png') center/contain no-repeat;}
+#generation-label::before{content:'';display:inline-block;width:1.3em;height:1.3em;vertical-align:-.26em;margin-right:.26em;background:url('./assets/mima-gothic-compose.png') center/contain no-repeat;}
 .context-ribbon.mima-ribbon-with-character::before{content:'';display:inline-block;width:1.3em;height:1.3em;vertical-align:-.26em;margin-right:.28em;background:url('./assets/mima-gothic-heart.png') center/contain no-repeat;}
+
+/* V5.94 scoped bulk manager. No changes to composer/viewport/theme surfaces. */
+.mima-category-tools>.danger-btn{min-height:40px;border-radius:12px}
+.mima-category-tools #mima-bulk-count-css,
+.mima-category-tools #mima-bulk-count-presets,
+.mima-category-tools #mima-bulk-count-worldbook{flex:1 1 100%;font-size:.8rem;line-height:1.5}
+.mima-bulk-delete-dialog{box-sizing:border-box;width:min(520px,calc(100vw - 32px));max-height:min(80dvh,720px);overflow:auto;margin:auto;padding:22px;border:1px solid var(--line);border-radius:20px;background:var(--panel);color:var(--text);box-shadow:0 24px 75px rgba(20,21,43,.3);font:inherit}
+.mima-bulk-delete-dialog::backdrop{background:rgba(17,19,34,.47);backdrop-filter:blur(3px)}
+.mima-bulk-delete-dialog h3{font-size:1.08rem;margin:0 0 12px}
+.mima-bulk-delete-dialog p{line-height:1.65;margin:8px 0}
+.mima-bulk-delete-dialog details{padding:12px;border:1px solid var(--line);border-radius:12px;margin:14px 0}
+.mima-bulk-delete-dialog summary{cursor:pointer;font-weight:600}
+.mima-bulk-delete-names{max-height:230px;overflow:auto;overscroll-behavior:contain;line-height:1.7;margin:10px 0 0;padding-left:24px;overflow-wrap:anywhere}
+.mima-bulk-delete-names small{color:var(--muted)}
+.mima-bulk-delete-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:10px}
+.mima-bulk-delete-actions button{min-height:44px;min-width:104px}
+#session-bulk-delete{min-height:44px}
+@media(max-width:440px){.mima-bulk-delete-dialog{padding:16px;border-radius:17px}.mima-bulk-delete-actions>*{flex:1 1 120px}}
+@media(prefers-reduced-motion:reduce){.mima-bulk-delete-dialog::backdrop{backdrop-filter:none}}
+
+.mima-bulk-delete-dialog :focus-visible{outline:2px solid var(--accent,#b49ac1);outline-offset:3px}
+
+/* White Gothic icon suite: lightweight transparent images; decorative; original button semantics untouched. */
+.mima-gothic-ui-icon{display:inline-block;box-sizing:content-box;width:1.48em;height:1.48em;max-width:none;object-fit:contain;flex:none;vertical-align:-.35em;pointer-events:none;user-select:none;-webkit-user-select:none;filter:drop-shadow(0 1px 1px rgba(49,36,59,.18));}
+button>.mima-gothic-ui-icon,summary>.mima-gothic-ui-icon{vertical-align:middle;margin-right:.12em;}
+.settings-tabs button>.mima-gothic-ui-icon{width:1.53em;height:1.53em;}
+.mima-play-head h2>.mima-gothic-ui-icon,.mima-play-tabs button>.mima-gothic-ui-icon,.mima-theater-heading>.mima-gothic-ui-icon{width:1.4em;height:1.4em;}
+@media(max-width:560px){.settings-tabs button>.mima-gothic-ui-icon{width:1.45em;height:1.45em;}}
+
+/* Contextual glyphs only. Keep the original toolbar controls and finger targets unchanged. */
+.quick-actions .mima-gothic-ui-icon{width:1.18em;height:1.18em;vertical-align:-.24em;}
+#session-tab-archived::before{content:'';display:inline-block;width:1.25em;height:1.25em;vertical-align:-.27em;margin-right:.24em;background:url('./assets/mima-gothic-archive.png') center/contain no-repeat;pointer-events:none;}
+
+/* Native, accessible category picker; UI-only, no overlay on the story editor. */
+.mima-category-picker{box-sizing:border-box;width:min(94vw,440px);max-width:94vw;max-height:min(80dvh,660px);padding:20px;border:1px solid var(--line);border-radius:20px;background:var(--panel-solid,#fff);color:var(--text);box-shadow:0 25px 70px rgba(20,20,30,.25);overflow:auto;overscroll-behavior:contain}
+.mima-category-picker::backdrop{background:rgba(28,25,39,.35);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}
+.mima-category-picker h3{margin:0 0 7px;font-size:1.05rem}
+.mima-category-picker .row-sub{line-height:1.5;margin:0 0 14px}
+.mima-category-picker-list{display:grid;gap:7px;max-height:min(48dvh,400px);overflow-y:auto;-webkit-overflow-scrolling:touch}
+.mima-category-picker-option{box-sizing:border-box;display:flex;align-items:center;gap:10px;padding:12px 13px;min-height:48px;border-radius:12px;border:1px solid var(--line);background:var(--panel);cursor:pointer;overflow-wrap:anywhere}
+.mima-category-picker-option:has(input:checked){border-color:var(--accent);background:var(--accent-soft)}
+.mima-category-picker-option input{accent-color:var(--accent);width:18px;height:18px;flex:none}
+.mima-category-picker-option span{min-width:0;flex:1}
+.mima-category-picker-option small{color:var(--muted);white-space:nowrap}
+.mima-category-picker-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:17px}
+.mima-category-picker-actions button{min-width:88px;min-height:44px}
+@media(max-width:380px){.mima-category-picker{padding:14px}.mima-category-picker-actions button{flex:1}}

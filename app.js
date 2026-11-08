@@ -596,21 +596,21 @@ async function renderSettingTemplatesTab(box){
     const oc=ps.outputContract||{};
     const renderCheck=(id,label,checked)=>`<label class="mima-template-choice"><input id="${id}" type="checkbox" ${checked?'checked':''}>${label}</label>`;
     box.innerHTML=`<section class="settings-section mima-template-editor">
-      <h3>🗂️ 剧情设置模板</h3>
+      <h3><img src="./assets/mima-gothic-template.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> 剧情设置模板</h3>
       <p class="helper">在这里独立创建、编辑并保存模板。<strong>无需先打开其他剧情</strong>。之后在「新建剧情」或「PNG 角色卡开局」选择挂载；不会携带旧 History、旧记忆、密钥或后台任务。</p>
       <div class="mima-template-chooser"><label class="form-label" for="tpl-edit-choice">选择要编辑的模板</label>
         <select id="tpl-edit-choice" class="field" onchange="chooseIndependentTemplate(this.value)"><option value="">＋ 全新空白模板</option>${settingTemplateCache.map(t=>`<option value="${escapeHtml(t.id)}" ${tpl?.id===t.id?'selected':''}>${t.isDefault?'★ ':''}${escapeHtml(t.name)}</option>`).join('')}</select></div>
       <div class="mima-template-actions"><button class="ghost-btn" onclick="chooseIndependentTemplate('')">＋ 创建空白模板</button><button class="ghost-btn" onclick="importCurrentSessionAsSettingTemplate()">从当前剧情复制配置</button><button class="ghost-btn" onclick="exportSettingTemplate()">导出模板</button><button class="ghost-btn" onclick="document.getElementById('setting-template-file-input').click()">导入模板</button>${tpl?'<button class="ghost-btn" onclick="copyIndependentTemplate()">复制当前模板</button><button class="ghost-btn" onclick="setIndependentTemplateDefault()">设为默认 / 取消默认</button>':''}</div>
       <label class="form-label" for="tpl-edit-name">模板名称</label><input id="tpl-edit-name" class="field" maxlength="120" value="${templateEditorValue(tpl?.name||'')}" placeholder="例如：我的通用长剧情">
-      <details class="mima-template-section" open><summary>🧩 预设 · 多选挂载</summary>${mimaTemplateChecked(cfg.presetIds,presets,'presetIds')}</details>
-      <details class="mima-template-section" open><summary>📚 世界书 · 多选挂载</summary>${mimaTemplateChecked(cfg.worldbookIds,worldbooks,'worldbookIds')}</details>
-      <details class="mima-template-section" open><summary>🧬 正则包 · 多选挂载</summary>${mimaTemplateChecked(cfg.regexPackIds,regexPacks,'regexPackIds')}</details>
+      <details class="mima-template-section" open><summary><img src="./assets/mima-gothic-preset.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> 预设 · 多选挂载</summary>${mimaTemplateChecked(cfg.presetIds,presets,'presetIds')}</details>
+      <details class="mima-template-section" open><summary><img src="./assets/mima-gothic-worldbook.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> 世界书 · 多选挂载</summary>${mimaTemplateChecked(cfg.worldbookIds,worldbooks,'worldbookIds')}</details>
+      <details class="mima-template-section" open><summary><img src="./assets/mima-gothic-regex.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> 正则包 · 多选挂载</summary>${mimaTemplateChecked(cfg.regexPackIds,regexPacks,'regexPackIds')}</details>
       <details class="mima-template-section" open><summary><span class="mima-gothic-inline-icon" aria-hidden="true"></span> 用户面具与可选皮肤</summary>
        <div class="form-grid"><div><label class="form-label">用户面具</label><select id="tpl-edit-mask" class="field">${optionList(masks.filter(x=>x.type==='user'),cfg.loadedUserMaskId,'不挂载')}</select></div>
        <div><label class="form-label">CSS 皮肤</label><select id="tpl-edit-css" class="field">${optionList(cssPresets,cfg.customCssId,'不挂载')}</select></div></div>
        ${renderCheck('tpl-edit-css-on','启用选中的 CSS 皮肤',cfg.customCssEnabled!==false)}
       </details>
-      <details class="mima-template-section" open><summary>🧠 长剧情 · 上下文设置</summary>
+      <details class="mima-template-section" open><summary><img src="./assets/mima-gothic-memory.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> 长剧情 · 上下文设置</summary>
         ${renderCheck('tpl-edit-context-on','这个模板保存长剧情设置',!!cfg.promptSettings)}
         <div class="form-grid">
          <div><label class="form-label">最近 History 条数</label><input id="tpl-edit-recent" class="field" type="number" min="6" max="100000" step="1" value="${templateEditorValue(ps.recentMessageLimit??34)}"></div>
@@ -630,7 +630,7 @@ async function renderSettingTemplatesTab(box){
         <div class="form-full"><label class="form-label">必须存在的元素选择器</label><input id="tpl-edit-required" class="field" value="${templateEditorValue(oc.requiredSelectors)}" placeholder=".story-body, .status"></div></div>
         <p class="helper">跨剧情不会复制上一轮的 HTML 样本消息 ID。需要参考模板时，开局后再明确绑定本剧情自己的 HTML 格式样本。</p>
        </details>
-      <details class="mima-template-section"><summary>🗃️ 记忆注入开关（不含记忆数据）</summary>
+      <details class="mima-template-section"><summary><img src="./assets/mima-gothic-memory.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> 记忆注入开关（不含记忆数据）</summary>
         ${renderCheck('tpl-edit-memory-on','为新剧情带入记忆注入开关',!!cfg.memoryInject)}
         ${renderCheck('tpl-edit-memory-core','注入核心记忆',cfg.memoryInject?.injectCore!==false)}
         ${renderCheck('tpl-edit-memory-facts','注入事实记忆',cfg.memoryInject?.injectFacts!==false)}
@@ -835,8 +835,11 @@ async function applySessionOrganizationAction(action){
 }
 async function applySessionBulkAction({archived,groupId=null}){
     if(sessionOrganizationBusy)return toast('上一项归档操作还在保存，请完成后再试');
-    const ids=[...sessionBulkSelected].filter(id=>sessions.some(s=>s.id===id));
+    const ids=[...sessionBulkSelected];
     if(!ids.length)return toast('请先勾选需要整理的剧情');
+    const modeIds=new Set(sessions.filter(s=>Boolean(sessionOrganization?.placements?.[s.id]?.archived)===(sessionListMode==='archived')).map(s=>s.id));
+    const missing=ids.filter(id=>!modeIds.has(id));
+    if(missing.length)return toast(`有 ${missing.length} 项剧情选择已失效，整批取消；请清空后重新勾选`);
     if(!confirm(`${archived?'归档／移动':'恢复'}选中的 ${ids.length} 段剧情？\n只更改收纳目录，不删除消息、Memory 或面具。`))return;
     const result=await applySessionOrganizationAction({type:'place-sessions',ids,archived,groupId:archived?groupId:null});
     if(result){sessionBulkSelected.clear();renderSessions();toast(`已${archived?'整理':'恢复'} ${ids.length} 段剧情`);}
@@ -888,13 +891,14 @@ function renderSessions(){
     const query=sessionSearchTerm.trim().toLocaleLowerCase();
     const visible=sessions.filter(s=>(archivedOf(s)===(sessionListMode==='archived'))&&
         (!query||[s.title,sessionMaskTag(s.loadedUserMaskId,'user'),sessionMaskTag(s.loadedCharMaskId,'character')].join(' ').toLocaleLowerCase().includes(query)));
-    // Search/filters never discard a bulk selection. Only remove actually missing IDs
-    // or IDs from the other archive mode (the latter is cleared explicitly on mode switch).
+    // A background refresh must never rewrite a selection the owner already made.
+    // Explicit active/archived mode switches clear the set in setSessionListMode().
     const modeIds=new Set(sessions.filter(s=>archivedOf(s)===(sessionListMode==='archived')).map(s=>s.id));
-    for(const id of [...sessionBulkSelected])if(!modeIds.has(id))sessionBulkSelected.delete(id);
     const updateSelectionUI=()=>{
       const current=visible.filter(s=>sessionBulkSelected.has(s.id)).length;
-      const count=qs('session-bulk-count');if(count)count.textContent=`已选 ${sessionBulkSelected.size} 段 · 当前筛选已选 ${current}/${visible.length} 段（跨搜索保留）`;
+      const missing=[...sessionBulkSelected].filter(id=>!modeIds.has(id)).length;
+      const hidden=sessionBulkSelected.size-current-missing;
+      const count=qs('session-bulk-count');if(count)count.textContent=`已选 ${sessionBulkSelected.size} 段 · 当前筛选 ${current}/${visible.length} 段 · 隐藏选择 ${hidden} 段${missing?` · ⚠ ${missing} 项选择已失效，请清空后重选`:''}`;
       for(const row of box.querySelectorAll('.session-item[data-session-id]')){
         const selected=sessionBulkSelected.has(row.dataset.sessionId);
         row.classList.toggle('is-selected',selected);
@@ -902,6 +906,7 @@ function renderSessions(){
         const choose=row.querySelector('.session-open');if(choose&&sessionBulkMode){choose.setAttribute('aria-pressed',String(selected));choose.setAttribute('aria-label',`${selected?'取消选择':'选择'}剧情：${row.dataset.sessionTitle}`);}
       }
       const all=qs('session-bulk-all'),inverse=qs('session-bulk-invert'),clear=qs('session-bulk-clear'),apply=qs('session-bulk-apply'),restore=qs('session-bulk-restore');
+      const remove=qs('session-bulk-delete');if(remove)remove.disabled=!sessionBulkSelected.size||sessionOrganizationBusy;
       if(all)all.disabled=!visible.length||sessionOrganizationBusy;
       if(inverse)inverse.disabled=!visible.length||sessionOrganizationBusy;
       if(clear)clear.disabled=!sessionBulkSelected.size||sessionOrganizationBusy;
@@ -922,6 +927,7 @@ function renderSessions(){
       if(group){const old=group.value;group.replaceChildren(new Option('未分类',''),...org.groups.map(g=>new Option(g.name,g.id)));if(org.groups.some(g=>g.id===old))group.value=old;group.disabled=sessionOrganizationBusy;group.title=sessionListMode==='active'?'批量归档到分类':'把已归档剧情移动到分类';}
       if(apply){apply.textContent=sessionListMode==='active'?'归档选中剧情':'移动选中剧情';apply.disabled=!sessionBulkSelected.size||sessionOrganizationBusy;apply.onclick=()=>applySessionBulkAction({archived:true,groupId:group?.value||null});}
       if(restore){restore.classList.toggle('hidden',sessionListMode!=='archived');restore.disabled=!sessionBulkSelected.size||sessionOrganizationBusy;restore.onclick=()=>applySessionBulkAction({archived:false});}
+      const remove=qs('session-bulk-delete');if(remove){remove.disabled=!sessionBulkSelected.size||sessionOrganizationBusy;remove.onclick=mimaBulkDeleteSessions;}
     }
     function item(s){
         const archived=archivedOf(s),place=org.placements[s.id]||{},row=document.createElement('article');
@@ -1413,7 +1419,7 @@ function renderRolesTab(box){
       <section class="settings-section"><h3>User Persona（用户人设）库</h3><div class="toolbar"><button class="ghost-btn" onclick="openMaskEditor('user')">＋ 新建 User Persona（用户人设）</button><button class="ghost-btn" onclick="choosePersonaImport('user')">⇧ 导入 TXT（文本） / JSON（数据）</button></div><div id="user-card-grid" class="card-grid"></div></section>`;
     renderMaskCards(qs('char-card-grid'),chars,'character'); renderMaskCards(qs('user-card-grid'),users,'user');
 }
-function renderMaskCards(root,items,type){root.innerHTML='';if(!items.length){root.innerHTML='<div class="row-sub">这里还是空的。</div>';return}items.forEach(m=>{const mounted=(type==='user'?currentSessionData.loadedUserMaskId:currentSessionData.loadedCharMaskId)===m.id;const div=document.createElement('div');div.className=`library-card ${mounted?'mounted':''}`;div.innerHTML=`<div class="card-title"><span>${escapeHtml(m.name)}</span>${mounted?'<span class="tag">已挂载</span>':''}</div><div class="card-desc">${escapeHtml(String(m.description||m.content||'暂无简介').slice(0,180))}</div><div class="card-actions"><button class="ghost-btn" onclick="mountMask('${type}','${m.id}')">${mounted?'卸下':'挂载'}</button><button class="ghost-btn" onclick="openMaskEditor('${type}','${m.id}')">编辑</button><button class="ghost-btn" onclick="exportMask('${m.id}')">导出</button></div>`;root.appendChild(div)})}
+function renderMaskCards(root,items,type){root.innerHTML='';if(!items.length){root.innerHTML='<div class="row-sub">这里还是空的。</div>';return}items.forEach(m=>{const mounted=(type==='user'?currentSessionData.loadedUserMaskId:currentSessionData.loadedCharMaskId)===m.id;const div=document.createElement('div');div.className=`library-card ${mounted?'mounted':''}`;div.innerHTML=`<div class="card-title"><span>${escapeHtml(m.name)}</span>${mounted?'<span class="tag">已挂载</span>':''}</div><div class="card-desc">${escapeHtml(String(m.description||m.content||'暂无简介').slice(0,180))}</div><div class="card-actions"><button class="ghost-btn" data-mima-action="mount">${mounted?'卸下':'挂载'}</button><button class="ghost-btn" data-mima-action="edit">编辑</button><button class="ghost-btn" data-mima-action="export">导出</button></div>`;mimaBindResourceActions(div,{mount:()=>mountMask(type,m.id),edit:()=>openMaskEditor(type,m.id),export:()=>exportMask(m.id)});root.appendChild(div)})}
 async function saveRoleMounts(){await patchCurrent({loadedCharMaskId:qs('mount-char').value||null,loadedUserMaskId:qs('mount-user').value||null});refreshChatBox()}
 async function mountMask(type,id){const key=type==='user'?'loadedUserMaskId':'loadedCharMaskId';const now=currentSessionData?.[key];await patchCurrent({[key]:now===id?null:id});refreshChatBox()}
 async function insertCharacterOpening(){const c=currentChar(),sessionId=currentSessionId;if(!c?.firstMessage||!sessionId)return;const res=await fetchStory(`/sessions/${sessionId}/opening`,'POST',{content:c.firstMessage});if(res.success){if(currentSessionId===sessionId){currentSessionData=res.data;closeSettings();refreshChatBox();}else toast('开场白已保存到原剧情，当前剧情未改变');}else toast(res.msg||'插入失败')}
@@ -1513,7 +1519,7 @@ async function inspectPngResources(file){
 function pngResourceCategory(kind){return({character:'角色卡',worldbook:'世界书',preset:'提示词预设',css:'CSS 美化',regex:'正则包',metadata:'PNG 原始文本',unknown:'待人工处理'}[kind]||'原始内容')}
 function renderPngResourcesTab(box){
     const info=pngResourceInspection;
-    box.innerHTML=`<section class="settings-section"><h3>📦 PNG 资源检查器</h3><p class="helper">只读扫描 PNG 全部文本元数据。先查看资源，再选择保存到咪嘛馆资源库；“同时挂载到当前剧情”默认关闭。未知格式、特殊脚本和无法等价转换的世界书规则只开放查看/导出，不会自动执行或吞掉字段。</p><div class="toolbar"><button class="primary-btn" onclick="choosePngResourceInspection()" ${pngResourceBusy?'disabled':''}>⇧ 选择 PNG 角色卡</button></div>${info?`<p class="helper">文件：${escapeHtml(info.parsed.filename)} · ${info.parsed.metadata.length} 个文本元数据区块 · ${info.resources.length} 个可检查项目</p><button class="primary-btn" onclick="playInspectedPngInCompat()">🎴 用这张卡开始聊天（无需再上传）</button>`:'<p class="row-sub">请选择酒馆原始 PNG 角色卡。PNG 截图不会自动伪装成角色卡。</p><button class="ghost-btn" onclick="closeSettings();MimaCompatUI.open()">🎴 玩酒馆角色卡（PNG / JSON / CHARX）</button>'}</section>`;
+    box.innerHTML=`<section class="settings-section"><h3><img src="./assets/mima-gothic-archive.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> PNG 资源检查器</h3><p class="helper">只读扫描 PNG 全部文本元数据。先查看资源，再选择保存到咪嘛馆资源库；“同时挂载到当前剧情”默认关闭。未知格式、特殊脚本和无法等价转换的世界书规则只开放查看/导出，不会自动执行或吞掉字段。</p><div class="toolbar"><button class="primary-btn" onclick="choosePngResourceInspection()" ${pngResourceBusy?'disabled':''}>⇧ 选择 PNG 角色卡</button></div>${info?`<p class="helper">文件：${escapeHtml(info.parsed.filename)} · ${info.parsed.metadata.length} 个文本元数据区块 · ${info.resources.length} 个可检查项目</p><button class="primary-btn" onclick="playInspectedPngInCompat()">🎴 用这张卡开始聊天（无需再上传）</button>`:'<p class="row-sub">请选择酒馆原始 PNG 角色卡。PNG 截图不会自动伪装成角色卡。</p><button class="ghost-btn" onclick="closeSettings();MimaCompatUI.open()">🎴 玩酒馆角色卡（PNG / JSON / CHARX）</button>'}</section>`;
     if(!info)return;
     const section=document.createElement('section');section.className='settings-section';
     section.innerHTML='<h3>识别结果 · 逐项选择</h3><p class="helper">只有能够等价转换的项目才可勾选。默认不勾选；重复保存同一资源会产生副本，请先检查列表。</p>';
@@ -1635,23 +1641,204 @@ const mimaCategorySelected={css:new Set(),presets:new Set(),worldbook:new Set()}
 function mimaCategoryItems(kind){return kind==='presets'?presets:kind==='worldbook'?worldbooks:cssPresets;}
 function mimaCategoryEntries(kind){return window.MimaStandalone.getResourceCategoryList?.(kind)||[];}
 function mimaLibraryToolbar(kind,items){
+ queueMicrotask(()=>mimaUpdateSelectionControls(kind));
  const v=mimaLibraryView[kind],known=mimaCategoryEntries(kind),names=[...new Set([...known.map(c=>c.name),...items.map(x=>String(x.category||'未分类'))])].sort((a,b)=>a.localeCompare(b,'zh'));
  const safe=x=>escapeHtml(x);
- return `<div class="mima-library-filters"><input class="field" aria-label="搜索资源" placeholder="搜索名称、标签和说明" value="${safe(v.search)}" oninput="mimaFilterLibrary('${kind}','search',this.value)"><select class="field" aria-label="资源分类" onchange="mimaFilterLibrary('${kind}','category',this.value)"><option value="all">全部分类</option><option value="未分类" ${v.category==='未分类'?'selected':''}>未分类</option>${names.filter(c=>c!=='未分类').map(c=>`<option value="${safe(c)}" ${v.category===c?'selected':''}>${safe(c)}（${items.filter(x=>(x.category||'未分类')===c).length}）</option>`).join('')}</select><label class="check-row"><input type="checkbox" ${v.favorites?'checked':''} onchange="mimaFilterLibrary('${kind}','favorites',this.checked)"> ★ 只看收藏</label></div><div class="mima-category-tools"><button type="button" class="ghost-btn" onclick="mimaCategoryCreate('${kind}')">＋ 新建分类</button><button type="button" class="ghost-btn" onclick="mimaCategoryManage('${kind}')">管理分类</button><button type="button" class="ghost-btn" onclick="mimaBatchMove('${kind}')">移动已勾选项目</button><span class="row-sub">分类可为空；勾选卡片上的「选入批量移动」后进行归类</span></div><div id="mima-categories-${kind}" class="mima-category-panel hidden"></div>`;
+ return `<div class="mima-library-filters"><input class="field" aria-label="搜索资源" placeholder="搜索名称、标签和说明" value="${safe(v.search)}" oninput="mimaFilterLibrary('${kind}','search',this.value)"><select class="field" aria-label="资源分类" onchange="mimaFilterLibrary('${kind}','category',this.value)"><option value="all">全部分类</option><option value="未分类" ${v.category==='未分类'?'selected':''}>未分类</option>${names.filter(c=>c!=='未分类').map(c=>`<option value="${safe(c)}" ${v.category===c?'selected':''}>${safe(c)}（${items.filter(x=>(x.category||'未分类')===c).length}）</option>`).join('')}</select><label class="check-row"><input type="checkbox" ${v.favorites?'checked':''} onchange="mimaFilterLibrary('${kind}','favorites',this.checked)"> ★ 只看收藏</label></div><div class="mima-category-tools"><button type="button" class="ghost-btn" onclick="mimaCategoryCreate('${kind}')">＋ 新建分类</button><button type="button" class="ghost-btn" onclick="mimaCategoryManage('${kind}')">管理分类</button><button type="button" class="ghost-btn" id="mima-bulk-all-${kind}" onclick="mimaSelectLibrary('${kind}','all')">选择当前筛选</button><button type="button" class="ghost-btn" id="mima-bulk-invert-${kind}" onclick="mimaSelectLibrary('${kind}','invert')">反选当前筛选</button><button type="button" class="ghost-btn" id="mima-bulk-clear-${kind}" onclick="mimaSelectLibrary('${kind}','clear')">清空选择</button><button type="button" class="ghost-btn" id="mima-bulk-move-${kind}" onclick="mimaBatchMove('${kind}')">移动至分类</button><button type="button" class="danger-btn" id="mima-bulk-delete-${kind}" onclick="mimaBulkDeleteResources('${kind}')">删除所选…</button><span class="row-sub" id="mima-bulk-count-${kind}" role="status">已选 0 项</span></div><div id="mima-categories-${kind}" class="mima-category-panel hidden"></div>`;
 }
-function mimaCategorySelect(kind,id,checked){const chosen=mimaCategorySelected[kind];if(checked)chosen.add(id);else chosen.delete(id);}
+// Selection is independent of the Session mount checkboxes and survives filters.
+const mimaBulkDeleteBusy={css:false,presets:false,worldbook:false,sessions:false};
+function mimaSelectionInfo(kind){
+ const list=mimaCategoryItems(kind),known=new Set(list.map(x=>x.id));
+ // Never silently shrink the owner's selection when another tab removes an item.
+ // Keep missing IDs separate from legitimately hidden (filtered) records.
+ const allSelected=[...mimaCategorySelected[kind]];
+ const selected=allSelected.filter(id=>known.has(id));
+ const missing=allSelected.filter(id=>!known.has(id));
+ const visible=mimaVisibleResources(kind,list);
+ const inView=new Set(visible.map(x=>x.id));
+ return {allSelected,selected,missing,visible,
+   visibleSelected:selected.filter(id=>inView.has(id)).length,
+   hidden:selected.filter(id=>!inView.has(id)).length};
+}
+function mimaUpdateSelectionControls(kind){
+ const info=mimaSelectionInfo(kind),label=qs('mima-bulk-count-'+kind),busy=mimaBulkDeleteBusy[kind];
+ if(label)label.textContent=`已选 ${info.allSelected.length} 项 · 当前筛选 ${info.visibleSelected}/${info.visible.length} 项 · 隐藏选择 ${info.hidden} 项${info.missing.length?` · ⚠ 有 ${info.missing.length} 项选择已失效，请清空后重选`:''}`;
+ for(const command of ['all','invert','clear','move','delete']){
+   const button=qs(`mima-bulk-${command}-${kind}`);
+   if(button)button.disabled=!!busy||(['clear','move','delete'].includes(command)?!info.allSelected.length:!info.visible.length);
+ }
+}
+function mimaSelectLibrary(kind,action){
+ if(mimaBulkDeleteBusy[kind])return;
+ const choice=mimaCategorySelected[kind],info=mimaSelectionInfo(kind);
+ if(action==='clear')choice.clear();
+ else for(const item of info.visible){
+   if(action==='all')choice.add(item.id);
+   else if(action==='invert'){if(choice.has(item.id))choice.delete(item.id);else choice.add(item.id);}
+ }
+ const root=qs(kind==='css'?'css-preset-list':kind==='worldbook'?'worldbook-list':'preset-list');
+ if(kind==='css')renderCssPresetLibrary(root);
+ else if(kind==='worldbook')fillWorldbooks(root);
+ else fillPresets(root);
+ mimaUpdateSelectionControls(kind);
+}
+// Fully enumerated names, including items hidden by search, category and folders.
+// No data write occurs until the explicit destructive button is pressed.
+function mimaConfirmBulkDeletion({title,items,hidden=0,consequence=''}){
+ return new Promise(resolve=>{
+   const dialog=document.createElement('dialog');dialog.className='mima-bulk-delete-dialog';
+   const heading=document.createElement('h3');heading.textContent=title;
+   const explanation=document.createElement('p');explanation.textContent=`确定永久删除以下 ${items.length} 项吗？${hidden?`其中 ${hidden} 项当前被筛选或折叠隐藏。`:''}`;
+   const tip=document.createElement('p');tip.className='helper';tip.textContent=consequence||'删除不可撤销，其他未选项目保持不变。';
+   const details=document.createElement('details');details.open=true;
+   const summary=document.createElement('summary');summary.textContent=`查看完整删除名单（${items.length} 项）`;
+   const list=document.createElement('ol');list.className='mima-bulk-delete-names';
+   for(const item of items){const li=document.createElement('li');li.textContent=item.name||item.title||item.id;
+     const ref=item.__bulkUsage;if(ref){const extra=document.createElement('small');extra.textContent=` · ${ref}`;li.appendChild(extra)}list.appendChild(li);}
+   details.append(summary,list);
+   const actions=document.createElement('div');actions.className='toolbar mima-bulk-delete-actions';
+   const cancel=document.createElement('button');cancel.type='button';cancel.className='ghost-btn';cancel.textContent='取消';
+   const confirm=document.createElement('button');confirm.type='button';confirm.className='danger-btn';confirm.textContent=`永久删除 ${items.length} 项`;
+   actions.append(cancel,confirm);dialog.append(heading,explanation,tip,details,actions);
+   let settled=false;const finish=approved=>{if(settled)return;settled=true;dialog.close();dialog.remove();resolve(approved);};
+   cancel.onclick=()=>finish(false);confirm.onclick=()=>finish(true);
+   dialog.addEventListener('cancel',e=>{e.preventDefault();finish(false)});
+   document.body.appendChild(dialog);
+   try{dialog.showModal();cancel.focus({preventScroll:true})}catch(e){dialog.remove();resolve(window.confirm(`${title}\n${items.map(x=>x.name||x.title||x.id).join('\n')}\n${consequence}`));}
+ });
+}
+function mimaUsageLabel(kind,id){
+ const key=kind==='css'?'customCssId':kind==='presets'?'presetIds':'worldbookIds';
+ const usedBySession=(sessions||[]).filter(s=>kind==='css'?s.customCssId===id:(s[key]||[]).includes(id));
+ const parts=[];
+ if(usedBySession.length)parts.push(`${usedBySession.length} 段剧情引用`);
+ if(usedBySession.some(s=>s.id===currentSessionId))parts.push('当前剧情');
+ if(kind==='css'&&window.MimaStandalone?.getThemeSettings?.()?.globalCssPresetId===id)parts.push('全局样式');
+ if(typeof novelProjects!=='undefined'&&Array.isArray(novelProjects)&&novelProjects.some(p=>kind==='css'?p.appearance?.customCssId===id:(p[key]||[]).includes(id)))parts.push('小说项目引用');
+ if(typeof settingTemplates!=='undefined'&&Array.isArray(settingTemplates)&&settingTemplates.some(t=>kind==='css'?t.config?.customCssId===id:(t.config?.[key]||[]).includes(id)))parts.push('设置模板引用');
+ return parts.join('、')||'未发现资源引用';
+}
+async function mimaBulkDeleteResources(kind){
+ if(mimaBulkDeleteBusy[kind])return;
+ const info=mimaSelectionInfo(kind),recordMap=new Map(mimaCategoryItems(kind).map(x=>[x.id,x]));
+ if(info.missing.length)return toast(`有 ${info.missing.length} 项选择已失效，整批取消；请清空选择后重新勾选`);
+ const items=info.allSelected.map(id=>recordMap.get(id)).filter(Boolean).map(item=>({id:item.id,name:item.name,__bulkUsage:mimaUsageLabel(kind,item.id)}));
+ if(!items.length)return toast('请先选择要删除的项目');
+ if(items.length!==info.allSelected.length)return toast('所选资源已经变化，整批取消，请清空选择后刷新列表');
+ const label={css:'CSS',presets:'剧情预设',worldbook:'世界书'}[kind];
+ // Freeze the confirmed snapshot's version BEFORE the user opens the modal.
+ // Any concurrent edit while confirming must invalidate the whole selection.
+ const expectedRevision=window.MimaStandalone.getStoreRevision();
+ const approved=await mimaConfirmBulkDeletion({title:`删除所选${label}`,items,hidden:info.hidden,
+   consequence:'仅删除上述资源及其挂载引用。不会删除剧情正文、Memory、Persona、其他主题或字体。此操作不可撤销。'});
+ if(!approved)return;
+ mimaBulkDeleteBusy[kind]=true;mimaUpdateSelectionControls(kind);
+ try{
+   const res=await fetchStory('/resources/bulk-delete','POST',{kind,ids:items.map(x=>x.id),expectedRevision});
+   if(!res?.success||res.data?.deleted!==items.length){
+     throw Error(res?.msg||'未取得整批提交回执，资料没有被标记为已删除');
+   }
+   for(const item of items)mimaCategorySelected[kind].delete(item.id);
+   if(kind==='css'){
+     // Older style-paint jobs cannot resurrect a now-deleted candidate.
+     ++globalCssSelectionEpoch;++storyCssSelectionEpoch;++cssPaintEpoch;
+     cssPaintController?.abort();
+   }
+   try{
+     await loadAll();
+     if(kind==='css'){
+       await applyCustomCss();refreshCssLibraryView();
+     }else if(isSettingsOpen())await renderSettings();
+     toast(`已永久删除 ${items.length} 项${label}，挂载引用已同步`);
+   }catch(readError){
+     console.error('E_BULK_DELETE_POST_COMMIT_UI_REFRESH',readError);
+     toast(`已删除 ${items.length} 项${label}，但界面刷新失败；请重新打开资源库核对`);
+   }
+ }catch(error){
+   console.error('E_BULK_DELETE_REFUSED',error);
+   toast('整批删除未完成：'+error.message);
+   try{await loadAll()}catch(refreshError){console.error('E_BULK_DELETE_CONFLICT_REFRESH',refreshError)}
+ }finally{mimaBulkDeleteBusy[kind]=false;mimaUpdateSelectionControls(kind)}
+}
+async function mimaBulkDeleteSessions(){
+ if(sessionOrganizationBusy||mimaBulkDeleteBusy.sessions)return;
+ const known=new Map(sessions.map(s=>[s.id,s]));
+ const ids=[...sessionBulkSelected];
+ if(!ids.length)return toast('先选择要删除的剧情');
+ const modeIds=new Set(sessions.filter(s=>Boolean(sessionOrganization?.placements?.[s.id]?.archived)===(sessionListMode==='archived')).map(s=>s.id));
+ if(ids.some(id=>!modeIds.has(id)||!known.has(id)))return toast('所选剧情已有失效项，整批取消；请清空后重新勾选');
+ const items=ids.map(id=>known.get(id));
+ const visibleIds=new Set(sessions.filter(s=>
+   (!!sessionOrganization?.placements?.[s.id]?.archived)===(sessionListMode==='archived')&&
+   (!sessionSearchTerm.trim()||[s.title,sessionMaskTag(s.loadedUserMaskId,'user'),sessionMaskTag(s.loadedCharMaskId,'character')]
+     .join(' ').toLocaleLowerCase().includes(sessionSearchTerm.trim().toLocaleLowerCase()))).map(s=>s.id));
+ const hidden=items.filter(s=>!visibleIds.has(s.id)).length;
+ const expectedRevision=window.MimaStandalone.getStoreRevision();
+ const approved=await mimaConfirmBulkDeletion({title:'删除所选剧情',items,hidden,
+   consequence:'会永久删除列出的剧情及消息，不能恢复；角色卡、世界书、预设、CSS、其他剧情及其 Memory 保留。正在生成的剧情不能被删除。'});
+ if(!approved)return;
+ sessionOrganizationBusy=true;mimaBulkDeleteBusy.sessions=true;renderSessions();
+ try{
+   const res=await fetchStory('/sessions/bulk-delete','POST',{ids:items.map(s=>s.id),expectedRevision});
+   if(!res?.success||res.data?.deleted!==items.length)throw Error(res?.msg||'没有取得完整删除回执');
+   sessionBulkSelected.clear();
+   if(currentSessionId&&items.some(s=>s.id===currentSessionId)){
+     sessionNavigationEpoch++;currentSessionId=null;currentSessionData=null;
+     try{localStorage.removeItem(R19_LAST_SESSION)}catch{}
+   }
+   try{await loadAll();toast(`已永久删除 ${items.length} 段剧情`);}
+   catch(readError){console.error('E_BULK_SESSION_POST_COMMIT_REFRESH',readError);toast('剧情已经删除，但列表刷新失败，请重新打开历史核对');}
+ }catch(error){
+   console.error('E_BULK_SESSION_DELETE_REFUSED',error);toast('整批剧情未删除：'+error.message);
+   try{await refreshSessionSummaryList();await refreshSessionOrganization({render:false});}catch(e){console.error('E_BULK_SESSION_REFRESH',e)}
+ }finally{sessionOrganizationBusy=false;mimaBulkDeleteBusy.sessions=false;renderSessions()}
+}
+
+function mimaCategorySelect(kind,id,checked){if(mimaBulkDeleteBusy[kind])return;const chosen=mimaCategorySelected[kind];if(checked)chosen.add(id);else chosen.delete(id);mimaUpdateSelectionControls(kind);}
 function mimaChooseCategory(kind,allowUncategorized=true){
- const names=mimaCategoryEntries(kind).map(c=>c.name).filter(c=>c!=='未分类');
- const options=[...(allowUncategorized?['未分类']:[]),...names];
- if(!options.length)return '未分类';
- const answer=prompt('选择保存分类（输入编号）：\n'+options.map((n,i)=>`${i+1}. ${n}`).join('\n')+'\n取消 = 不保存',String(Math.min(options.length,1)));
- if(answer===null)return null;
- const i=Number(String(answer).trim())-1;
- if(!Number.isInteger(i)||i<0||i>=options.length){toast('分类编号无效，本次没有修改');return null;}
- return options[i];
+ const items=mimaCategoryItems(kind);
+ const known=mimaCategoryEntries(kind).map(c=>c.name).filter(name=>name!=='未分类');
+ const options=[...(allowUncategorized?['未分类']:[]),...new Set(known)];
+ if(!options.length)return Promise.resolve(null);
+ return new Promise(resolve=>{
+   const dialog=document.createElement('dialog');dialog.className='mima-category-picker';
+   dialog.setAttribute('aria-label','选择目标分类');
+   const heading=document.createElement('h3');heading.textContent='移动到哪个分类？';
+   const hint=document.createElement('p');hint.className='row-sub';hint.textContent='选择目标分类，再点「确定移动」。取消不会修改任何资源。';
+   const list=document.createElement('div');list.className='mima-category-picker-list';list.setAttribute('role','radiogroup');list.setAttribute('aria-label','目标分类');
+   const group='mima-category-picker-'+String(Date.now())+'-'+Math.random().toString(36).slice(2);
+   let selected=options[0];
+   options.forEach((name,index)=>{
+     const label=document.createElement('label');label.className='mima-category-picker-option';
+     const radio=document.createElement('input');radio.type='radio';radio.name=group;radio.value=String(index);radio.checked=index===0;
+     radio.addEventListener('change',()=>{if(radio.checked)selected=name;});
+     const text=document.createElement('span');text.textContent=name;
+     const count=document.createElement('small');count.textContent=`${items.filter(x=>(x.category||'未分类')===name).length} 项`;
+     label.append(radio,text,count);list.appendChild(label);
+   });
+   const actions=document.createElement('div');actions.className='mima-category-picker-actions';
+   const cancel=document.createElement('button');cancel.type='button';cancel.className='ghost-btn';cancel.textContent='取消';
+   const apply=document.createElement('button');apply.type='button';apply.className='primary-btn';apply.textContent='确定移动';
+   actions.append(cancel,apply);dialog.append(heading,hint,list,actions);
+   let settled=false;
+   const finish=value=>{if(settled)return;settled=true;dialog.close?.();dialog.remove();resolve(value);};
+   cancel.addEventListener('click',()=>finish(null));apply.addEventListener('click',()=>finish(selected));
+   dialog.addEventListener('cancel',event=>{event.preventDefault();finish(null);});
+   document.body.appendChild(dialog);
+   if(typeof dialog.showModal==='function')dialog.showModal();
+   else dialog.setAttribute('open','');
+   list.querySelector('input')?.focus();
+ });
+}
+function mimaCategoryRevisionStamp(kind){
+ return kind==='css'?{expectedAppearanceRevision:MimaStandalone.getAppearanceRevision()}:
+   {expectedRevision:MimaStandalone.getStoreRevision()};
 }
 async function mimaCategoryWrite(kind,action,details){
- const res=await fetchStory(`/resource-categories/${kind}`,'POST',{action,...details,expectedRevision:MimaStandalone.getStoreRevision()});
+ const revision=kind==='css'?details?.expectedAppearanceRevision:details?.expectedRevision;
+ if(!Number.isSafeInteger(revision)||revision<0){toast('分类版本尚未核实，请重新打开资源库');return false;}
+ const res=await fetchStory(`/resource-categories/${kind}`,'POST',{action,...details});
  if(!res?.success){toast('分类保存失败：'+(res?.msg||res?.code||'未知错误'));return false;}
  const path=kind==='css'?'/css-presets':kind==='worldbook'?'/worldbooks':'/presets';
  const fresh=await fetchStory(path);
@@ -1661,20 +1848,41 @@ async function mimaCategoryWrite(kind,action,details){
  if(isSettingsOpen()&&settingsTab===(kind==='css'?'appearance':kind==='worldbook'?'worldbook':'presets'))await renderSettings();
  toast('分类操作已保存');return true;
 }
-async function mimaCategoryCreate(kind){const name=prompt('新分类名称（可以先创建空分类）');if(name===null)return;const next=name.trim();if(!next)return toast('分类名不能为空');await mimaCategoryWrite(kind,'create',{name:next});}
+async function mimaCategoryCreate(kind){const stamp=mimaCategoryRevisionStamp(kind);
+ const name=prompt('新分类名称（可以先创建空分类）');if(name===null)return;const next=name.trim();
+ if(!next)return toast('分类名不能为空');await mimaCategoryWrite(kind,'create',{name:next,...stamp});}
 function mimaCategoryManage(kind){const root=qs('mima-categories-'+kind);if(!root)return;const shouldOpen=root.classList.contains('hidden');if(!shouldOpen){root.classList.add('hidden');root.innerHTML='';return;}
  const items=mimaCategoryItems(kind),cats=mimaCategoryEntries(kind).filter(x=>x.name!=='未分类');
  root.innerHTML=`<div class="mima-category-panel-head"><strong>分类管理</strong><button class="ghost-btn" type="button" onclick="mimaCategoryManage('${kind}')">完成 / 收起</button></div>${cats.length?cats.map((c,i)=>`<div class="mima-category-row"><span>${escapeHtml(c.name)} <small>(${items.filter(x=>x.category===c.name).length})</small></span><div class="mima-category-row-actions"><button type="button" class="ghost-btn" onclick="mimaCategoryRename('${kind}',${i})">重命名</button><button type="button" class="danger-btn" onclick="mimaCategoryDelete('${kind}',${i})">删除分类</button></div></div>`).join(''):'<p class="row-sub">暂无分类，点击「新建分类」可创建空分类。</p>'}<p class="row-sub">删除分类只把其中的资源移动到「未分类」，不会删除任何原件。</p>`;
  root.classList.remove('hidden');
 }
-async function mimaCategoryRename(kind,index){const old=mimaCategoryEntries(kind).filter(c=>c.name!=='未分类')[index]?.name;if(!old)return toast('分类已变化，请重新打开');const name=prompt('重命名分类：',old);if(name===null)return;await mimaCategoryWrite(kind,'rename',{oldName:old,name:name.trim()});}
-async function mimaCategoryDelete(kind,index){const old=mimaCategoryEntries(kind).filter(c=>c.name!=='未分类')[index]?.name;if(!old)return toast('分类已变化，请重新打开');if(!confirm(`删除分类「${old}」？分类中的所有资源只移到「未分类」，内容不会删除。`))return;await mimaCategoryWrite(kind,'delete',{oldName:old});}
-async function mimaBatchMove(kind){const allIds=new Set(mimaCategoryItems(kind).map(x=>x.id));const ids=[...mimaCategorySelected[kind]].filter(id=>allIds.has(id));if(!ids.length)return toast('请先勾选要移动的资源');const name=mimaChooseCategory(kind,true);if(name===null)return;const result=await mimaCategoryWrite(kind,'move',{ids,name});if(result){mimaCategorySelected[kind].clear();const root=qs(kind==='css'?'css-preset-list':kind==='worldbook'?'worldbook-list':'preset-list');if(kind==='css')renderCssPresetLibrary(root);else if(kind==='worldbook')fillWorldbooks(root);else fillPresets(root);}}
+async function mimaCategoryRename(kind,index){const old=mimaCategoryEntries(kind).filter(c=>c.name!=='未分类')[index]?.name;
+ if(!old)return toast('分类已变化，请重新打开');const stamp=mimaCategoryRevisionStamp(kind);
+ const name=prompt('重命名分类：',old);if(name===null)return;
+ await mimaCategoryWrite(kind,'rename',{oldName:old,name:name.trim(),...stamp});}
+async function mimaCategoryDelete(kind,index){const old=mimaCategoryEntries(kind).filter(c=>c.name!=='未分类')[index]?.name;
+ if(!old)return toast('分类已变化，请重新打开');const stamp=mimaCategoryRevisionStamp(kind);
+ if(!confirm(`删除分类「${old}」？分类中的所有资源只移到「未分类」，内容不会删除。`))return;
+ await mimaCategoryWrite(kind,'delete',{oldName:old,...stamp});}
+async function mimaBatchMove(kind){
+ if(mimaBulkDeleteBusy[kind])return;
+ const info=mimaSelectionInfo(kind);
+ if(info.missing.length)return toast(`有 ${info.missing.length} 项选择已失效，整批取消；请清空选择后重新勾选`);
+ if(!info.allSelected.length)return toast('请先勾选要移动的资源');
+ const ids=info.allSelected.slice();
+ // The target picker may outlive another tab's edit; preserve the pre-dialog CAS.
+ const stamp=mimaCategoryRevisionStamp(kind);
+ const name=await mimaChooseCategory(kind,true);
+ if(name===null)return;
+ const result=await mimaCategoryWrite(kind,'move',{ids,name,...stamp});
+ if(result){mimaCategorySelected[kind].clear();const root=qs(kind==='css'?'css-preset-list':kind==='worldbook'?'worldbook-list':'preset-list');if(kind==='css')renderCssPresetLibrary(root);else if(kind==='worldbook')fillWorldbooks(root);else fillPresets(root);}
+}
 function mimaFilterLibrary(kind,key,value){if(!mimaLibraryView[kind])return;mimaLibraryView[kind][key]=value;
  const items=kind==='presets'?presets:kind==='worldbook'?worldbooks:cssPresets;
  const root=kind==='presets'?qs('preset-list'):kind==='worldbook'?qs('worldbook-list'):qs('css-preset-list');
  // Update just the visible list; do not reset the scroll position or its mounted state.
  if(kind==='presets')fillPresets(root);else if(kind==='worldbook')fillWorldbooks(root);else renderCssPresetLibrary(root);
+ mimaUpdateSelectionControls(kind);
 }
 function mimaUpdateCommittedResource(kind,record,deleted=false){
  const items=kind==='presets'?presets:kind==='worldbook'?worldbooks:kind==='css'?cssPresets:kind==='mask'?masks:regexPacks;
@@ -1702,12 +1910,22 @@ async function mimaToggleFavorite(kind,id){const records=kind==='presets'?preset
  mimaUpdateCommittedResource(kind,res.data);
  toast(res.data.favorite?'已收藏 ★':'已取消收藏');
 }
+
+// Imported IDs are data, never executable markup. A closure preserves the exact
+// original identifier (including quotes, whitespace, Unicode and punctuation).
+function mimaBindResourceActions(row,handlers){
+ for(const control of row.querySelectorAll('[data-mima-action]')){
+   const callback=handlers[control.dataset.mimaAction];
+   if(typeof callback!=='function')throw Error('E_MIMA_ACTION_UNBOUND: '+control.dataset.mimaAction);
+   control.addEventListener(control.matches('input')?'change':'click',event=>callback(control,event));
+ }
+}
 function renderWorldbookTab(box){
- box.innerHTML=`<section class="settings-section"><h3>📚 世界书</h3><p class="helper">收藏和分类仅影响资源库展示，不改变本剧情的世界书挂载与触发规则。</p><div class="toolbar"><button class="primary-btn" onclick="openWorldbookEditor()">＋ 新建世界书</button><button class="ghost-btn" onclick="chooseWorldbookImport()">⇧ 导入 JSON</button></div>${mimaLibraryToolbar('worldbook',worldbooks)}<div id="worldbook-list"></div></section>`;
+ box.innerHTML=`<section class="settings-section"><h3><img src="./assets/mima-gothic-worldbook.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> 世界书</h3><p class="helper">收藏和分类仅影响资源库展示，不改变本剧情的世界书挂载与触发规则。</p><div class="toolbar"><button class="primary-btn" onclick="openWorldbookEditor()">＋ 新建世界书</button><button class="ghost-btn" onclick="chooseWorldbookImport()">⇧ 导入 JSON</button></div>${mimaLibraryToolbar('worldbook',worldbooks)}<div id="worldbook-list"></div></section>`;
  fillWorldbooks(qs('worldbook-list'));
 }
 function fillWorldbooks(root){if(!root)return;const mounted=new Set(currentSessionData.worldbookIds||[]);root.innerHTML='';const items=mimaVisibleResources('worldbook',worldbooks);if(!items.length){root.innerHTML='<div class="row-sub">当前分类没有世界书。可以新建世界书或导入 JSON。</div>';return;}
- items.sort((a,b)=>Number(!!b.favorite)-Number(!!a.favorite)||String(a.name).localeCompare(String(b.name),'zh')).forEach(w=>{const row=document.createElement('div');row.className='worldbook-row';row.innerHTML=`<label class="mima-resource-select"><input type="checkbox" ${mimaCategorySelected.worldbook.has(w.id)?'checked':''} onchange="mimaCategorySelect('worldbook','${w.id}',this.checked)"> 批量移动</label><input type="checkbox" aria-label="挂载世界书" ${mounted.has(w.id)?'checked':''} onchange="toggleWorldbookMount('${w.id}',this.checked)"><div class="row-main"><div class="row-title">${escapeHtml(w.name)}</div><div class="row-sub">${escapeHtml(w.category||'未分类')} · ${w.entries?.length||0} 条${w.enabled===false?(mounted.has(w.id)?' · ⚠ 已挂载但未生效（整本停用）':' · 已停用'):''} · ${escapeHtml(String(w.description||'无说明').slice(0,160))}</div></div><button class="ghost-btn" title="收藏世界书" aria-label="${w.favorite?'取消收藏':'收藏'}" onclick="mimaToggleFavorite('worldbook','${w.id}')">${w.favorite?'★':'☆'}</button><button class="ghost-btn" onclick="openWorldbookEditor('${w.id}')">编辑</button><button class="ghost-btn" onclick="exportWorldbook('${w.id}')">导出</button>`;root.appendChild(row);});
+ items.sort((a,b)=>Number(!!b.favorite)-Number(!!a.favorite)||String(a.name).localeCompare(String(b.name),'zh')).forEach(w=>{const row=document.createElement('div');row.className='worldbook-row';row.innerHTML=`<label class="mima-resource-select"><input type="checkbox" ${mimaCategorySelected.worldbook.has(w.id)?'checked':''} data-mima-action="select"> 选择</label><input type="checkbox" aria-label="挂载世界书" ${mounted.has(w.id)?'checked':''} data-mima-action="mount"><div class="row-main"><div class="row-title">${escapeHtml(w.name)}</div><div class="row-sub">${escapeHtml(w.category||'未分类')} · ${w.entries?.length||0} 条${w.enabled===false?(mounted.has(w.id)?' · ⚠ 已挂载但未生效（整本停用）':' · 已停用'):''} · ${escapeHtml(String(w.description||'无说明').slice(0,160))}</div></div><button class="ghost-btn" title="收藏世界书" aria-label="${w.favorite?'取消收藏':'收藏'}" data-mima-action="favorite">${w.favorite?'★':'☆'}</button><button class="ghost-btn" data-mima-action="edit">编辑</button><button class="ghost-btn" data-mima-action="export">导出</button>`;mimaBindResourceActions(row,{select:el=>mimaCategorySelect('worldbook',w.id,el.checked),mount:el=>toggleWorldbookMount(w.id,el.checked),favorite:()=>mimaToggleFavorite('worldbook',w.id),edit:()=>openWorldbookEditor(w.id),export:()=>exportWorldbook(w.id)});root.appendChild(row);});
 }
 async function toggleWorldbookMount(id,on){const set=new Set(currentSessionData.worldbookIds||[]);on?set.add(id):set.delete(id);await patchCurrent({worldbookIds:[...set]},true);refreshHeader();renderSettings()}
 function defaultEntry(){return {name:'新条目',content:'',keywords:[],secondaryKeywords:[],enabled:true,alwaysActive:false,matchMode:'any',caseSensitive:false,useRegex:false,priority:50,scanDepth:12,depth:0,position:'middle',maxChars:0}}
@@ -1755,7 +1973,7 @@ async function importWorldbookFile(file){
  if(!file)return;let committedId='';
  try{
   const raw=JSON.parse(await file.text()),body=normalizeImportedWorldbook(raw,file.name.replace(/\.json$/i,''));
-  const category=mimaChooseCategory('worldbook',true);if(category===null)return;body.category=category;
+  const category=await mimaChooseCategory('worldbook',true);if(category===null)return;body.category=category;
   const res=await fetchStory('/worldbooks','POST',body);if(!res.success)throw new Error(res.msg||'导入失败');
   committedId=res.data?.id||'';if(!committedId)throw new Error('导入已经提交，但缺少世界书 ID，请先核对资源库');
   const canonical=await fetchStory(`/worldbooks/${encodeURIComponent(committedId)}/canonical-view`);
@@ -1780,13 +1998,13 @@ function worldbookImportKeywords(value,useRegex=false){
 function exportWorldbook(id){const w=worldbooks.find(x=>x.id===id);if(w)downloadJson(`${w.name}.mimamao-worldbook.json`,w)}
 
 function renderPresetsTab(box){
- const active=new Set(arr(currentSessionData.presetIds));box.innerHTML=`<section class="settings-section"><h3>🧩 原生剧情预设</h3><p class="helper">分类与收藏仅用于整理资源库，不改变优先级、启用状态或实际 Prompt 顺序。本剧情已挂载 ${active.size} 项。</p><div class="toolbar"><button class="primary-btn" onclick="openPresetEditor()">＋ 新建预设</button><button class="ghost-btn" onclick="MimaAssistantStudio.open('preset')">✦ 预设助手</button></div>${mimaLibraryToolbar('presets',presets)}<div id="preset-list"></div></section>`;
+ const active=new Set(arr(currentSessionData.presetIds));box.innerHTML=`<section class="settings-section"><h3><img src="./assets/mima-gothic-preset.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> 原生剧情预设</h3><p class="helper">分类与收藏仅用于整理资源库，不改变优先级、启用状态或实际 Prompt 顺序。本剧情已挂载 ${active.size} 项。</p><div class="toolbar"><button class="primary-btn" onclick="openPresetEditor()">＋ 新建预设</button><button class="ghost-btn" onclick="MimaAssistantStudio.open('preset')">✦ 预设助手</button></div>${mimaLibraryToolbar('presets',presets)}<div id="preset-list"></div></section>`;
  fillPresets(qs('preset-list'));
 }
 function fillPresets(root){if(!root)return;root.innerHTML='';const active=new Set(arr(currentSessionData.presetIds)),mountIndex=new Map(arr(currentSessionData.presetIds).map((id,i)=>[id,i]));
  const ordered=mimaVisibleResources('presets',presets).sort((a,b)=>Number(a.priority??50)-Number(b.priority??50)||(mountIndex.get(a.id)??Number.MAX_SAFE_INTEGER)-(mountIndex.get(b.id)??Number.MAX_SAFE_INTEGER));
  if(!ordered.length){root.innerHTML='<div class="row-sub">当前分类没有预设，可以点击上方「新建预设」。</div>';return;}
- ordered.forEach(p=>{const r=document.createElement('div');r.className='preset-row';r.innerHTML=`<label class="mima-resource-select"><input type="checkbox" ${mimaCategorySelected.presets.has(p.id)?'checked':''} onchange="mimaCategorySelect('presets','${p.id}',this.checked)"> 批量移动</label><input type="checkbox" aria-label="挂载剧情预设" ${active.has(p.id)?'checked':''} onchange="togglePreset('${p.id}',this.checked)"><div class="row-main"><div class="row-title">${escapeHtml(p.name)}</div><div class="row-sub">${escapeHtml(p.category||'未分类')} · ${escapeHtml(presetTypeLabel(p.type||'style'))} · 顺序 ${p.priority??50}${p.enabled===false?(active.has(p.id)?' · ⚠ 已挂载但未生效（预设停用）':' · 已停用'):''}</div></div><button class="ghost-btn" title="收藏预设" onclick="mimaToggleFavorite('presets','${p.id}')">${p.favorite?'★':'☆'}</button><button class="ghost-btn" onclick="openPresetEditor('${p.id}')">编辑</button>`;root.appendChild(r);});
+ ordered.forEach(p=>{const r=document.createElement('div');r.className='preset-row';r.innerHTML=`<label class="mima-resource-select"><input type="checkbox" ${mimaCategorySelected.presets.has(p.id)?'checked':''} data-mima-action="select"> 选择</label><input type="checkbox" aria-label="挂载剧情预设" ${active.has(p.id)?'checked':''} data-mima-action="mount"><div class="row-main"><div class="row-title">${escapeHtml(p.name)}</div><div class="row-sub">${escapeHtml(p.category||'未分类')} · ${escapeHtml(presetTypeLabel(p.type||'style'))} · 顺序 ${Number.isFinite(Number(p.priority))?Number(p.priority):50}${p.enabled===false?(active.has(p.id)?' · ⚠ 已挂载但未生效（预设停用）':' · 已停用'):''}</div></div><button class="ghost-btn" title="收藏预设" data-mima-action="favorite">${p.favorite?'★':'☆'}</button><button class="ghost-btn" data-mima-action="edit">编辑</button>`;mimaBindResourceActions(r,{select:el=>mimaCategorySelect('presets',p.id,el.checked),mount:el=>togglePreset(p.id,el.checked),favorite:()=>mimaToggleFavorite('presets',p.id),edit:()=>openPresetEditor(p.id)});root.appendChild(r);});
 }
 async function togglePreset(id,on){const set=new Set(currentSessionData.presetIds||[]);on?set.add(id):set.delete(id);await patchCurrent({presetIds:[...set]},true);renderSettings()}
 function openPresetEditor(id=null){const p=id?presets.find(x=>x.id===id):{name:'',type:'style',description:'',content:'',priority:50};if(!p){toast('预设已不存在，不能打开旧编辑器');return;}editorState={type:'preset',id,saving:false,nonce:newGenerationTraceId(),expectedToken:id?window.MimaLocalStore.presetCasToken(p):null};qs('editor-title').textContent=id?`编辑预设 · ${p.name}`:'新建预设';qs('editor-eyebrow').textContent='PRESET（预设）';qs('editor-body').innerHTML=`<div class="form-grid"><div><label class="form-label">名称</label><input id="pre-name" class="field" value="${escapeHtml(p.name||'')}"></div><div><label class="form-label">类型</label><select id="pre-type" class="field">${['style','format','behavior','model'].map(x=>`<option value="${x}" ${p.type===x?'selected':''}>${presetTypeLabel(x)}</option>`).join('')}</select></div><div><label class="form-label">Priority（发送顺序，小值先发）</label><input id="pre-priority" type="number" class="field" value="${Number(p.priority??50)}"></div><div><label class="form-label">分类</label><input id="pre-category" class="field" value="${escapeHtml(p.category||'未分类')}"></div><div class="form-full"><label class="form-label">说明</label><input id="pre-desc" class="field" value="${escapeHtml(p.description||'')}"></div><div class="form-full"><label class="check-row"><input id="pre-enabled" type="checkbox" ${p.enabled!==false?'checked':''}> 启用这份预设</label><p class="helper">关闭后即使在剧情里勾选了挂载，也不会发给模型。开启后仍需要在目标剧情挂载。</p></div><div class="form-full"><label class="form-label">内容</label><textarea id="pre-content" class="field textarea tall">${escapeHtml(p.content||'')}</textarea></div></div>`;setupEditorButtons(id?()=>deletePreset(id):null,savePresetEditor);qs('editor-modal').classList.remove('hidden')}
@@ -1907,9 +2125,9 @@ function regexPhaseLabel(v){return({display:'显示渲染（推荐 / 省 Token�
 function defaultRegexRule(){return {name:'新规则',pattern:'',replacement:'',flags:'g',phase:'display',priority:50,enabled:true,description:''}}
 function renderRegexTab(box){
     const active=new Set(currentSessionData.regexPackIds||[]);
-    box.innerHTML=`<section class="settings-section"><h3>🧬 Regex（正则）</h3><p class="helper">正则包是独立 DLC：不会替换旧预设/世界书。最推荐使用 <strong>显示渲染</strong> 阶段——模型只输出短标签，咪嘛馆在前端把它展开成完整 HTML，从而减少上下文里的长 div 代码。显示规则会重算旧 Assistant 消息，保留原始 History；Assistant 保存前只处理之后的新回复。保存规则后，还需在此勾选挂载。这里管理原生剧情；酒馆兼容故事请在其“正则工具”中配置。</p><div class="toolbar"><button class="primary-btn" onclick="openRegexPackEditor()">＋ 新建正则包</button><button class="ghost-btn" onclick="chooseRegexImport()">⇧ 导入正则包</button><button class="ghost-btn" onclick="MimaAssistantStudio.open('regex')">✦ 打开正则助手</button></div><div id="regex-pack-list"></div></section>`;
+    box.innerHTML=`<section class="settings-section"><h3><img src="./assets/mima-gothic-regex.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> Regex（正则）</h3><p class="helper">正则包是独立 DLC：不会替换旧预设/世界书。最推荐使用 <strong>显示渲染</strong> 阶段——模型只输出短标签，咪嘛馆在前端把它展开成完整 HTML，从而减少上下文里的长 div 代码。显示规则会重算旧 Assistant 消息，保留原始 History；Assistant 保存前只处理之后的新回复。保存规则后，还需在此勾选挂载。这里管理原生剧情；酒馆兼容故事请在其“正则工具”中配置。</p><div class="toolbar"><button class="primary-btn" onclick="openRegexPackEditor()">＋ 新建正则包</button><button class="ghost-btn" onclick="chooseRegexImport()">⇧ 导入正则包</button><button class="ghost-btn" onclick="MimaAssistantStudio.open('regex')">✦ 打开正则助手</button></div><div id="regex-pack-list"></div></section>`;
     const root=qs('regex-pack-list');if(!regexPacks.length){root.innerHTML='<div class="row-sub">还没有正则包。可以手工新建，也可以让正则助手从 HTML 输出规范一键生成。</div>';return}
-    regexPacks.slice().sort((a,b)=>Number(a.priority??50)-Number(b.priority??50)).forEach(pack=>{const row=document.createElement('div');row.className='preset-row regex-pack-row';row.innerHTML=`<input type="checkbox" ${active.has(pack.id)?'checked':''} onchange="toggleRegexPack('${pack.id}',this.checked)"><div class="row-main"><div class="row-title">${escapeHtml(pack.name)}</div><div class="row-sub">${pack.enabled===false?'包已停用 · ':''}${arr(pack.rules).length} 条规则 · priority ${Number(pack.priority??50)} · ${escapeHtml(pack.description||'无说明')}</div></div><button class="ghost-btn" onclick="openRegexPackEditor('${pack.id}')">编辑</button><button class="ghost-btn" onclick="exportRegexPack('${pack.id}')">导出</button>`;root.appendChild(row)})
+    regexPacks.slice().sort((a,b)=>Number(a.priority??50)-Number(b.priority??50)).forEach(pack=>{const row=document.createElement('div');row.className='preset-row regex-pack-row';row.innerHTML=`<input type="checkbox" ${active.has(pack.id)?'checked':''} data-mima-action="mount"><div class="row-main"><div class="row-title">${escapeHtml(pack.name)}</div><div class="row-sub">${pack.enabled===false?'包已停用 · ':''}${arr(pack.rules).length} 条规则 · priority ${Number(pack.priority??50)} · ${escapeHtml(pack.description||'无说明')}</div></div><button class="ghost-btn" data-mima-action="edit">编辑</button><button class="ghost-btn" data-mima-action="export">导出</button>`;mimaBindResourceActions(row,{mount:el=>toggleRegexPack(pack.id,el.checked),edit:()=>openRegexPackEditor(pack.id),export:()=>exportRegexPack(pack.id)});root.appendChild(row)})
 }
 async function toggleRegexPack(id,on){const set=new Set(currentSessionData.regexPackIds||[]);on?set.add(id):set.delete(id);const saved=await patchCurrent({regexPackIds:[...set]},true);if(!saved){renderSettings();return;}refreshChatBox();renderSettings();toast(on?'正则包已挂载到当前剧情':'正则包已从当前剧情卸载')}
 function openRegexPackEditor(id=null){const old=id?regexPacks.find(x=>x.id===id):null;editorState={type:'regex-pack',id,draft:clone(old||{name:'新正则包',description:'',priority:50,enabled:true,rules:[]})};qs('editor-title').textContent=id?`编辑正则 · ${old?.name||''}`:'新建 Regex 正则包';qs('editor-eyebrow').textContent='REGEX PACK（正则包）';renderRegexPackEditorBody();setupEditorButtons(id?()=>deleteRegexPack(id):null,saveRegexPackEditor);qs('editor-modal').classList.remove('hidden')}
@@ -1943,10 +2161,10 @@ async function importRegexFile(file){if(!file)return;try{const raw=JSON.parse(aw
 function exportRegexPack(id){const p=regexPacks.find(x=>x.id===id);if(p)downloadJson(`${p.name}.mimamao-regex.json`,{format:'mimamao-tavern-regex-pack',version:1,data:p})}
 
 function renderContextTab(box){const ps=currentSessionData.promptSettings||{};box.innerHTML=`<section class="settings-section"><h3>🪐 Session（剧情会话）</h3><div class="form-grid"><div class="form-full"><label class="form-label">标题</label><input id="ctx-title" class="field" value="${escapeHtml(currentSessionData.title||'')}"></div><div><label class="form-label">Canon Level（设定层级）</label><select id="ctx-canon" class="field">${['temporary','alternate','soft','core'].map(x=>`<option value="${x}" ${currentSessionData.canonLevel===x?'selected':''}>${canonLabel(x)}</option>`).join('')}</select></div><div><label class="form-label">Temperature（温度）</label><input id="ctx-temp" class="field" type="number" min="0.1" max="2" step="0.05" value="${getTemp()}"></div></div><p class="helper">Standalone（独立版）中所有 Session（剧情会话）都是浏览器本地独立宇宙，不会写入任何 MIMAMAO / Telegram 世界。</p></section>
-<section class="settings-section"><h3>🧠 长剧情与记忆</h3>
+<section class="settings-section"><h3><img src="./assets/mima-gothic-memory.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> 长剧情与记忆</h3>
     <div class="context-window-link" role="status"><strong>当前 API 模型上下文总窗口：${Number(MimaStandalone.getApiConfig()?.contextWindowTokens)>=4096?`${Number(MimaStandalone.getApiConfig().contextWindowTokens).toLocaleString()} Tokens`:'未配置（0 / 未知）'}</strong><span>它决定是否需要按 10 轮规划裁剪；与最大输出 Tokens 不同。未知时不假定 32K 上限，也不裁删历史；完整请求由服务商判断能否接收。</span><button type="button" class="ghost-btn" onclick="openSettings('api')">去设置模型实际窗口</button></div><div class="form-grid"><div><label class="form-label">自动整理时，最近多少条剧情保持原样（按消息计）</label><input id="ctx-recent" class="field" type="number" min="6" max="100000" step="1" value="${Number(ps.recentMessageLimit??34)}"><div class="row-sub">这是自动整理时保留的近期消息窗口；模型容量允许时仍优先提供完整原始 History。修改后请点击下方保存。</div></div><div><label class="form-label">Prompt 超窗时每批移出最早完整剧情轮次</label><input id="ctx-trim-batch" class="field" type="number" min="1" max="100" step="1" value="${Number(ps.contextTrimBatchRounds??10)}"><div class="row-sub">默认 10 轮；只有来源已被有效滚动记忆覆盖才允许从单次请求中移出。本地 History 永不删除。</div></div><div><label class="form-label">Prompt 至少保留的最新完整剧情轮次</label><input id="ctx-trim-min-recent" class="field" type="number" min="1" max="100000" step="1" value="${Number(ps.contextMinRecentRounds??20)}"><div class="row-sub">默认 20 轮；保留后仍超窗时停止请求并提示调整，不会擅自牺牲最近剧情。</div></div><div><label class="form-label">较早剧情每积累多少条后可自动整理</label><input id="ctx-summary-trigger" class="field" type="number" min="12" max="200" value="${Number(ps.summaryTriggerMessages||28)}"><div class="row-sub">默认 28 条；不删减原始剧情，也不影响手动整理。</div></div><div><label class="form-label">世界书总预算（字符，最多 1,000,000）</label><input id="ctx-wbbudget" class="field" type="number" min="1000" max="1000000" step="1" value="${Number(ps.worldbookBudgetChars??16000)}"><div class="row-sub">这是本轮命中条目允许占用的字符上限，不保证所有条目都触发；实际仍受模型上下文窗口限制。超过窗口会报错，不会暗中删除原始剧情。</div></div><div class="form-full"><label class="form-label">🎭 AIRP 输入语义</label><select id="ctx-airp-mode" class="field"><option value="auto" ${(ps.inputSemanticMode||'raw')==='auto'?'selected':''}>智能自动（主动选择，可能误判）</option><option value="dialogue_first" ${ps.inputSemanticMode==='dialogue_first'?'selected':''}>对话优先：普通文本=台词，括号=动作/心理</option><option value="quote_dialogue" ${ps.inputSemanticMode==='quote_dialogue'?'selected':''}>引号台词：引号=台词，其余普通文本=动作</option><option value="raw" ${(ps.inputSemanticMode||'raw')==='raw'?'selected':''}>原样发送（默认）：关闭语义解析</option></select><div class="row-sub">默认按原文发送；已存消息保留当时的解析模式。选择并保存非原样模式才会对新消息启用语义改写，可能误判。智能自动会兼容两种常见 AIRP：有明确引号时把引号当台词、周围当动作；没有引号时普通文本默认台词，括号永远不是台词。括号中的明确“心想/内心/OS”等会标记为私密想法。</div></div><div class="form-full"><label class="check-row"><input id="ctx-history-html-projection" type="checkbox" ${ps.historyHtmlMode!=='raw'?'checked':''}> 历史剧情 HTML 转纯文本（仅新模型请求和记忆总结，不改存档、渲染或预设）</label><div class="row-sub">保留 HTML 正文/状态栏文字与数值，去除布局标签、CSS 和装饰代码。预设/世界书/玩家输入不转换；按原请求重说保持旧快照。含真正代码示例的剧情可关闭。</div></div><div class="form-full"><label class="check-row"><input id="ctx-summary" type="checkbox" ${ps.autoRollingEnabled===true?'checked':''}> 自动整理较早剧情（会调用模型，可能收费）</label><label class="check-row"><input id="ctx-inject-saved-rolling" type="checkbox" ${ps.injectSavedRolling!==false?'checked':''}> 让 AI 参考以前保存的剧情摘要（与自动生成独立）</label><div class="row-sub">首次自动整理一般要积累至少 ${Math.max(0,Math.max(18,Number(ps.recentMessageLimit??34)-4)+Number(ps.summaryTriggerMessages||28))} 条消息（当前尚未总结时）；消息不等于问答轮。原始剧情不会删除。曾经失败的任务将暂停，需手动确认才继续。</div><label class="form-label">自动整理单次最多允许多少次模型请求</label><input id="ctx-auto-rolling-budget" class="field" type="number" min="1" max="20" value="${Number(ps.autoRollingMaxRequests||1)}"><label class="check-row"><input id="ctx-complete-html" type="checkbox" ${ps.outputContract?.completeHtml===true?'checked':''}> 明确要求回复 HTML 标签完整闭合（普通文本不受限制）</label><label class="check-row"><input id="ctx-require-html" type="checkbox" ${ps.outputContract?.requireHtml===true?'checked':''}> 独立 HTML 结构合同：必须包含 HTML 及下面的必需结构（默认关闭）</label><div class="row-sub">缺失结构将保护性拒绝自动入库，不会后台重复调用 API；可通过坏回复诊断和手动代码修复处理。</div><label class="check-row"><input id="ctx-three-part-html" type="checkbox" ${ps.outputContract?.structureMode==='three_part_html_status'?'checked':''}> 三段式 HTML 完整性检查（开头环境栏＋正文＋八个末尾模块；仅当前剧情主动开启）</label><label class="check-row"><input id="ctx-html-strict-values" type="checkbox" ${ps.outputContract?.strictValues===true?'checked':''}> 严格检查 progress 数值（可选）</label><label class="check-row"><input id="ctx-html-strict-template" type="checkbox" ${ps.outputContract?.strictTemplatePath===true?'checked':''}> 严格匹配模板层级（开启后不允许额外包装层；默认关闭）</label><label class="form-label">必需 CSS 选择器（每行或逗号分隔）</label><textarea id="ctx-html-selectors" class="field textarea" rows="2">${escapeHtml(ps.outputContract?.requiredSelectors||'')}</textarea><label class="form-label">标准 HTML 参考消息（手动选择，仅角色回复）</label><select id="ctx-html-template-message" class="field"><option value="">不绑定模板</option>${arr(currentSessionData.messages).filter(m=>m.role==='assistant'&&/[<][A-Za-z]/.test(m.content||'')).map(m=>`<option value="${escapeHtml(m.id)}" ${ps.outputContract?.templateMessageId===m.id?'selected':''}>${escapeHtml((m.content||'').replace(/<[^>]*>/g,' ').trim().slice(0,70)||m.id)}</option>`).join('')}</select><label class="form-label">模板的正文容器 CSS 选择器（唯一插槽，手动代码修复必填）</label><input id="ctx-html-body-slot" class="field" value="${escapeHtml(ps.outputContract?.bodySelector||'')}" placeholder="例如 .story-body"><label class="form-label">状态容器 CSS 选择器（含实时数据时不可自动伪造）</label><input id="ctx-html-status-slot" class="field" value="${escapeHtml(ps.outputContract?.statusSelector||'')}" placeholder="例如 .status-panel"><label class="form-label">允许继承固定文字的静态容器选择器（每行一个；仅授权固定标题/说明，不得包含正文槽或状态栏）</label><textarea id="ctx-html-static-slots" class="field textarea" rows="2">${escapeHtml(ps.outputContract?.staticSelectors||'')}</textarea><label class="form-label">允许自动继承固定 CSS 的规则选择器（每行一个；仅当该规则确实不含动态状态时授权）</label><textarea id="ctx-html-static-css" class="field textarea" rows="2">${escapeHtml(ps.outputContract?.staticCssSelectors||'')}</textarea><label class="form-label">明确属于固定布局的 class / 动画名（用空格或换行分隔；例如 card-wrapper，动态状态类不要填）</label><textarea id="ctx-html-static-classes" class="field textarea" rows="2">${escapeHtml(ps.outputContract?.staticClassTokens||'')}</textarea><label class="form-label">固定 HTML/CSS 注释精确白名单（每行一个，仅填写注释内部文字）</label><textarea id="ctx-html-static-comments" class="field textarea" rows="2">${escapeHtml(ps.outputContract?.staticCommentTexts||'')}</textarea><label class="check-row"><input id="ctx-pinned-on" type="checkbox" ${ps.pinnedFactsEnabled!==false?'checked':''}> 注入 Pinned Facts（固定事实）</label></div><div class="form-full"><label class="form-label">📌 Pinned Facts（固定事实，一行一条）</label><textarea id="ctx-pinned" class="field textarea">${escapeHtml(arr(currentSessionData.pinnedFacts).join('\n'))}</textarea></div><div class="form-full"><label class="form-label">玩家备注</label><textarea id="ctx-usernotes" class="field textarea">${escapeHtml(currentSessionData.userNotes||'')}</textarea></div><div class="form-full"><label class="form-label">AI（人工智能）备注</label><textarea id="ctx-ainotes" class="field textarea">${escapeHtml(currentSessionData.aiNotes||'')}</textarea></div></div></section>
 <div class="toolbar"><button id="ctx-save" class="primary-btn" type="button" onclick="saveContextSettings()">保存长剧情与会话设置</button><span class="row-sub">保存成功后，重新打开此页面仍会显示你设定的数值。</span></div>
-<section class="settings-section"><h3>💾 本地档案</h3><p class="helper">剧情、角色卡、世界书、预设、正则包保存在当前浏览器 IndexedDB（本地数据库）。分享剧情请选“纯剧情 TXT/JSON”，不含预设与历史请求快照；“原始会话存档”和“完整剧情资料备份”保留生成请求快照等私密上下文，仅用于自己的恢复与迁移。字体、API Key、小手机数据库和兼容库不会被打进这份“剧情资料备份”。</p><div class="toolbar"><button class="primary-btn" onclick="exportStoryTranscript('txt')">⇩ 纯剧情 TXT</button><button class="ghost-btn" onclick="exportStoryTranscript('json')">⇩ 纯剧情 JSON</button><button class="ghost-btn" onclick="exportCurrentSession()">⇩ 原始会话存档（可导回）</button><button class="ghost-btn" onclick="exportWholeLibrary()">⇩ 原生剧情+工坊+壁纸备份</button><button class="ghost-btn" onclick="chooseLibraryImport()">⇧ 导入剧情资料备份</button><button class="danger-btn" onclick="deleteCurrentSession()">删除当前剧情</button></div></section>`}
+<section class="settings-section"><h3><img src="./assets/mima-gothic-archive.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> 本地档案</h3><p class="helper">剧情、角色卡、世界书、预设、正则包保存在当前浏览器 IndexedDB（本地数据库）。分享剧情请选“纯剧情 TXT/JSON”，不含预设与历史请求快照；“原始会话存档”和“完整剧情资料备份”保留生成请求快照等私密上下文，仅用于自己的恢复与迁移。字体、API Key、小手机数据库和兼容库不会被打进这份“剧情资料备份”。</p><div class="toolbar"><button class="primary-btn" onclick="exportStoryTranscript('txt')">⇩ 纯剧情 TXT</button><button class="ghost-btn" onclick="exportStoryTranscript('json')">⇩ 纯剧情 JSON</button><button class="ghost-btn" onclick="exportCurrentSession()">⇩ 原始会话存档（可导回）</button><button class="ghost-btn" onclick="exportWholeLibrary()">⇩ 原生剧情+工坊+壁纸备份</button><button class="ghost-btn" onclick="chooseLibraryImport()">⇧ 导入剧情资料备份</button><button class="danger-btn" onclick="deleteCurrentSession()">删除当前剧情</button></div></section>`}
 async function saveContextSettings(){
     if(!currentSessionId)return toast('请先选择剧情会话');
     // Treat the input as authoritative only after validating it. Backend
@@ -2074,7 +2292,7 @@ function renderMemoryTab(box){
     const mountedPresets=presets.filter(x=>arr(currentSessionData?.presetIds).includes(x.id)&&x.enabled!==false);
     const mountedBooks=worldbooks.filter(x=>arr(currentSessionData?.worldbookIds).includes(x.id)&&x.enabled!==false);
     const refCheckbox=(kind,id,label,on)=>`<label class="check-row"><input data-memory-ref="${kind}" type="checkbox" value="${escapeHtml(id)}" ${on?'checked':''}> ${escapeHtml(label)}</label>`;
-    const memoryReferenceControls=`<section class="settings-section"><h3>📚 总结时参考背景（可选）</h3><p class="helper">只作用于新的记忆生成请求，与后续剧情注入开关互不干扰。旧存档默认不读取。预设作为你选中的总结指令，Persona / 世界书只用于背景消歧，不会冒充已发生的剧情；完整内容增加上下文用量。</p><div class="form-grid"><div>${'<label class="form-label">人物设定</label>'}<label class="check-row"><input id="memory-ref-user" type="checkbox" ${memoryFormDraftChecked('memory-ref-user',refs.userPersona)?'checked':''}> 玩家 Persona</label><label class="check-row"><input id="memory-ref-char" type="checkbox" ${memoryFormDraftChecked('memory-ref-char',refs.characterPersona)?'checked':''}> 角色 Persona</label></div><div><label class="form-label">世界书条目选择方式</label><select id="memory-ref-mode" class="field"><option value="none" ${memoryFormDraftValue('memory-ref-mode',refs.worldbookMode)==='none'?'selected':''}>不读取</option><option value="selected_entries" ${memoryFormDraftValue('memory-ref-mode',refs.worldbookMode)==='selected_entries'?'selected':''}>指定条目</option><option value="matched_entries" ${memoryFormDraftValue('memory-ref-mode',refs.worldbookMode)==='matched_entries'?'selected':''}>当前命中条目</option></select></div></div><details><summary>选择已挂载预设（${mountedPresets.length}）</summary>${mountedPresets.map(x=>refCheckbox('preset',x.id,x.name,selectedPresets.has(x.id))).join('')||'<p class="helper">无已挂载预设</p>'}</details><details><summary>选择已挂载世界书及条目（${mountedBooks.length}）</summary>${mountedBooks.map(b=>`<fieldset><legend>${escapeHtml(b.name)}</legend>${refCheckbox('book',b.id,'启用此书作为参考来源',selectedBooks.has(b.id))}${arr(b.entries).filter(e=>e.enabled!==false).map(e=>refCheckbox('entry',JSON.stringify([b.id,e.id]),e.name||e.id,selectedEntries.has(JSON.stringify([b.id,e.id]))||(legacySelectedEntries.has(e.id)&&mountedBooks.reduce((n,w)=>n+arr(w.entries).filter(x=>x.id===e.id).length,0)===1))).join('')}</fieldset>`).join('')||'<p class="helper">无已挂载世界书</p>'}</details><p class="helper">若某个已保存的参考资源后来卸载或关闭，生成时会明确报错，不会静默忽略它。</p></section>`;
+    const memoryReferenceControls=`<section class="settings-section"><h3><img src="./assets/mima-gothic-worldbook.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> 总结时参考背景（可选）</h3><p class="helper">只作用于新的记忆生成请求，与后续剧情注入开关互不干扰。旧存档默认不读取。预设作为你选中的总结指令，Persona / 世界书只用于背景消歧，不会冒充已发生的剧情；完整内容增加上下文用量。</p><div class="form-grid"><div>${'<label class="form-label">人物设定</label>'}<label class="check-row"><input id="memory-ref-user" type="checkbox" ${memoryFormDraftChecked('memory-ref-user',refs.userPersona)?'checked':''}> 玩家 Persona</label><label class="check-row"><input id="memory-ref-char" type="checkbox" ${memoryFormDraftChecked('memory-ref-char',refs.characterPersona)?'checked':''}> 角色 Persona</label></div><div><label class="form-label">世界书条目选择方式</label><select id="memory-ref-mode" class="field"><option value="none" ${memoryFormDraftValue('memory-ref-mode',refs.worldbookMode)==='none'?'selected':''}>不读取</option><option value="selected_entries" ${memoryFormDraftValue('memory-ref-mode',refs.worldbookMode)==='selected_entries'?'selected':''}>指定条目</option><option value="matched_entries" ${memoryFormDraftValue('memory-ref-mode',refs.worldbookMode)==='matched_entries'?'selected':''}>当前命中条目</option></select></div></div><details><summary>选择已挂载预设（${mountedPresets.length}）</summary>${mountedPresets.map(x=>refCheckbox('preset',x.id,x.name,selectedPresets.has(x.id))).join('')||'<p class="helper">无已挂载预设</p>'}</details><details><summary>选择已挂载世界书及条目（${mountedBooks.length}）</summary>${mountedBooks.map(b=>`<fieldset><legend>${escapeHtml(b.name)}</legend>${refCheckbox('book',b.id,'启用此书作为参考来源',selectedBooks.has(b.id))}${arr(b.entries).filter(e=>e.enabled!==false).map(e=>refCheckbox('entry',JSON.stringify([b.id,e.id]),e.name||e.id,selectedEntries.has(JSON.stringify([b.id,e.id]))||(legacySelectedEntries.has(e.id)&&mountedBooks.reduce((n,w)=>n+arr(w.entries).filter(x=>x.id===e.id).length,0)===1))).join('')}</fieldset>`).join('')||'<p class="helper">无已挂载世界书</p>'}</details><p class="helper">若某个已保存的参考资源后来卸载或关闭，生成时会明确报错，不会静默忽略它。</p></section>`;
     const rounds=storyRoundCount(),temp=Math.max(.1,Math.min(2,Number(mem.settings.summaryTemperature??core.temperature??.35)||.35));
     const overlapCount=facts.reduce((n,f,i)=>n+facts.slice(0,i).filter(prev=>Number(prev.startRound)<=Number(f.endRound)&&Number(f.startRound)<=Number(prev.endRound)).length,0);
     const coreBehind=!!core.content&&core.source!=='manual'&&Number(core.sourceRoundCount||0)>0&&Number(core.sourceRoundCount)<rounds;
@@ -2086,9 +2304,9 @@ function renderMemoryTab(box){
       ...(facts.length&&latestFactRound<rounds?[`事实记忆目前最多覆盖到第 ${latestFactRound} 轮，之后的轮次尚未总结。`]:[])
     ];
     const factCards=facts.length?facts.map(f=>`<div class="memory-card"><div class="memory-card-head"><div><label class="check-row"><input class="memory-merge-select" type="checkbox" data-fact-id="${escapeHtml(f.id)}" checked> <strong>第 ${Number(f.startRound||0)}–${Number(f.endRound||0)} 轮</strong></label><div class="entry-meta">${escapeHtml(memoryDateLabel(f.updatedAt||f.createdAt))} · 约 ${Number(f.targetChars||0)||'—'} 字 · T=${Number(f.temperature??.35).toFixed(2)}</div></div><div class="toolbar"><button class="tool-mini" onclick="startFactMemoryEdit(${escapeHtml(JSON.stringify(f.id))})">编辑</button><button class="tool-mini" onclick="deleteFactMemory(${escapeHtml(JSON.stringify(f.id))})">删除</button></div></div>${memoryFactEditId===f.id?`<textarea id="fact-edit-${escapeHtml(f.id)}" class="field textarea tall">${escapeHtml(f.content||'')}</textarea><div class="toolbar"><button class="primary-btn" onclick="saveFactMemoryEdit(${escapeHtml(JSON.stringify(f.id))})">保存修改</button><button class="ghost-btn" onclick="cancelFactMemoryEdit()">取消</button></div>`:`<div class="memory-text">${escapeHtml(f.content||'')}</div>`}</div>`).join(''):'<div class="memory-empty">还没有事实记忆。可以按 10 / 25 轮一段开始总结猫。</div>';
-    const preview=memoryMergeDraft?.sessionId===currentSessionId?`<div class="memory-card" id="memory-merge-preview"><h4>🧩 AI 二次合并候选 · 原记忆还在</h4><p class="helper">已选择 ${memoryMergeDraft.selectedIds.length} 条 · 第 ${memoryMergeDraft.startRound}–${memoryMergeDraft.endRound} 轮。可先编辑内容，再确认替换；不确认就绝不改动旧记忆。</p><textarea class="field textarea tall" id="memory-merge-result" rows="14" oninput="queueFactMergeDraftSave(this.value)">${escapeHtml(memoryMergeDraft.content||'')}</textarea><div class="toolbar"><button type="button" class="primary-btn" onclick="confirmFactMemoryMerge()">确认合并并保存</button><button type="button" class="ghost-btn" onclick="cancelFactMemoryMerge()">放弃候选，保留原记忆</button></div></div>`:'';
+    const preview=memoryMergeDraft?.sessionId===currentSessionId?`<div class="memory-card" id="memory-merge-preview"><h4><img src="./assets/mima-gothic-memory.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> AI 二次合并候选 · 原记忆还在</h4><p class="helper">已选择 ${memoryMergeDraft.selectedIds.length} 条 · 第 ${memoryMergeDraft.startRound}–${memoryMergeDraft.endRound} 轮。可先编辑内容，再确认替换；不确认就绝不改动旧记忆。</p><textarea class="field textarea tall" id="memory-merge-result" rows="14" oninput="queueFactMergeDraftSave(this.value)">${escapeHtml(memoryMergeDraft.content||'')}</textarea><div class="toolbar"><button type="button" class="primary-btn" onclick="confirmFactMemoryMerge()">确认合并并保存</button><button type="button" class="ghost-btn" onclick="cancelFactMemoryMerge()">放弃候选，保留原记忆</button></div></div>`:'';
     box.innerHTML=`
-    <section class="settings-section memory-overview"><h3>🗃️ 手动记忆总结</h3><p class="helper">使用当前 API 配置与所选记忆模型整理这个 Session（剧情会话）的长期记忆。这里的“1 轮”= 一次 User 发言 + 随后的角色回复；角色开场白会作为第 1 轮之前的前置信息纳入摘要，但不会单独占一轮。</p><div class="memory-stats"><div class="stat-card"><div class="stat-num">${rounds}</div><div class="stat-label">当前剧情轮数</div></div><div class="stat-card"><div class="stat-num">${facts.length}</div><div class="stat-label">事实记忆片段</div></div><div class="stat-card"><div class="stat-num">${core.content?'✓':'—'}</div><div class="stat-label">核心记忆</div></div></div>
+    <section class="settings-section memory-overview"><h3><img src="./assets/mima-gothic-memory.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> 手动记忆总结</h3><p class="helper">使用当前 API 配置与所选记忆模型整理这个 Session（剧情会话）的长期记忆。这里的“1 轮”= 一次 User 发言 + 随后的角色回复；角色开场白会作为第 1 轮之前的前置信息纳入摘要，但不会单独占一轮。</p><div class="memory-stats"><div class="stat-card"><div class="stat-num">${rounds}</div><div class="stat-label">当前剧情轮数</div></div><div class="stat-card"><div class="stat-num">${facts.length}</div><div class="stat-label">事实记忆片段</div></div><div class="stat-card"><div class="stat-num">${core.content?'✓':'—'}</div><div class="stat-label">核心记忆</div></div></div>
     ${memoryWarnings.length?`<p class="helper" role="status">⚠ ${memoryWarnings.map(escapeHtml).join('　')}</p>`:''}<div class="form-grid memory-global-grid"><div><label class="form-label">Summary Temperature（总结温度）</label><input id="memory-temp" class="field" type="number" min="0.1" max="2" step="0.05" value="${escapeHtml(String(memoryFormDraftValue('memory-temp',temp.toFixed(2))))}"><div class="row-sub">独立于剧情温度；若 API 关闭发送温度则请求不会带温度。</div></div><div class="form-full"><label class="form-label">记忆模型（留空沿用剧情模型）</label><div class="inline-field-row"><select id="memory-model-list" class="field" onchange="selectMemoryModel()"><option value="">沿用剧情模型</option>${mem.settings.memoryModel?`<option selected value="${escapeHtml(mem.settings.memoryModel)}">${escapeHtml(mem.settings.memoryModel)}</option>`:''}</select><button class="ghost-btn" type="button" onclick="loadMemoryModels()">拉取模型</button></div><input id="memory-model" class="field" value="${escapeHtml(String(memoryFormDraftValue('memory-model',mem.settings.memoryModel)))}" placeholder="留空沿用剧情模型，也可手填模型 ID"><div class="row-sub">核心、事实、手动合并及后台滚动摘要共用独立记忆模型，具体请求绑定当次模型；不会改 API 页的剧情模型。</div></div><div><label class="form-label">后续剧情注入</label><label class="check-row"><input id="memory-inject-core" type="checkbox" ${memoryFormDraftChecked('memory-inject-core',mem.settings.injectCore)?'checked':''}> 注入核心记忆</label><label class="check-row"><input id="memory-inject-facts" type="checkbox" ${memoryFormDraftChecked('memory-inject-facts',mem.settings.injectFacts)?'checked':''}> 注入事实记忆</label></div><div><label class="form-label">最多注入最近几段事实记忆</label><input id="memory-inject-limit" class="field" type="number" min="0" step="1" value="${escapeHtml(String(memoryFormDraftNumber('memory-inject-limit',mem.settings.factInjectionLimit)))}"><div class="row-sub">填 0 = 注入全部事实记忆；正整数 = 最近指定条数。没有人为 100 条上限，实际请求仍受所用模型上下文容量约束。</div></div></div>
     <div class="form-full"><label class="form-label">记忆生成 Streaming（流式预览，不等于正式保存）</label><select id="memory-stream-mode" class="field"><option value="inherit" ${memoryFormDraftValue('memory-stream-mode',mem.settings.memoryStreamMode||'inherit')==='inherit'?'selected':''}>继承 API 设置</option><option value="on" ${memoryFormDraftValue('memory-stream-mode',mem.settings.memoryStreamMode||'inherit')==='on'?'selected':''}>打开</option><option value="off" ${memoryFormDraftValue('memory-stream-mode',mem.settings.memoryStreamMode||'inherit')==='off'?'selected':''}>关闭</option></select></div><div class="toolbar"><button class="ghost-btn" onclick="saveMemorySettings()" >保存记忆设置</button></div><div id="memory-progress" class="memory-progress ${memoryTask?.sessionId===currentSessionId?'':'hidden'}"><div class="memory-progress-head"><span id="memory-progress-label">正在调用 LLM（大语言模型）…</span><span id="memory-progress-percent">0%</span></div><div class="memory-progress-track"><div id="memory-progress-bar" class="memory-progress-bar"></div></div><div id="memory-progress-detail" class="row-sub"></div><label class="form-label">正在接收的记忆草稿（只读，非已提交）</label><textarea id="memory-stage-draft" class="field textarea tall" readonly style="user-select:text"></textarea><button class="tool-mini" onclick="stopMemorySummary()">停止总结</button></div></section>
 
@@ -2997,7 +3215,7 @@ async function renderDataTab(box,renderEpoch=++settingsRenderEpoch){
     const cfg=MimaStandalone.getApiConfig();
     const receipt=lastFullSettingsRestoreReceipt;
     const backupRestoreResult=receipt?`<div class="data-backup-card" role="${receipt.warnings.length||!receipt.uiRefreshed?'alert':'status'}" style="white-space:pre-wrap"><strong>${receipt.warnings.length||!receipt.uiRefreshed?'⚠️ 本次恢复：部分完成':'✅ 本次恢复：完成'}</strong><div class="row-sub">${!receipt.uiRefreshed?'主资料库已提交，但页面刷新失败；请检查后手动刷新，不要重复导入。':receipt.warnings.length?'主资料库已经恢复，但下列设置未能全部恢复：':'主资料库和本次设置均已恢复。'}</div>${receipt.warnings.map(item=>`<div class="row-sub">• ${escapeHtml(String(item).slice(0,650))}</div>`).join('')}</div>`:'';
-    box.innerHTML=`<section class="settings-section"><h3>💾 Data Backup（数据备份）</h3><p class="helper">这里备份的不只是剧情，还包括角色卡、世界书、预设、正则包、CSS Preset（CSS 预设）、API（接口）参数、温度/流式设置、字体选择；可选把本地字体文件也一起装进备份。普通“刷新 / 强制刷新”不会删除这些数据，但 Safari 的“清除历史记录与网站数据”或删除网站数据会清掉 IndexedDB（本地数据库）和 localStorage（本地存储），所以真正保险的是导出 JSON（数据文件）到“文件”App。</p>
+    box.innerHTML=`<section class="settings-section"><h3><img src="./assets/mima-gothic-backup.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> Data Backup（数据备份）</h3><p class="helper">这里备份的不只是剧情，还包括角色卡、世界书、预设、正则包、CSS Preset（CSS 预设）、API（接口）参数、温度/流式设置、字体选择；可选把本地字体文件也一起装进备份。普通“刷新 / 强制刷新”不会删除这些数据，但 Safari 的“清除历史记录与网站数据”或删除网站数据会清掉 IndexedDB（本地数据库）和 localStorage（本地存储），所以真正保险的是导出 JSON（数据文件）到“文件”App。</p>
     ${window.MimaTavernBackup?.markup?.()||''}${window.MimaCloudBackupUI?.markup?.()||''}<div class="data-backup-card"><div class="row-title">本机设置快照</div><div class="row-sub">${snap?`最近保存：${escapeHtml(snap.savedAt||snap.exportedAt||'已保存')}`:'尚未保存本机快照'}</div><div class="toolbar"><button class="primary-btn" onclick="saveFullSettingsSnapshot()">保存咪嘛馆设置数据</button><button class="ghost-btn" onclick="restoreSavedSettingsSnapshot()">恢复本机快照</button><button class="ghost-btn" onclick="cleanupSettingsSnapshotStaging()">清理失败快照暂存</button></div><div class="row-sub">新版快照将字体原件独立保存。它仍位于本网站数据库，不能替代设备外备份。</div></div>
     <div class="data-backup-card"><div class="row-title">剧情与设置备份（不含小手机）</div><div class="row-sub"><strong>重要：这不是整馆迁移。</strong>只包含原生剧情、资源、工坊、壁纸及可选字体／接口设置；不包含小手机独立数据库或酒馆兼容库。清除网站数据或换设备前，还必须分别在小手机备份页、酒馆兼容管理页导出各自存档。尚不支持多库一键原子恢复。</div><label class="check-row"><input id="backup-fonts" type="checkbox" checked> 把本地字体文件也加入备份（文件可能变大）</label><label class="check-row"><input id="backup-api-key" type="checkbox"> 把 API Key（接口密钥）加入导出/快照 <strong>（敏感）</strong></label><div class="toolbar"><button class="primary-btn" onclick="exportFullSettingsBackup()">⇩ 导出剧情与设置</button><button class="ghost-btn" onclick="chooseFullSettingsImport()">⇧ 恢复剧情与设置</button><button class="ghost-btn" onclick="resumeSettingsJsonTemp()">继续保存临时 JSON</button><button class="ghost-btn" onclick="cleanupSettingsJsonTemp()">清理导出临时文件</button></div><div class="row-sub">当前 API（接口）：${cfg.apiBase?escapeHtml(cfg.apiBase):'未配置'} · Model（模型）：${cfg.model?escapeHtml(cfg.model):'未选择'}</div></div>
     <div id="data-backup-status" class="api-status">${snap?'✅ 当前浏览器已有本机快照。':'建议先保存一次本机快照，再导出一份文件备份。'}</div>${backupRestoreResult}</section>
@@ -3035,13 +3253,14 @@ async function resetMimaFeedbackSound(kind,button){
  catch(error){if(button)button.disabled=false;toast('恢复主题声音失败：'+error.message);}
 }
 function appearanceFeedbackHtml(){
- const p=window.MimaInteraction?.getPreferences?.()||{motionEnabled:true,soundEnabled:true,particleEnabled:true,transitionsEnabled:true,animation:'theme',volume:100};
+ const p=window.MimaInteraction?.getPreferences?.()||{motionEnabled:true,soundEnabled:true,particleEnabled:true,transitionsEnabled:true,animation:'theme',volume:100,screenTouchEnabled:true};
  const checked=x=>x?'checked':'';
  const anims=[['theme','跟随当前主题'],['jelly','果冻回弹'],['press','柔软下陷'],['glow','魔法光晕'],['ripple','水波扩散'],['none','不播放按钮动画']];
  return `<section class="settings-section mima-feedback-settings mima-motion-settings" id="mima-motion-settings"><h3>✨ 按钮动画</h3><p class="helper">立即生效并自动保存。选择风格、粒子和过渡效果，不会修改剧情或主题文件。</p>
  <div class="mima-feedback-setting-row"><div><strong>动画状态</strong><small>关闭后停止按钮动画、粒子和弹窗过渡；音效可以独立播放</small></div><label class="mima-feedback-switch"><input type="checkbox" ${checked(p.motionEnabled)} aria-label="开启按钮动画" onchange="setMimaFeedbackPreference('motionEnabled',this.checked,this)"><span>${p.motionEnabled?'开启':'关闭'}</span></label></div>
  <div class="mima-motion-choice"><label class="form-label" for="mima-feedback-animation">当前样式：<strong id="mima-current-animation-label">${anims.find(x=>x[0]===p.animation)?.[1]||'跟随当前主题'}</strong></label><select class="field" id="mima-feedback-animation" onchange="setMimaFeedbackPreference('animation',this.value,this)">${anims.map(([value,label])=>`<option value="${value}" ${p.animation===value?'selected':''}>${label}</option>`).join('')}</select><button class="ghost-btn" type="button" onclick="demoMimaFeedbackAnimation(this,event)">✦ 点击试看动画</button></div>
  <label class="check-row"><input type="checkbox" ${checked(p.particleEnabled)} onchange="setMimaFeedbackPreference('particleEnabled',this.checked,this)"> 显示星星、花瓣等点击粒子</label>
+ <label class="check-row"><input type="checkbox" ${checked(p.screenTouchEnabled!==false)} onchange="setMimaFeedbackPreference('screenTouchEnabled',this.checked,this)"> 屏幕轻触光纹（含空白处轻点与长按光晕，不影响滑动、复制和原生菜单）</label>
  <label class="check-row"><input type="checkbox" ${checked(p.transitionsEnabled)} onchange="setMimaFeedbackPreference('transitionsEnabled',this.checked,this)"> 菜单和弹窗淡入过渡</label>
  <p class="helper">动画受系统「减少动态效果」偏好约束。主题工坊还可以单独调整主题内的动画素材。</p></section>
  <section class="settings-section mima-feedback-settings mima-sound-settings"><h3>🔊 点击声音</h3><div class="mima-feedback-setting-row"><div><strong>点击音效</strong><small>关闭后只静音，按钮动画照常运行</small></div><label class="mima-feedback-switch"><input type="checkbox" ${checked(p.soundEnabled)} aria-label="开启点击音效" onchange="setMimaFeedbackPreference('soundEnabled',this.checked,this)"><span>${p.soundEnabled?'开启':'关闭'}</span></label></div>
@@ -3325,7 +3544,7 @@ async function renderAppearanceTab(box,renderEpoch=++settingsRenderEpoch){
     window.MimaInteraction?.ready?.then(updateAppearanceSoundRows).catch(error=>console.warn('[Appearance] 个人音效读取失败，原始数据未修改',error));
     if(needsFontInventory&&!fontReadError)fontRecords=records;
     const ui=MimaFontManager.getSelected('ui'),story=MimaFontManager.getSelected('story'),typo=getStoryTypography();const opts=localFontOptions(fontReadError?[]:fontRecords);const themeState=MimaStandalone.getThemeSettings?.()||{theme:'default'},themeCards=(MimaThemeEngine?.getBuiltins?.()||[]).map(t=>`<button class="novel-theme-card ${themeState.theme===t.id?'active':''}" data-theme-choice="${t.id}" onclick="setBuiltInTheme('${t.id}')"><strong>${escapeHtml(t.name)}</strong><span>${escapeHtml(t.description)}</span></button>`).join('');box.innerHTML=`${appearanceFeedbackHtml()}<nav class="mima-appearance-jumps" aria-label="外观设置快捷入口"><button type="button" onclick="mimaOpenAppearanceSection('font-settings')">🔤 字体设置</button><button type="button" onclick="mimaOpenAppearanceSection('local-fonts')">📁 本地字体管理</button><button type="button" onclick="mimaOpenAppearanceSection('remote-fonts')">🔗 网络字体管理</button><button type="button" onclick="mimaOpenAppearanceSection('css-presets')">🎨 CSS 列表</button></nav><section class="settings-section"><h3>🌓 Built-in Theme（内置主题）</h3><p class="helper">Default 保留原始外观；深色、电子墨水、暖纸与韩系柔色主题覆盖聊天、设置、小说及助手的常用组件。启用全局 CSS 时内置皮肤暂停；停用全局 CSS 后恢复这里选择的主题。基础布局始终保留。</p><div class="novel-theme-grid">${themeCards}</div></section><section class="settings-section"><h3>📐 界面显示大小</h3><p class="helper">单独控制咪嘛馆的按钮、面板和小手机尺寸，不改变剧情正文字号设置，也不删除你现有的主题 CSS。默认 80%，相当于之前觉得舒服的紧凑尺寸；浏览器缩放建议恢复 100% 使用。</p><label class="form-label" for="mima-ui-density">界面显示比例</label><select id="mima-ui-density" class="field" style="max-width:240px" onchange="changeMimaUiDensity(this.value)"><option value="70">70% · 更紧凑</option><option value="80">80% · 推荐</option><option value="90">90%</option><option value="100">100% · 原始大小</option><option value="110">110% · 较大</option></select></section><section class="settings-section mima-font-settings-card" id="mima-font-settings"><h3>🔤 字体设置 <span class="mima-fold-hint">界面和正文分别选择，随时可改</span></h3><p class="helper">这里始终显示当前正在使用的字体、字重和补字组合；管理字体文件请使用下方的「本地字体管理」或「网络字体管理」。收起字体库不会停用已选字体。</p><div class="form-grid"><div><label class="form-label">UI（界面）字体</label><select id="font-ui-select" class="field" onchange="changeFont('ui',this.value)">${opts}</select></div><div><label class="form-label">剧情正文字体</label><select id="font-story-select" class="field" onchange="changeFont('story',this.value)">${opts}</select></div></div><div class="mima-weight-grid">${fontWeightControlsHtml('ui')}${fontWeightControlsHtml('story')}</div><div class="mima-font-quick-preview" aria-label="正在使用的界面与正文实时字体预览"><div class="mima-preview-label">实时预览 · 当前选中字体与字重</div><div class="mima-font-quick-ui"><small>界面 / 菜单</small><div class="mima-font-quick-menu"><strong>✦ 咪嘛馆</strong><span class="mima-font-quick-button">保存设置</span><span class="mima-font-quick-button">剧情列表</span></div></div><div class="mima-font-quick-story"><small>剧情正文 / 中日英文</small><p class="story-prose story-paragraph">雨停了，她轻声说：「おかえり、咪嘛。」The moon is beautiful.</p><p class="story-prose story-paragraph">第二段用来观察字号、行高、字重与段落间距。</p></div><button type="button" class="ghost-btn mima-preview-full" onclick="mimaExpandAppearancePreview()">展开完整聊天 / 小说 / 助手预览 ↗</button></div><div id="font-bundle-status" class="mima-bundle-status"></div><div id="font-application-status" class="mima-font-load-status" role="status" aria-live="polite"></div><div class="toolbar mima-font-manager-shortcuts"><button type="button" class="ghost-btn" onclick="mimaOpenAppearanceSection('local-fonts')">📁 管理本地字体（${fontRecords.length} 款）</button><button type="button" class="ghost-btn" onclick="mimaOpenAppearanceSection('remote-fonts')">🔗 管理网络字体（${MimaFontManager.urlFonts().length} 款）</button></div></section><section class="settings-section mima-appearance-group"><details id="mima-local-fonts" class="mima-appearance-fold" ${mimaAppearanceFoldAttr('local-fonts',false)} ontoggle="mimaAppearanceFoldChanged('local-fonts',this)"><summary>📁 本地字体管理 <span class="mima-fold-hint">${fontRecords.length} 款 · 导入 / 预览 / 补字 / 删除 / 备份</span></summary><div class="mima-appearance-fold-body"><p class="helper">直接导入 TTF / OTF / WOFF / WOFF2（字体文件格式）。文件保存在当前浏览器 IndexedDB，不需要转 URL（链接），也不会上传到服务器。剧情正文字体会作用于普通小说正文；开启 Safe HTML（安全 HTML）后，未自行指定字体的 HTML 正文也会继承它。状态栏若有自己的 CSS 字体设置，仍以状态栏自己的设置为准。</p><div class="toolbar"><button class="primary-btn" onclick="chooseFontImport()">＋ 导入字体文件</button><button class="ghost-btn" type="button" onclick="exportReadableFonts()">⇩ 分卷备份本地字体</button><button class="ghost-btn" type="button" onclick="exportReadableFontsToFolder()" ${typeof window.showDirectoryPicker==='function'?'':'hidden'}>⇩ 一键保存到文件夹</button><button class="ghost-btn" type="button" onclick="importLocalFontBackup()">⇧ 导入本地字体备份</button></div><div id="font-volume-export-status" class="row-sub" role="status" style="margin:8px 0;display:flex;flex-wrap:wrap;align-items:center;gap:8px"></div><p class="helper">单独字体备份每卷最多 16 MiB；支持的浏览器可以一键保存到选定文件夹，手机上可逐卷保存并在刷新后继续；恢复时一次选择同轮清单和所有分卷。旧版 JSON 仍可导入。未完成全部卷不能视为完整备份。异常字体若保留了原始字节，也会正常备份。若存在真正无法读取的文件，单独备份会明确列出缺失记录；这不是完整字体备份。旧版导入字体移除后原始字节暂时保留，不会立即腾出旧库存储。</p><label class="form-label" for="mima-font-test-text">自定义字形测试句（按需检查，不会扫描全部字体）</label><input id="mima-font-test-text" class="field" value="咪嘛馆 中文简体 你好 天束影 日本語 あいうえお 漢字 Aa 0123"><pre id="mima-font-coverage-output" class="mima-font-coverage" hidden aria-live="polite"></pre><div id="font-list" style="margin-top:14px"></div><div id="font-preview-sample" class="row-sub" aria-live="polite">每一行在滚动到可见区域时使用对应字体预览；离开视野后释放预览资源，选择不会改变。</div><div style="margin-top:10px"><button type="button" class="ghost-btn" onclick="mimaAuditFontData()">🛟 本地字体紧急检查（只读）</button><button type="button" class="ghost-btn" onclick="mimaInspectFontFailure()">🔎 检查字体为什么没生效（只读）</button><button type="button" class="ghost-btn" onclick="mimaCopyFontReport()">复制字体诊断</button><pre id="mima-font-diagnostic-output" hidden style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:42vh;overflow:auto;padding:10px;margin-top:8px;border:1px solid var(--line);border-radius:12px;font:12px/1.55 ui-monospace,monospace;background:var(--surface,white)"></pre></div></div></details></section>
-<section class="settings-section"><h3>📖 Novel Typography（小说正文排版）</h3><p class="helper">进入本页会自动打开上方实时预览。字号、正文字体、行高与字间距也会作为 Safe HTML 的基础继承值；段间距与首行缩进仍只作用于咪嘛馆识别出的普通小说段落，不会强行挤压 &lt;system&gt; / &lt;details&gt; / 表格等状态栏结构。</p>
+<section class="settings-section"><h3><img src="./assets/mima-gothic-guide.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> Novel Typography（小说正文排版）</h3><p class="helper">进入本页会自动打开上方实时预览。字号、正文字体、行高与字间距也会作为 Safe HTML 的基础继承值；段间距与首行缩进仍只作用于咪嘛馆识别出的普通小说段落，不会强行挤压 &lt;system&gt; / &lt;details&gt; / 表格等状态栏结构。</p>
 <div class="typography-grid">
 ${typographyControlHtml('字号','fontSize',12,26,.5,typo.fontSize,'px')}
 ${typographyControlHtml('行间距','lineHeight',1.2,2.6,.05,typo.lineHeight,'')}
@@ -3671,7 +3890,8 @@ function renderCssPresetLibrary(root){
   for(const p of items){
    const global=p.scope==='app',mounted=global?p.id===globalId:p.id===active;
    const row=document.createElement('div');row.className=`library-card ${mounted?'mounted':''}`;
-   row.innerHTML=`<label class="mima-resource-select"><input type="checkbox" ${mimaCategorySelected.css.has(p.id)?'checked':''} onchange="mimaCategorySelect('css','${p.id}',this.checked)"> 选入批量移动</label><div class="card-title"><span>${escapeHtml(p.name)}</span>${mounted?`<span class="tag">${global?'全局挂载':'当前 Session'}</span>`:''}</div><div class="card-desc">${escapeHtml(p.category||'未分类')} · ${cssScopeLabel(p.scope)} · ${String(p.css||'').length} 字符</div><div class="card-actions mima-css-actions"><button class="${mounted?'primary-btn':'primary-btn'} mima-css-apply" onclick="${global?'applyGlobalCssPreset':'applyCssPreset'}('${p.id}')">${global?(mounted?'重新应用':'应用到全局'):mounted?(currentSessionData?.customCssEnabled===false?'启用':'重新应用'):'应用到聊天'}</button><button class="ghost-btn mima-css-edit" onclick="openCssPresetEditor('${p.id}')">编辑</button><button class="ghost-btn mima-css-star" title="${p.favorite?'取消收藏':'收藏'}" aria-label="${p.favorite?'取消收藏':'收藏'} ${escapeHtml(p.name)}" onclick="mimaToggleFavorite('css','${p.id}')">${p.favorite?'★':'☆'}</button><button type="button" class="ghost-btn mima-css-more" aria-expanded="false" aria-label="更多操作 ${escapeHtml(p.name)}">⋯</button><div class="mima-css-more-menu hidden"><button type="button" onclick="duplicateCssPreset('${p.id}')">复制预设</button><button type="button" onclick="exportCssPreset('${p.id}')">导出 CSS</button>${String(p.css||'').length>200000&&mounted?`<button type="button" onclick="${global?'unapplyGlobalCssPreset':'unapplyCss'}()">停用大型 CSS</button>`:''}<button type="button" class="mima-css-danger" onclick="deleteCssPreset('${p.id}')">删除 CSS…</button></div></div>`;
+   row.innerHTML=`<label class="mima-resource-select"><input type="checkbox" ${mimaCategorySelected.css.has(p.id)?'checked':''} data-mima-action="select"> 选择</label><div class="card-title"><span>${escapeHtml(p.name)}</span>${mounted?`<span class="tag">${global?'全局挂载':'当前 Session'}</span>`:''}</div><div class="card-desc">${escapeHtml(p.category||'未分类')} · ${cssScopeLabel(p.scope)} · ${String(p.css||'').length} 字符</div><div class="card-actions mima-css-actions"><button class="${mounted?'primary-btn':'primary-btn'} mima-css-apply" data-mima-action="apply">${global?(mounted?'重新应用':'应用到全局'):mounted?(currentSessionData?.customCssEnabled===false?'启用':'重新应用'):'应用到聊天'}</button><button class="ghost-btn mima-css-edit" data-mima-action="edit">编辑</button><button class="ghost-btn mima-css-star" title="${p.favorite?'取消收藏':'收藏'}" aria-label="${p.favorite?'取消收藏':'收藏'} ${escapeHtml(p.name)}" data-mima-action="favorite">${p.favorite?'★':'☆'}</button><button type="button" class="ghost-btn mima-css-more" aria-expanded="false" aria-label="更多操作 ${escapeHtml(p.name)}">⋯</button><div class="mima-css-more-menu hidden"><button type="button" data-mima-action="duplicate">复制预设</button><button type="button" data-mima-action="export">导出 CSS</button>${String(p.css||'').length>200000&&mounted?`<button type="button" onclick="${global?'unapplyGlobalCssPreset':'unapplyCss'}()">停用大型 CSS</button>`:''}<button type="button" class="mima-css-danger" data-mima-action="delete">删除 CSS…</button></div></div>`;
+   mimaBindResourceActions(row,{select:el=>mimaCategorySelect('css',p.id,el.checked),apply:()=>global?applyGlobalCssPreset(p.id):applyCssPreset(p.id),edit:()=>openCssPresetEditor(p.id),favorite:()=>mimaToggleFavorite('css',p.id),duplicate:()=>duplicateCssPreset(p.id),export:()=>exportCssPreset(p.id),delete:()=>deleteCssPreset(p.id)});
    const more=row.querySelector('.mima-css-more'),menu=row.querySelector('.mima-css-more-menu');
    const hide=()=>{menu.classList.add('hidden');menu.classList.remove('flip-up');menu.style.maxHeight='';more.setAttribute('aria-expanded','false');};
    more.onclick=()=>{const shouldOpen=menu.classList.contains('hidden');
@@ -4200,11 +4420,19 @@ function stopUrlFontPreview(){
     });
     document.querySelectorAll('#url-font-list .mima-url-font-preview').forEach(panel=>panel.remove());
 }
+document.addEventListener('click',event=>{
+ const button=event.target.closest?.('#url-font-list [data-url-font-action]');
+ if(!button)return;
+ const row=button.closest('[data-url-font-id]'),id=row?.dataset.urlFontId;
+ if(!id)return;
+ const actions={preview:()=>previewUrlFont(id),activate:()=>activateUrlFont(id),offline:()=>activateOfflineFont(id),cache:()=>cacheUrlFontLocally(id,button),compat:()=>toggleUrlFontCompatibility(id),remove:()=>removeUrlFont(id)};
+ const run=actions[button.dataset.urlFontAction];if(run)run();
+});
 function urlFontItemsHtml(){
     const cached=new Map((fontRecords||[]).filter(f=>f.sourceUrlFontId).map(f=>[f.sourceUrlFontId,f]));
     return MimaFontManager.urlFonts().map(f=>{
         const saved=cached.get(f.id),valid=saved?.sourceUrl===f.url;
-        return `<div class="font-row mima-url-font-row" data-url-font-id="${f.id}"><div class="row-main"><div class="row-title">${escapeHtml(f.name)}${valid?' · ✅ 已保存离线副本':''}</div><div class="row-sub">${escapeHtml(f.css?'CSS · '+f.family:'字体文件')} · ${escapeHtml(f.url.length>90?f.url.slice(0,90)+'…':f.url)}</div></div><button type="button" class="ghost-btn" data-url-preview-button aria-expanded="false" aria-label="预览 ${escapeHtml(f.name)}" onclick="previewUrlFont('${f.id}')">预览</button><button type="button" class="ghost-btn" onclick="activateUrlFont('${f.id}')">应用链接</button>${valid?`<button type="button" class="ghost-btn" onclick="activateOfflineFont('${f.id}')">应用离线</button>`:!f.css?`<button type="button" class="ghost-btn" onclick="cacheUrlFontLocally('${f.id}',this)">下载离线</button>`:''}${f.css?`<button type="button" class="ghost-btn" title="仅当旧字体 CSS 被主题引用但无法识别时启用；会在未选中时加载外部 CSS" onclick="toggleUrlFontCompatibility('${f.id}')">${f.compatAlwaysLoad===true||(f.lazy===false&&f.compatAlwaysLoad!==false)?'关闭强制加载':'兼容加载'}</button>`:''}<button type="button" class="danger-btn" onclick="removeUrlFont('${f.id}')">删除</button></div>`;
+        return `<div class="font-row mima-url-font-row" data-url-font-id="${escapeHtml(f.id)}"><div class="row-main"><div class="row-title">${escapeHtml(f.name)}${valid?' · ✅ 已保存离线副本':''}</div><div class="row-sub">${escapeHtml(f.css?'CSS · '+f.family:'字体文件')} · ${escapeHtml(f.url.length>90?f.url.slice(0,90)+'…':f.url)}</div></div><button type="button" class="ghost-btn" data-url-preview-button aria-expanded="false" aria-label="预览 ${escapeHtml(f.name)}" data-url-font-action="preview">预览</button><button type="button" class="ghost-btn" data-url-font-action="activate">应用链接</button>${valid?`<button type="button" class="ghost-btn" data-url-font-action="offline">应用离线</button>`:!f.css?`<button type="button" class="ghost-btn" data-url-font-action="cache">下载离线</button>`:''}${f.css?`<button type="button" class="ghost-btn" title="仅当旧字体 CSS 被主题引用但无法识别时启用；会在未选中时加载外部 CSS" data-url-font-action="compat">${f.compatAlwaysLoad===true||(f.lazy===false&&f.compatAlwaysLoad!==false)?'关闭强制加载':'兼容加载'}</button>`:''}<button type="button" class="danger-btn" data-url-font-action="remove">删除</button></div>`;
     }).join('')||'<div class="row-sub">还没有收藏字体链接。</div>';
 }
 async function cacheUrlFontLocally(id,button){

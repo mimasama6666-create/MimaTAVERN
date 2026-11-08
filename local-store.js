@@ -150,7 +150,7 @@
   // Tombstones remain until a complete canonical write folds them into state.
   function mergeAppearance(base,appearance) {
     assertAppearance(appearance);
-    const next={...base,cssPresets:appearance.cssPresets,cssCategoriesV1:appearance.cssCategoriesV1??base.cssCategoriesV1??[],themeSettings:appearance.themeSettings,storeRevision:appearance.storeRevision,savedAt:appearance.savedAt};
+    const next={...base,cssPresets:appearance.cssPresets,cssCategoriesV1:appearance.cssCategoriesV1??base.cssCategoriesV1??[],themeSettings:appearance.themeSettings,storeRevision:base.storeRevision,savedAt:appearance.savedAt};
     if(!appearance.deletedCssIds.length)return next;
     const deleted=new Set(appearance.deletedCssIds);
     next.sessions=(base.sessions||[]).map(s=>deleted.has(s.customCssId)?{...s,customCssId:null,customCssEnabled:false,recordRevision:(Number(s.recordRevision)||0)+1}:s);
@@ -425,7 +425,8 @@
     oldHead.onsuccess=()=>{try{for(const id of assertPresetsOverlay(oldHead.result).changes)kv.delete(PRESET_RECORD_PREFIX+id);}
       catch(_){try{kv.transaction.abort();}catch{}}};
     oldHead.onerror=()=>{try{kv.transaction.abort();}catch{}};
-    const {sessionOrganizationV1:_organization,__resourceSignature:_resourceSignature,...canonicalValue}=value;
+    const {sessionOrganizationV1:_organization,__resourceSignature:_resourceSignature,
+      __appearanceRevision:_appearanceRevision,...canonicalValue}=value;
     const ids=value.sessions.map(s=>s.id),revision=value.storeRevision;
     if(new Set(ids).size!==ids.length)throw Error('E_SESSION_DUPLICATE_IDS');
     if(prior)for(const s of prior.sessions||[])if(!ids.includes(s.id))kv.delete(SESSION_PREFIX+s.id);
@@ -553,6 +554,7 @@
             recordRevision:(Number(row.recordRevision)||0)+1}:row;
         }).filter(Boolean);
         result={themeSettings:a.result.themeSettings,cssPresets:a.result.cssPresets,sessions,
+          appearanceRevision:a.result.storeRevision,
           storeRevision:globalRevision(b.result.revision,a.result,p.result,t.result,head)};
       }catch(e){fail(e)}};
       h.onsuccess=()=>{try{const head=verifiedSessionHead(h.result);
@@ -637,6 +639,186 @@
       tx.oncomplete=()=>{db.close();resolve(result)};tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_SESSION_DELETE_ABORT'))};
     });
   }
+  // R19: one IndexedDB transaction for every explicitly selected bulk deletion.
+  // Resource changes touch independent overlays and *only* Session records whose
+  // compact directory rows actually reference a removed ID. No History scan and
+  // no sequence of non-atomic single DELETE requests.
+  async function commitBulkDelete(kind,ids,expectedRevision){
+    if(!['css','presets','worldbook','sessions'].includes(kind)||!Array.isArray(ids)||!ids.length||
+       ids.some(id=>typeof id!=='string'||!id)||new Set(ids).size!==ids.length||
+       !Number.isSafeInteger(expectedRevision)||expectedRevision<0)
+      throw Error('E_BULK_DELETE_INVALID: 选择无效，原件未变更');
+    await ensureSessionPartition();
+    const selected=new Set(ids),db=await openDb();
+    return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE),data=new Map();
+      let pending=0,issue=null,receipt=null,writing=false;
+      const fail=e=>{if(issue)return;issue=e||Error('E_BULK_DELETE_READ');try{tx.abort()}catch{}};
+      const read=(key,tag,after)=>{
+        pending++;
+        const req=kv.get(key);
+        req.onsuccess=()=>{if(issue)return;try{
+          data.set(tag,req.result);after?.(req.result);
+          if(--pending===0&&!writing){writing=true;commit();}
+        }catch(e){fail(e)}};
+        req.onerror=()=>fail(req.error);
+      };
+      const snapshot={base:STATE_KEY,appearance:APPEARANCE_KEY,appearanceMeta:APPEARANCE_META_KEY,
+        presets:PRESETS_KEY,presetIndex:PRESET_BASE_INDEX_KEY,
+        templates:TEMPLATE_OVERLAY_KEY,templateMeta:TEMPLATE_META_KEY,
+        head:SESSION_HEAD_KEY,organization:ORG_KEY,sessionIds:SESSION_IDS_KEY};
+      for(const [tag,key] of Object.entries(snapshot))read(key,tag,tag==='head'?head=>{
+        const rows=verifiedSessionHead(head).directory;
+        const needed=kind==='sessions'?ids:rows.filter(row=>{
+          if(kind==='css')return selected.has(row.customCssId);
+          const refs=kind==='presets'?row.presetIds:row.worldbookIds;
+          return Array.isArray(refs)&&refs.some(id=>selected.has(id));
+        }).map(row=>row.id);
+        for(const id of needed)read(SESSION_PREFIX+id,'session:'+id);
+      }:tag==='presets'&&kind==='presets'?head=>{
+        for(const id of assertPresetsOverlay(head).changes.filter(id=>selected.has(id)))
+          read(PRESET_RECORD_PREFIX+id,'preset:'+id);
+      }:undefined);
+      function commit(){try{
+        const base=data.get('base'),app=assertAppearance(data.get('appearance')),
+          preset=assertPresetsOverlay(data.get('presets')),head=verifiedSessionHead(data.get('head')),
+          org=verifiedOrganization(data.get('organization'));
+        if(!isCanonicalStateRecord(base)||base.schemaVersion!==4||
+           !Array.isArray(base.sessions)||base.sessions.length)
+          throw Error('E_BULK_DELETE_BASE_UNVERIFIED');
+        const oldBaseRev=base.storeRevision;
+        if(head.baseRevision!==oldBaseRev||app.baseRevision!==oldBaseRev||preset.baseRevision!==oldBaseRev)
+          throw Error('E_BULK_DELETE_BASE_CONFLICT');
+        const oldMeta=assertAppearanceMeta(data.get('appearanceMeta'),oldBaseRev),
+          oldTemplateMeta=verifiedTemplateMeta(data.get('templateMeta'),oldBaseRev),
+          oldTemplate=verifiedTemplateOverlay(data.get('templates'),oldBaseRev),
+          oldIndex=verifiedPresetBaseIndex(data.get('presetIndex'),oldBaseRev);
+        if(oldMeta.storeRevision!==app.storeRevision||
+           !Array.isArray(data.get('sessionIds'))||
+           JSON.stringify(data.get('sessionIds'))!==JSON.stringify(head.ids))
+          throw Error('E_BULK_DELETE_DIRECTORY_CONFLICT');
+        const rev=globalRevisionLight(oldBaseRev,oldMeta,preset,oldTemplateMeta,head);
+        if(rev!==expectedRevision)
+          throw Error('E_BULK_DELETE_CONFLICT: 资料库或剧情已在其他窗口更新，整批取消，请刷新选择');
+        const catalog=kind==='sessions'?head.ids:
+          kind==='css'?app.cssPresets.map(x=>x.id):
+          kind==='worldbook'?base.worldbooks.map(x=>x.id):
+          [...new Set([...base.presets.map(x=>x.id),...preset.changes])];
+        if(ids.some(id=>!catalog.includes(id)))
+          throw Error('E_BULK_DELETE_MISSING: 选中的记录已变化，整批未删除');
+        if(kind==='presets')for(const id of ids.filter(id=>preset.changes.includes(id))){
+          const row=data.get('preset:'+id);
+          if(!row||row.id!==id||typeof row.content!=='string')throw Error('E_BULK_DELETE_PRESET_FRAGMENT_INVALID');
+        }
+        const stamp=new Date().toISOString(),rebase=kind==='presets'||kind==='worldbook';
+        const newBaseRev=oldBaseRev+(rebase?1:0);
+        if(newBaseRev>=Number.MAX_SAFE_INTEGER)throw Error('E_BULK_DELETE_REVISION_OVERFLOW');
+        const unlinkIds=values=>Array.isArray(values)?values.filter(id=>!selected.has(id)):values;
+        let changedSessions=0;
+        const newRows=head.directory.map((meta,i)=>{
+          const deleting=kind==='sessions'&&selected.has(meta.id);
+          if(deleting){const row=data.get('session:'+meta.id);
+            if(!row||row.id!==meta.id||Number(row.recordRevision||0)!==meta.recordRevision)
+              throw Error('E_BULK_DELETE_SESSION_CONFLICT');
+            // Prepared generations may still hold model responses and send jobs;
+            // never delete their canonical owner before settlement.
+            if(row.pendingGeneration&&!['failed','aborted','interrupted','completed'].includes(row.pendingGeneration.status)||
+               ['prepared','running','streaming'].includes(row.lastGeneration?.status))
+              throw Error('E_BULK_DELETE_GENERATING: 选中剧情仍有生成任务，请结算后再删除');
+            kv.delete(SESSION_PREFIX+meta.id);changedSessions++;return null;
+          }
+          let next=null;
+          const uses=kind==='css'?selected.has(meta.customCssId):
+            kind==='presets'?Array.isArray(meta.presetIds)&&meta.presetIds.some(id=>selected.has(id)):
+            kind==='worldbook'?Array.isArray(meta.worldbookIds)&&meta.worldbookIds.some(id=>selected.has(id)):false;
+          if(uses){const row=data.get('session:'+meta.id);
+            if(!row||row.id!==meta.id||Number(row.recordRevision||0)!==meta.recordRevision)
+              throw Error('E_BULK_DELETE_SESSION_CONFLICT: 引用剧情被更改，整批取消');
+            // Resource unlinking during a live reply can invalidate the reply's
+            // canonical owner; block the whole transaction rather than racing it.
+            if(row.pendingGeneration&&!['failed','aborted','interrupted','completed'].includes(row.pendingGeneration.status)||
+               ['prepared','running','streaming'].includes(row.lastGeneration?.status))
+              throw Error('E_BULK_DELETE_GENERATING: 有剧情正在使用选中资源生成，整批取消');
+            if(kind==='css')next={...row,customCssId:null,customCssEnabled:false};
+            else if(kind==='presets')next={...row,presetIds:unlinkIds(row.presetIds)};
+            else next={...row,worldbookIds:unlinkIds(row.worldbookIds)};
+            next.recordRevision=meta.recordRevision+1;next.updatedAt=stamp;
+            kv.put(next,SESSION_PREFIX+meta.id);changedSessions++;
+          }
+          return next?sessionDirectoryRow(next):meta;
+        }).filter(Boolean);
+        let nextHead={...head,baseRevision:newBaseRev,storeRevision:head.storeRevision+(rebase?1:0)+(changedSessions?1:0),
+          ids:kind==='sessions'?head.ids.filter(id=>!selected.has(id)):head.ids.slice(),directory:newRows,updatedAt:stamp};
+        if(kind==='sessions'){
+          const placements={...org.placements};let orgChanged=false;
+          for(const id of ids)if(placements[id]){delete placements[id];orgChanged=true;}
+          if(orgChanged){const nextOrg={...org,placements,revision:org.revision+1,updatedAt:stamp};
+            validateSessionOrganization(nextOrg,new Set(nextHead.ids));kv.put(nextOrg,ORG_KEY);}
+          else validateSessionOrganization(org,new Set(nextHead.ids));
+          kv.put(nextHead.ids,SESSION_IDS_KEY);
+        }
+        if(changedSessions||rebase||kind==='sessions')kv.put(nextHead,SESSION_HEAD_KEY);
+        if(kind==='css'){
+          const existing=new Set(app.deletedCssIds),deletedCssAt={...(app.deletedCssAt||{})};
+          for(const id of ids){existing.add(id);deletedCssAt[id]=stamp;}
+          const nextApp={...app,cssPresets:app.cssPresets.filter(x=>!selected.has(x.id)),
+            themeSettings:selected.has(app.themeSettings.globalCssPresetId)?
+              {...app.themeSettings,globalCssPresetId:null,globalCssEnabled:false}:app.themeSettings,
+            deletedCssIds:[...existing],deletedCssAt,storeRevision:app.storeRevision+1,savedAt:stamp};
+          assertAppearance(nextApp);kv.put(nextApp,APPEARANCE_KEY);
+          kv.put(appearanceMeta(nextApp),APPEARANCE_META_KEY);
+        }
+        if(rebase){
+          const nextBase={...base,storeRevision:newBaseRev};
+          if(kind==='presets')nextBase.presets=base.presets.filter(x=>!selected.has(x.id));
+          if(kind==='worldbook')nextBase.worldbooks=base.worldbooks.filter(x=>!selected.has(x.id));
+          nextBase.novelProjects=(base.novelProjects||[]).map(p=>{
+            const key=kind==='presets'?'presetIds':'worldbookIds';
+            if(!Array.isArray(p[key])||!p[key].some(id=>selected.has(id)))return p;
+            return {...p,[key]:unlinkIds(p[key]),recordRevision:(Number(p.recordRevision)||0)+1,updatedAt:stamp};
+          });
+          assertWritableState(nextBase);kv.put(nextBase,STATE_KEY);kv.put({revision:newBaseRev},BASE_REVISION_KEY);
+          const nextApp={...app,baseRevision:newBaseRev,storeRevision:app.storeRevision+1};
+          kv.put(nextApp,APPEARANCE_KEY);kv.put(appearanceMeta(nextApp),APPEARANCE_META_KEY);
+          const nextPreset={...preset,baseRevision:newBaseRev,storeRevision:preset.storeRevision+1,
+            changes:kind==='presets'?preset.changes.filter(id=>!selected.has(id)):preset.changes};
+          assertPresetsOverlay(nextPreset);kv.put(nextPreset,PRESETS_KEY);
+          if(kind==='presets'){
+            kv.put({...oldIndex,baseRevision:newBaseRev,
+              entries:Object.fromEntries(Object.entries(oldIndex.entries).filter(([id])=>!selected.has(id)))},PRESET_BASE_INDEX_KEY);
+            for(const id of ids.filter(id=>preset.changes.includes(id)))kv.delete(PRESET_RECORD_PREFIX+id);
+          }else kv.put({...oldIndex,baseRevision:newBaseRev},PRESET_BASE_INDEX_KEY);
+        }
+        // Template overlays own edited template references, even when the base
+        // still holds a legacy copy. Rebase alongside base resources atomically.
+        const originals=oldTemplate?oldTemplate.templates:base.settingTemplates;
+        let updatedTemplates=0;
+        const updated=originals.map(template=>{
+          const config=template.config||{},key=kind==='css'?'customCssId':kind==='presets'?'presetIds':'worldbookIds';
+          const linked=kind==='sessions'?false:
+            kind==='css'?selected.has(config.customCssId):
+            Array.isArray(config[key])&&config[key].some(id=>selected.has(id));
+          if(!linked)return template;
+          updatedTemplates++;
+          return {...template,config:kind==='css'?{...config,customCssId:null,customCssEnabled:false}:
+            {...config,[key]:unlinkIds(config[key])},revision:(Number(template.revision)||0)+1,updatedAt:stamp};
+        });
+        if(updatedTemplates||rebase){
+          const nextTemplateRev=(oldTemplate?.storeRevision??oldBaseRev)+(rebase?1:0)+(updatedTemplates?1:0);
+          if(oldTemplate||updatedTemplates)kv.put({version:1,baseRevision:newBaseRev,
+            storeRevision:nextTemplateRev,templates:updated,savedAt:stamp},TEMPLATE_OVERLAY_KEY);
+          kv.put({version:1,baseRevision:newBaseRev,storeRevision:nextTemplateRev},TEMPLATE_META_KEY);
+        }
+        const bumpedBase=oldBaseRev+(rebase?1:0);
+        const newRev=rev+(rebase?1:0)+(kind==='css'?1:0)+(changedSessions?1:0)+(updatedTemplates?1:0);
+        receipt={kind,deleted:ids.length,ids:ids.slice(),affectedSessions:changedSessions,
+          affectedTemplates:updatedTemplates,storeRevision:newRev,baseRevision:bumpedBase};
+      }catch(e){fail(e)}}
+      tx.oncomplete=()=>{db.close();resolve(receipt)};
+      tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_BULK_DELETE_TX_ABORT'))};
+    });
+  }
+
   // CSS selection is less frequent than a message save, but it also must not
   // enumerate/rewrite every Session. Validate the exact CSS candidate and the
   // target Session inside the same IDB commit (cross-tab edit/delete fencing).
@@ -707,9 +889,32 @@
     });
   }
   async function loadAppearance(){const value=await get(APPEARANCE_KEY);return assertAppearance(value);}
+  // The appearance bytes and all five lightweight revision heads must come
+  // from ONE IDB snapshot. Two independent reads can combine different tabs'
+  // commits and incorrectly publish a stale resource signature to RAM.
+  async function loadAppearanceWithRevision(){
+    await ensureSessionPartition();const db=await openDb();return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readonly'),kv=tx.objectStore(STORE);
+      const a=kv.get(APPEARANCE_KEY),b=kv.get(BASE_REVISION_KEY),
+        p=kv.get(PRESETS_KEY),t=kv.get(TEMPLATE_META_KEY),h=kv.get(SESSION_HEAD_KEY);
+      let result,issue;
+      const inspect=()=>{if([a,b,p,t,h].some(req=>req.readyState!=='done'))return;try{
+        const appearance=assertAppearance(a.result),base=b.result?.revision;
+        if(!Number.isSafeInteger(base)||appearance.baseRevision!==base)
+          throw Error('E_APPEARANCE_BASE_CONFLICT: 外观版本与资料库基线不一致');
+        const preset=assertPresetsOverlay(p.result),template=verifiedTemplateMeta(t.result,base);
+        const global=globalRevisionLight(base,appearanceMeta(appearance),preset,template,h.result);
+        result={appearance,storeRevision:global,appearanceRevision:appearance.storeRevision,
+          resourceSignature:resourceSignature(base,appearance.storeRevision,preset.storeRevision,template.storeRevision)};
+      }catch(e){issue=e;tx.abort()}};
+      for(const req of [a,b,p,t,h]){req.onsuccess=inspect;req.onerror=()=>{issue=req.error;tx.abort()}};
+      tx.oncomplete=()=>{db.close();resolve(result)};
+      tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_APPEARANCE_SNAPSHOT_ABORT'))};
+    });
+  }
   // edit is synchronous and receives a detached, small IDB clone. False means
   // no write; exceptions abort. No state document or message is read here.
-  async function commitAppearance(edit,{signal=null,checkCanonical=null}={}) {
+  async function commitAppearance(edit,{signal=null,checkCanonical=null,withRevision=false}={}) {
     const db=await openDb();
     if(signal?.aborted){db.close();throw new DOMException('外观保存已取消','AbortError');}
     return new Promise((resolve,reject)=>{
@@ -723,8 +928,14 @@
       const baseReq=typeof checkCanonical==='function'?kv.get(STATE_KEY):null;
       const sessionHeadReq=baseReq?kv.get(SESSION_HEAD_KEY):null;
       const templateOverlayReq=baseReq?kv.get(TEMPLATE_OVERLAY_KEY):null;
-      let ready=0;
-      const inspect=()=>{if(++ready!==(baseReq?4:1))return;try{
+      // Read the SAME lightweight revision heads in the writing transaction.
+      // Never reconstruct the global revision from the appearance counter.
+      const baseHeadReq=withRevision?kv.get(BASE_REVISION_KEY):null;
+      const presetHeadReq=withRevision?kv.get(PRESETS_KEY):null;
+      const templateHeadReq=withRevision?kv.get(TEMPLATE_META_KEY):null;
+      const globalSessionHeadReq=withRevision&&!baseReq?kv.get(SESSION_HEAD_KEY):sessionHeadReq;
+      let ready=0,receipt=null;
+      const inspect=()=>{if(++ready!==(baseReq?4:1)+(withRevision?(baseReq?3:4):0))return;try{
         const value=assertAppearance(req.result),revision=value.storeRevision,baseRevision=value.baseRevision;
         if(baseReq){
           if(!isCanonicalStateRecord(baseReq.result)||Number(baseReq.result.storeRevision||0)!==baseRevision)
@@ -736,16 +947,33 @@
           if(verdict&&typeof verdict.then==='function')throw Error('E_APPEARANCE_ASYNC_CHECK');
         }
         const outcome=edit(value);if(outcome&&typeof outcome.then==='function')throw Error('E_APPEARANCE_ASYNC_EDIT');
-        if(outcome===false){result=value;return;}
-        result={...value,baseRevision,storeRevision:revision+1,savedAt:new Date().toISOString()};assertAppearance(result);
+        if(outcome===false)result=value;
+        else {
+          result={...value,baseRevision,storeRevision:revision+1,savedAt:new Date().toISOString()};assertAppearance(result);
+        }
+        if(withRevision){
+          const base=baseHeadReq.result?.revision,preset=assertPresetsOverlay(presetHeadReq.result),
+            template=verifiedTemplateMeta(templateHeadReq.result,base);
+          if(!Number.isSafeInteger(base)||result.baseRevision!==base)
+            throw Error('E_APPEARANCE_BASE_CONFLICT: 资料库基线已变化，本次未写入');
+          const global=globalRevisionLight(base,appearanceMeta(result),preset,template,globalSessionHeadReq.result);
+          if(!Number.isSafeInteger(global)||global>=Number.MAX_SAFE_INTEGER)
+            throw Error('E_CANONICAL_REVISION_OVERFLOW');
+          receipt={appearance:result,storeRevision:global,appearanceRevision:result.storeRevision,
+            resourceSignature:resourceSignature(base,result.storeRevision,preset.storeRevision,template.storeRevision)};
+        }
+        if(outcome===false)return;
         if(signal?.aborted){abort();return;}kv.put(result,APPEARANCE_KEY);kv.put(appearanceMeta(result),APPEARANCE_META_KEY);
       }catch(error){issue=error;tx.abort();}};
       req.onerror=()=>{issue=req.error;tx.abort();};req.onsuccess=inspect;
       if(baseReq){baseReq.onerror=()=>{issue=baseReq.error;tx.abort();};baseReq.onsuccess=inspect;
         sessionHeadReq.onerror=()=>{issue=sessionHeadReq.error;tx.abort()};sessionHeadReq.onsuccess=inspect;
         templateOverlayReq.onerror=()=>{issue=templateOverlayReq.error;tx.abort()};templateOverlayReq.onsuccess=inspect;}
+      if(withRevision)for(const r of [baseHeadReq,presetHeadReq,templateHeadReq,...(baseReq?[]:[globalSessionHeadReq])]){
+        r.onerror=()=>{issue=r.error;tx.abort()};r.onsuccess=inspect;
+      }
       const close=()=>{signal?.removeEventListener?.('abort',abort);db.close();};
-      tx.oncomplete=()=>{close();resolve(result);};
+      tx.oncomplete=()=>{close();resolve(withRevision?receipt:result);};
       tx.onabort=()=>{close();reject(issue||tx.error||Error('E_APPEARANCE_WRITE_ABORTED'));};
     });
   }
@@ -2198,5 +2426,5 @@
     if(text.length!==receipt.persistedChars)throw new Error('E_GENERATION_FRAGMENT_INCOMPLETE');
     return {receipt,text,complete:true};
   }
-  window.MimaLocalStore={loadSessionRecord,loadResourceSnapshot,loadResourceRevision,presetCasToken,loadSessionDirectory,loadCssSelectionSnapshot,commitSessionRecord,deleteSessionRecord,commitSessionCssSelection,commitSettingTemplates,validateSessionOrganization,loadSessionOrganization,commitSessionOrganization,commitPreset,putHtmlRepairDraft,getHtmlRepairDraft,loadAppearance,commitAppearance,mergeAppearance,exportPlayToolRecords,importPlayToolRecords,listPlayToolLocal,getPlayToolLocal:key=>get('play_tools_v1:'+key),putPlayToolLocal:(key,value)=>set('play_tools_v1:'+key,value),generationReceipt,generationAppendFragment,generationStatus,generationRead,getRollingPreflight,putRollingPreflight,clearRollingPreflight,commitHtmlRepair,putHtmlRepairCandidate,getHtmlRepairCandidate,setHtmlRepairCandidateState,listMemoryStages,inspectLegacyMemoryStages,putMemoryRejectedDraft,listMemoryRejectedDrafts,memoryReferenceContract,putFactRangeCandidate,listFactRangeCandidates,commitVerifiedFactRanges,getMergeStage,putMergeStage,getMergeDraft,createMergeDraft,updateMergeDraft,commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,loadSettingsSnapshotSummary,clearSettingsSnapshot,beginSettingsSnapshotV2,stageSettingsSnapshotFontV2,completeSettingsSnapshotV2,discardFailedSettingsSnapshotV2,hasIncompleteSettingsSnapshotV2,loadSettingsSnapshotFontV2,pruneOldSettingsSnapshotsV2,getMemoryJob,getMemoryStage,putMemoryStage,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
+  window.MimaLocalStore={commitBulkDelete,loadSessionRecord,loadResourceSnapshot,loadResourceRevision,loadAppearanceWithRevision,presetCasToken,loadSessionDirectory,loadCssSelectionSnapshot,commitSessionRecord,deleteSessionRecord,commitSessionCssSelection,commitSettingTemplates,validateSessionOrganization,loadSessionOrganization,commitSessionOrganization,commitPreset,putHtmlRepairDraft,getHtmlRepairDraft,loadAppearance,commitAppearance,mergeAppearance,exportPlayToolRecords,importPlayToolRecords,listPlayToolLocal,getPlayToolLocal:key=>get('play_tools_v1:'+key),putPlayToolLocal:(key,value)=>set('play_tools_v1:'+key,value),generationReceipt,generationAppendFragment,generationStatus,generationRead,getRollingPreflight,putRollingPreflight,clearRollingPreflight,commitHtmlRepair,putHtmlRepairCandidate,getHtmlRepairCandidate,setHtmlRepairCandidateState,listMemoryStages,inspectLegacyMemoryStages,putMemoryRejectedDraft,listMemoryRejectedDrafts,memoryReferenceContract,putFactRangeCandidate,listFactRangeCandidates,commitVerifiedFactRanges,getMergeStage,putMergeStage,getMergeDraft,createMergeDraft,updateMergeDraft,commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,loadSettingsSnapshotSummary,clearSettingsSnapshot,beginSettingsSnapshotV2,stageSettingsSnapshotFontV2,completeSettingsSnapshotV2,discardFailedSettingsSnapshotV2,hasIncompleteSettingsSnapshotV2,loadSettingsSnapshotFontV2,pruneOldSettingsSnapshotsV2,getMemoryJob,getMemoryStage,putMemoryStage,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
 })();

@@ -422,6 +422,9 @@
     return {
       schemaVersion: 4, storeRevision: Math.max(0,Number(raw.storeRevision)||0),
       __resourceSignature:typeof raw.__resourceSignature==='string'?raw.__resourceSignature:null,
+      __appearanceRevision:(()=>{const stamp=String(raw.__resourceSignature||'');
+        if(/^\d+:\d+:\d+:\d+$/.test(stamp)){const n=Number(stamp.split(':')[1]);if(Number.isSafeInteger(n))return n;}
+        return Number.isSafeInteger(raw.__appearanceRevision)?raw.__appearanceRevision:null;})(),
       sessions: legacyRoot(raw.sessions,'legacy_session',normalizeSession), masks: legacyRoot(raw.masks,'legacy_mask',normalizeMask),
       presets: legacyRoot(raw.presets,'legacy_preset',normalizePreset), worldbooks: legacyRoot(raw.worldbooks,'legacy_worldbook',normalizeWorldbook), cssPresets: legacyRoot(raw.cssPresets,'legacy_css',normalizeCssPreset),
       cssCategoriesV1:normalizeCategoryRecords(raw.cssCategoriesV1),resourceCategoriesV1:normalizedCategoryGroups(raw.resourceCategoriesV1),
@@ -444,7 +447,8 @@
         const result=edit(stored);
         if(result&&result[NO_LIBRARY_WRITE]===true){state=stored;return result.value;}
         const committed=await window.MimaLocalStore.saveState(stored,stored.storeRevision);
-        state={...stored,storeRevision:committed.storeRevision,__resourceSignature:null};
+        state={...stored,storeRevision:committed.storeRevision,
+          __resourceSignature:null,__appearanceRevision:committed.storeRevision};
         return result;
       }catch(error){
         // A real CAS refusal must not leave obsolete resources on screen. The
@@ -468,9 +472,12 @@
   }
   async function changeCategories(kind,body){
     if(!categorySpec[kind])throw new ApiError('E_CATEGORY_KIND','未知分类类型');
-    const action=body?.action,expected=body?.expectedRevision;
+    const action=body?.action,expected=kind==='css'?body?.expectedAppearanceRevision:body?.expectedRevision;
     const execute=stored=>{
-      if(stored.storeRevision!==expected)throw new ApiError('E_CATEGORY_STALE','分类库已变化，请刷新后重试');
+      // CSS uses the appearance overlay; other resources use the canonical state.
+      // This check executes inside the same IDB readwrite transaction as the edit.
+      if(!Number.isSafeInteger(expected)||expected<0||stored.storeRevision!==expected)
+        throw new ApiError('E_CATEGORY_STALE','分类库已变化，请刷新后重试');
       const records=categoryEntries(stored,kind),items=categoryResources(stored,kind);
       const nameOf=x=>String(x||'').trim();const old=nameOf(body?.oldName),name=nameOf(body?.name);
       const existing=new Set([...records.map(x=>x.name),...items.map(x=>x.category||'未分类')]);
@@ -487,10 +494,12 @@
         else if(action==='rename')records.push({id:makeId('category'),name,createdAt:nowIso()});
         for(const item of items)if(item.category===old)item.category=action==='delete'?'未分类':name;
       }else if(action==='move'){
-        const ids=body?.ids;if(!Array.isArray(ids)||!ids.length||ids.length>500||new Set(ids).size!==ids.length)throw new ApiError('E_CATEGORY_ITEMS','未选择有效的移动项目');
+        const ids=body?.ids;
+        if(!Array.isArray(ids)||!ids.length||ids.some(id=>typeof id!=='string'||!id)||new Set(ids).size!==ids.length)throw new ApiError('E_CATEGORY_ITEMS','未选择有效的移动项目');
         if(name!=='未分类'&&!existing.has(name))throw new ApiError('E_CATEGORY_MISSING','目标分类不存在');
-        if(ids.some(id=>!items.some(item=>item.id===id)))throw new ApiError('E_CATEGORY_ITEMS','待移动记录已变化，不执行部分移动');
-        for(const item of items)if(ids.includes(item.id))item.category=name;
+        const selectedIds=new Set(ids),existingIds=new Set(items.map(item=>item.id));
+        if(ids.some(id=>!existingIds.has(id)))throw new ApiError('E_CATEGORY_ITEMS','待移动记录已变化，不执行部分移动');
+        for(const item of items)if(selectedIds.has(item.id))item.category=name;
       }else throw new ApiError('E_CATEGORY_ACTION','不支持的分类操作');
       return {kind,action,category:name,items:items.length,categories:categoryView(stored,kind)};
     };
@@ -504,16 +513,29 @@
     const commit=async()=>{
       let result;
       try{
-        const appearance=await window.MimaLocalStore.commitAppearance(raw=>{
+        const receipt=await window.MimaLocalStore.commitAppearance(raw=>{
           const stored=normalizeAppearance(raw);result=edit(stored);
           if(result&&result[NO_LIBRARY_WRITE]===true){result=result.value;return false;}
           Object.assign(raw,stored);
-        },{checkCanonical});
-        state={...window.MimaLocalStore.mergeAppearance(state,normalizeAppearance(appearance)),__resourceSignature:null};
+        },{checkCanonical,withRevision:true});
+        // Publish only the global revision proven by the SAME committed IDB tx.
+        // Keep the complete resource signature unknown: another tab could have
+        // edited presets/templates before this appearance commit, while this
+        // window still holds their old bytes. The next resource refresh must
+        // not mistake that stale cache for a verified complete snapshot.
+        state={...window.MimaLocalStore.mergeAppearance(state,normalizeAppearance(receipt.appearance)),
+          storeRevision:receipt.storeRevision,__resourceSignature:null,
+          __appearanceRevision:receipt.appearanceRevision};
         return result;
       }catch(error){
-        try{state={...window.MimaLocalStore.mergeAppearance(state,normalizeAppearance(await window.MimaLocalStore.loadAppearance())),__resourceSignature:null};}
-        catch(readError){console.error('E_APPEARANCE_REFRESH_FAILED_AFTER_WRITE',readError);}
+        try{
+          // A single readonly transaction prevents pairing new appearance bytes
+          // with an older/newer global head after a cross-tab concurrent edit.
+          const receipt=await window.MimaLocalStore.loadAppearanceWithRevision();
+          state={...window.MimaLocalStore.mergeAppearance(state,normalizeAppearance(receipt.appearance)),
+            storeRevision:receipt.storeRevision,__resourceSignature:null,
+            __appearanceRevision:receipt.appearanceRevision};
+        }catch(readError){console.error('E_APPEARANCE_REFRESH_FAILED_AFTER_WRITE',readError);}
         throw error;
       }
     };
@@ -604,6 +626,36 @@
       unlinkTemplateResource(stored,table,id);
       return {deleted:true};
     });
+  }
+  // An all-or-nothing operation. Keep stale selections and in-flight reply owners
+  // out of the transaction, then let LocalStore recheck canonical revisions.
+  async function bulkDeleteCanonical(kind,body={}){
+    const ids=body.ids,expectedRevision=body.expectedRevision;
+    if(!['css','presets','worldbook','sessions'].includes(kind)||!Array.isArray(ids)||!ids.length||
+       ids.some(id=>typeof id!=='string'||!id)||new Set(ids).size!==ids.length||
+       !Number.isSafeInteger(expectedRevision)||expectedRevision<0)
+      throw new ApiError('E_BULK_DELETE_INVALID','请选择有效的资源或剧情；本次没有删除');
+    const commit=async()=>{
+      // Never cut a running generation off from its canonical owner.
+      if(kind==='sessions')for(const attempt of inFlightStoryAttempts){
+        let owner=null;try{owner=JSON.parse(attempt).sessionId}catch{}
+        if(ids.includes(owner))throw new ApiError('E_BULK_DELETE_GENERATING','选中剧情正在生成，先完成或停止该任务；没有删除任何剧情');
+      }
+      const saved=await window.MimaLocalStore.commitBulkDelete(kind,ids,expectedRevision);
+      // Transaction completion is authoritative. A read failure afterwards is
+      // a refresh failure, never evidence the already-committed delete failed.
+      try{state=normalizeState(await window.MimaLocalStore.loadState());}
+      catch(error){console.error('E_BULK_DELETE_POST_COMMIT_REFRESH',error);
+        // Do not return failure, which would invite a repeat destructive request.
+        return {...saved,refreshed:false,refreshError:String(error?.message||error)};
+      }
+      if(kind==='css')try{window.MimaThemeEngine?.apply?.(state.themeSettings);}
+        catch(e){console.error('E_THEME_APPLY_AFTER_BULK_DELETE',e);}
+      return {...saved,refreshed:true};
+    };
+    const task=sessionSaveTail.then(commit,commit);
+    sessionSaveTail=task.then(()=>{},()=>{});
+    return task;
   }
   async function init() {
     state = normalizeState(await window.MimaLocalStore.loadState());window.MimaThemeEngine?.apply?.(state.themeSettings);
@@ -949,7 +1001,9 @@
     const read=async()=>{
       const persisted=await window.MimaLocalStore.loadCssSelectionSnapshot(sessionIds);
       for(const session of persisted.sessions)publishSession(normalizeSession(session));
-      state={...state,themeSettings:persisted.themeSettings,cssPresets:persisted.cssPresets,storeRevision:persisted.storeRevision};
+      state={...state,themeSettings:persisted.themeSettings,cssPresets:persisted.cssPresets,
+        storeRevision:persisted.storeRevision,__appearanceRevision:persisted.appearanceRevision,
+        __resourceSignature:null};
       return persisted;
     };
     const task=sessionSaveTail.then(read,read);sessionSaveTail=task.then(()=>{},()=>{});return task;
@@ -4360,6 +4414,7 @@
       let templateRoute=path.match(/^\/setting-templates\/([^/]+)$/);
       if(templateRoute&&method==='PATCH')return ok(await editSettingTemplate('save',{...(body||{}),id:templateRoute[1]}));
       if(templateRoute&&method==='DELETE')return ok(await editSettingTemplate('delete',{...(body||{}),id:templateRoute[1]}));
+      if(path==='/sessions/bulk-delete'&&method==='POST')return ok(await bulkDeleteCanonical('sessions',body||{}));
       if(path==='/session-organization'&&method==='GET')return ok(await window.MimaLocalStore.loadSessionOrganization());
       if(path==='/session-organization/actions'&&method==='POST')return ok(await organizationAction(body||{}));
       if(path==='/sessions'&&method==='GET')return ok(sessionSummaries());
@@ -4426,6 +4481,7 @@
       m=path.match(/^\/sessions\/([^/]+)\/memory\/facts\/([^/]+)$/);if(m&&method==='PATCH')return ok(await editFactMemory(m[1],m[2],body?.content));
       m=path.match(/^\/sessions\/([^/]+)\/memory\/facts\/([^/]+)$/);if(m&&method==='DELETE')return ok(await deleteFactMemory(m[1],m[2]));
 
+      if(path==='/resources/bulk-delete'&&method==='POST')return ok(await bulkDeleteCanonical(body?.kind,body||{}));
       if(path==='/masks'&&method==='GET')return ok(state.masks);
       if(path==='/masks'&&method==='POST')return ok(await saveMask(body||{}));
       m=path.match(/^\/masks\/([^/]+)$/);if(m&&method==='PATCH'){const old=getMask(m[1]);return old?ok(await saveMask({...old,...body,id:m[1]})):fail('未找到面具');}
@@ -4489,6 +4545,7 @@
     // declare the independently versioned full-data contract on export.
     const snapshot=normalizeState(await window.MimaLocalStore.loadState());
     delete snapshot.__resourceSignature; // internal cache stamp is not user backup data
+    delete snapshot.__appearanceRevision; // internal UI CAS token never enters backups
     // Some historical/offline consumers supply only loadState/saveState. The
     // production store always has the validator; do not claim a modern
     // verified contract when that validator is not connected.
@@ -4603,6 +4660,7 @@
     // The final CAS is the authority. A second tab may commit after preflight.
     const committed=await window.MimaLocalStore.saveState(plan.next,plan.beforeRevision,{organizationImport:true,expectedOrganizationRevision:plan.beforeOrganizationRevision});
     state=normalizeState(committed);
+    state.__appearanceRevision=state.storeRevision; // canonical promotion resets the overlay to the new base
     // The canonical transaction has already committed. A rendering error must
     // not be reported as a failed import (nor trigger rollback of other stores).
     let importWarnings=[];
@@ -4615,5 +4673,5 @@
 
   window.MimaMemoryContracts=Object.freeze({normalizeManualMemory});
   // Normalized CSS presets contain scalar fields; copy their records without serializing History or immutable CSS strings.
-  window.MimaStandalone={getPlayTools:()=>({theaterCards:state.theaterCards.map(p=>({...p})),quickCommands:state.quickCommands.map(p=>({...p}))}),init,handle,previewMemoryPlan,memorySourceParts,memoryWorkPlan,runRecordedMemory,memorySourceFingerprint,memoryFactSignature,manualReplyFingerprint,isManuallyRecoveredReply,getApiConfig,saveApiConfig,validateApiConfigSnapshot,replaceApiConfigSnapshot,captureApiConfigBytes,restoreApiConfigBytes,apiCapacityIdentity,effectiveRequestConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,validateStoryReply,classifyStoryReply,applyRegexForSession,applyRegexForSessionAsync,applyRegexBatchForSessionAsync,hasActiveRegexForSession,resolveMacrosForSession,compileUserInputForPrompt,exportLibrary,importLibrary,previewLibraryImport,validateLibrary,assemble,getLastUsage,getPhoneResources:()=>({masks:clone(state.masks),presets:clone(state.presets),worldbooks:clone(state.worldbooks),themeSettings:clone(state.themeSettings),storeRevision:state.storeRevision}),getThemeSettings:()=>clone(state.themeSettings),cssSelectionIdentity,getResourceCategoryList:kind=>categorySpec[kind]?categoryView(state,kind):[],getStoreRevision:()=>state.storeRevision,getCssAppearance:()=>({themeSettings:clone(state.themeSettings),cssPresets:state.cssPresets.map(p=>({...p}))}),getState:()=>clone(state)};
+  window.MimaStandalone={getPlayTools:()=>({theaterCards:state.theaterCards.map(p=>({...p})),quickCommands:state.quickCommands.map(p=>({...p}))}),init,handle,previewMemoryPlan,memorySourceParts,memoryWorkPlan,runRecordedMemory,memorySourceFingerprint,memoryFactSignature,manualReplyFingerprint,isManuallyRecoveredReply,getApiConfig,saveApiConfig,validateApiConfigSnapshot,replaceApiConfigSnapshot,captureApiConfigBytes,restoreApiConfigBytes,apiCapacityIdentity,effectiveRequestConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,validateStoryReply,classifyStoryReply,applyRegexForSession,applyRegexForSessionAsync,applyRegexBatchForSessionAsync,hasActiveRegexForSession,resolveMacrosForSession,compileUserInputForPrompt,exportLibrary,importLibrary,previewLibraryImport,validateLibrary,assemble,getLastUsage,getPhoneResources:()=>({masks:clone(state.masks),presets:clone(state.presets),worldbooks:clone(state.worldbooks),themeSettings:clone(state.themeSettings),storeRevision:state.storeRevision}),getThemeSettings:()=>clone(state.themeSettings),cssSelectionIdentity,getResourceCategoryList:kind=>categorySpec[kind]?categoryView(state,kind):[],getStoreRevision:()=>state.storeRevision,getAppearanceRevision:()=>state.__appearanceRevision,getCssAppearance:()=>({themeSettings:clone(state.themeSettings),cssPresets:state.cssPresets.map(p=>({...p}))}),getState:()=>clone(state)};
 })();
