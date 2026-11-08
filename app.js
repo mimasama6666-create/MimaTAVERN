@@ -605,7 +605,7 @@ async function renderSettingTemplatesTab(box){
       <details class="mima-template-section" open><summary>🧩 预设 · 多选挂载</summary>${mimaTemplateChecked(cfg.presetIds,presets,'presetIds')}</details>
       <details class="mima-template-section" open><summary>📚 世界书 · 多选挂载</summary>${mimaTemplateChecked(cfg.worldbookIds,worldbooks,'worldbookIds')}</details>
       <details class="mima-template-section" open><summary>🧬 正则包 · 多选挂载</summary>${mimaTemplateChecked(cfg.regexPackIds,regexPacks,'regexPackIds')}</details>
-      <details class="mima-template-section" open><summary>🤍 用户面具与可选皮肤</summary>
+      <details class="mima-template-section" open><summary><span class="mima-gothic-inline-icon" aria-hidden="true"></span> 用户面具与可选皮肤</summary>
        <div class="form-grid"><div><label class="form-label">用户面具</label><select id="tpl-edit-mask" class="field">${optionList(masks.filter(x=>x.type==='user'),cfg.loadedUserMaskId,'不挂载')}</select></div>
        <div><label class="form-label">CSS 皮肤</label><select id="tpl-edit-css" class="field">${optionList(cssPresets,cfg.customCssId,'不挂载')}</select></div></div>
        ${renderCheck('tpl-edit-css-on','启用选中的 CSS 皮肤',cfg.customCssEnabled!==false)}
@@ -1117,10 +1117,10 @@ function currentUser(){return masks.find(x=>x.id===currentSessionData?.loadedUse
 function refreshHeader(){
     const char=currentChar(); qs('current-character').textContent=char?.name||(currentSessionData?.mode==='sandalphon'?'圣德芬':'未挂载角色');
     qs('current-title').textContent=currentSessionData?.title||'欢迎来到咪嘛馆';
-    const av=qs('top-avatar'); av.innerHTML=''; if(char?.avatar){const img=document.createElement('img');img.src=char.avatar;img.onerror=()=>{av.textContent='🤍'};av.appendChild(img)}else av.textContent=char?'🤍':'🍷';
+    const av=qs('top-avatar'); av.replaceChildren(); const showGothicMark=()=>{const img=document.createElement('img');img.className='mima-gothic-mark';img.src='./assets/mima-gothic-heart.png';img.alt='';img.draggable=false;av.replaceChildren(img);};if(char?.avatar){const img=document.createElement('img');img.src=char.avatar;img.onerror=showGothicMark;av.appendChild(img)}else showGothicMark();
     const mountedBooks=(currentSessionData?.worldbookIds||[]).map(id=>worldbooks.find(w=>w.id===id)).filter(Boolean);
     const ribbon=qs('context-ribbon');
-    if(currentSessionData&&(char||mountedBooks.length)){ribbon.classList.remove('hidden');ribbon.textContent=`独立宇宙 · ${char?`🤍 ${char.name}`:'未挂角色'}${mountedBooks.length?` · 📚 ${mountedBooks.map(w=>w.name).join(' / ')}`:''}`}
+    if(currentSessionData&&(char||mountedBooks.length)){ribbon.classList.remove('hidden');ribbon.textContent=`独立宇宙 · ${char?char.name:'未挂角色'}${mountedBooks.length?` · 📚 ${mountedBooks.map(w=>w.name).join(' / ')}`:''}`;ribbon.classList.toggle('mima-ribbon-with-character',!!char)}
     else {ribbon.textContent='';ribbon.classList.add('hidden');}
     ribbon.setAttribute('role','button');ribbon.setAttribute('tabindex','0');
     ribbon.setAttribute('aria-label','点击收起或展开独立宇宙信息');ribbon.classList.toggle('mima-ribbon-collapsed',ribbon.dataset.collapsed==='true');
@@ -1406,7 +1406,7 @@ function renderRolesTab(box){
     box.innerHTML=`
       <section class="settings-section"><h3>当前挂载</h3><p class="helper">角色卡和 User Persona（用户人设）只作用于这个剧情 Session（剧情会话）；不同宇宙可以挂不同的人。</p>
       <div class="mount-row">
-       <div class="mount-box"><label class="form-label">🤍 Character（角色）</label><select id="mount-char" class="field">${optionList(chars,currentSessionData.loadedCharMaskId,'不挂载角色卡')}</select></div>
+       <div class="mount-box"><label class="form-label"><span class="mima-gothic-inline-icon" aria-hidden="true"></span> Character（角色）</label><select id="mount-char" class="field">${optionList(chars,currentSessionData.loadedCharMaskId,'不挂载角色卡')}</select></div>
        <div class="mount-box"><label class="form-label">👤 User Persona（用户人设）</label><select id="mount-user" class="field">${optionList(users,currentSessionData.loadedUserMaskId,'不挂载 User Persona（用户人设）')}</select></div>
       </div><div class="toolbar"><button class="primary-btn" onclick="saveRoleMounts()">应用挂载</button>${currentChar()?.firstMessage&&!(currentSessionData.messages||[]).length?'<button class="ghost-btn" onclick="insertCharacterOpening()">✦ 插入角色开场白</button>':''}</div></section>
       <section class="settings-section"><h3>角色卡库</h3><div class="toolbar"><button class="ghost-btn" onclick="openMaskEditor('character')">＋ 新建角色卡</button><button class="ghost-btn" onclick="choosePersonaImport('character')">⇧ 导入 PNG（角色卡） / TXT / JSON</button></div><div id="char-card-grid" class="card-grid"></div></section>
@@ -5176,7 +5176,7 @@ function beginGenerationProgress(action){r19FailedHudReadToken++;r19FailedHudIde
  for(const id of ['generation-owner-preview','generation-owner-recover','generation-owner-html-repair','generation-view-draft','generation-copy-draft'])qs(id)?.classList.add('hidden');
  qs('generation-owner-raw-preview')?.remove();qs('generation-hud-recovery-error')?.remove();
  toggleUnknownGenerationActions(false);
- hideFailedStreamControls();qs('generation-recovery-draft')?.classList.add('hidden');qs('generation-copy-failed-stream')?.classList.add('hidden');deferredGenerationProgress=null;currentGenerationAction=action;lastGenerationFailure=null;contextRecoveryReceipt=null;setGenerationRetryVisible(false);setGenerationPanelMinimized(false);qs('generation-capacity-recovery')?.classList.add('hidden');qs('generation-resume-unanswered')?.classList.add('hidden');const panel=qs('generation-panel');panel?.classList.remove('hidden','error','done');setGenerationProgress({percent:4,label:`🤍 ${generationActionLabel(action)}`,detail:'正在准备本轮剧情…'})}
+ hideFailedStreamControls();qs('generation-recovery-draft')?.classList.add('hidden');qs('generation-copy-failed-stream')?.classList.add('hidden');deferredGenerationProgress=null;currentGenerationAction=action;lastGenerationFailure=null;contextRecoveryReceipt=null;setGenerationRetryVisible(false);setGenerationPanelMinimized(false);qs('generation-capacity-recovery')?.classList.add('hidden');qs('generation-resume-unanswered')?.classList.add('hidden');const panel=qs('generation-panel');panel?.classList.remove('hidden','error','done');setGenerationProgress({percent:4,label:generationActionLabel(action),detail:'正在准备本轮剧情…'})}
 function isStoryNearBottom(box,threshold=96){return !box||((box.scrollHeight-box.scrollTop-box.clientHeight)<=threshold)}
 function updateStoryFollowButton(){const b=qs('story-follow-stream');if(!b)return;b.classList.toggle('hidden',!liveStreamState||liveStreamState.followTail!==false)}
 function resumeStoryStreamFollow(){
@@ -5623,7 +5623,7 @@ function finishGenerationProgress(owner=null){
     if(owner&&!ownsVisibleGeneration(owner))return;
     deferredGenerationProgress=null;lastGenerationFailure=null;currentGenerationAction=null;
     setGenerationRetryVisible(false);
-    setGenerationProgress({percent:100,label:'🤍 生成完成',detail:'剧情已保存到本机。'});
+    setGenerationProgress({percent:100,label:'生成完成',detail:'剧情已保存到本机。'});
     const panel=qs('generation-panel');panel?.classList.add('done');
     setGenerationPanelMinimized(false);
     const sessionId=currentSessionId;
@@ -6180,7 +6180,7 @@ function refreshChatBox(options={}){
  const box=qs('story-chat-box'),renderedSessionId=currentSessionId,renderedEpoch=sessionNavigationEpoch,renderedLayoutEpoch=readingLayoutEpoch;
  if(!box)return;
  const messages=currentSessionData?.messages||[];
- if(!messages.length){window.MimaNativeHistoryWindow?.reset();r19DisplayContext(currentSessionId,r19RegexRenderToken());r19RenderState={sessionId:currentSessionId,renderMode:null,roleNames:'',regexToken:'',nodes:new Map()};for(const child of [...box.children])if(!child.classList.contains('mima-theater-shelf'))child.remove();const empty=document.createElement('div');empty.innerHTML=`<div class="empty-state"><div class="empty-icon">${currentChar()?'🤍':'🍷'}</div><h2>${escapeHtml(currentChar()?.name||'这个宇宙还是空的')}</h2><p>${currentChar()?.firstMessage?'角色卡里有开场白，可以在角色设置中插入。':'写下第一句话，剧情从这里开始。'}</p><button class="ghost-btn" onclick="MimaCompatUI.open()">🎴 或者用酒馆角色卡开始聊天</button></div>`;box.append(...empty.childNodes);window.MimaHistoryNavigator?.sync(currentSessionId,messages);window.MimaPlayTools?.ensure('native',box);return;}
+ if(!messages.length){window.MimaNativeHistoryWindow?.reset();r19DisplayContext(currentSessionId,r19RegexRenderToken());r19RenderState={sessionId:currentSessionId,renderMode:null,roleNames:'',regexToken:'',nodes:new Map()};for(const child of [...box.children])if(!child.classList.contains('mima-theater-shelf'))child.remove();const empty=document.createElement('div');empty.innerHTML=`<div class="empty-state"><div class="empty-icon">${currentChar()?'<span class="mima-gothic-empty-icon" aria-hidden="true"></span>':'🍷'}</div><h2>${escapeHtml(currentChar()?.name||'这个宇宙还是空的')}</h2><p>${currentChar()?.firstMessage?'角色卡里有开场白，可以在角色设置中插入。':'写下第一句话，剧情从这里开始。'}</p><button class="ghost-btn" onclick="MimaCompatUI.open()">🎴 或者用酒馆角色卡开始聊天</button></div>`;box.append(...empty.childNodes);window.MimaHistoryNavigator?.sync(currentSessionId,messages);window.MimaPlayTools?.ensure('native',box);return;}
  const start=performance.now(),oldScroll=box.scrollTop,oldBottom=box.scrollHeight-box.clientHeight-oldScroll<80;
  // The viewport boundary is monotone across the direct message siblings.
  // Binary-search bounding boxes instead of measuring every earlier message.

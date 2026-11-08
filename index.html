@@ -77,7 +77,7 @@
 <div class="app-shell">
     <header class="topbar glass-bar">
         <button class="nav-label" onclick="openDrawer()" aria-label="剧情列表">☰ <span>剧情</span></button>
-        <button id="top-avatar" class="top-avatar" onclick="openSettings('roles')" title="切换角色" aria-label="切换角色">🤍</button>
+        <button id="top-avatar" class="top-avatar" onclick="openSettings('roles')" title="切换角色" aria-label="切换角色"><img src="./assets/mima-gothic-heart.png" class="mima-gothic-mark" alt="" aria-hidden="true" draggable="false"></button>
         <div class="top-title-wrap" aria-label="当前角色和剧情">
             <div id="current-character" class="top-character">未挂载角色</div>
             <div id="current-title" class="top-title">欢迎来到咪嘛馆</div>
@@ -91,7 +91,7 @@
       <button onclick="MimaNovelStudio.open();MimaR6Nav.close()">✒ 小说创作</button>
       <button onclick="MimaAssistantStudio.open('regex');MimaR6Nav.close()">✦ AI 工具（文字效果与美化）</button>
       <button onclick="MimaCompatUI.open();MimaR6Nav.close()">🎴 玩酒馆角色卡</button>
-      <button onclick="openSettings('roles');MimaR6Nav.close()">🤍 管理角色资料（高级）</button>
+      <button onclick="openSettings('roles');MimaR6Nav.close()"><span class="mima-gothic-inline-icon" aria-hidden="true"></span> 管理角色资料（高级）</button>
       <button onclick="openSettings('worldbook');MimaR6Nav.close()">📚 世界书</button>
       <button onclick="openSettings('memory');MimaR6Nav.close()">🧠 剧情记忆</button>
       <button onclick="MimaThemeAtelier.open();MimaR6Nav.close()">🎨 可视化主题工坊</button>
@@ -114,7 +114,7 @@
 
     <footer class="composer-shell glass-bar">
         <div id="generation-panel" class="generation-panel hidden" aria-live="polite">
-            <div class="generation-head"><span id="generation-label">🤍 正在生成剧情</span><span id="generation-percent">0%</span><button class="generation-close" onclick="toggleGenerationPanelMinimize()" aria-label="最小化状态" title="最小化状态">－</button><button type="button" class="generation-error-dismiss" onclick="dismissGenerationPanel()" aria-label="关闭生成错误面板" title="关闭错误面板（诊断与手动恢复仍保留）">×</button></div>
+            <div class="generation-head"><span id="generation-label">正在生成剧情</span><span id="generation-percent">0%</span><button class="generation-close" onclick="toggleGenerationPanelMinimize()" aria-label="最小化状态" title="最小化状态">－</button><button type="button" class="generation-error-dismiss" onclick="dismissGenerationPanel()" aria-label="关闭生成错误面板" title="关闭错误面板（诊断与手动恢复仍保留）">×</button></div>
             <div class="generation-track"><div id="generation-progress-bar" class="generation-progress-bar"></div></div>
             <div id="generation-detail" class="generation-detail">正在准备本轮剧情…</div><pre id="generation-recovery-draft" class="generation-error-diagnostic hidden" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:26vh;overflow:auto"></pre>
             <div class="generation-actions"><button type="button" class="generation-stop-btn" id="generation-stop-inline" onclick="stopGeneration()">■ 停止生成</button><button id="generation-check-unknown" type="button" class="generation-retry hidden" onclick="checkUnknownGeneration()">↻ 免费核对原任务</button><button id="generation-view-draft" type="button" class="generation-retry hidden" onclick="viewUnknownGenerationDraft()">查看本机已收到的草稿</button><button id="generation-copy-draft" type="button" class="generation-retry hidden" onclick="copyUnknownGenerationDraft()">复制已收到的草稿</button><button id="generation-view-failed-stream" type="button" class="generation-retry hidden" onclick="viewFailedGenerationStream()">查看已保存的流式原文（不收费）</button><button id="generation-copy-failed-stream" type="button" class="generation-retry hidden" onclick="copyFailedGenerationStream()">复制已保存的流式原文</button><button id="generation-abandon-unknown" type="button" class="generation-retry hidden" onclick="abandonUnknownGeneration()" title="只在本机解除未结算任务锁定；不取消上游或调用模型">解锁旧任务（不调用模型）</button><button id="generation-takeover-unknown" type="button" class="generation-retry hidden" onclick="retryUnknownGeneration()">确认后重新生成（可能再次计费）</button><button type="button" id="generation-reconcile" class="generation-retry hidden" onclick="retryGenerationReconciliation()">↻ 重新核对剧情（免费）</button><button id="generation-retry" class="generation-retry hidden" onclick="retryFailedGeneration()" title="精确重放原请求；模型、输出上限、流式和温度保持原值">↻ 原请求 · 原 API 参数</button><button id="generation-retry-current" class="generation-retry hidden" onclick="retryFailedGeneration('current')" title="保留原轮消息与资料，使用当前 API 配置；不重复玩家消息">↻ 原上下文 · 当前 API 参数</button><button type="button" class="generation-retry hidden" id="generation-owner-recover" onclick="recoverFailedGenerationRaw()">♻ 直接手动恢复（免费）</button><button type="button" class="generation-retry hidden" id="generation-owner-preview" onclick="previewFailedGenerationRaw()">查看原文（可选）</button><button type="button" class="generation-retry hidden" id="generation-owner-html-repair" onclick="repairFailedGenerationHtml()">仅检查／补全 HTML · 0 API</button><button type="button" class="ghost-btn" id="generation-diagnostic-link" onclick="openSettings('diagnostics')">🧾 查看诊断日志</button></div>
@@ -147,7 +147,7 @@
         </div>
         <div class="composer-row" style="position:relative">
             <textarea id="story-input" rows="1" placeholder="写下你的动作、语言或剧情……"></textarea><span id="r19-draft-status" role="status" aria-live="polite" style="position:absolute;right:56px;bottom:-9px;font:10px system-ui,sans-serif;pointer-events:none;z-index:1"></span>
-            <button type="button" id="mima-toolbox-open" class="mima-toolbox-trigger" aria-label="打开百宝箱" title="百宝箱 · 快捷指令" onclick="MimaPlayTools.open('native','commands')">🪎</button>
+            <button type="button" id="mima-toolbox-open" class="mima-toolbox-trigger" aria-label="打开百宝箱" title="百宝箱 · 快捷指令" onclick="MimaPlayTools.open('native','commands')"><img src="./assets/mima-gothic-treasure.png" class="mima-gothic-treasure-mark" alt="" aria-hidden="true" draggable="false"></button>
             <button id="send-btn" class="send-btn" onclick="sendMsg()">➤</button>
         </div>
     </footer>
@@ -261,7 +261,7 @@ window.addEventListener('message',function(ev){
             <button class="icon-btn" onclick="closeSettings()">✕</button>
         </div>
         <nav class="settings-tabs">
-            <button data-tab="roles" onclick="switchSettingsTab('roles')">🤍 角色</button>
+            <button data-tab="roles" onclick="switchSettingsTab('roles')"><span class="mima-gothic-inline-icon" aria-hidden="true"></span> 角色</button>
             <button data-tab="png-resources" onclick="switchSettingsTab('png-resources')">📦 PNG 资源</button>
             <button data-tab="worldbook" onclick="switchSettingsTab('worldbook')">📚 世界书</button>
             <button data-tab="presets" onclick="switchSettingsTab('presets')">🧩 预设</button>

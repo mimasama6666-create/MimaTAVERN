@@ -1770,3 +1770,14 @@ html.mima-keyboard-theme-active body > .app-shell{z-index:1}
 #editor-modal .mima-preset-compare>button{min-height:44px;white-space:normal}
 #editor-modal .mima-compare-expand{min-height:40px;white-space:normal;text-align:left}
 @media(max-width:420px){#editor-modal .mima-preset-compare-cols{grid-template-columns:minmax(0,1fr)}}
+
+/* V5.94 · white gothic liquid-glass icons. Keep existing touch targets and avatar photos. */
+.top-avatar{position:relative;}
+.top-avatar img.mima-gothic-mark{position:absolute;inset:7%;width:86%;height:86%;max-width:none;object-fit:contain;object-position:center;pointer-events:none;}
+.mima-toolbox-trigger img.mima-gothic-treasure-mark{display:block;width:90%;height:90%;object-fit:contain;pointer-events:none;user-select:none;}
+.mima-gothic-inline-icon,.mima-gothic-empty-icon{display:inline-block;flex:none;background:url('./assets/mima-gothic-heart.png') center/contain no-repeat;vertical-align:-.23em;}
+.mima-gothic-inline-icon{width:1.23em;height:1.23em;}
+.mima-gothic-empty-icon{width:1.85em;height:1.85em;vertical-align:middle;}
+#story-chat-box .mima-gothic-empty-icon{width:2.2em;height:2.2em;}
+#generation-label::before{content:'';display:inline-block;width:1.3em;height:1.3em;vertical-align:-.26em;margin-right:.26em;background:url('./assets/mima-gothic-heart.png') center/contain no-repeat;}
+.context-ribbon.mima-ribbon-with-character::before{content:'';display:inline-block;width:1.3em;height:1.3em;vertical-align:-.26em;margin-right:.28em;background:url('./assets/mima-gothic-heart.png') center/contain no-repeat;}
