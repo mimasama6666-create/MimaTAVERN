@@ -44,7 +44,11 @@
  // Unrelated story history or CSS changes must not cancel a phone reply.
  async function promptDigest(actorId){const prefs=await settings(),mounts=await effectiveResources(actorId,prefs),r=MimaPhoneResources.state();
    const pick=(collection,id,label)=>{const found=collection.find(x=>x.id===id&&x.enabled!==false);must(found,label+'引用失效：'+id);return found;};
-   const raw=JSON.stringify({char:MimaPhoneResources.getCharMask(actorId),user:prefs.userMaskId?MimaPhoneResources.getUserMask(prefs.userMaskId):null,
+   // Persona remark is local library metadata, never phone prompt content.
+   // Exclude it from the phone prompt fingerprint as well: renaming a label
+   // must not cancel an otherwise unchanged in-flight conversation.
+   const promptMask=mask=>{if(!mask)return null;const {remark:_localLibraryRemark,...source}=mask;return source;};
+   const raw=JSON.stringify({char:promptMask(MimaPhoneResources.getCharMask(actorId)),user:prefs.userMaskId?promptMask(MimaPhoneResources.getUserMask(prefs.userMaskId)):null,
      presets:mounts.presetIds.map(i=>pick(r.presets,i,'预设')),worldbooks:mounts.worldbookIds.map(i=>pick(r.worldbooks,i,'世界书'))});
    const bytes=new TextEncoder().encode(raw),digest=await crypto.subtle.digest('SHA-256',bytes);
    return [...new Uint8Array(digest)].map(n=>n.toString(16).padStart(2,'0')).join('');}

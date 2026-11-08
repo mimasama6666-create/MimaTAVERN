@@ -210,11 +210,16 @@
  }
 
  async function saveEdit(){captureEdit();const item=editing;if(!item||item.saving)return;item.saving=true;const controls=[...bodyNode.querySelectorAll('input,textarea,select,button')];for(const el of controls)el.disabled=true;statusNode.textContent='正在保存，编辑区暂时锁定。';let saved;
-  try{saved=await route('/'+endpoint(item.table)+(item.id?'/'+item.id:''),item.id?'PATCH':'POST',{...item.data,...(item.table==='theaterCards'?{accessGrant:item.data.access||{}}:{})});
+  try{saved=await route('/'+endpoint(item.table)+(item.id?'/'+encodeURIComponent(item.id):''),item.id?'PATCH':'POST',{...item.data,...(item.table==='theaterCards'?{accessGrant:item.data.access||{}}:{})});
    item.id=saved.id;item.data=structuredClone(saved);item.baseFields=editSnapshot(item.data);item.changed={};dropDraft(item.table);await persistDrafts();await changed();if(editing===item){editing=null;paint();statusNode.textContent='已保存'+(item.table==='theaterCards'?'；请勾选挂载到当前剧情。':'，点击即可使用。');}return saved;
   }catch(e){if(saved)e.message='素材已保存，但草稿清理或界面刷新未完成；请勿重复新建。'+e.message;throw e;}finally{delete item.saving;for(const el of controls)if(el.isConnected)el.disabled=false;}
  }
- async function remove(resource){if(!confirm('删除“'+resource.name+'”？已发送的剧情原文不受影响。'))return;const t=table();await route('/'+endpoint(t)+'/'+resource.id,'DELETE');await changed();const clean=t==='theaterCards'?await reconcileUnlinks():true;for(const p of providers.values())await p.reload?.();paint();if(clean)statusNode.textContent='已删除，剧情原文保留。';}
+ async function remove(resource){if(!confirm('删除“'+resource.name+'”？已发送的剧情原文不受影响。'))return;const t=table();const receipt=await route('/'+endpoint(t)+'/'+encodeURIComponent(resource.id),'DELETE');if(receipt?.deleted!==true||(receipt.id!==undefined&&receipt.id!==resource.id))throw Error('删除未确认：对象已不存在或数据发生变化，列表未作成功更新');
+  // The deletion is already committed. Any subsequent refresh/compatibility cleanup
+  // failure must not be reported as a failed DELETE or invite another DELETE.
+  try{await changed();const clean=t==='theaterCards'?await recoverUnlinks(true):true;for(const p of providers.values())await p.reload?.();paint();if(clean)statusNode.textContent='已删除，剧情原文保留。';}
+  catch(e){throw new Error('素材已删除并保存，但列表刷新或兼容挂载清理未完成。请重新打开列表；小剧场可点“重试清理挂载”。'+(e?.message||String(e)));}
+ }
  async function execute(id,fillOnly){const ticket=capture(),p=provider(),commandView=view;if(!ticket)throw Error('请先进入一个剧情');const key=ticket.scope+':'+ticket.id;if(running.has(key)||p.isBusy())throw Error('当前剧情正在生成，请等待或停止后再发送');running.add(key);
   try{await load();if(!live(ticket))throw Error('已切换剧情，未发送到其他剧情');const command=library.quickCommands.find(x=>x.id===id);if(!command||command.enabled===false)throw Error('指令已删除或停用');
    let source=command.content,meta=null;try{meta=JSON.parse(command.sourceData||'null');}catch{}

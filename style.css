@@ -1610,15 +1610,13 @@ html.mima-settings-paint-guard .app-shell *::after{animation-play-state:paused!i
 .mima-font-settings-card .field,.mima-font-settings-card button,.mima-font-row-sample{box-sizing:border-box}
 @media(max-width:620px){.mima-font-quick-preview{padding:10px}.session-item{gap:4px}.session-more{min-width:calc(44px / var(--mima-ui-scale,1));min-height:calc(44px / var(--mima-ui-scale,1))}}
 
-/* V5.83: keep the story composer compact while the iOS software keyboard is
-   visible. Preserve the normal 170px multiline height outside keyboard mode.
-   Longer drafts scroll *inside* the textarea; never truncate or rewrite text. */
+/* The keyboard composer grows with the actual visual viewport rather than
+   clipping long drafts to 92px. Beyond the available space the textarea itself
+   scrolls, and the dedicated full editor provides uninterrupted editing. */
 @media (max-width:700px){
   html.mima-composer-keyboard .app-shell > .composer-shell .composer-row textarea#story-input{
-    /* Keyboard-only sizing wins over oversized custom-theme textarea rules;
-       all theme colors, images, borders and fonts remain untouched. */
-    min-height:0!important;
-    max-height:calc(92px / var(--mima-ui-scale,1))!important;
+    min-height:58px!important;
+    max-height:min(360px,calc(var(--mima-viewport-height,100dvh) * .56))!important;
     overflow-y:auto;
     overscroll-behavior:contain;
     -webkit-overflow-scrolling:touch;
@@ -1828,3 +1826,86 @@ button>.mima-gothic-ui-icon,summary>.mima-gothic-ui-icon{vertical-align:middle;m
 .mima-category-picker-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:17px}
 .mima-category-picker-actions button{min-width:88px;min-height:44px}
 @media(max-width:380px){.mima-category-picker{padding:14px}.mima-category-picker-actions button{flex:1}}
+
+
+/* V5.94 input usability: reduce wasted internal padding without removing the
+   selected theme's border colors, glass material or box-shadow effects. */
+.app-shell>.composer-shell>.composer-row textarea#story-input{
+  box-sizing:border-box;
+  padding:9px 11px;
+  border-width:1px;
+  min-height:58px;
+  min-width:0;
+  max-height:min(360px,calc(var(--mima-viewport-height,100dvh) * .56));
+  overflow-y:auto;
+  overscroll-behavior:contain;
+}
+.app-shell>.composer-shell>.quick-actions>.mima-compose-expand{
+  flex:none;box-sizing:border-box;min-height:40px;padding:7px 9px;
+  white-space:nowrap;touch-action:manipulation;line-height:1.1;
+}
+.mima-compose-expanded[hidden]{display:none!important}
+.mima-compose-expanded{
+  box-sizing:border-box;position:fixed;z-index:220;
+  top:var(--mima-viewport-top,0px);left:var(--mima-viewport-left,0px);
+  width:var(--mima-viewport-width,100vw);height:var(--mima-viewport-height,100dvh);
+  display:flex;align-items:stretch;justify-content:center;
+  padding:8px max(9px,env(safe-area-inset-right)) 8px max(9px,env(safe-area-inset-left));
+  background:rgba(25,22,37,.24);
+  -webkit-backdrop-filter:blur(7px);backdrop-filter:blur(7px);
+}
+.mima-compose-expanded-panel{
+  box-sizing:border-box;display:flex;flex-direction:column;gap:10px;
+  width:min(780px,100%);min-width:0;min-height:0;overflow:hidden;
+  border:1px solid color-mix(in srgb,var(--accent,#b8a0c8) 43%,rgba(255,255,255,.74));
+  border-radius:22px;
+  padding:14px;
+  color:var(--text,#383044);
+  background:color-mix(in srgb,var(--panel-solid,#fffafc) 89%,transparent);
+  box-shadow:0 22px 72px rgba(26,18,39,.22),inset 0 1px rgba(255,255,255,.68);
+  -webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);
+}
+.mima-compose-expanded-head{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0}
+.mima-compose-expanded-title{display:grid;gap:3px;min-width:0;line-height:1.25}
+.mima-compose-expanded-title strong{font-size:16px;letter-spacing:.02em}
+.mima-compose-expanded-title span{font-size:12px;color:var(--muted,#797080);line-height:1.4}
+.mima-compose-expanded :is(button,textarea){font:inherit;color:inherit}
+.mima-compose-expanded button{
+  min-height:42px;flex:none;border:1px solid var(--line,rgba(111,92,124,.24));
+  background:color-mix(in srgb,var(--panel,#fff) 85%,transparent);
+  border-radius:13px;padding:8px 14px;cursor:pointer;touch-action:manipulation;
+}
+.mima-compose-expanded button:focus-visible,.mima-compose-expanded textarea:focus-visible{
+  outline:2px solid var(--accent-strong,#9b76a9);outline-offset:2px;
+}
+#mima-compose-expanded-input{
+  flex:1 1 auto;box-sizing:border-box;min-width:0;min-height:92px;width:100%;
+  font-family:var(--font-ui,system-ui);font-size:16px;line-height:1.65;
+  resize:none;overflow-y:auto;overscroll-behavior:contain;
+  padding:15px 16px;border:1px solid color-mix(in srgb,var(--accent,#b8a0c8) 45%,transparent);
+  border-radius:16px;outline:none;
+  background:color-mix(in srgb,var(--panel,#fff) 72%,transparent);
+  -webkit-overflow-scrolling:touch;
+}
+.mima-compose-expanded-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;min-height:42px}
+#mima-compose-expanded-count{font-size:12px;color:var(--muted,#797080);white-space:nowrap}
+.mima-compose-expanded-actions{display:flex;justify-content:flex-end;gap:8px;flex:1}
+.mima-compose-expanded .mima-compose-expanded-send{
+  background:var(--accent,#ac8bba);color:#fff;border-color:transparent;font-weight:700;
+}
+@media(max-width:410px){
+ .mima-compose-expanded-panel{border-radius:17px;padding:10px;gap:8px}
+ .mima-compose-expanded-title span{font-size:11px}
+ .mima-compose-expanded button{padding:7px 10px}
+ #mima-compose-expanded-input{padding:11px 12px}
+ .app-shell>.composer-shell>.quick-actions>.mima-compose-expand{padding:5px 8px}
+}
+@media(prefers-reduced-motion:reduce){.mima-compose-expanded,.mima-compose-expanded *{transition:none!important;animation:none!important}}
+
+/* Persona 备注：仅资源库标签与过滤器，不参与发送模型。 */
+.persona-library-filter{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 12px}
+.persona-library-filter input{flex:1 1 180px;min-width:0}
+.persona-library-filter select{flex:0 1 180px;min-width:120px;max-width:100%}
+.persona-remark-line{display:flex;gap:6px;align-items:flex-start;font-size:.75rem;color:var(--muted);min-width:0;overflow-wrap:anywhere}
+.persona-remark-line .tag{flex:0 0 auto}
+@media(max-width:380px){.persona-library-filter select{flex:1 1 120px}}

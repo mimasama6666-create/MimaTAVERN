@@ -611,6 +611,48 @@
       tx.onabort=()=>{close();reject(issue||tx.error||Error('E_SESSION_COMMIT_ABORT'))};
     });
   }
+  // Single and bulk Session operations must agree about whether a generation
+  // still owns its canonical record. Keep this inside the IDB transaction.
+  function sessionGenerationUnsettled(row){
+    return !!(row.pendingGeneration&&!['failed','aborted','interrupted','completed'].includes(row.pendingGeneration.status)||
+      ['prepared','running','streaming'].includes(row.lastGeneration?.status));
+  }
+  // Session-private records are NOT shared Memory, backups, Persona or themes.
+  // Some old archive keys are digests/random IDs, so key prefixes only narrow
+  // the cursor: ownership must be proved by the stored session identity.
+  const SESSION_SIDECAR_PREFIXES=[
+    'r19-generation:', 'memory_job:', 'memory_stage_v1:', 'memory_stage_v2:',
+    'memory_rejected_v1:', 'memory_rolling_preflight_v1:',
+    'html_repair_candidate_v1:', 'html_repair_immutable_v2:',
+    'html_repair_draft_v1:', 'html_repair_draft_archive_v1:',
+    'memory_merge_stage_v2:', 'memory_merge_draft_v1:',
+    'memory_fact_range_v2:', 'memory_fact_receipt_v1:', 'memory_fact_merge_undo:'
+  ];
+  function purgeSessionSidecars(kv,sessionIds){
+    const owners=new Set(sessionIds);
+    for(const prefix of SESSION_SIDECAR_PREFIXES){
+      const range=IDBKeyRange.bound(prefix,prefix+'\uffff');
+      const req=kv.openCursor(range);
+      req.onsuccess=()=>{
+        const cursor=req.result;
+        if(!cursor)return;
+        const value=cursor.value;
+        const owner=value?.sessionId ?? (prefix==='r19-generation:'?value?.identity?.sessionId:undefined);
+        if(typeof owner==='string'&&owners.has(owner))cursor.delete();
+        cursor.continue();
+      };
+      // Unhandled IDB cursor failure aborts the containing transaction.
+      // Never convert a failed purge into a successful permanent deletion.
+    }
+  }
+  function requireSidecarSession(kv,sessionId,onValid,fail){
+    const req=kv.get(SESSION_PREFIX+sessionId);
+    req.onerror=()=>fail(req.error||Error('E_STORY_SESSION_READ_FAILED'));
+    req.onsuccess=()=>{
+      if(!req.result||req.result.id!==sessionId){fail(Error('E_STORY_SESSION_MISSING'));return;}
+      try{onValid(req.result)}catch(error){fail(error)}
+    };
+  }
   // Delete only the chosen Session, its small directory row, and the matching
   // archive placement in one transaction. Other sessions and resources stay put.
   async function deleteSessionRecord(id,expectedRecordRevision=null){
@@ -626,11 +668,15 @@
         const effectiveRevision=Number(session.recordRevision||0)+(deletedCss.has(session.customCssId)?1:0);
         if(expectedRecordRevision!==null&&effectiveRevision!==Number(expectedRecordRevision))
           throw Error('E_CANONICAL_CONFLICT: 被删除的剧情已更新，未覆盖');
+        if(sessionGenerationUnsettled(session))
+          throw Error('E_SESSION_DELETE_GENERATING: 剧情仍有未结算的生成任务，请结算后再删除');
         const org=verifiedOrganization(o.result),nextOrg={...org,placements:{...org.placements}};
         if(nextOrg.placements[id]){delete nextOrg.placements[id];nextOrg.revision++;nextOrg.updatedAt=new Date().toISOString();}
         const ids=head.ids.filter(x=>x!==id),directory=head.directory.filter(x=>x.id!==id),stamp=new Date().toISOString();
         const rev=globalRevisionLight(b.result.revision,a.result,p.result,t.result,head);
-        kv.delete(SESSION_PREFIX+id);kv.put(ids,SESSION_IDS_KEY);
+        kv.delete(SESSION_PREFIX+id);
+        purgeSessionSidecars(kv,[id]);
+        kv.put(ids,SESSION_IDS_KEY);
         kv.put({...head,ids,directory,storeRevision:head.storeRevision+1,updatedAt:stamp},SESSION_HEAD_KEY);
         if(nextOrg.revision!==org.revision)kv.put(nextOrg,ORG_KEY);
         result={deleted:true,storeRevision:rev+1,organization:nextOrg};
@@ -722,8 +768,7 @@
               throw Error('E_BULK_DELETE_SESSION_CONFLICT');
             // Prepared generations may still hold model responses and send jobs;
             // never delete their canonical owner before settlement.
-            if(row.pendingGeneration&&!['failed','aborted','interrupted','completed'].includes(row.pendingGeneration.status)||
-               ['prepared','running','streaming'].includes(row.lastGeneration?.status))
+            if(sessionGenerationUnsettled(row))
               throw Error('E_BULK_DELETE_GENERATING: 选中剧情仍有生成任务，请结算后再删除');
             kv.delete(SESSION_PREFIX+meta.id);changedSessions++;return null;
           }
@@ -736,8 +781,7 @@
               throw Error('E_BULK_DELETE_SESSION_CONFLICT: 引用剧情被更改，整批取消');
             // Resource unlinking during a live reply can invalidate the reply's
             // canonical owner; block the whole transaction rather than racing it.
-            if(row.pendingGeneration&&!['failed','aborted','interrupted','completed'].includes(row.pendingGeneration.status)||
-               ['prepared','running','streaming'].includes(row.lastGeneration?.status))
+            if(sessionGenerationUnsettled(row))
               throw Error('E_BULK_DELETE_GENERATING: 有剧情正在使用选中资源生成，整批取消');
             if(kind==='css')next={...row,customCssId:null,customCssEnabled:false};
             else if(kind==='presets')next={...row,presetIds:unlinkIds(row.presetIds)};
@@ -750,6 +794,7 @@
         let nextHead={...head,baseRevision:newBaseRev,storeRevision:head.storeRevision+(rebase?1:0)+(changedSessions?1:0),
           ids:kind==='sessions'?head.ids.filter(id=>!selected.has(id)):head.ids.slice(),directory:newRows,updatedAt:stamp};
         if(kind==='sessions'){
+          purgeSessionSidecars(kv,ids);
           const placements={...org.placements};let orgChanged=false;
           for(const id of ids)if(placements[id]){delete placements[id];orgChanged=true;}
           if(orgChanged){const nextOrg={...org,placements,revision:org.revision+1,updatedAt:stamp};
@@ -1241,6 +1286,7 @@
     }});
     validateItems(src.masks, 'masks', {validate:(m,at)=>{
       persistedTextFields(m,['content','description','scenario','firstMessage','exampleDialogue','creatorNotes'],at,version);
+      if(m.remark!==null)mustString(m.remark,`${at}.remark`,false); // Historical null means no remark; malformed non-strings still fail.
       for (const key of ['aliases','tags']) mustStringList(m[key],`${at}.${key}`,version>=4);
     }});
     validateItems(src.presets, 'presets',{validate:(p,at)=>persistedTextFields(p,['content','description'],at,version)});
@@ -1653,22 +1699,26 @@
     // content share one transaction; a second tab may replace only the pointer,
     // never destroy an older attempted repair.
     const db=await openDb();return new Promise((resolve,reject)=>{
-      const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE);
-      kv.put(candidate,htmlRepairArchiveKey(candidate.id));
-      kv.put(candidate,htmlRepairKey(candidate.sessionId,candidate.messageId));
+      const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE);let issue;
+      requireSidecarSession(kv,candidate.sessionId,()=>{
+        kv.put(candidate,htmlRepairArchiveKey(candidate.id));
+        kv.put(candidate,htmlRepairKey(candidate.sessionId,candidate.messageId));
+      },error=>{issue=error;tx.abort();});
       tx.oncomplete=()=>{db.close();resolve(candidate)};
-      tx.onabort=()=>{db.close();reject(tx.error||Error('E_HTML_REPAIR_STORE_FAILED'))};
+      tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_HTML_REPAIR_STORE_FAILED'))};
     });
   }
   // Separate unadopted output journal: never a canonical story/candidate.
   async function putHtmlRepairDraft(draft){
     if(!draft?.id||!draft.sessionId||!draft.messageId||typeof draft.content!=='string'||draft.accepted!==false)throw Error('E_HTML_AI_DRAFT_INVALID');
     const db=await openDb();return new Promise((resolve,reject)=>{
-      const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE);
-      kv.put(draft,'html_repair_draft_v1:'+draft.sessionId+':'+draft.messageId);
-      kv.put(draft,'html_repair_draft_archive_v1:'+draft.id);
+      const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE);let issue;
+      requireSidecarSession(kv,draft.sessionId,()=>{
+        kv.put(draft,'html_repair_draft_v1:'+draft.sessionId+':'+draft.messageId);
+        kv.put(draft,'html_repair_draft_archive_v1:'+draft.id);
+      },error=>{issue=error;tx.abort();});
       tx.oncomplete=()=>{db.close();resolve(draft)};
-      tx.onabort=()=>{db.close();reject(tx.error||Error('E_HTML_AI_DRAFT_SAVE_FAILED'))};
+      tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_HTML_AI_DRAFT_SAVE_FAILED'))};
     });
   }
   const getHtmlRepairDraft=(sessionId,messageId)=>get('html_repair_draft_v1:'+sessionId+':'+messageId);
@@ -1679,8 +1729,10 @@
       const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE),req=kv.get(key);let problem;
       req.onerror=()=>{problem=req.error;tx.abort();};req.onsuccess=()=>{
         if(!req.result||req.result.id!==id||req.result.state!=='pending'){problem=Error('E_HTML_REPAIR_FENCED');tx.abort();return;}
-        const settled={...req.result,state,settledAt:new Date().toISOString()};
-        kv.put(settled,key);kv.put(settled,htmlRepairArchiveKey(id));
+        requireSidecarSession(kv,sessionId,()=>{
+          const settled={...req.result,state,settledAt:new Date().toISOString()};
+          kv.put(settled,key);kv.put(settled,htmlRepairArchiveKey(id));
+        },error=>{problem=error;tx.abort();});
       };
       tx.oncomplete=()=>{db.close();resolve(state);};tx.onabort=()=>{db.close();reject(problem||tx.error||Error('E_HTML_REPAIR_STORE_FAILED'));};
     });
@@ -1775,7 +1827,9 @@
     const db=await openDb();return new Promise((resolve,reject)=>{
       const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE);let result,issue;
       const req=kv.get(jobKey(sessionId,kind));req.onerror=()=>{issue=req.error;tx.abort();};
-      req.onsuccess=()=>{try{result=work(req.result,kv,tx);}catch(e){issue=e;tx.abort();}};
+      req.onsuccess=()=>requireSidecarSession(kv,sessionId,()=>{
+        result=work(req.result,kv,tx);
+      },error=>{issue=error;tx.abort();});
       tx.oncomplete=()=>{db.close();resolve(result);};tx.onabort=()=>{db.close();reject(issue||tx.error||new Error('E_MEMORY_JOURNAL_WRITE_FAILED'));};
     });
   }
@@ -2140,8 +2194,10 @@
     if(!content?.trim()||!outputDigest)throw new Error('E_MEMORY_MERGE_STAGE_INVALID');
     const db=await openDb();return new Promise((resolve,reject)=>{const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE),req=kv.get(mergeStageKey(sessionId,digest));let error,result;
       req.onerror=()=>{error=req.error;tx.abort();};req.onsuccess=()=>{
-        const old=req.result;if(old){if(old.status!=='STAGED'||old.outputDigest!==outputDigest){error=new Error('E_MEMORY_MERGE_STAGE_CONFLICT');tx.abort();return;}result=old;return;}
-        result={version:2,status:'STAGED',sessionId,contractDigest:digest,outputText:content,outputLength:content.length,outputDigest,createdAt:new Date().toISOString()};kv.put(result,mergeStageKey(sessionId,digest));
+        requireSidecarSession(kv,sessionId,()=>{
+          const old=req.result;if(old){if(old.status!=='STAGED'||old.outputDigest!==outputDigest){error=new Error('E_MEMORY_MERGE_STAGE_CONFLICT');tx.abort();return;}result=old;return;}
+          result={version:2,status:'STAGED',sessionId,contractDigest:digest,outputText:content,outputLength:content.length,outputDigest,createdAt:new Date().toISOString()};kv.put(result,mergeStageKey(sessionId,digest));
+        },failure=>{error=failure;tx.abort();});
       };tx.oncomplete=()=>{db.close();resolve(result);};tx.onabort=()=>{db.close();reject(error||tx.error||new Error('E_MEMORY_MERGE_STAGE_WRITE'));};});
   }
   async function getMergeDraft(sessionId){return await get(mergeDraftKey(sessionId))||null;}
@@ -2168,7 +2224,9 @@
       const fail=msg=>{error=new Error(msg);tx.abort();};req.onerror=()=>fail('E_MEMORY_MERGE_DRAFT_READ');req.onsuccess=()=>{
         const old=req.result;if(!old||old.draftId!==draftId||old.version!==expectedVersion||!['DRAFT_PERSISTED','USER_EDITED'].includes(old.status)){fail('E_MEMORY_MERGE_DRAFT_CONFLICT');return;}
         if(action==='edit'&&(typeof content!=='string'||content.length>250000)){fail('E_MEMORY_MERGE_INVALID');return;}
-        result={...old,version:old.version+1,status:action==='discard'?'DISCARDED':'USER_EDITED',content:action==='discard'?old.content:String(content),updatedAt:new Date().toISOString()};kv.put(result,mergeDraftKey(sessionId));
+        requireSidecarSession(kv,sessionId,()=>{
+          result={...old,version:old.version+1,status:action==='discard'?'DISCARDED':'USER_EDITED',content:action==='discard'?old.content:String(content),updatedAt:new Date().toISOString()};kv.put(result,mergeDraftKey(sessionId));
+        },fail);
       };tx.oncomplete=()=>{db.close();resolve(result);};tx.onabort=()=>{db.close();reject(error||tx.error||new Error('E_MEMORY_MERGE_DRAFT_WRITE'));};});
   }
   // Individual verified fact ranges remain reviewable if a later range fails.
@@ -2365,10 +2423,14 @@
     return new Promise((resolve,reject)=>{
       const tx=db.transaction(STORE,'readwrite'),store=tx.objectStore(STORE);let outcome,issue=null;
       const request=store.get(key);
-      request.onsuccess=()=>{
+      request.onsuccess=()=>requireSidecarSession(store,identity.sessionId,session=>{
         const old=request.result;
-        if(old!==undefined&&(!old||old.generationId!==identity.generationId||old.attempt!==identity.attempt||old.sessionId!==identity.sessionId)){
-          issue=new Error('E_GENERATION_RECEIPT_CORRUPT');tx.abort();return;
+        if(old!==undefined&&(!old||old.generationId!==identity.generationId||old.attempt!==identity.attempt||old.sessionId!==identity.sessionId))
+          throw Error('E_GENERATION_RECEIPT_CORRUPT');
+        if(old===undefined){
+          if(stage!=='PREPARED_COMMITTED'||session.pendingGeneration?.id!==identity.generationId||
+             Number(session.pendingGeneration?.attempt)!==identity.attempt)
+            throw Error('E_GENERATION_RECEIPT_MISSING');
         }
         // Every stage update replaces the single receipt record. Preserve actual
         // request-dispatch evidence, source identity and verified stream outcome;
@@ -2380,7 +2442,7 @@
           startedAt:old?.startedAt||Date.now(),lastSeenAt:Date.now(),
           fragmentCount:old?.fragmentCount||0,persistedChars:old?.persistedChars||0,...updates};
         store.put(outcome,key);
-      };
+      },error=>{issue=error;tx.abort();});
       request.onerror=()=>{issue=request.error;tx.abort()};
       tx.oncomplete=()=>{db.close();resolve(outcome)};
       tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_GENERATION_RECEIPT_ABORT'))};
@@ -2391,13 +2453,13 @@
     return new Promise((resolve,reject)=>{
       const tx=db.transaction(STORE,'readwrite'),store=tx.objectStore(STORE);let result,issue=null;
       const req=store.get(key);
-      req.onsuccess=()=>{
+      req.onsuccess=()=>requireSidecarSession(store,identity.sessionId,()=>{
         const old=req.result;
         if(!old||old.sessionId!==identity.sessionId||old.generationId!==identity.generationId||old.attempt!==identity.attempt){issue=new Error('E_GENERATION_RECEIPT_MISSING');tx.abort();return;}
         if(ordinal!==old.fragmentCount||offset!==old.persistedChars||typeof piece!=='string'||!piece.length){issue=new Error('E_GENERATION_FRAGMENT_ORDER');tx.abort();return;}
         result={...old,fragmentCount:ordinal+1,persistedChars:offset+piece.length,lastSeenAt:Date.now(),stage:'RESPONSE_IN_PROGRESS'};
         store.put({identity,ordinal,offset,piece},key+':fragment:'+ordinal);store.put(result,key);
-      };
+      },error=>{issue=error;tx.abort();});
       req.onerror=()=>{issue=req.error;tx.abort()};
       tx.oncomplete=()=>{db.close();resolve(result)};
       tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_GENERATION_FRAGMENT_ABORT'))};

@@ -107,8 +107,10 @@ function toggleKeyboardTheme(visible){
  }
 }
 function isComposerControl(element){
- return !!element?.matches?.('#story-input,#director-note') &&
-  !!element.closest?.('.app-shell > .composer-shell');
+ return (!!element?.matches?.('#story-input,#director-note') &&
+  !!element.closest?.('.app-shell > .composer-shell')) ||
+  (!!element?.matches?.('#mima-compose-expanded-input') &&
+  !!element.closest?.('#mima-compose-expanded:not([hidden])'));
 }
 function beginKeyboardSession(){
  keyboardSession++;

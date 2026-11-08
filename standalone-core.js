@@ -261,7 +261,7 @@
       id: m.id || makeId('mask'), type, name: text(m.name || '未命名面具'), source: text(m.source || 'manual'),
       description: String(m.description ?? ''), content: String(content ?? ''), scenario: String(m.scenario ?? ''),
       firstMessage: String(m.firstMessage ?? m.first_mes ?? ''), exampleDialogue: String(m.exampleDialogue ?? m.mes_example ?? ''),
-      creatorNotes: String(m.creatorNotes ?? m.creator_notes ?? ''), avatar: text(m.avatar), aliases: list(m.aliases), tags: list(m.tags),
+      creatorNotes: String(m.creatorNotes ?? m.creator_notes ?? ''), remark: String(m.remark ?? ''), avatar: text(m.avatar), aliases: list(m.aliases), tags: list(m.tags),
       enabled: m.enabled !== false, createdAt, updatedAt: m.updatedAt || createdAt
     };
   }
@@ -616,7 +616,7 @@
       stored.cssPresets=stored.cssPresets.filter(item=>item.id!==id);
       if(stored.themeSettings?.globalCssPresetId===id)stored.themeSettings={...stored.themeSettings,globalCssPresetId:null,globalCssEnabled:false};
       if(!stored.deletedCssIds.includes(id)){stored.deletedCssIds.push(id);stored.deletedCssAt={...stored.deletedCssAt,[id]:nowIso()};}
-      return {deleted:true};
+      return {deleted:true,id};
     });
     return commitLibraryEdit(stored=>{
       const current=assertResourceFresh(table,id,stored);
@@ -624,7 +624,7 @@
       stored[table]=stored[table].filter(item=>item.id!==id);
       unlink?.(stored,id);
       unlinkTemplateResource(stored,table,id);
-      return {deleted:true};
+      return {deleted:true,id};
     });
   }
   // An all-or-nothing operation. Keep stale selections and in-flight reply owners
@@ -845,7 +845,7 @@
         const existing=stored.settingTemplates.find(x=>x.id===body.id);
         if(!existing)throw new ApiError('E_SETTINGS_TEMPLATE_MISSING','指定模板已不存在');
         if(existing.revision!==Number(body.expectedRevision))throw new ApiError('E_SETTINGS_TEMPLATE_STALE','模板版本已经变化');
-        stored.settingTemplates.splice(stored.settingTemplates.findIndex(x=>x.id===body.id),1);result={deleted:true};
+        stored.settingTemplates.splice(stored.settingTemplates.findIndex(x=>x.id===body.id),1);result={deleted:true,id:body.id};
       }else throw new ApiError('E_SETTINGS_TEMPLATE_ACTION','无效模板操作');
         return result;
       },state.storeRevision,state.settingTemplates);
@@ -4355,6 +4355,23 @@
   // ---------- Local route compatibility ----------
   function ok(data){return{success:true,data};}
   function fail(msg,extra={}){return{success:false,msg,...extra};}
+  // Resource IDs are opaque storage keys. Decode one URL path segment exactly once;
+  // a literal `%2F` ID and an ID containing `/` must never alias each other.
+  function decodeResourcePathId(segment){
+    try{return decodeURIComponent(segment);}catch(_){throw new ApiError('E_RESOURCE_ID_ENCODING','资源地址编码无效，未修改任何数据');}
+  }
+  function resourcePathMatch(path,pattern){
+    const match=path.match(pattern);
+    if(match)match[1]=decodeResourcePathId(match[1]);
+    return match;
+  }
+  // Match the encoded path first, then resolve each opaque ID segment once.
+  // Never decode an entire path: an ID containing / must remain one segment.
+  function pathIdMatch(path,pattern){
+    const m=path.match(pattern);
+    if(m)for(let i=1;i<m.length;i++)if(m[i]!==undefined)m[i]=decodeResourcePathId(m[i]);
+    return m;
+  }
   async function handle(endpoint,method='GET',body=null,signal=null,progress=null){
     try{
       const path=String(endpoint||'').split('?')[0];
@@ -4383,35 +4400,35 @@
       if(path==='/novels'&&method==='GET')return ok(novelSummaries());
       if(path==='/novels'&&method==='POST')return ok(await saveNovelProject(createBlankNovel(body||{}),{allowCreate:true}));
       if(path==='/novels/import'&&method==='POST'){const p=window.MimaNovelEngine.createProjectFromText({title:body?.title,sourceName:body?.sourceName||'',sourceEncoding:body?.sourceEncoding||'utf-8',text:body?.text||''});return ok(await saveNovelProject(p,{allowCreate:true}));}
-      let nm=path.match(/^\/novels\/([^/]+)$/);if(nm&&method==='GET'){const p=getNovel(nm[1]);return p?ok(p):fail('未找到小说项目');}
+      let nm=pathIdMatch(path,/^\/novels\/([^/]+)$/);if(nm&&method==='GET'){const p=getNovel(nm[1]);return p?ok(p):fail('未找到小说项目');}
       if(nm&&method==='PATCH')return ok(await patchNovelProject(nm[1],body||{}));
       if(nm&&method==='DELETE')return ok(await deleteResource('novelProjects',nm[1]));
-      nm=path.match(/^\/novels\/([^/]+)\/chapters$/);if(nm&&method==='POST'){const p=getNovelProject(nm[1]);return ok(await saveNovelProject(window.MimaNovelEngine.appendNewChapter(p,body?.title||'')));}
-      nm=path.match(/^\/novels\/([^/]+)\/chapters\/([^/]+)\/discard-empty-auto$/);if(nm&&method==='POST')return ok(await discardEmptyAutoNovelChapter(nm[1],nm[2]));
-      nm=path.match(/^\/novels\/([^/]+)\/reparse$/);if(nm&&method==='POST'){const p=getNovelProject(nm[1]);return ok(await saveNovelProject(window.MimaNovelEngine.reparseImportedProject(p)));}
-      nm=path.match(/^\/novels\/([^/]+)\/chapters\/([^/]+)$/);if(nm&&method==='PATCH'){const p=getNovelProject(nm[1]),next=window.MimaNovelEngine.editChapter(p,nm[2],body?.action||'replace_text',body||{});return ok(await saveNovelProject(next));}
-      nm=path.match(/^\/novels\/([^/]+)\/test-connection$/);if(nm&&method==='POST'){const p=getNovelProject(nm[1]),cfg=novelModelConfig(p);const stages=[{stage:'summary_nonstream',stream:false},{stage:'continuation',stream:cfg.stream}],out={model:cfg.model,streamSetting:cfg.stream};
+      nm=pathIdMatch(path,/^\/novels\/([^/]+)\/chapters$/);if(nm&&method==='POST'){const p=getNovelProject(nm[1]);return ok(await saveNovelProject(window.MimaNovelEngine.appendNewChapter(p,body?.title||'')));}
+      nm=pathIdMatch(path,/^\/novels\/([^/]+)\/chapters\/([^/]+)\/discard-empty-auto$/);if(nm&&method==='POST')return ok(await discardEmptyAutoNovelChapter(nm[1],nm[2]));
+      nm=pathIdMatch(path,/^\/novels\/([^/]+)\/reparse$/);if(nm&&method==='POST'){const p=getNovelProject(nm[1]);return ok(await saveNovelProject(window.MimaNovelEngine.reparseImportedProject(p)));}
+      nm=pathIdMatch(path,/^\/novels\/([^/]+)\/chapters\/([^/]+)$/);if(nm&&method==='PATCH'){const p=getNovelProject(nm[1]),next=window.MimaNovelEngine.editChapter(p,nm[2],body?.action||'replace_text',body||{});return ok(await saveNovelProject(next));}
+      nm=pathIdMatch(path,/^\/novels\/([^/]+)\/test-connection$/);if(nm&&method==='POST'){const p=getNovelProject(nm[1]),cfg=novelModelConfig(p);const stages=[{stage:'summary_nonstream',stream:false},{stage:'continuation',stream:cfg.stream}],out={model:cfg.model,streamSetting:cfg.stream};
         for(const step of stages){try{const reply=await callModelWithConfig([{role:'user',content:'请回复：连接成功'}],cfg,cfg.temperature,signal,{streamOverride:step.stream,onProgress:progress});out[step.stage]={ok:true,chars:reply.length};}
           catch(e){if(e instanceof ApiError)e.details=[`novel_test_stage: ${step.stage}`,e.details].filter(Boolean).join('; ');throw e;}}
         return ok(out);}
-      nm=path.match(/^\/novels\/([^/]+)\/prompt-preview$/);if(nm&&method==='POST')return ok(await novelPromptPreview(nm[1],body||{}));
-      nm=path.match(/^\/novels\/([^/]+)\/continue$/);if(nm&&method==='POST')return ok(await continueNovel(nm[1],body||{},signal,progress));
-      nm=path.match(/^\/novels\/([^/]+)\/drafts\/([^/]+)$/);if(nm&&method==='PATCH')return ok(await patchNovelDraft(nm[1],nm[2],body||{}));
+      nm=pathIdMatch(path,/^\/novels\/([^/]+)\/prompt-preview$/);if(nm&&method==='POST')return ok(await novelPromptPreview(nm[1],body||{}));
+      nm=pathIdMatch(path,/^\/novels\/([^/]+)\/continue$/);if(nm&&method==='POST')return ok(await continueNovel(nm[1],body||{},signal,progress));
+      nm=pathIdMatch(path,/^\/novels\/([^/]+)\/drafts\/([^/]+)$/);if(nm&&method==='PATCH')return ok(await patchNovelDraft(nm[1],nm[2],body||{}));
       if(nm&&method==='DELETE')return ok(await rejectNovelDraft(nm[1],nm[2]));
-      nm=path.match(/^\/novels\/([^/]+)\/drafts\/([^/]+)\/continue$/);if(nm&&method==='POST')return ok(await continueNovel(nm[1],{...(body||{}),draftId:nm[2]},signal,progress));
-      nm=path.match(/^\/novels\/([^/]+)\/drafts\/([^/]+)\/regenerate$/);if(nm&&method==='POST')return ok(await regenerateNovelDraft(nm[1],nm[2],body||{},signal,progress));
-      nm=path.match(/^\/novels\/([^/]+)\/drafts\/([^/]+)\/accept$/);if(nm&&method==='POST')return ok(await acceptNovelDraft(nm[1],nm[2],signal,progress));
-      nm=path.match(/^\/novels\/([^/]+)\/memory\/chapter\/([^/]+)$/);if(nm&&method==='POST')return ok(await updateNovelMemory(nm[1],nm[2],signal,progress));
-      nm=path.match(/^\/novels\/([^/]+)\/memory\/rebuild$/);if(nm&&method==='POST')return ok(await rebuildNovelMemory(nm[1],signal,progress));
-      nm=path.match(/^\/novels\/([^/]+)\/memory\/legacy-review$/);if(nm&&method==='POST')return ok(await reviewLegacyMemoryItem(nm[1],body||{}));
-      nm=path.match(/^\/novels\/([^/]+)\/memory$/);if(nm&&method==='PATCH')return ok(await patchNovelMemory(nm[1],body||{}));
-      nm=path.match(/^\/novels\/([^/]+)\/export\/txt$/);if(nm&&method==='GET'){const p=getNovelProject(nm[1]);return ok({name:`${p.title||'novel'}.txt`,text:window.MimaNovelEngine.exportProjectText(p)});}
-      nm=path.match(/^\/novels\/([^/]+)\/export\/json$/);if(nm&&method==='GET'){const p=getNovelProject(nm[1]);return ok({name:`${p.title||'novel'}.json`,project:clone(p)});}
+      nm=pathIdMatch(path,/^\/novels\/([^/]+)\/drafts\/([^/]+)\/continue$/);if(nm&&method==='POST')return ok(await continueNovel(nm[1],{...(body||{}),draftId:nm[2]},signal,progress));
+      nm=pathIdMatch(path,/^\/novels\/([^/]+)\/drafts\/([^/]+)\/regenerate$/);if(nm&&method==='POST')return ok(await regenerateNovelDraft(nm[1],nm[2],body||{},signal,progress));
+      nm=pathIdMatch(path,/^\/novels\/([^/]+)\/drafts\/([^/]+)\/accept$/);if(nm&&method==='POST')return ok(await acceptNovelDraft(nm[1],nm[2],signal,progress));
+      nm=pathIdMatch(path,/^\/novels\/([^/]+)\/memory\/chapter\/([^/]+)$/);if(nm&&method==='POST')return ok(await updateNovelMemory(nm[1],nm[2],signal,progress));
+      nm=pathIdMatch(path,/^\/novels\/([^/]+)\/memory\/rebuild$/);if(nm&&method==='POST')return ok(await rebuildNovelMemory(nm[1],signal,progress));
+      nm=pathIdMatch(path,/^\/novels\/([^/]+)\/memory\/legacy-review$/);if(nm&&method==='POST')return ok(await reviewLegacyMemoryItem(nm[1],body||{}));
+      nm=pathIdMatch(path,/^\/novels\/([^/]+)\/memory$/);if(nm&&method==='PATCH')return ok(await patchNovelMemory(nm[1],body||{}));
+      nm=pathIdMatch(path,/^\/novels\/([^/]+)\/export\/txt$/);if(nm&&method==='GET'){const p=getNovelProject(nm[1]);return ok({name:`${p.title||'novel'}.txt`,text:window.MimaNovelEngine.exportProjectText(p)});}
+      nm=pathIdMatch(path,/^\/novels\/([^/]+)\/export\/json$/);if(nm&&method==='GET'){const p=getNovelProject(nm[1]);return ok({name:`${p.title||'novel'}.json`,project:clone(p)});}
 
       if(path==='/setting-templates'&&method==='GET')return ok(state.settingTemplates);
       if(path==='/setting-templates'&&method==='POST')return ok(await editSettingTemplate('save',body||{}));
       if(path==='/setting-templates/default'&&method==='POST')return ok(await editSettingTemplate('default',body||{}));
-      let templateRoute=path.match(/^\/setting-templates\/([^/]+)$/);
+      let templateRoute=pathIdMatch(path,/^\/setting-templates\/([^/]+)$/);
       if(templateRoute&&method==='PATCH')return ok(await editSettingTemplate('save',{...(body||{}),id:templateRoute[1]}));
       if(templateRoute&&method==='DELETE')return ok(await editSettingTemplate('delete',{...(body||{}),id:templateRoute[1]}));
       if(path==='/sessions/bulk-delete'&&method==='POST')return ok(await bulkDeleteCanonical('sessions',body||{}));
@@ -4421,16 +4438,29 @@
       if(path==='/sessions/full'&&method==='GET')return ok((await window.MimaLocalStore.loadState()).sessions);
       if(path==='/sessions'&&method==='POST'){if(body?.settingTemplateId)return ok(await createSessionUsingTemplate(body));const s=await saveSession(normalizeSession({...body,id:makeId('sess'),createdAt:nowIso(),updatedAt:nowIso(),messages:[]}),{allowCreate:true});return ok(s);}
       if(path==='/sessions/import'&&method==='POST'){const s=normalizeSession({...body,id:makeId('sess'),title:`${text(body?.title||'导入剧情')} · 导入`,createdAt:nowIso(),updatedAt:nowIso()});return ok(await saveSession(s,{allowCreate:true}));}
-      let m=path.match(/^\/sessions\/([^/]+)\/canonical-view$/);
+      let m=pathIdMatch(path,/^\/sessions\/([^/]+)\/canonical-view$/);
       if(m&&method==='GET'){
         // Normal GET uses the tab-local projected state. Regeneration requires
         // an independently confirmed canonical storage read instead.
         const verified=await window.MimaLocalStore.loadSessionRecord(m[1]);
         return verified?ok(clone(verified)):fail('canonical 剧情不存在',{code:'E_STORY_SESSION_MISSING'});
       }
-      m=path.match(/^\/sessions\/([^/]+)$/);if(m&&method==='GET'){await refreshPersistedSession(m[1]);const s=getSession(m[1]);return s?ok(s):fail('未找到剧本');}
+      m=pathIdMatch(path,/^\/sessions\/([^/]+)$/);if(m&&method==='GET'){await refreshPersistedSession(m[1]);const s=getSession(m[1]);return s?ok(s):fail('未找到剧本');}
       if(m&&method==='PATCH'){const s=getSession(m[1]);return s?ok(await saveSession({...s,...body,id:s.id,createdAt:s.createdAt})):fail('未找到剧本');}
-      m=path.match(/^\/sessions\/([^/]+)\/css-disable$/);if(m&&method==='POST'){
+      if(m&&method==='DELETE'){
+        const id=m[1];
+        const change=async()=>{
+          for(const attempt of inFlightStoryAttempts){
+            let owner=null;try{owner=JSON.parse(attempt).sessionId}catch{}
+            if(owner===id)throw new ApiError('E_SESSION_DELETE_GENERATING','剧情仍在生成，先结算该任务；未删除剧情');
+          }
+          const current=getSession(id);if(!current)throw new ApiError('E_STORY_SESSION_MISSING','该剧情未在当前窗口加载，禁止无版本校验删除');
+          const result=await window.MimaLocalStore.deleteSessionRecord(id,current.recordRevision);
+          if(result.deleted){state={...state,sessions:state.sessions.filter(x=>x.id!==id),sessionOrganizationV1:result.organization,storeRevision:result.storeRevision};}
+          return {deleted:result.deleted,...(result.deleted?{id,organization:result.organization}:{})};};
+        const task=sessionSaveTail.then(change,change);sessionSaveTail=task.then(()=>{},()=>{});return ok(await task);
+      }
+      m=pathIdMatch(path,/^\/sessions\/([^/]+)\/css-disable$/);if(m&&method==='POST'){
         const session=getSession(m[1]);if(!session)throw new ApiError('E_STORY_SESSION_MISSING','原剧情不存在，未改变其他剧情');
         if(body?.expected&&(session.recordRevision!==body.expected.recordRevision||
           (session.customCssId||null)!==(body.expected.customCssId||null)||
@@ -4438,67 +4468,60 @@
           throw new ApiError('E_CSS_SELECTION_STALE','原剧情 CSS 已改变，本次取消未覆盖新选择');
         return ok(await saveSession({...session,customCssId:body?.clearSelection?null:session.customCssId,customCssEnabled:false}));
       }
-      m=path.match(/^\/sessions\/([^/]+)\/css-selection$/);if(m&&method==='POST'){
+      m=pathIdMatch(path,/^\/sessions\/([^/]+)\/css-selection$/);if(m&&method==='POST'){
         const id=m[1],result=await window.MimaLocalStore.commitSessionCssSelection(id,body?.expected||{},body?.candidate||{},body?.identity,
           (actual,expectedIdentity)=>cssSelectionIdentity(actual)===expectedIdentity);
         return ok(publishSession(normalizeSession(result.session),result.storeRevision));
       }
-      if(m&&method==='DELETE'){
-        const id=m[1];
-        const change=async()=>{const current=getSession(id);if(!current)throw new ApiError('E_STORY_SESSION_MISSING','该剧情未在当前窗口加载，禁止无版本校验删除');const result=await window.MimaLocalStore.deleteSessionRecord(id,current.recordRevision);
-          if(result.deleted){state={...state,sessions:state.sessions.filter(x=>x.id!==id),sessionOrganizationV1:result.organization,storeRevision:result.storeRevision};}
-          return {deleted:result.deleted};};
-        const task=sessionSaveTail.then(change,change);sessionSaveTail=task.then(()=>{},()=>{});return ok(await task);
-      }
-      m=path.match(/^\/sessions\/([^/]+)\/generation-abandon$/);if(m&&method==='POST')return ok(await abandonUnknownStoryGeneration(m[1],body||{}));
-      m=path.match(/^\/sessions\/([^/]+)\/chat$/);if(m&&method==='POST')return ok(await processStoryTurn(m[1],body?.text,body?.action||'send',signal,body?.temperature,{directorNote:body?.directorNote||'',targetMessageId:body?.targetMessageId||null,expectedRecordRevision:body?.expectedRecordRevision??null,expectedSourceFingerprint:body?.expectedSourceFingerprint||null,diagnosticTurnId:body?.diagnosticTurnId||'',diagnosticTraceId:body?.diagnosticTraceId||'',regenerationContext:body?.regenerationContext||'original',retryParameters:body?.retryParameters==='current'?'current':'original',confirmUnknownTakeover:body?.confirmUnknownTakeover===true},progress));
-      m=path.match(/^\/sessions\/([^/]+)\/recover-reply$/);if(m&&method==='POST')return ok(await restoreRejectedReply(m[1],body||{}));
-      m=path.match(/^\/sessions\/([^/]+)\/recover-stream-ledger$/);if(m&&method==='POST')return ok(await restoreFailedStreamLedger(m[1],body||{}));
-      m=path.match(/^\/sessions\/([^/]+)\/recover-reply\/html-repair$/);if(m&&method==='POST')return ok(await prepareRejectedHtmlRepair(m[1],body?.diagnosticId));
-      m=path.match(/^\/sessions\/([^/]+)\/prompt-preview$/);if(m&&method==='POST'){await refreshPersistedSession(m[1]);return ok(await previewPrompt(m[1],body||{}));}
-      m=path.match(/^\/sessions\/([^/]+)\/opening$/);if(m&&method==='POST')return ok(await addOpening(m[1],body?.content||''));
-      m=path.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)\/html-repair\/inspect$/);if(m&&method==='GET')return ok(await inspectHtmlMessage(m[1],m[2]));
-      m=path.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)\/html-repair\/draft$/);if(m&&method==='GET')return ok(await readHtmlRepairDraft(m[1],m[2]));
-      m=path.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)\/html-repair$/);if(m&&method==='POST')return ok(await prepareHtmlRepair(m[1],m[2]));
-      m=path.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)\/html-repair\/approve$/);if(m&&method==='POST')return ok(await applyHtmlRepair(m[1],m[2],body?.candidateId,body?.dynamicValues||{}));
-      m=path.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)\/html-repair\/ai$/);if(m&&method==='POST')return ok(await prepareAiHtmlRepair(m[1],m[2],body||{}));
-      m=path.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)$/);if(m&&method==='PATCH')return ok(await editMessage(m[1],m[2],body?.content,{truncateAfter:!!body?.truncateAfter}));
+      m=pathIdMatch(path,/^\/sessions\/([^/]+)\/generation-abandon$/);if(m&&method==='POST')return ok(await abandonUnknownStoryGeneration(m[1],body||{}));
+      m=pathIdMatch(path,/^\/sessions\/([^/]+)\/chat$/);if(m&&method==='POST')return ok(await processStoryTurn(m[1],body?.text,body?.action||'send',signal,body?.temperature,{directorNote:body?.directorNote||'',targetMessageId:body?.targetMessageId||null,expectedRecordRevision:body?.expectedRecordRevision??null,expectedSourceFingerprint:body?.expectedSourceFingerprint||null,diagnosticTurnId:body?.diagnosticTurnId||'',diagnosticTraceId:body?.diagnosticTraceId||'',regenerationContext:body?.regenerationContext||'original',retryParameters:body?.retryParameters==='current'?'current':'original',confirmUnknownTakeover:body?.confirmUnknownTakeover===true},progress));
+      m=pathIdMatch(path,/^\/sessions\/([^/]+)\/recover-reply$/);if(m&&method==='POST')return ok(await restoreRejectedReply(m[1],body||{}));
+      m=pathIdMatch(path,/^\/sessions\/([^/]+)\/recover-stream-ledger$/);if(m&&method==='POST')return ok(await restoreFailedStreamLedger(m[1],body||{}));
+      m=pathIdMatch(path,/^\/sessions\/([^/]+)\/recover-reply\/html-repair$/);if(m&&method==='POST')return ok(await prepareRejectedHtmlRepair(m[1],body?.diagnosticId));
+      m=pathIdMatch(path,/^\/sessions\/([^/]+)\/prompt-preview$/);if(m&&method==='POST'){await refreshPersistedSession(m[1]);return ok(await previewPrompt(m[1],body||{}));}
+      m=pathIdMatch(path,/^\/sessions\/([^/]+)\/opening$/);if(m&&method==='POST')return ok(await addOpening(m[1],body?.content||''));
+      m=pathIdMatch(path,/^\/sessions\/([^/]+)\/messages\/([^/]+)\/html-repair\/inspect$/);if(m&&method==='GET')return ok(await inspectHtmlMessage(m[1],m[2]));
+      m=pathIdMatch(path,/^\/sessions\/([^/]+)\/messages\/([^/]+)\/html-repair\/draft$/);if(m&&method==='GET')return ok(await readHtmlRepairDraft(m[1],m[2]));
+      m=pathIdMatch(path,/^\/sessions\/([^/]+)\/messages\/([^/]+)\/html-repair$/);if(m&&method==='POST')return ok(await prepareHtmlRepair(m[1],m[2]));
+      m=pathIdMatch(path,/^\/sessions\/([^/]+)\/messages\/([^/]+)\/html-repair\/approve$/);if(m&&method==='POST')return ok(await applyHtmlRepair(m[1],m[2],body?.candidateId,body?.dynamicValues||{}));
+      m=pathIdMatch(path,/^\/sessions\/([^/]+)\/messages\/([^/]+)\/html-repair\/ai$/);if(m&&method==='POST')return ok(await prepareAiHtmlRepair(m[1],m[2],body||{}));
+      m=pathIdMatch(path,/^\/sessions\/([^/]+)\/messages\/([^/]+)$/);if(m&&method==='PATCH')return ok(await editMessage(m[1],m[2],body?.content,{truncateAfter:!!body?.truncateAfter}));
       if(m&&method==='DELETE')return ok(await deleteMessage(m[1],m[2]));
-      m=path.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)\/versions\/(\d+)\/restore$/);if(m&&method==='POST')return ok(await restoreMessageVersion(m[1],m[2],Number(m[3]),body||{}));
-      m=path.match(/^\/sessions\/([^/]+)\/memory$/);if(m&&method==='PATCH')return ok(await updateManualMemory(m[1],body||{}));
-      m=path.match(/^\/sessions\/([^/]+)\/memory\/plan$/);if(m&&method==='POST')return ok(await previewMemoryPlan(body?.kind==='facts'?'facts':'core',m[1],body?.options||{}));
-      m=path.match(/^\/sessions\/([^/]+)\/memory\/core$/);if(m&&method==='POST')return ok(await runRecordedMemory('core',m[1],body||{},signal,progress));
+      m=pathIdMatch(path,/^\/sessions\/([^/]+)\/messages\/([^/]+)\/versions\/(\d+)\/restore$/);if(m&&method==='POST')return ok(await restoreMessageVersion(m[1],m[2],Number(m[3]),body||{}));
+      m=pathIdMatch(path,/^\/sessions\/([^/]+)\/memory$/);if(m&&method==='PATCH')return ok(await updateManualMemory(m[1],body||{}));
+      m=pathIdMatch(path,/^\/sessions\/([^/]+)\/memory\/plan$/);if(m&&method==='POST')return ok(await previewMemoryPlan(body?.kind==='facts'?'facts':'core',m[1],body?.options||{}));
+      m=pathIdMatch(path,/^\/sessions\/([^/]+)\/memory\/core$/);if(m&&method==='POST')return ok(await runRecordedMemory('core',m[1],body||{},signal,progress));
       if(m&&method==='DELETE')return ok(await deleteCoreMemory(m[1]));
-      m=path.match(/^\/sessions\/([^/]+)\/memory\/rolling\/plan$/);if(m&&method==='POST')return ok(await previewMemoryPlan('rolling',m[1],body||{}));
-      m=path.match(/^\/sessions\/([^/]+)\/memory\/rolling\/run$/);if(m&&method==='POST')return ok(await runRecordedMemory('rolling',m[1],body||{},signal,progress));
-      m=path.match(/^\/sessions\/([^/]+)\/memory\/rolling$/);if(m&&method==='POST'){const result=await window.MimaLocalStore.updateRollingMemory(m[1],body?.action||'revoke');await refreshPersistedSession(m[1]);return ok(getSession(m[1])||result);}
-      m=path.match(/^\/sessions\/([^/]+)\/memory\/facts\/merge-plan$/);if(m&&method==='POST')return ok(await previewFactMerge(m[1],{...(body||{}),planOnly:true},signal,null));
-      m=path.match(/^\/sessions\/([^/]+)\/memory\/facts\/merge-preview$/);if(m&&method==='POST')return ok(await previewFactMerge(m[1],body||{},signal,progress));
-      m=path.match(/^\/sessions\/([^/]+)\/memory\/facts\/merge-commit$/);if(m&&method==='POST')return ok(await commitFactMerge(m[1],body||{}));
-      m=path.match(/^\/sessions\/([^/]+)\/memory\/facts\/merge-undo$/);if(m&&method==='POST')return ok(await undoFactMerge(m[1]));
-      m=path.match(/^\/sessions\/([^/]+)\/memory\/facts$/);if(m&&method==='POST')return ok(await runRecordedMemory('facts',m[1],body||{},signal,progress));
+      m=pathIdMatch(path,/^\/sessions\/([^/]+)\/memory\/rolling\/plan$/);if(m&&method==='POST')return ok(await previewMemoryPlan('rolling',m[1],body||{}));
+      m=pathIdMatch(path,/^\/sessions\/([^/]+)\/memory\/rolling\/run$/);if(m&&method==='POST')return ok(await runRecordedMemory('rolling',m[1],body||{},signal,progress));
+      m=pathIdMatch(path,/^\/sessions\/([^/]+)\/memory\/rolling$/);if(m&&method==='POST'){const result=await window.MimaLocalStore.updateRollingMemory(m[1],body?.action||'revoke');await refreshPersistedSession(m[1]);return ok(getSession(m[1])||result);}
+      m=pathIdMatch(path,/^\/sessions\/([^/]+)\/memory\/facts\/merge-plan$/);if(m&&method==='POST')return ok(await previewFactMerge(m[1],{...(body||{}),planOnly:true},signal,null));
+      m=pathIdMatch(path,/^\/sessions\/([^/]+)\/memory\/facts\/merge-preview$/);if(m&&method==='POST')return ok(await previewFactMerge(m[1],body||{},signal,progress));
+      m=pathIdMatch(path,/^\/sessions\/([^/]+)\/memory\/facts\/merge-commit$/);if(m&&method==='POST')return ok(await commitFactMerge(m[1],body||{}));
+      m=pathIdMatch(path,/^\/sessions\/([^/]+)\/memory\/facts\/merge-undo$/);if(m&&method==='POST')return ok(await undoFactMerge(m[1]));
+      m=pathIdMatch(path,/^\/sessions\/([^/]+)\/memory\/facts$/);if(m&&method==='POST')return ok(await runRecordedMemory('facts',m[1],body||{},signal,progress));
       if(m&&method==='DELETE')return ok(await deleteFactMemory(m[1]));
-      m=path.match(/^\/sessions\/([^/]+)\/memory\/facts\/([^/]+)$/);if(m&&method==='PATCH')return ok(await editFactMemory(m[1],m[2],body?.content));
-      m=path.match(/^\/sessions\/([^/]+)\/memory\/facts\/([^/]+)$/);if(m&&method==='DELETE')return ok(await deleteFactMemory(m[1],m[2]));
+      m=pathIdMatch(path,/^\/sessions\/([^/]+)\/memory\/facts\/([^/]+)$/);if(m&&method==='PATCH')return ok(await editFactMemory(m[1],m[2],body?.content));
+      m=pathIdMatch(path,/^\/sessions\/([^/]+)\/memory\/facts\/([^/]+)$/);if(m&&method==='DELETE')return ok(await deleteFactMemory(m[1],m[2]));
 
       if(path==='/resources/bulk-delete'&&method==='POST')return ok(await bulkDeleteCanonical(body?.kind,body||{}));
       if(path==='/masks'&&method==='GET')return ok(state.masks);
       if(path==='/masks'&&method==='POST')return ok(await saveMask(body||{}));
-      m=path.match(/^\/masks\/([^/]+)$/);if(m&&method==='PATCH'){const old=getMask(m[1]);return old?ok(await saveMask({...old,...body,id:m[1]})):fail('未找到面具');}
+      m=resourcePathMatch(path,/^\/masks\/([^/]+)$/);if(m&&method==='PATCH'){const old=getMask(m[1]);return old?ok(await saveMask({...old,...body,id:m[1]})):fail('未找到面具');}
       if(m&&method==='DELETE')return ok(await deleteResource('masks',m[1],(db,id)=>{for(const s of db.sessions){if(s.loadedCharMaskId===id||s.loadedUserMaskId===id){if(s.loadedCharMaskId===id)s.loadedCharMaskId=null;if(s.loadedUserMaskId===id)s.loadedUserMaskId=null;s.recordRevision++;}}for(const project of db.novelProjects){let changed=false;if(project.macroUserMaskId===id){project.macroUserMaskId=null;changed=true;}if(project.macroCharMaskId===id){project.macroCharMaskId=null;changed=true;}if(changed)project.recordRevision=(Number(project.recordRevision)||0)+1;}}));
 
-      m=path.match(/^\/presets\/([^/]+)\/latest$/);
+      m=resourcePathMatch(path,/^\/presets\/([^/]+)\/latest$/);
       if(m&&method==='GET'){await refreshPersistedResources();return ok(getPreset(m[1])||null);}
       if(path==='/presets'&&method==='GET')return ok(state.presets);
       if(path==='/presets'&&method==='POST')return ok(await savePreset(body||{},null));
-      m=path.match(/^\/presets\/([^/]+)$/);if(m&&method==='PATCH'){const old=getPreset(m[1]);return old?ok(await savePreset({...old,...body,id:m[1]},body?.expectedToken)):fail('未找到预设');}
+      m=resourcePathMatch(path,/^\/presets\/([^/]+)$/);if(m&&method==='PATCH'){const old=getPreset(m[1]);return old?ok(await savePreset({...old,...body,id:m[1]},body?.expectedToken)):fail('未找到预设');}
       if(m&&method==='DELETE')return ok(await deleteResource('presets',m[1],(db,id)=>{for(const s of db.sessions)if(s.presetIds.includes(id)){s.presetIds=s.presetIds.filter(x=>x!==id);s.recordRevision++;}for(const p of db.novelProjects)if(p.presetIds.includes(id)){p.presetIds=p.presetIds.filter(x=>x!==id);p.recordRevision++;}}));
 
       m=path.match(/^\/resource-categories\/(css|presets|worldbook)$/);if(m&&method==='GET')return ok({records:categoryView(state,m[1]),storeRevision:state.storeRevision});
       if(m&&method==='POST')return ok(await changeCategories(m[1],body||{}));
       if(path==='/css-presets'&&method==='GET')return ok(state.cssPresets);
       if(path==='/css-presets'&&method==='POST')return ok(await saveCssPreset(body||{}));
-      m=path.match(/^\/css-presets\/([^/]+)$/);if(m&&method==='PATCH'){const old=getCssPreset(m[1]);return old?ok(await saveCssPreset({...old,...body,id:m[1]})):fail('未找到 CSS Preset');}
+      m=resourcePathMatch(path,/^\/css-presets\/([^/]+)$/);if(m&&method==='PATCH'){const old=getCssPreset(m[1]);return old?ok(await saveCssPreset({...old,...body,id:m[1]})):fail('未找到 CSS Preset');}
       if(m&&method==='DELETE'){
         const receipt=await deleteResource('cssPresets',m[1],(db,id)=>{if(db.themeSettings?.globalCssPresetId===id)db.themeSettings={...db.themeSettings,globalCssPresetId:null,globalCssEnabled:false};for(const sess of db.sessions){if(sess.customCssId===id){sess.customCssId=null;sess.customCssEnabled=false;sess.recordRevision++;}}for(const p of db.novelProjects){if(p.appearance?.customCssId===id){p.appearance.customCssId=null;p.appearance.customCssEnabled=false;p.recordRevision++;}}});
         if(receipt.deleted)try{window.MimaThemeEngine?.apply?.(state.themeSettings);}catch(e){console.error('E_THEME_APPLY_AFTER_CSS_DELETE',e);}
@@ -4509,27 +4532,30 @@
       if(path==='/play-tools'&&method==='GET'){state=normalizeState(await window.MimaLocalStore.loadState());return ok({theaterCards:clone(state.theaterCards),quickCommands:clone(state.quickCommands)});}
       if(path==='/play-tools/import'&&method==='POST')return ok(await importPlayResources(body));
       const playRoute=path.match(/^\/(theater-cards|quick-commands)(?:\/([^/]+))?$/);
-      if(playRoute){const table=playRoute[1]==='theater-cards'?'theaterCards':'quickCommands',id=playRoute[2];
+      if(playRoute){const table=playRoute[1]==='theater-cards'?'theaterCards':'quickCommands',id=playRoute[2]?decodeResourcePathId(playRoute[2]):null;
         if(!id&&method==='POST')return ok(await savePlayResource(table,body||{}));
         if(id&&method==='PATCH')return ok(await savePlayResource(table,body||{},id));
         if(id&&method==='DELETE'){
-          let operationId=null;
-          if(table==='theaterCards'){
-            operationId=makeId('theater_unlink');
-            await window.MimaLocalStore.putPlayToolLocal('unlink-job:'+operationId,{operationId,id,phase:'delete-requested',affected:[],createdAt:nowIso(),error:''});
-          }
           const receipt=await deleteResource(table,id,table==='theaterCards'?(db,deleted)=>{for(const session of db.sessions)if(arr(session.theaterCardIds).includes(deleted)){session.theaterCardIds=session.theaterCardIds.filter(x=>x!==deleted);session.recordRevision=(Number(session.recordRevision)||0)+1;session.updatedAt=nowIso();}}:null);
-          return ok({...receipt,...(operationId?{operationId,compatCleanup:'pending'}:{})});
+          if(receipt.deleted!==true)return ok(receipt);
+          if(table==='theaterCards'){
+            const operationId=makeId('theater_unlink');
+            try{
+              await window.MimaLocalStore.putPlayToolLocal('unlink-job:'+operationId,{operationId,id,phase:'delete-committed',affected:[],createdAt:nowIso(),error:''});
+              return ok({...receipt,operationId,compatCleanup:'pending'});
+            }catch(e){console.error('E_THEATER_UNLINK_JOB_AFTER_DELETE',e);return ok({...receipt,compatCleanup:'manual-reconciliation-required'});}
+          }
+          return ok(receipt);
         }
       }
       if(path==='/regex-packs'&&method==='POST')return ok(await saveRegexPack(body||{}));
-      m=path.match(/^\/regex-packs\/([^/]+)$/);if(m&&method==='PATCH'){const old=getRegexPack(m[1]);return old?ok(await saveRegexPack({...old,...body,id:m[1]})):fail('未找到正则包');}
+      m=resourcePathMatch(path,/^\/regex-packs\/([^/]+)$/);if(m&&method==='PATCH'){const old=getRegexPack(m[1]);return old?ok(await saveRegexPack({...old,...body,id:m[1]})):fail('未找到正则包');}
       if(m&&method==='DELETE')return ok(await deleteResource('regexPacks',m[1],(db,id)=>{for(const sess of db.sessions)if(sess.regexPackIds.includes(id)){sess.regexPackIds=sess.regexPackIds.filter(x=>x!==id);sess.recordRevision++;}}));
 
       if(path==='/worldbooks'&&method==='GET')return ok(state.worldbooks);
       if(path==='/worldbooks'&&method==='POST')return ok(await saveWorldbook(body||{}));
-      m=path.match(/^\/worldbooks\/([^/]+)\/canonical-view$/);if(m&&method==='GET'){const persisted=normalizeState(await window.MimaLocalStore.loadState());const book=persisted.worldbooks.find(w=>w.id===m[1]);return book?ok(clone(book)):fail('已保存世界书未找到',{code:'E_WORLDBOOK_CANONICAL_MISSING'});}
-      m=path.match(/^\/worldbooks\/([^/]+)$/);if(m&&method==='GET'){const w=getWorldbook(m[1]);return w?ok(w):fail('未找到世界书');}
+      m=resourcePathMatch(path,/^\/worldbooks\/([^/]+)\/canonical-view$/);if(m&&method==='GET'){const persisted=normalizeState(await window.MimaLocalStore.loadState());const book=persisted.worldbooks.find(w=>w.id===m[1]);return book?ok(clone(book)):fail('已保存世界书未找到',{code:'E_WORLDBOOK_CANONICAL_MISSING'});}
+      m=resourcePathMatch(path,/^\/worldbooks\/([^/]+)$/);if(m&&method==='GET'){const w=getWorldbook(m[1]);return w?ok(w):fail('未找到世界书');}
       if(m&&method==='PATCH'){const old=getWorldbook(m[1]);return old?ok(await saveWorldbook({...old,...body,id:m[1]})):fail('未找到世界书');}
       if(m&&method==='DELETE')return ok(await deleteResource('worldbooks',m[1],(db,id)=>{for(const s of db.sessions)if(s.worldbookIds.includes(id)){s.worldbookIds=s.worldbookIds.filter(x=>x!==id);s.recordRevision++;}for(const p of db.novelProjects)if(p.worldbookIds.includes(id)){p.worldbookIds=p.worldbookIds.filter(x=>x!==id);p.recordRevision++;}}));
       return fail(`Standalone 未实现路径：${method} ${path}`);
