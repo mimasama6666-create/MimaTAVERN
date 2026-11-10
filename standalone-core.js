@@ -880,6 +880,53 @@
   async function savePreset(p,expectedToken){return commitResource('presets',normalizePreset({...p,updatedAt:nowIso()}),p.updatedAt,expectedToken);}
   async function saveWorldbook(w){return commitResource('worldbooks',normalizeWorldbook({...w,updatedAt:nowIso()}),w.updatedAt);}
   async function saveCssPreset(p){return commitResource('cssPresets',normalizeCssPreset({...p,updatedAt:nowIso()}),p.updatedAt);}
+  // Import every selected CSS in ONE appearance transaction: no partial saves,
+  // implicit application or rewriting existing presets when a file name repeats.
+  async function importCssPresetsBatch(body={}){
+    const entries=body.items,addCategories=body.newCategories||[];
+    const expected=body.expectedAppearanceRevision;
+    if(!Number.isSafeInteger(expected)||expected<0)throw new ApiError('E_CSS_IMPORT_STALE','CSS 库版本尚未确认，请重新选择文件');
+    if(!Array.isArray(entries)||!entries.length||!Array.isArray(addCategories))
+      throw new ApiError('E_CSS_IMPORT_ITEMS','没有可导入的 CSS 文件');
+    const allowedScopes=new Set(['app','story','global','novel','assistant']);
+    const prepared=entries.map((entry,index)=>{
+      if(!entry||typeof entry!=='object'||typeof entry.css!=='string'||typeof entry.name!=='string'||!entry.name.trim()||
+        !allowedScopes.has(entry.scope)||typeof entry.category!=='string'||!entry.category.trim()||entry.category.trim().length>60)
+        throw new ApiError('E_CSS_IMPORT_ITEMS',`第 ${index+1} 份 CSS 的名称、内容或分类不合法，整批未保存`);
+      const scope=entry.scope;
+      return {name:entry.name.trim(),css:entry.css,category:entry.category.trim(),scope,
+        surface:scope==='app'?'global':scope==='novel'?'novel':scope==='assistant'?'assistant':'chat'};
+    });
+    return commitAppearanceEdit(stored=>{
+      // This comparison executes inside the same readwrite IndexedDB transaction
+      // that appends all presets and registers their new categories.
+      if(stored.storeRevision!==expected)
+        throw new ApiError('E_CSS_IMPORT_STALE','导入期间 CSS 库已在其他窗口变化；未保存任何文件，请重新选择');
+      const categories=categoryView(stored,'css').map(c=>c.name);
+      const names=new Set(categories.map(name=>name.toLocaleLowerCase()));
+      for(const input of addCategories){
+        if(typeof input!=='string'||!input.trim()||input.trim().length>60||input.trim()==='未分类')
+          throw new ApiError('E_CATEGORY_NAME','新分类名称必须为 1～60 字且不可使用「未分类」');
+        const name=input.trim(),folded=name.toLocaleLowerCase();
+        if(names.has(folded))throw new ApiError('E_CATEGORY_DUPLICATE','新分类已经存在或重复：'+name);
+        names.add(folded);
+        stored.cssCategoriesV1.push({id:makeId('category'),name,createdAt:nowIso()});
+      }
+      const permitted=new Set([...categoryView(stored,'css').map(c=>c.name),'未分类']);
+      if(prepared.some(entry=>!permitted.has(entry.category)))
+        throw new ApiError('E_CATEGORY_MISSING','部分目标分类已变化，整批 CSS 未保存');
+      const occupied=new Set(stored.cssPresets.map(item=>item.id));
+      const saved=[];
+      for(const input of prepared){
+        const preset=normalizeCssPreset({...input,createdAt:nowIso(),updatedAt:nowIso(),favorite:false});
+        if(occupied.has(preset.id))throw new ApiError('E_CSS_IMPORT_ID','新 CSS ID 冲突，整批未保存');
+        occupied.add(preset.id);stored.cssPresets.push(preset);
+        saved.push({id:preset.id,name:preset.name,category:preset.category,scope:preset.scope});
+      }
+      // Never change themeSettings, global/session pointers or existing CSS bytes.
+      return {count:saved.length,items:saved};
+    });
+  }
   async function publishAtelierCss(body){
     if(!body||!body.preset||typeof body.preset!=='object')throw Error('工坊正式发布缺少 CSS 快照');
     const input=body.preset;
@@ -4519,6 +4566,7 @@
 
       m=path.match(/^\/resource-categories\/(css|presets|worldbook)$/);if(m&&method==='GET')return ok({records:categoryView(state,m[1]),storeRevision:state.storeRevision});
       if(m&&method==='POST')return ok(await changeCategories(m[1],body||{}));
+      if(path==='/css-presets/import-batch'&&method==='POST')return ok(await importCssPresetsBatch(body||{}));
       if(path==='/css-presets'&&method==='GET')return ok(state.cssPresets);
       if(path==='/css-presets'&&method==='POST')return ok(await saveCssPreset(body||{}));
       m=resourcePathMatch(path,/^\/css-presets\/([^/]+)$/);if(m&&method==='PATCH'){const old=getCssPreset(m[1]);return old?ok(await saveCssPreset({...old,...body,id:m[1]})):fail('未找到 CSS Preset');}

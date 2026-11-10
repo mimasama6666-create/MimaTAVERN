@@ -3657,7 +3657,7 @@ ${typographyControlHtml('字间距','letterSpacing',-.04,.18,.005,typo.letterSpa
 ${typographyControlHtml('首行缩进','firstLineIndent',0,4,.25,typo.firstLineIndent,'em')}
 </div><div class="typography-indent-hint"><span>中文小说推荐：<strong>2em</strong>（约两个汉字宽）</span><div class="typography-quick-buttons"><button class="tool-mini" onclick="updateStoryTypography('firstLineIndent',0)">0</button><button class="tool-mini" onclick="updateStoryTypography('firstLineIndent',1)">1em</button><button class="tool-mini" onclick="updateStoryTypography('firstLineIndent',2)">2em</button><button class="tool-mini" onclick="updateStoryTypography('firstLineIndent',3)">3em</button></div></div><div class="toolbar typography-actions"><button class="ghost-btn" onclick="resetStoryTypography()">恢复默认排版</button></div></section>
 <section class="settings-section mima-appearance-group"><details id="mima-remote-fonts" class="mima-appearance-fold" ${mimaAppearanceFoldAttr('remote-fonts',false)} ontoggle="mimaAppearanceFoldChanged('remote-fonts',this)"><summary>🔗 网络字体管理 <span class="mima-fold-hint">${MimaFontManager.urlFonts().length} 款 · 添加 / 批量导入 / 下载离线</span></summary><div class="mima-appearance-fold-body"><p class="helper">字体文件链接可点「下载离线」，校验成功后保存到本机字体库；CSS（例如 Google Fonts）链接仍在线加载，想离线使用请导入完整字体文件。离线副本不占用临时 HTTP 缓存，普通清理缓存通常不影响它；但清除网站数据仍可能删除 IndexedDB。为了真正防丢，请到「数据备份」勾选字体文件，导出完整备份 JSON 到「文件」App。</p><div class="toolbar" role="group" aria-label="网络字体添加方式" style="display:flex;flex-wrap:wrap;gap:9px;margin:12px 0 14px"><button type="button" id="url-font-mode-single" class="primary-btn" aria-pressed="true" style="min-height:44px" onclick="setUrlFontImportMode('single')">单条添加</button><button type="button" id="url-font-mode-batch" class="ghost-btn" aria-pressed="false" style="min-height:44px" onclick="setUrlFontImportMode('batch')">＋ 批量导入字体链接</button></div><div id="url-font-single-panel" class="form-grid"><div><label class="form-label">收藏名称</label><input id="url-font-name" class="field" placeholder="例如：我的日文字体"></div><div><label class="form-label">字体族名（Google Fonts CSS 需要与其声明一致）</label><input id="url-font-family" class="field" placeholder="例如：Noto Sans JP"></div><div class="form-full"><label class="form-label">HTTPS 字体文件或 CSS 地址</label><input id="url-font-address" type="url" class="field" inputmode="url" placeholder="https://…/font.woff2"></div><div class="form-full"><button type="button" class="ghost-btn" onclick="saveUrlFont()">＋ 保存到字体库（不启用）</button></div></div><div id="url-font-batch-panel" class="mima-font-batch" style="display:none;margin:13px 0;padding:12px;border:1px solid var(--line);border-radius:13px"><p class="helper">一次粘贴多条 HTTPS 链接（每行一条，也支持空格分隔）。字体文件自动命名为「自定义字体1、2……」并生成 CSS；Google Fonts 的 CSS 会自动识别字体族名，其他 CSS 地址需允许跨站读取才能识别。链接只收藏，选择时才加载，不更改当前字体。最多收藏 100 个。</p><label class="form-label" for="url-font-batch-links">字体链接（可一次粘贴多条）</label><textarea id="url-font-batch-links" class="field textarea mono" rows="5" style="min-height:110px" spellcheck="false" placeholder="https://example.com/font1.woff2&#10;https://example.com/font2.ttf&#10;https://fonts.googleapis.com/css2?family=Noto+Sans+JP&amp;display=swap"></textarea><div class="toolbar" style="margin-top:9px"><button id="url-font-batch-import" type="button" class="primary-btn" style="min-height:56px" onclick="batchImportUrlFonts()">＋ 批量导入到字体库</button></div><div id="url-font-batch-status" class="row-sub" role="status" aria-live="polite" style="white-space:pre-wrap;overflow-wrap:anywhere;margin-top:8px"></div></div><div class="toolbar"><button type="button" class="ghost-btn" onclick="exportUrlFontRaw()">⇩ 导出链接字体收藏原始数据（救援）</button></div><div id="url-font-list" class="mima-url-font-list">${mimaAppearanceFoldOpen('remote-fonts',false)?urlFontItemsHtml():''}</div><details class="mima-legacy-font"><summary>旧版单链接字体（兼容保留）</summary><div class="form-grid"><div><label class="form-label">旧 URL</label><input id="legacy-font-url" class="field" value="${escapeHtml(localStorage.getItem(LEGACY_FONT_URL_KEY)||'')}"></div><div><label class="form-label">字体族名</label><input id="legacy-font-family" class="field" value="${escapeHtml(localStorage.getItem(LEGACY_FONT_FAMILY_KEY)||'')}"></div><div class="form-full"><button type="button" class="ghost-btn" onclick="applyLegacyUrlFont()">应用旧版链接</button></div></div></details></div></details></section>
-${window.MimaChatWallpaper?.markup?.()||''}<section class="settings-section mima-appearance-group mima-css-manager" id="mima-css-presets"><h3>🎨 CSS 样式管理 <span class="mima-fold-hint">${cssPresets.length} 款 · 分类可单独展开或收起</span></h3><p class="helper">支持直接粘贴或导入<strong>纯 CSS</strong>，不需要手动包 &lt;style&gt;。CSS 可以只美化模型输出的自定义 HTML，也可以覆盖剧情区域，或选择“咪嘛馆全局”直接二改整个 UI（界面）。模型输出本身仍经过 Safe HTML sanitizer（安全 HTML 清洗器），不会执行 &lt;script&gt; / &lt;style&gt;。</p><div id="css-current-status" class="row-sub" style="margin:8px 0 12px">当前聊天：${currentCssPreset()?escapeHtml(currentCssPreset().name):'未挂载'} · ${currentSessionData?.customCssEnabled===false?'已禁用':'已启用'}</div><div class="mima-css-list-head"><strong>已保存的 CSS · 点击分类标题展开或收起</strong><span class="row-sub">可按分类整理，不用逐张滑动</span></div><div class="toolbar mima-css-list-quick-actions"><button type="button" class="primary-btn" onclick="openCssPresetEditor()">＋ 新建 CSS</button><button type="button" class="ghost-btn" onclick="chooseCssImport()">⇧ 导入 CSS</button></div><div id="css-library-toolbar">${mimaLibraryToolbar('css',cssPresets)}</div><div id="css-preset-list" class="mima-css-group-list" style="margin-top:12px"></div><div class="toolbar css-default-tools"><button class="ghost-btn" onclick="copyDefaultCss()">⧉ 一键复制默认 CSS（样式）</button><button class="ghost-btn" onclick="exportDefaultCss()">⇩ 导出默认 CSS（样式）</button><button class="ghost-btn" onclick="forkDefaultCss()">✦ 默认 CSS 二改</button><button class="ghost-btn" onclick="MimaAssistantStudio.open('css')">✦ CSS 美化助手</button><button class="danger-btn" onclick="emergencyDisableCss()">🚑 临时禁用自定义 CSS（样式）</button></div><div class="toolbar"><button class="ghost-btn" onclick="stopAtelierAndRestoreCss()">停用工坊全局主题（保留旧 CSS）</button></div><div class="row-sub css-scope-note">Scope（作用域）：自定义 HTML / Chat / Novel / Assistant / 咪嘛馆全局。Novel 与 Assistant 使用稳定公开 selector；全局 CSS 仍拥有最高覆盖能力。</div><div id="css-recovery-status">${cssRecoveryMarkup()}</div><div id="css-session-actions" class="toolbar">${currentSessionData?.customCssId?'<button class="ghost-btn" onclick="unapplyCss()">取消应用</button>':''}${currentSessionData?.customCssId&&currentSessionData?.customCssEnabled===false?'<button class="ghost-btn" onclick="reenableCss()">重新启用</button>':''}</div><button class="ghost-btn" onclick="unapplyGlobalCssPreset()">取消全局 CSS</button></section>
+${window.MimaChatWallpaper?.markup?.()||''}<section class="settings-section mima-appearance-group mima-css-manager" id="mima-css-presets"><h3>🎨 CSS 样式管理 <span class="mima-fold-hint">${cssPresets.length} 款 · 分类可单独展开或收起</span></h3><p class="helper">支持直接粘贴或导入<strong>纯 CSS</strong>，不需要手动包 &lt;style&gt;。CSS 可以只美化模型输出的自定义 HTML，也可以覆盖剧情区域，或选择“咪嘛馆全局”直接二改整个 UI（界面）。模型输出本身仍经过 Safe HTML sanitizer（安全 HTML 清洗器），不会执行 &lt;script&gt; / &lt;style&gt;。</p><div id="css-current-status" class="row-sub" style="margin:8px 0 12px">当前聊天：${currentCssPreset()?escapeHtml(currentCssPreset().name):'未挂载'} · ${currentSessionData?.customCssEnabled===false?'已禁用':'已启用'}</div><div class="mima-css-list-head"><strong>已保存的 CSS · 点击分类标题展开或收起</strong><span class="row-sub">可按分类整理，不用逐张滑动</span></div><div class="toolbar mima-css-list-quick-actions"><button type="button" class="primary-btn" onclick="openCssPresetEditor()">＋ 新建 CSS</button><button type="button" class="ghost-btn" onclick="chooseCssImport()">⇧ 批量导入 CSS</button></div><div id="css-library-toolbar">${mimaLibraryToolbar('css',cssPresets)}</div><div id="css-preset-list" class="mima-css-group-list" style="margin-top:12px"></div><div class="toolbar css-default-tools"><button class="ghost-btn" onclick="copyDefaultCss()">⧉ 一键复制默认 CSS（样式）</button><button class="ghost-btn" onclick="exportDefaultCss()">⇩ 导出默认 CSS（样式）</button><button class="ghost-btn" onclick="forkDefaultCss()">✦ 默认 CSS 二改</button><button class="ghost-btn" onclick="MimaAssistantStudio.open('css')">✦ CSS 美化助手</button><button class="danger-btn" onclick="emergencyDisableCss()">🚑 临时禁用自定义 CSS（样式）</button></div><div class="toolbar"><button class="ghost-btn" onclick="stopAtelierAndRestoreCss()">停用工坊全局主题（保留旧 CSS）</button></div><div class="row-sub css-scope-note">Scope（作用域）：自定义 HTML / Chat / Novel / Assistant / 咪嘛馆全局。Novel 与 Assistant 使用稳定公开 selector；全局 CSS 仍拥有最高覆盖能力。</div><div id="css-recovery-status">${cssRecoveryMarkup()}</div><div id="css-session-actions" class="toolbar">${currentSessionData?.customCssId?'<button class="ghost-btn" onclick="unapplyCss()">取消应用</button>':''}${currentSessionData?.customCssId&&currentSessionData?.customCssEnabled===false?'<button class="ghost-btn" onclick="reenableCss()">重新启用</button>':''}</div><button class="ghost-btn" onclick="unapplyGlobalCssPreset()">取消全局 CSS</button></section>
 <section class="settings-section mima-appearance-display" id="mima-appearance-display"><h3>显示与 Safe HTML</h3><label class="check-row"><input id="render-html-setting" type="checkbox" ${currentSessionData?.renderMode==='safe_html'?'checked':''} onchange="toggleSafeHtml(this.checked)"> 允许 Safe HTML（安全 HTML）状态栏渲染</label><p class="helper">开启后会保留正文原有换行与空格，并支持 &lt;system&gt;、&lt;details&gt;、&lt;summary&gt;、区块、表格等安全结构，方便 CSS 状态栏直接生效。</p></section>`;mimaCompactAppearance(box);applyMimaUiDensity();qs('font-ui-select').value=ui;qs('font-story-select').value=story;stopUrlFontPreview();stopVisibleFontPreviews();applyFontWeightPrefs();updateFontApplicationStatus();renderFontBundleStatus();const root=qs('font-list');if(fontReadError){stopVisibleFontPreviews();root.textContent='字体库读取失败，原字体和选择均未更改：'+(fontReadError.message||String(fontReadError));}
 else if(needsFontInventory&&mimaAppearanceFoldOpen('local-fonts',false)){renderLocalFontRows(root,fontRecords);root.dataset.loaded='1';}
 if(needsFontInventory)box.dataset.fontInventoryLoaded='1';
@@ -3976,7 +3976,7 @@ function renderCssPresetLibrary(root){
  const globalId=theme?.globalCssEnabled===false?null:theme?.globalCssPresetId;
  const list=mimaVisibleResources('css',cssPresets);
  root.replaceChildren();
- if(!list.length){root.innerHTML='<div class="mima-category-empty"><p class="row-sub">当前没有符合条件的 CSS。可以取消筛选、新建分类或导入样式。</p><div class="toolbar"><button type="button" class="primary-btn" onclick="openCssPresetEditor()">＋ 新建 CSS</button><button type="button" class="ghost-btn" onclick="chooseCssImport()">⇧ 导入 CSS</button></div></div>';return;}
+ if(!list.length){root.innerHTML='<div class="mima-category-empty"><p class="row-sub">当前没有符合条件的 CSS。可以取消筛选、新建分类或导入样式。</p><div class="toolbar"><button type="button" class="primary-btn" onclick="openCssPresetEditor()">＋ 新建 CSS</button><button type="button" class="ghost-btn" onclick="chooseCssImport()">⇧ 批量导入 CSS</button></div></div>';return;}
  list.sort((a,b)=>Number(!!b.favorite)-Number(!!a.favorite)||String(a.name).localeCompare(String(b.name),'zh'));
  const groups=new Map();for(const p of list){const name=String(p.category||'未分类');if(!groups.has(name))groups.set(name,[]);groups.get(name).push(p);}
  const searching=!!mimaLibraryView.css.search.trim();
@@ -4224,14 +4224,95 @@ async function emergencyDisableCss(){
 async function reenableCss(){const id=currentSessionData?.customCssId;if(!id)return;const result=await applyCssPreset(id);if(settingsTab==='appearance'&&isSettingsOpen())await renderSettings();return result;}
 async function duplicateCssPreset(id){const p=cssPresets.find(x=>x.id===id);if(!p)return;const res=await fetchStory('/css-presets','POST',{name:`${p.name} · 副本`,css:p.css,scope:p.scope,surface:p.surface,category:p.category,atelierReleaseKey:p.atelierReleaseKey||'',favorite:false});if(res.success){await reloadCssLibrary();refreshCssLibraryView();toast('CSS Preset（CSS 预设）已复制')}else toast(res.msg||'复制失败')}
 async function deleteCssPreset(id){if(!confirm('删除这个 CSS Preset（CSS 预设）？挂载它的 Session（剧情会话）会自动取消应用。'))return;const res=await fetchStory(`/css-presets/${encodeURIComponent(id)}`,'DELETE');if(!confirmedSingleDelete(res,id))return toast(res.msg||'CSS 删除未确认，请刷新列表');closeEditor();await reloadCssLibrary();if(currentSessionId){const fresh=await fetchStory('/sessions/'+encodeURIComponent(currentSessionId));if(fresh?.success)currentSessionData=fresh.data;else return toast('CSS 已删除；当前剧情状态重新读取失败，请重新打开剧情');}await applyCustomCss();refreshCssLibraryView()}
-function chooseCssImport(){qs('css-file-input').value='';qs('css-file-input').click()}
-async function importCssFile(file){if(!file)return;
- const picked=prompt('导入 CSS 作用域：1=咪嘛馆全局，2=Novel Studio，3=剧情正文，4=Assistant Studio；取消不导入。','1');
- if(picked===null)return;const scope=({'1':'app','2':'novel','3':'story','4':'assistant'})[String(picked).trim()];if(!scope)return toast('请输入 1 / 2 / 3 / 4');
- const category=await mimaChooseCategory('css',true);if(category===null)return;
- try{const css=stripEmbeddedStyleTags(await file.text());const res=await fetchStory('/css-presets','POST',{name:file.name.replace(/\.css$/i,'')||'导入 CSS',css,scope,category,surface:scope==='app'?'global':scope==='novel'?'novel':scope==='assistant'?'assistant':'chat'});
-  if(!res.success)throw Error(res.msg||'导入失败');await reloadCssLibrary();refreshCssLibraryView();toast('CSS 已保存到「'+category+'」，未启用；需要使用时点击“应用”');
- }catch(e){toast('CSS 导入失败：'+e.message);}
+function chooseCssImport(){const input=qs('css-file-input');input.value='';input.click();}
+function importCssFiles(fileList){
+ const files=Array.from(fileList||[]).filter(Boolean);if(!files.length)return;
+ const previous=document.querySelector('dialog.mima-css-batch-import[open]');if(previous)return toast('请先完成或取消当前批量导入');
+ const revision=MimaStandalone.getAppearanceRevision();
+ if(!Number.isSafeInteger(revision)||revision<0)return toast('CSS 库修订号未核实，请重新打开外观设置');
+ const scopeOptions=[['app','咪嘛馆全局'],['global','剧情聊天区域'],['story','剧情正文 HTML'],['novel','小说工作室'],['assistant','助手工作室']];
+ const scopeNames=new Map(scopeOptions);
+ const existing=[...new Set(['未分类',...mimaCategoryEntries('css').map(c=>c.name)])];
+ const stagedCategories=[];
+ const rows=files.map(file=>({file,selected:true,scope:'app',category:'未分类'}));
+ const dialog=document.createElement('dialog');dialog.className='mima-css-batch-import';dialog.setAttribute('aria-label','批量导入 CSS 主题');
+ const title=document.createElement('h3');title.textContent=`批量导入 CSS · ${files.length} 份`;
+ const explanation=document.createElement('p');explanation.className='row-sub';
+ explanation.textContent='勾选只用于批量分组，可分几次给不同文件归类；最后会保存本次选取的全部文件，不必重新全选。不会自动启用任何主题。';
+ const controls=document.createElement('div');controls.className='mima-css-import-controls';
+ const makeLabel=(title,control)=>{const label=document.createElement('label');const text=document.createElement('span');text.textContent=title;label.append(text,control);return label;};
+ const categorySelect=document.createElement('select');categorySelect.className='field';categorySelect.setAttribute('aria-label','要批量分配的分类');
+ const addCategory=name=>{const option=new Option(name,name);categorySelect.add(option);categorySelect.value=name;};
+ existing.forEach(addCategory);categorySelect.value='未分类';
+ const scopeSelect=document.createElement('select');scopeSelect.className='field';scopeSelect.setAttribute('aria-label','要批量分配的作用域');
+ for(const [value,label] of scopeOptions)scopeSelect.add(new Option(label,value));
+ const applyGroup=document.createElement('button');applyGroup.type='button';applyGroup.className='primary-btn';applyGroup.textContent='设置到所选文件';
+ const newCategory=document.createElement('button');newCategory.type='button';newCategory.className='ghost-btn';newCategory.textContent='＋ 新建分类';
+ controls.append(makeLabel('目标分类',categorySelect),newCategory,makeLabel('作用域',scopeSelect),applyGroup);
+ const selection=document.createElement('div');selection.className='mima-css-import-select-actions';
+ const selectAll=document.createElement('button');selectAll.type='button';selectAll.className='ghost-btn';selectAll.textContent='全选';
+ const clear=document.createElement('button');clear.type='button';clear.className='ghost-btn';clear.textContent='清空选择';
+ const count=document.createElement('span');count.className='row-sub';count.setAttribute('role','status');
+ selection.append(selectAll,clear,count);
+ const list=document.createElement('div');list.className='mima-css-import-file-list';list.setAttribute('role','group');list.setAttribute('aria-label','选择要导入的 CSS 文件');
+ const status=document.createElement('p');status.className='mima-css-import-status row-sub';status.setAttribute('role','status');status.setAttribute('aria-live','polite');
+ const actions=document.createElement('div');actions.className='mima-css-import-actions';
+ const cancel=document.createElement('button');cancel.type='button';cancel.className='ghost-btn';cancel.textContent='取消';
+ const save=document.createElement('button');save.type='button';save.className='primary-btn';save.textContent=`保存全部 ${rows.length} 份到 CSS 库`;actions.append(cancel,save);
+ const rowWidgets=[];let busy=false;
+ const update=()=>{const total=rows.filter(x=>x.selected).length;
+   count.textContent=`选中 ${total}/${rows.length} 份待分组 · 将保存全部 ${rows.length} 份`;save.disabled=busy;applyGroup.disabled=busy||!total;};
+ for(const record of rows){
+   const label=document.createElement('label');label.className='mima-css-import-file';
+   const checkbox=document.createElement('input');checkbox.type='checkbox';checkbox.checked=true;checkbox.setAttribute('aria-label','选择 '+record.file.name);
+   const info=document.createElement('span');info.className='mima-css-import-file-info';
+   const name=document.createElement('strong');name.textContent=record.file.name;
+   const meta=document.createElement('small');info.append(name,meta);label.append(checkbox,info);list.appendChild(label);
+   checkbox.addEventListener('change',()=>{record.selected=checkbox.checked;update();});rowWidgets.push({checkbox,meta,record});
+ }
+ const updateRows=()=>{for(const {meta,record} of rowWidgets)meta.textContent=`${record.category} · ${scopeNames.get(record.scope)}`;};
+ selectAll.addEventListener('click',()=>{rowWidgets.forEach(({checkbox,record})=>{record.selected=true;checkbox.checked=true;});update();});
+ clear.addEventListener('click',()=>{rowWidgets.forEach(({checkbox,record})=>{record.selected=false;checkbox.checked=false;});update();});
+ applyGroup.addEventListener('click',()=>{for(const record of rows)if(record.selected){record.category=categorySelect.value;record.scope=scopeSelect.value;}
+   updateRows();status.textContent=`已将选中的 ${rows.filter(x=>x.selected).length} 份 CSS 设置为「${categorySelect.value}」· ${scopeNames.get(scopeSelect.value)}。`;});
+ newCategory.addEventListener('click',()=>{const input=prompt('新建 CSS 分类（仅在保存所选 CSS 时一并创建）');if(input===null)return;
+   const name=input.trim();if(!name||name.length>60||name==='未分类')return toast('分类名称须为 1～60 字且不能叫「未分类」');
+   if([...existing,...stagedCategories].some(old=>old.toLocaleLowerCase()===name.toLocaleLowerCase()))return toast('分类已存在');
+   stagedCategories.push(name);addCategory(name);status.textContent=`新分类「${name}」已准备好，请点「设置到所选文件」。`;
+ });
+ const finish=()=>{dialog.close?.();dialog.remove();};
+ cancel.addEventListener('click',()=>{if(!busy)finish();});
+ dialog.addEventListener('cancel',event=>{event.preventDefault();if(!busy)finish();});
+ save.addEventListener('click',async()=>{
+   if(busy)return;const selected=rows.slice();
+   busy=true;update();cancel.disabled=true;newCategory.disabled=true;categorySelect.disabled=true;scopeSelect.disabled=true;
+   selectAll.disabled=true;clear.disabled=true;for(const {checkbox} of rowWidgets)checkbox.disabled=true;
+   try{
+     const items=[];for(let i=0;i<selected.length;i++){
+       status.textContent=`正在读取 CSS 文件 ${i+1}/${selected.length}：${selected[i].file.name}`;
+       const raw=await selected[i].file.text();
+       items.push({name:selected[i].file.name.replace(/\.css$/i,'')||'导入 CSS',
+         css:stripEmbeddedStyleTags(raw),category:selected[i].category,scope:selected[i].scope});
+     }
+     status.textContent=`正在一次性保存 ${items.length} 份 CSS（失败则整批不提交）…`;
+     const needed=stagedCategories.filter(name=>selected.some(item=>item.category===name));
+     const result=await fetchStory('/css-presets/import-batch','POST',{items,newCategories:needed,expectedAppearanceRevision:revision});
+     if(!result?.success||result.data?.count!==items.length)throw Error(result?.msg||'没有收到完整批量保存回执');
+     finish();
+     try{await reloadCssLibrary();refreshCssLibraryView();
+       toast(`已将 ${items.length} 份 CSS 批量保存到库（未自动启用）`);}
+     catch(error){console.error('E_CSS_BATCH_IMPORT_POST_COMMIT_REFRESH',error);
+       toast(`已保存 ${items.length} 份 CSS，但列表刷新失败；请重新打开外观设置核对，勿重复导入`);}
+   }catch(error){console.error('E_CSS_BATCH_IMPORT',error);
+     status.textContent='批量导入未完成：'+error.message+'。当前选择和分组已保留，可核对后重试或取消。';
+     toast('CSS 批量导入失败：'+error.message);
+   }finally{busy=false;cancel.disabled=false;newCategory.disabled=false;categorySelect.disabled=false;scopeSelect.disabled=false;
+     selectAll.disabled=false;clear.disabled=false;for(const {checkbox} of rowWidgets)checkbox.disabled=false;update();}
+ });
+ dialog.append(title,explanation,controls,selection,list,status,actions);document.body.appendChild(dialog);
+ try{if(typeof dialog.showModal==='function')dialog.showModal();else dialog.setAttribute('open','');}
+ catch(error){dialog.remove();toast('无法打开 CSS 批量导入面板：'+error.message);return;}
+ updateRows();update();
 }
 
 function exportCssPreset(id){const p=cssPresets.find(x=>x.id===id);if(!p)return;downloadText(`${p.name||'mimamao'}.css`,p.css||'','text/css;charset=utf-8')}
@@ -7158,7 +7239,7 @@ async function mimaBoot(){
     qs('worldbook-file-input').addEventListener('change',e=>importWorldbookFile(e.target.files?.[0]));
     qs('regex-file-input').addEventListener('change',e=>importRegexFile(e.target.files?.[0]));
     qs('font-file-input').addEventListener('change',e=>importFontFile(e.target.files?.[0]));
-    qs('css-file-input').addEventListener('change',e=>importCssFile(e.target.files?.[0]));
+    qs('css-file-input').addEventListener('change',e=>importCssFiles(e.target.files));
     qs('api-config-file-input').addEventListener('change',e=>importApiConfigFile(e.target.files?.[0]));
     qs('library-file-input').addEventListener('change',e=>importWholeLibrary(e.target.files?.[0]));
     qs('full-settings-file-input').addEventListener('change',e=>importFullSettingsFile(e.target.files?.[0]));

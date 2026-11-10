@@ -24,6 +24,8 @@
       // Reapplying a theme after CSS/Atelier notifications must not needlessly
       // invalidate the entire DOM's styles when the effective theme is unchanged.
       const element=document.documentElement;
+      // Read-only appearance contract: preserve the selected day/night identity while custom CSS owns paint.
+      if(element.getAttribute('data-mima-selected-theme')!==settings.theme)element.setAttribute('data-mima-selected-theme',settings.theme);
       const nextTheme=custom||settings.theme==='default'?null:settings.theme;
       if(element.getAttribute('data-mima-theme')!==nextTheme){
         if(nextTheme===null)element.removeAttribute('data-mima-theme');
