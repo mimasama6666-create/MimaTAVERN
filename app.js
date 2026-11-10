@@ -4238,7 +4238,7 @@ function importCssFiles(fileList){
  const dialog=document.createElement('dialog');dialog.className='mima-css-batch-import';dialog.setAttribute('aria-label','批量导入 CSS 主题');
  const title=document.createElement('h3');title.textContent=`批量导入 CSS · ${files.length} 份`;
  const explanation=document.createElement('p');explanation.className='row-sub';
- explanation.textContent='勾选只用于批量分组，可分几次给不同文件归类；最后会保存本次选取的全部文件，不必重新全选。不会自动启用任何主题。';
+ explanation.textContent='勾选要设置的文件，修改分类或作用域即刻应用到所选文件；可以分几次设置不同组。最后保存本次选取的全部文件，不必重新全选，也不会自动启用主题。';
  const controls=document.createElement('div');controls.className='mima-css-import-controls';
  const makeLabel=(title,control)=>{const label=document.createElement('label');const text=document.createElement('span');text.textContent=title;label.append(text,control);return label;};
  const categorySelect=document.createElement('select');categorySelect.className='field';categorySelect.setAttribute('aria-label','要批量分配的分类');
@@ -4271,6 +4271,16 @@ function importCssFiles(fileList){
    checkbox.addEventListener('change',()=>{record.selected=checkbox.checked;update();});rowWidgets.push({checkbox,meta,record});
  }
  const updateRows=()=>{for(const {meta,record} of rowWidgets)meta.textContent=`${record.category} · ${scopeNames.get(record.scope)}`;};
+ // A selector is an edit, not a pending draft requiring a second hidden commit.
+ // Apply only to the currently checked subset; previously assigned groups remain intact.
+ const applySelectedField=(field,value)=>{const targets=rows.filter(x=>x.selected);
+   if(!targets.length){status.textContent='请先勾选要设置的 CSS 文件';return false;}
+   for(const record of targets)record[field]=value;
+   updateRows();status.textContent=`已为 ${targets.length} 份 CSS 设置${field==='scope'?'作用域':'分类'}：${field==='scope'?scopeNames.get(value):value}。保存时会按每份文件显示的设置入库。`;
+   return true;
+ };
+ categorySelect.addEventListener('change',()=>applySelectedField('category',categorySelect.value));
+ scopeSelect.addEventListener('change',()=>applySelectedField('scope',scopeSelect.value));
  selectAll.addEventListener('click',()=>{rowWidgets.forEach(({checkbox,record})=>{record.selected=true;checkbox.checked=true;});update();});
  clear.addEventListener('click',()=>{rowWidgets.forEach(({checkbox,record})=>{record.selected=false;checkbox.checked=false;});update();});
  applyGroup.addEventListener('click',()=>{for(const record of rows)if(record.selected){record.category=categorySelect.value;record.scope=scopeSelect.value;}
@@ -4278,7 +4288,8 @@ function importCssFiles(fileList){
  newCategory.addEventListener('click',()=>{const input=prompt('新建 CSS 分类（仅在保存所选 CSS 时一并创建）');if(input===null)return;
    const name=input.trim();if(!name||name.length>60||name==='未分类')return toast('分类名称须为 1～60 字且不能叫「未分类」');
    if([...existing,...stagedCategories].some(old=>old.toLocaleLowerCase()===name.toLocaleLowerCase()))return toast('分类已存在');
-   stagedCategories.push(name);addCategory(name);status.textContent=`新分类「${name}」已准备好，请点「设置到所选文件」。`;
+   stagedCategories.push(name);addCategory(name);
+   if(!applySelectedField('category',name))status.textContent=`新分类「${name}」已备好；请勾选文件后分配分类。`;
  });
  const finish=()=>{dialog.close?.();dialog.remove();};
  cancel.addEventListener('click',()=>{if(!busy)finish();});
