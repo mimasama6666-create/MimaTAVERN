@@ -1966,3 +1966,9 @@ button>.mima-gothic-ui-icon,summary>.mima-gothic-ui-icon{vertical-align:middle;m
  .mima-css-import-file-list{flex:0 0 auto;min-height:0;max-height:none;overflow:visible}
  .mima-css-import-actions{position:sticky;bottom:0;z-index:1;background:var(--panel-solid,#fff);padding:8px 0 0}
 }
+
+/* Independent setting-template semantics: keep source/result legible on mobile. */
+.mima-template-output{white-space:pre-wrap;overflow-wrap:anywhere;max-height:310px;overflow:auto;padding:12px;border-radius:12px;background:var(--panel);border:1px solid var(--line);font:inherit;font-size:.79rem;line-height:1.55;user-select:text;}
+.mima-template-editor .mima-template-section>summary{min-height:30px;touch-action:manipulation;}
+.mima-template-editor .mima-template-section .field{min-width:0;width:100%;box-sizing:border-box;}
+@media(max-width:500px){.mima-template-editor .form-grid{grid-template-columns:minmax(0,1fr);}.mima-template-editor{max-width:100%;}.mima-template-output{max-height:230px;}}

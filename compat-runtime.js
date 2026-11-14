@@ -402,7 +402,7 @@ function resolveCharacterSelection(sourceId,scanned,persisted){
 // Require an explicit acknowledgement of every non-equivalent field before
 // persisting a compatibility session. Never import another story's memories.
 function templateCapabilityContract(config={}){
- const ps=config.promptSettings||{},c=ps.outputContract||null,translated=[],notEquivalent=[];
+ const ps=config.contextSettingsEnabled===false?{outputContract:config.promptSettings?.outputContract||null}:(config.promptSettings||{}),c=ps.outputContract||null,translated=[],notEquivalent=[];
  const ok=(field,note)=>translated.push({field,note});
  const gap=(field,note)=>notEquivalent.push({field,note});
  ok('presetIds','mounted source-bound system messages');
@@ -418,7 +418,9 @@ function templateCapabilityContract(config={}){
  if(ps.historyHtmlMode==='semantic')ok('historyHtmlMode','only projected request History; canonical messages remain untouched');
  if(ps.historyHtmlMode==='raw')ok('historyHtmlMode','raw canonical History is used');
  if(Object.prototype.hasOwnProperty.call(ps,'recentMessageLimit'))gap('recentMessageLimit','兼容引擎默认完整 History 优先，只在真实模型窗口不足时裁剪；不能保证按原生最近条数限制');
- if(ps.inputSemanticMode&&ps.inputSemanticMode!=='raw')gap('inputSemanticMode','兼容玩家消息不使用原生 AIRP 改写');
+ if((config.inputSemanticMode||ps.inputSemanticMode)&&((config.inputSemanticMode||ps.inputSemanticMode)!=='raw'))gap('inputSemanticMode','兼容玩家消息不使用原生 AIRP 改写，模板选择的原生语义模式不会自动套用');
+ if(config.defaultSessionTitle||config.sessionTitlePattern)gap('sessionTitlePattern','兼容角色卡开局优先使用角色卡标题，模板命名偏好不覆盖角色名');
+ if(config.canonLevel)gap('canonLevel','兼容开局遵循角色卡运行路线，不保证模板原生路线设置等价');
  if(ps.injectSavedRolling===true)gap('injectSavedRolling','不能将其他角色的已保存剧情摘要移植到本角色');
  if(ps.pinnedFactsEnabled===true)gap('pinnedFactsEnabled','模板不含固定事实记录，不能假装已经注入');
  if(config.memoryInject)gap('memoryInject','只携带注入偏好，不复制其他会话的核心/事实记忆');
@@ -526,7 +528,7 @@ async function prepareNativeTemplateBinding(templateId){
    push('css',css.id,css.name,safe);styleResourceId=resources[resources.length-1].id;
  }
  // Snapshot resources, not history, memory contents, keys, debts or old conversation IDs.
- const promptSettings={...(c.promptSettings||{}),autoRollingEnabled:false,summaryEnabled:false};
+ const promptSettings={...(c.contextSettingsEnabled===false?{...(c.promptSettings?.outputContract?{outputContract:c.promptSettings.outputContract}:{})}:(c.promptSettings||{})),autoRollingEnabled:false,summaryEnabled:false};
  const capabilityContract=templateCapabilityContract(c);
  const outputContract=compatOutputContract(promptSettings);
  return {version:1,templateId:template.id,templateRevision:template.revision,templateName:template.name,

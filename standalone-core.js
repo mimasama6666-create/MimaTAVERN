@@ -160,7 +160,9 @@
       }}:{}),
       inputSemanticMode: ['auto','dialogue_first','quote_dialogue','raw'].includes(input.inputSemanticMode) && (input.inputSemanticMode==='raw'||input.inputSemanticExplicit===true) ? input.inputSemanticMode : 'raw',
       inputSemanticExplicit: input.inputSemanticExplicit===true,
-      legacyInputSemanticMode: ['auto','dialogue_first','quote_dialogue'].includes(input.legacyInputSemanticMode) ? input.legacyInputSemanticMode : input.inputSemanticExplicit!==true&&['auto','dialogue_first','quote_dialogue'].includes(input.inputSemanticMode) ? input.inputSemanticMode : null
+      // 'raw' is a real frozen legacy mode too: never reinterpret old raw turns
+      // when a session later opts into AIRP structured input.
+      legacyInputSemanticMode: ['auto','dialogue_first','quote_dialogue','raw'].includes(input.legacyInputSemanticMode) ? input.legacyInputSemanticMode : input.inputSemanticExplicit!==true&&['auto','dialogue_first','quote_dialogue'].includes(input.inputSemanticMode) ? input.inputSemanticMode : null
     };
   }
 
@@ -223,6 +225,14 @@
 
   function normalizeSession(s = {}) {
     const createdAt = s.createdAt || s.updatedAt || (s.id ? '' : nowIso());
+    // V5 projected unmarked legacy turns using their then-current session
+    // semantic mode. Capture that mode ONCE at the first normalized read,
+    // before any later setting/template changes. Never rewrite message text or
+    // add synthetic per-turn metadata: historical intent is not provable.
+    const originalSettings=s.promptSettings&&typeof s.promptSettings==='object'?s.promptSettings:{};
+    const hasUnmarkedUserTurn=arr(s.messages).some(m=>m?.role==='user'&&!semanticModes.includes(m?.metadata?.inputSemanticMode));
+    const legacyMode=semanticModes.includes(originalSettings.legacyInputSemanticMode)?originalSettings.legacyInputSemanticMode:
+      hasUnmarkedUserTurn?(semanticModes.includes(originalSettings.inputSemanticMode)?originalSettings.inputSemanticMode:'auto'):null;
     return {
       id: s.id || makeId('sess'), recordRevision:Math.max(0,Number(s.recordRevision)||0), title: text(s.title || '未命名咪嘛宇宙'), createdAt,
       updatedAt: s.updatedAt || createdAt, mode: 'tavern', characterMode: 'tavern',
@@ -242,7 +252,7 @@
       lastSummarizedIndex: Number.isFinite(Number(s.lastSummarizedIndex)) ? Number(s.lastSummarizedIndex) : 0,rollingSourceCount:Math.max(0,Number(s.rollingSourceCount)||0),rollingSourceFingerprint:String(s.rollingSourceFingerprint||''),rollingVerification:normalizeMemoryVerification(s.rollingVerification),
       tags: list(s.tags), lastScene: text(s.lastScene), userNotes: text(s.userNotes), aiNotes: text(s.aiNotes),
       directorNote: text(s.directorNote), storyState: s.storyState && typeof s.storyState === 'object' ? s.storyState : {},
-      promptSettings: normalizePromptSettings({...s.promptSettings,...(arr(s.messages).length&&!s.promptSettings?.inputSemanticMode&&!s.promptSettings?.legacyInputSemanticMode?{legacyInputSemanticMode:'auto'}:{})}),
+      promptSettings: normalizePromptSettings({...originalSettings,...(legacyMode!==null?{legacyInputSemanticMode:legacyMode}:{})}),
       manualMemory: normalizeManualMemory(s.manualMemory || {}),
       customCssId: s.customCssId || null, customCssEnabled: s.customCssEnabled !== false,
       regexPackIds: list(s.regexPackIds),
@@ -309,7 +319,19 @@
 
   // Configuration templates have no History, generated Memory, source cursor,
   // running jobs, API credentials, character reply or owner private notes.
-  const templateFields=['presetIds','worldbookIds','regexPackIds','theaterCardIds','loadedUserMaskId','customCssId','customCssEnabled','promptSettings','renderMode','memoryInject'];
+  const templateFields=['presetIds','worldbookIds','regexPackIds','theaterCardIds','loadedUserMaskId','customCssId','customCssEnabled','promptSettings','renderMode','memoryInject','inputSemanticMode','defaultSessionTitle','sessionTitlePattern','canonLevel','contextSettingsEnabled'];
+  const semanticModes=['auto','dialogue_first','quote_dialogue','raw'];
+  const titleTokens=['{日期}','{时间}','{角色名}','{序号}'];
+  function validateTemplateTitle(value,limit){if(typeof value!=='string'||value.length>limit)throw new ApiError('E_SETTINGS_TEMPLATE_TITLE','剧情默认标题/命名规则长度无效');return value;}
+  function validateTitlePattern(value){const p=validateTemplateTitle(value,120).trim();if(p.replace(/\{(?:日期|时间|角色名|序号)\}/g,'').match(/[{}]/))throw new ApiError('E_SETTINGS_TEMPLATE_TITLE','命名规则含未知或未闭合的变量');return p;}
+  function renderTemplateTitle(c={},opts={}){
+    const fixed=String(c.defaultSessionTitle||'').trim(),pattern=String(c.sessionTitlePattern||'').trim();
+    if(!pattern)return fixed;
+    const stamp=opts.now instanceof Date?opts.now:new Date();
+    const localDate=`${stamp.getFullYear()}-${String(stamp.getMonth()+1).padStart(2,'0')}-${String(stamp.getDate()).padStart(2,'0')}`;
+    const localTime=`${String(stamp.getHours()).padStart(2,'0')}:${String(stamp.getMinutes()).padStart(2,'0')}`;
+    return pattern.replace(/\{[^{}]+\}/g,tag=>({ '{日期}':localDate,'{时间}':localTime,'{角色名}':String(opts.characterName||'新宇宙'),'{序号}':String(opts.sequence||1) }[tag]??tag)).trim().slice(0,120)||fixed;
+  }
   function normalizeSettingTemplate(t={}){
     const raw=t.config&&typeof t.config==='object'&&!Array.isArray(t.config)?t.config:{};
     const config={};
@@ -318,6 +340,11 @@
       else if(key==='loadedUserMaskId'||key==='customCssId')config[key]=raw[key]?String(raw[key]):null;
       else if(key==='customCssEnabled')config[key]=raw[key]!==false;
       else if(key==='renderMode')config[key]=raw[key]==='safe_html'?'safe_html':'text';
+      else if(key==='defaultSessionTitle')config[key]=validateTemplateTitle(raw[key],120).trim();
+      else if(key==='sessionTitlePattern')config[key]=validateTitlePattern(raw[key]);
+      else if(key==='contextSettingsEnabled')config[key]=raw[key]!==false;
+      else if(key==='canonLevel')config[key]=['canon','alternate'].includes(raw[key])?raw[key]:'alternate';
+      else if(key==='inputSemanticMode'){if(!semanticModes.includes(raw[key]))throw new ApiError('E_SETTINGS_TEMPLATE_SEMANTIC','输入语义模式无效');config[key]=raw[key];}
       else if(key==='promptSettings'){
         const p=normalizePromptSettings(raw[key]);
         // A reference to a message in the SOURCE session must never point into
@@ -341,6 +368,8 @@
     if(include.css===true){c.customCssId=session.customCssId||null;c.customCssEnabled=session.customCssEnabled!==false;}
     if(include.context!==false){c.promptSettings=clone(session.promptSettings);if(c.promptSettings.outputContract)c.promptSettings.outputContract.templateMessageId='';c.promptSettings.autoRollingEnabled=false;c.promptSettings.summaryEnabled=false;c.renderMode=session.renderMode;}
     if(include.memoryInject===true)c.memoryInject={injectCore:session.manualMemory.settings.injectCore,injectFacts:session.manualMemory.settings.injectFacts};
+    if(session.promptSettings?.inputSemanticExplicit===true)c.inputSemanticMode=session.promptSettings.inputSemanticMode;
+    c.canonLevel=session.canonLevel;
     return normalizeSettingTemplate({config:c}).config;
   }
   function templateMissing(state,c){const missing=[];
@@ -354,7 +383,19 @@
     const c=template.config||{},missing=templateMissing(stored,c);
     if(missing.length)throw new ApiError('E_SETTINGS_TEMPLATE_MISSING_RESOURCES','剧情模板所需的预设/世界书/面具/CSS 已缺失，未创建半成品会话',{details:JSON.stringify({missing})});
     const next={...body};
-    for(const key of templateFields){if(key==='memoryInject'||!Object.prototype.hasOwnProperty.call(c,key))continue;next[key]=clone(c[key]);}
+    for(const key of templateFields){
+      if(['memoryInject','inputSemanticMode','defaultSessionTitle','sessionTitlePattern','contextSettingsEnabled'].includes(key)||!Object.prototype.hasOwnProperty.call(c,key))continue;
+      // Output contracts and context budgets are independent settings. An HTML-only
+      // template must not silently overwrite a fresh session's History limits.
+      if(key==='promptSettings'&&c.contextSettingsEnabled===false){
+        if(c.promptSettings?.outputContract)next.promptSettings={...(next.promptSettings||{}),outputContract:clone(c.promptSettings.outputContract)};
+        continue;
+      }
+      next[key]=clone(c[key]);
+    }
+    const templateSemantic=Object.prototype.hasOwnProperty.call(c,'inputSemanticMode')?c.inputSemanticMode:
+      (c.promptSettings?.inputSemanticExplicit===true?c.promptSettings.inputSemanticMode:null);
+    if(semanticModes.includes(templateSemantic))next.promptSettings={...(next.promptSettings||{}),inputSemanticMode:templateSemantic,inputSemanticExplicit:true};
     if(c.memoryInject){const defaults=normalizeManualMemory();next.manualMemory={...defaults,settings:{...defaults.settings,...c.memoryInject}};}
     return next;
   }
@@ -839,7 +880,9 @@
         result=next;
       }else if(action==='default'){
         if(body.id&&!stored.settingTemplates.some(x=>x.id===body.id))throw new ApiError('E_SETTINGS_TEMPLATE_MISSING','指定模板已不存在');
-        stored.settingTemplates.forEach(x=>{x.isDefault=x.id===body.id;x.revision++;x.updatedAt=nowIso();});
+        // Only a template whose default flag changed was edited. Bumping every
+        // unrelated template revision made another tab's valid draft go stale.
+        stored.settingTemplates.forEach(x=>{const shouldDefault=x.id===body.id;if(x.isDefault!==shouldDefault){x.isDefault=shouldDefault;x.revision++;x.updatedAt=nowIso();}});
         result=stored.settingTemplates;
       }else if(action==='delete'){
         const existing=stored.settingTemplates.find(x=>x.id===body.id);
@@ -860,16 +903,64 @@
     sessionSaveTail=task.then(()=>{},()=>{});
     return task;
   }
+  function uniqueTemplateTitle(config,stored,createdAt,characterName='新宇宙',freshSessionDirectory=null){
+    const now=new Date(createdAt),pattern=String(config?.sessionTitlePattern||'');
+    const sessionDirectory=Array.isArray(freshSessionDirectory)?freshSessionDirectory:stored.sessions;
+    const start=Math.max(1,sessionDirectory.length+1);
+    const titles=new Set(sessionDirectory.map(x=>String(x.title||'')));
+    for(let offset=0;offset<10000;offset++){
+      const candidate=renderTemplateTitle(config,{now,sequence:start+(pattern.includes('{序号}')?offset:0),characterName});
+      if(!candidate)return '';
+      if(!titles.has(candidate))return candidate;
+      if(!pattern.includes('{序号}')){
+        const suffix=` · ${offset+2}`;
+        const alternate=candidate.slice(0,Math.max(0,120-suffix.length))+suffix;
+        if(!titles.has(alternate))return alternate;
+      }
+    }
+    throw new ApiError('E_SETTINGS_TEMPLATE_TITLE','自动命名无法生成未占用的标题，未创建剧情');
+  }
+  function sessionTitleCharacterName(body,stored){
+    const mask=stored.masks.find(m=>m.id===body.loadedCharMaskId&&m.type==='character');
+    return String(mask?.name||(body.mode==='sandalphon'?'圣德芬':'新宇宙'));
+  }
+  async function createSessionWithDeviceTitle(body={}){
+    const commit=async()=>{
+      try{
+        await refreshPersistedResources();
+        const stored=state,createdAt=nowIso();
+        // The cross-tab canonical directory contains names newly created in other tabs.
+        // Its read is fenced by the existing expectedGlobalRevision at commit time.
+        const titleDirectory=await window.MimaLocalStore.loadSessionDirectory();
+        const pattern=validateTitlePattern(String(body.sessionTitlePattern||''));
+        const title=String(body.title||'').trim()||uniqueTemplateTitle({sessionTitlePattern:pattern},stored,createdAt,sessionTitleCharacterName(body,stored),titleDirectory)||'未命名咪嘛宇宙';
+        const {sessionTitlePattern:_localOnly,settingTemplateId:_templateOnly,...rest}=body;
+        const candidate=normalizeSession({...rest,id:makeId('sess'),title,createdAt,updatedAt:createdAt,messages:[],recordRevision:0});
+        const committed=await window.MimaLocalStore.commitSessionRecord(candidate,0,{allowCreate:true,expectedGlobalRevision:stored.storeRevision});
+        return publishSession(normalizeSession(committed.session),committed.storeRevision);
+      }catch(error){
+        try{state=normalizeState(await window.MimaLocalStore.loadState());}
+        catch(readError){console.error('E_SESSION_TITLE_REFRESH_FAILED',readError);}
+        throw error;
+      }
+    };
+    const task=sessionSaveTail.then(commit,commit);sessionSaveTail=task.then(()=>{},()=>{});return task;
+  }
   async function createSessionUsingTemplate(body){
     // A template's resource references are protected by a global revision CAS,
     // while the newly created Session is the ONLY large record written.
     const commit=async()=>{try{
       await refreshPersistedResources();
       const stored=state,id=String(body.settingTemplateId||'');
+      const titleDirectory=await window.MimaLocalStore.loadSessionDirectory();
       const tpl=id==='default'?stored.settingTemplates.find(x=>x.isDefault):stored.settingTemplates.find(x=>x.id===id);
       if(!tpl)throw new ApiError('E_SETTINGS_TEMPLATE_MISSING','设置模板已删除，未创建剧情');
-      const input=appliedSessionSettings(body,tpl,stored);
-      const candidate=normalizeSession({...input,id:makeId('sess'),createdAt:nowIso(),updatedAt:nowIso(),messages:[],recordRevision:0});
+      const {sessionTitlePattern:_localOnly,...sessionBody}=body;
+      const input=appliedSessionSettings(sessionBody,tpl,stored);
+      // The creation time/title are settled once per committed new session.
+      const createdAt=nowIso();
+      const title=String(body.title||'').trim()||uniqueTemplateTitle(tpl.config,stored,createdAt,sessionTitleCharacterName(input,stored),titleDirectory)||uniqueTemplateTitle({sessionTitlePattern:validateTitlePattern(String(body.sessionTitlePattern||''))},stored,createdAt,sessionTitleCharacterName(input,stored),titleDirectory)||'未命名咪嘛宇宙';
+      const candidate=normalizeSession({...input,title,id:makeId('sess'),createdAt,updatedAt:createdAt,messages:[],recordRevision:0});
       const committed=await window.MimaLocalStore.commitSessionRecord(candidate,0,{allowCreate:true,expectedGlobalRevision:stored.storeRevision});
       return publishSession(normalizeSession(committed.session),committed.storeRevision);
     }catch(error){try{state=normalizeState(await window.MimaLocalStore.loadState());}
@@ -1132,11 +1223,18 @@
       /<[^>]+class\s*=\s*["'][^"']*mima-(?:current|gaze|bond|abyss|pulse|cocoon|echo|pets|nexus)/i.test(original);
     return isOldStatus?'【历史回合来源提示：以下状态栏、朋友圈、论坛、推送、搜索均是当时的虚构快照，并非当前最新事件；正文仍属于剧情历史。】\n'+projection.text:projection.text;
   }
+  // Per-message semantic ownership is immutable across template changes. An
+  // unmarked legacy message is not evidence that it used the current session mode.
+  // The old 1.1.7 marker was shared by V5 and V8; never infer a renderer from it.
   function inputSemanticMode(session,message=null){
     const stored=message?.metadata?.inputSemanticMode;
-    if(['auto','dialogue_first','quote_dialogue','raw'].includes(stored))return stored;
-    const configured=message&&!stored?(session?.promptSettings?.legacyInputSemanticMode||session?.promptSettings?.inputSemanticMode):session?.promptSettings?.inputSemanticMode;
-    return ['auto','dialogue_first','quote_dialogue','raw'].includes(configured)?configured:'raw';
+    if(semanticModes.includes(stored))return stored;
+    if(message){
+      const legacy=session?.promptSettings?.legacyInputSemanticMode;
+      return semanticModes.includes(legacy)?legacy:'raw';
+    }
+    const configured=session?.promptSettings?.inputSemanticMode;
+    return semanticModes.includes(configured)?configured:'raw';
   }
   function compileUserInputForPrompt(sessionOrId,input,modeOverride=null){
     const session=typeof sessionOrId==='string'?getSession(sessionOrId):sessionOrId;
@@ -3673,7 +3771,7 @@
     if(action==='send'&&!retryPending){
       if(!String(userText||'').trim())throw new ApiError('E_STORY_EMPTY_INPUT','还没有输入内容猫！',{hint:'请输入动作、语言或剧情后再发送。'});
       const originalUserText=String(userText||'');const transformedUserText=await applyRegexForSessionAsync(session,originalUserText,'input',null,{signal});
-      const userMsg=makeMessage('user',transformedUserText,session,{source:'manual_send',submissionTraceId:String(options.diagnosticTraceId||''),regexInputApplied:transformedUserText!==originalUserText,inputSemanticMode:inputSemanticMode(session),inputSemanticParserVersion:'1.1.7'});userMsg.rawContent=originalUserText;session.messages.push(userMsg);submittedMessageId=userMsg.id;
+      const userMsg=makeMessage('user',transformedUserText,session,{source:'manual_send',submissionTraceId:String(options.diagnosticTraceId||''),regexInputApplied:transformedUserText!==originalUserText,inputSemanticMode:inputSemanticMode(session),inputSemanticParserVersion:window.MimaUserInputSemanticParser?.version||'1.1.8-v5-classification-escaped'});userMsg.rawContent=originalUserText;session.messages.push(userMsg);submittedMessageId=userMsg.id;
       unsavedUserInput=true;
     }
     let sourceBeforeReply,target=null,opts,cfg,built=null,requestBody=null,snapshot=null,messages,pending;
@@ -4355,7 +4453,7 @@
   }
   // Edit only a detached canonical session. A display-regex Worker may yield;
   // leaking the edit into global state before CAS could let another save persist it.
-  async function editMessage(id,msgId,content,opts={}){const source=getSession(id),s=source?normalizeSession(clone(source)):null;if(!s)throw new Error('未找到剧本');const i=s.messages.findIndex(m=>m.id===msgId);if(i<0)throw new Error('未找到消息');const msg=s.messages[i];archiveVersion(msg,'manual_edit');msg.content=String(content||'');msg.rawContent=msg.content;msg.renderedContent='';if(msg.role==='assistant'){delete msg.metadata.thinking;delete msg.metadata.thinkingContinuations;}if(msg.role==='user')msg.metadata={...(msg.metadata||{}),inputSemanticMode:inputSemanticMode(s),inputSemanticParserVersion:'1.1.7'};msg.isEdited=true;msg.editedAt=nowIso();msg.tokenEstimate=estimateTokens(msg.content);s.legacyMemoryQuarantined=true;if(opts.truncateAfter){const removed=s.messages.slice(i+1);if(removed.length){s.archivedBranches=arr(s.archivedBranches);s.archivedBranches.push({id:makeId('branch'),fromMessageId:msg.id,reason:'edit_truncate_after',archivedAt:nowIso(),messages:removed});s.messages=s.messages.slice(0,i+1);}}return saveSession(s);}
+  async function editMessage(id,msgId,content,opts={}){const source=getSession(id),s=source?normalizeSession(clone(source)):null;if(!s)throw new Error('未找到剧本');const i=s.messages.findIndex(m=>m.id===msgId);if(i<0)throw new Error('未找到消息');const msg=s.messages[i];archiveVersion(msg,'manual_edit');msg.content=String(content||'');msg.rawContent=msg.content;msg.renderedContent='';if(msg.role==='assistant'){delete msg.metadata.thinking;delete msg.metadata.thinkingContinuations;}if(msg.role==='user'){const mode=opts.reinterpretSemantic===true?inputSemanticMode(s):inputSemanticMode(s,msg);msg.metadata={...(msg.metadata||{}),inputSemanticMode:mode,inputSemanticParserVersion:window.MimaUserInputSemanticParser?.version||'1.1.8-v5-classification-escaped'};}msg.isEdited=true;msg.editedAt=nowIso();msg.tokenEstimate=estimateTokens(msg.content);s.legacyMemoryQuarantined=true;if(opts.truncateAfter){const removed=s.messages.slice(i+1);if(removed.length){s.archivedBranches=arr(s.archivedBranches);s.archivedBranches.push({id:makeId('branch'),fromMessageId:msg.id,reason:'edit_truncate_after',archivedAt:nowIso(),messages:removed});s.messages=s.messages.slice(0,i+1);}}return saveSession(s);}
   async function restoreMessageVersion(id,msgId,versionIndex,body={}){
     const current=getSession(id);if(!current)throw new ApiError('E_STORY_SESSION_MISSING','未找到剧情 Session。');
     const session=normalizeSession(clone(current)),msg=session.messages.find(m=>m.id===msgId);
@@ -4397,7 +4495,34 @@
     return saveSession(s);
   }
   async function addOpening(id,content){const source=getSession(id),s=source?normalizeSession(clone(source)):null;if(!s)throw new Error('未找到剧本');if(!String(content||'').trim())throw new Error('开场白为空');const msg=makeMessage('assistant',content,s,{source:'character_first_message'});msg.renderedContent='';s.messages.push(msg);return saveSession(s);}
-  async function previewPrompt(id,opts={}){const s=getSession(id);if(!s)throw new Error('未找到剧本');const c=normalizeSession(clone(s));if(String(opts.draft||'').trim())c.messages.push(makeMessage('user',opts.draft,c,{source:'prompt_preview_draft',inputSemanticMode:inputSemanticMode(c),inputSemanticParserVersion:'1.1.7'}));return (await assemble(c,{directorNote:opts.directorNote||''})).inspector;}
+  async function previewPrompt(id,opts={}){
+    const s=getSession(id);if(!s)throw new Error('未找到剧本');const c=normalizeSession(clone(s));
+    const draft=String(opts.draft||'');let inputAfterRegex=draft;
+    if(draft.trim()){
+      inputAfterRegex=await applyRegexForSessionAsync(c,draft,'input');
+      const msg=makeMessage('user',inputAfterRegex,c,{source:'prompt_preview_draft',regexInputApplied:inputAfterRegex!==draft,inputSemanticMode:inputSemanticMode(c),inputSemanticParserVersion:window.MimaUserInputSemanticParser?.version||'1.1.8-v5-classification-escaped'});
+      msg.rawContent=draft;c.messages.push(msg);
+    }
+    const inspector=(await assemble(c,{directorNote:opts.directorNote||''})).inspector;
+    inspector.inputPreview={raw:draft,afterInputRegex:inputAfterRegex,mode:inputSemanticMode(c)};
+    return inspector;
+  }
+  async function previewTemplateInput(body={}){
+    const template=normalizeSettingTemplate({config:body.config||{}}),config=template.config;
+    const missing=templateMissing(state,config);
+    if(missing.length)throw new ApiError('E_SETTINGS_TEMPLATE_MISSING_RESOURCES','模板预览所需资源已缺失',{details:JSON.stringify({missing})});
+    const mode=config.inputSemanticMode||normalizePromptSettings(config.promptSettings||{}).inputSemanticMode;
+    const fake=normalizeSession({...config,promptSettings:{...(config.promptSettings||{}),inputSemanticMode:mode,inputSemanticExplicit:true}});
+    // A preview must cover the same complete draft as a real send; silently
+    // cutting at 15K chars made long HTML / code previews falsely reassuring.
+    const raw=String(body.input??'');
+    const afterInputRegex=await applyRegexForSessionAsync(fake,raw,'input');
+    const afterPromptRegex=await window.MimaRegexEngine.applyAsync(afterInputRegex,activeRegexPacks(fake),'prompt');
+    const resolved=mode==='raw'?afterPromptRegex:resolveMacrosForSession(fake,afterPromptRegex);
+    const actualContent=compileUserInputForPrompt(fake,afterPromptRegex,mode);
+    const segments=mode==='raw'?[]:(window.MimaUserInputSemanticParser?.compile(resolveMacrosForSession(fake,afterPromptRegex),{mode})?.segments||[]);
+    return {raw,afterInputRegex,afterPromptRegex,mode,segments,actualContent,extraChars:actualContent.length-resolved.length,macroDeltaChars:resolved.length-afterPromptRegex.length,modelVisible:true};
+  }
 
   // ---------- Local route compatibility ----------
   function ok(data){return{success:true,data};}
@@ -4426,6 +4551,7 @@
         if(!Array.isArray(body?.sessionIds)||body.sessionIds.some(id=>typeof id!=='string'))throw new ApiError('E_CSS_RECOVERY_INPUT','CSS 恢复会话列表无效');
         return ok(await readCssSelectionCanonical(body.sessionIds));
       }
+      if(path==='/setting-templates/input-preview'&&method==='POST')return ok(await previewTemplateInput(body||{}));
       if(path==='/atelier/publish'&&method==='POST')return ok(await publishAtelierCss(body));
       if(path==='/assistant/css-publish'&&method==='POST')return ok(await publishAssistantCss(body));
       if(path==='/assistant/mount'&&method==='POST')return ok(await mountAssistantResources(body));
@@ -4483,7 +4609,13 @@
       if(path==='/session-organization/actions'&&method==='POST')return ok(await organizationAction(body||{}));
       if(path==='/sessions'&&method==='GET')return ok(sessionSummaries());
       if(path==='/sessions/full'&&method==='GET')return ok((await window.MimaLocalStore.loadState()).sessions);
-      if(path==='/sessions'&&method==='POST'){if(body?.settingTemplateId)return ok(await createSessionUsingTemplate(body));const s=await saveSession(normalizeSession({...body,id:makeId('sess'),createdAt:nowIso(),updatedAt:nowIso(),messages:[]}),{allowCreate:true});return ok(s);}
+      if(path==='/sessions'&&method==='POST'){
+        if(body?.settingTemplateId)return ok(await createSessionUsingTemplate(body));
+        // With no naming preference, preserve the established ordinary-create
+        // transaction, including callers outside the new-session dialog.
+        if(!body?.sessionTitlePattern){const session=await saveSession(normalizeSession({...body,id:makeId('sess'),createdAt:nowIso(),updatedAt:nowIso(),messages:[]}),{allowCreate:true});return ok(session);}
+        return ok(await createSessionWithDeviceTitle(body||{}));
+      }
       if(path==='/sessions/import'&&method==='POST'){const s=normalizeSession({...body,id:makeId('sess'),title:`${text(body?.title||'导入剧情')} · 导入`,createdAt:nowIso(),updatedAt:nowIso()});return ok(await saveSession(s,{allowCreate:true}));}
       let m=pathIdMatch(path,/^\/sessions\/([^/]+)\/canonical-view$/);
       if(m&&method==='GET'){
@@ -4532,7 +4664,7 @@
       m=pathIdMatch(path,/^\/sessions\/([^/]+)\/messages\/([^/]+)\/html-repair$/);if(m&&method==='POST')return ok(await prepareHtmlRepair(m[1],m[2]));
       m=pathIdMatch(path,/^\/sessions\/([^/]+)\/messages\/([^/]+)\/html-repair\/approve$/);if(m&&method==='POST')return ok(await applyHtmlRepair(m[1],m[2],body?.candidateId,body?.dynamicValues||{}));
       m=pathIdMatch(path,/^\/sessions\/([^/]+)\/messages\/([^/]+)\/html-repair\/ai$/);if(m&&method==='POST')return ok(await prepareAiHtmlRepair(m[1],m[2],body||{}));
-      m=pathIdMatch(path,/^\/sessions\/([^/]+)\/messages\/([^/]+)$/);if(m&&method==='PATCH')return ok(await editMessage(m[1],m[2],body?.content,{truncateAfter:!!body?.truncateAfter}));
+      m=pathIdMatch(path,/^\/sessions\/([^/]+)\/messages\/([^/]+)$/);if(m&&method==='PATCH')return ok(await editMessage(m[1],m[2],body?.content,{truncateAfter:!!body?.truncateAfter,reinterpretSemantic:body?.reinterpretSemantic===true}));
       if(m&&method==='DELETE')return ok(await deleteMessage(m[1],m[2]));
       m=pathIdMatch(path,/^\/sessions\/([^/]+)\/messages\/([^/]+)\/versions\/(\d+)\/restore$/);if(m&&method==='POST')return ok(await restoreMessageVersion(m[1],m[2],Number(m[3]),body||{}));
       m=pathIdMatch(path,/^\/sessions\/([^/]+)\/memory$/);if(m&&method==='PATCH')return ok(await updateManualMemory(m[1],body||{}));

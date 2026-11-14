@@ -1,6 +1,6 @@
 /**
  * 🎭 MIMAMAO Tavern User Input Semantic Parser
- * v1.1.7 additive sidecar.
+ * v1.1.8; V5 original classification + V8 linear matching and markup escaping.
  *
  * Goal: preserve the player's raw message in Store/UI while compiling a model-facing
  * semantic view that distinguishes speech, observable action/stage direction, and
@@ -32,30 +32,39 @@
     return /^[\s，,。；;：:、—…·]+$/.test(String(value || ''));
   }
 
-  function findClosing(input, start, opener) {
-    const close = PAIRS.get(opener);
-    if (!close) return -1;
-    if (opener === '"') {
-      for (let i = start + 1; i < input.length; i++) {
-        if (input[i] === '"' && input[i - 1] !== '\\') return i;
+  // Precompute paired delimiters once. Re-scanning the remaining source for
+  // every unmatched opener was quadratic on long HTML/code inputs.
+  function closingIndices(source) {
+    const matches=new Int32Array(source.length);
+    matches.fill(-1);
+    for(const [open,close] of PAIRS) {
+      if(open==='"') {
+        let next=-1;
+        for(let i=source.length-1;i>=0;i--)if(source[i]==='"'){
+          matches[i]=next;
+          if(i===0||source[i-1]!=='\\')next=i;
+        }
+      } else if(PAREN_OPEN.has(open)) {
+        const stack=[];
+        for(let i=source.length-1;i>=0;i--) {
+          if(source[i]===close)stack.push(i);
+          else if(source[i]===open&&stack.length)matches[i]=stack.pop();
+        }
+      } else {
+        let next=-1;
+        for(let i=source.length-1;i>=0;i--) {
+          if(source[i]===close)next=i;
+          else if(source[i]===open)matches[i]=next;
+        }
       }
-      return -1;
     }
-    if (QUOTE_OPEN.has(opener)) return input.indexOf(close, start + 1);
-    let depth = 1;
-    for (let i = start + 1; i < input.length; i++) {
-      if (input[i] === opener) depth += 1;
-      else if (input[i] === close) {
-        depth -= 1;
-        if (depth === 0) return i;
-      }
-    }
-    return -1;
+    return matches;
   }
 
   function tokenize(input) {
     const source = String(input ?? '');
     const out = [];
+    const matchAt = closingIndices(source);
     let plainStart = 0;
     const pushPlain = end => {
       if (end <= plainStart) return;
@@ -65,7 +74,7 @@
     for (let i = 0; i < source.length; i++) {
       const ch = source[i];
       if (!PAIRS.has(ch)) continue;
-      const end = findClosing(source, i, ch);
+      const end = matchAt[i];
       if (end < 0) continue;
       pushPlain(i);
       out.push({ type: QUOTE_OPEN.has(ch) ? 'quote' : 'paren', value: source.slice(i + 1, end), opener: ch, closer: PAIRS.get(ch) });
@@ -142,14 +151,15 @@
     return 'SMART_AUTO';
   }
 
+  function escapeMarkup(value) {return String(value).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
   function render(parsed) {
     if (!parsed || parsed.mode === 'raw') return String(parsed?.source ?? '');
     const lines = [`<PLAYER_TURN mode="${modeLabel(parsed.mode)}">`];
     for (const seg of parsed.segments || []) {
-      if (seg.kind === 'speech') lines.push(`<PLAYER_SPEECH>${seg.text}</PLAYER_SPEECH>`);
-      else if (seg.kind === 'action') lines.push(`<PLAYER_ACTION>${seg.text}</PLAYER_ACTION>`);
-      else if (seg.kind === 'private_thought') lines.push(`<PLAYER_PRIVATE_THOUGHT>${seg.text}</PLAYER_PRIVATE_THOUGHT>`);
-      else lines.push(`<PLAYER_STAGE>${seg.text}</PLAYER_STAGE>`);
+      if (seg.kind === 'speech') lines.push(`<PLAYER_SPEECH>${escapeMarkup(seg.text)}</PLAYER_SPEECH>`);
+      else if (seg.kind === 'action') lines.push(`<PLAYER_ACTION>${escapeMarkup(seg.text)}</PLAYER_ACTION>`);
+      else if (seg.kind === 'private_thought') lines.push(`<PLAYER_PRIVATE_THOUGHT>${escapeMarkup(seg.text)}</PLAYER_PRIVATE_THOUGHT>`);
+      else lines.push(`<PLAYER_STAGE>${escapeMarkup(seg.text)}</PLAYER_STAGE>`);
     }
     lines.push('</PLAYER_TURN>');
     return lines.join('\n');
@@ -160,5 +170,6 @@
     return { ...parsed, prompt: render(parsed) };
   }
 
-  window.MimaUserInputSemanticParser = { parse, render, compile, normalizeMode, modeLabel };
+  const PARSER_VERSION = '1.1.8-v5-classification-escaped';
+  window.MimaUserInputSemanticParser = { parse, render, compile, normalizeMode, modeLabel, version: PARSER_VERSION };
 })();

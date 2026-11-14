@@ -197,6 +197,7 @@ function showLaunchPlan(){
  if(!choice||choice.kind!=='character')return;
  try{
   const plan=onboard().make(scan.resources,choice),c=plan.counts;
+  el('p',{className:'compat-help',text:'即将创建：「'+(choice.name||'角色剧情')+'」（标题来自角色卡；即使挂载设置模板，也不会自动覆盖角色卡名称）'},output);
   el('strong',{text:'这个故事带来了'},output);
   for(const [label,value,state]of[['人物与开场','所选版本','已读取'],['世界书',c.worldbookEnabled+' 条启用候选','按规则触发'],['正则效果',c.regex+' 条','可本地测试'],['MVU / 变量',c.variable_schema+' 项来源','开场时检查']]){const row=el('div',{className:'compat-capability-row'},output);el('span',{text:label},row);el('small',{text:value},row);el('span',{className:'compat-capability-state',text:state},row);}
   if(c.script_source||c.html_template||plan.warnings.length){const detail=el('details',{},output);el('summary',{text:'查看外观、脚本与兼容说明'},detail);el('p',{text:'安全 CSS 随卡片 HTML 显示；独立模板需手动选择。'+(c.script_source?'此卡另含 '+c.script_source+' 项脚本，原版 Tavern Helper API 尚未完整提供。':'')},detail);if(plan.warnings.length)el('small',{text:plan.warnings.join('；')},detail);}
