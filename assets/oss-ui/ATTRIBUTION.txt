@@ -1,0 +1,3 @@
+Icons: Font Awesome Free, CC BY 4.0, copyright Fonticons, Inc.
+Source: https://fontawesome.com/license/free
+The icon files are redistributed unmodified. Local CSS masks style the glyphs without changing the SVG source.

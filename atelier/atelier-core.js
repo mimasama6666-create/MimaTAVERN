@@ -66,7 +66,7 @@ function normalizeInteractions(raw){
   if(typeof value!=='string'||value.length>5.4*1024*1024||(value&&!AUDIO_DATA.test(value)))throw Error('交互音效 '+kind+' 文件格式无效或超过 4 MB，原主题不会被覆盖');
   sounds[kind]=value;soundNames[kind]=String(x.soundNames?.[kind]||'').replace(/[<>\u0000-\u001f]/g,'').slice(0,80);
  }
- return {enabled:x.enabled!==false,animation:['jelly','press','glow','ripple','none'].includes(x.animation)?x.animation:DEFAULT_INTERACTIONS.animation,
+ return {enabled:x.enabled!==false,animation:['jelly','press','glow','ripple','float','orbit','twinkle','heartbeat','none'].includes(x.animation)?x.animation:DEFAULT_INTERACTIONS.animation,
   duration:clamp(x.duration??340,140,850),particles:['sparkles','hearts','petals','paw','none'].includes(x.particles)?x.particles:'sparkles',
   particleCount:clamp(x.particleCount??5,0,12),transitions:x.transitions!==false,soundEnabled:x.soundEnabled!==false,
   volume:clamp(x.volume??24,0,100),sounds,soundNames};

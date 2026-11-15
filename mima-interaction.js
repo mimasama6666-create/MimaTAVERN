@@ -87,7 +87,7 @@
   const p=raw&&typeof raw==='object'&&!Array.isArray(raw)?raw:{};
   return {motionEnabled:p.motionEnabled!==false,soundEnabled:p.soundEnabled!==false,
     particleEnabled:p.particleEnabled!==false,transitionsEnabled:p.transitionsEnabled!==false,screenTouchEnabled:p.screenTouchEnabled!==false,
-    animation:['theme','jelly','press','glow','ripple','none'].includes(p.animation)?p.animation:'theme',
+    animation:['theme','jelly','press','glow','ripple','float','orbit','twinkle','heartbeat','none'].includes(p.animation)?p.animation:'theme',
     volume:Math.max(0,Math.min(100,Number.isFinite(Number(p.volume))?Math.round(Number(p.volume)):100))};
  }
  function readPreferences(){try{return normalizePreferences(JSON.parse(localStorage.getItem(PREF_KEY)||'null'));}
@@ -118,8 +118,8 @@
   const newSoundSignature=JSON.stringify(next.sounds);
   if(newSoundSignature!==soundSignature){disposeSounds();soundSignature=newSoundSignature;}
   signature=nextSig;settings=next;
-  if(!next.enabled||!next.screenTouchEnabled)cancelPointers();
-  if(!next.enabled){
+  if(!next.enabled||next.animation==='none'||!next.screenTouchEnabled)cancelPointers();
+  if(!next.enabled||next.animation==='none'){
    for(const animation of activeButtonMotions)animation.cancel();
    activeButtonMotions.clear();
    for(const node of transientScenes)node.remove();transientScenes.clear();
@@ -218,7 +218,11 @@
   jelly:[['1 1',0],['1.085 .88',.18],['.955 1.075',.42],['1.035 .97',.72],['1 1',1]],
   press:[['.955',0],['1.018',.44],['.994',.75],['1',1]],
   glow:[['.975',0],['1.022',.4],['1',1]],
-  ripple:[['.97',0],['1.014',.38],['1',1]]
+  ripple:[['.97',0],['1.014',.38],['1',1]],
+  float:[['1',0],['1.035',.28],['.992',.67],['1',1]],
+  orbit:[['.96',0],['1.032',.32],['.987',.73],['1',1]],
+  twinkle:[['.985',0],['1.055',.23],['.98',.55],['1',1]],
+  heartbeat:[['1',0],['1.065',.20],['.975',.39],['1.042',.63],['1',1]]
  };
  function animateScale(button,steps,options){
   if(!button?.animate)return null;
@@ -242,14 +246,53 @@
    duration,easing:'cubic-bezier(.2,.75,.24,1)',fill:'none'
   });
  }
- const symbols={sparkles:['✦','✧','⋆'],hearts:['♡','♥'],petals:['🌸','✿'],paw:['🐾','✧']};
+ const symbols={sparkles:['✦','✧','⋆'],hearts:['♡','♥'],petals:['✿','❀','✾'],paw:['','✧']};
  // A single fixed particle field per click: one DOM insertion and one expiry,
  // instead of N individually appended paint surfaces and N expiry timers.
- function positionTransient(node,x,y){
-  // Root CSS zoom changes the coordinate space of fixed descendants, but
-  // pointer.clientX/Y and getBoundingClientRect are viewport coordinates.
+ // The original full-radius clamp could move a glow over 70 screen pixels
+ // away from a tapped edge button. Keep the visual center close to the touch,
+ // and compress only the temporary decoration when its full reach will not fit.
+ // CSS zoom changes the *painted* reach; all comparisons below are in viewport
+ // coordinates, then fixed-position coordinates are converted back for placement.
+ const SCENE_REACH={jelly:64,press:60,glow:98,ripple:66,float:52,orbit:68,
+   twinkle:76,heartbeat:51,screen:48,hold:57};
+ // CSS border-box dimensions; keeps a scaled scene's *painted* center on the
+ // intended point. Particle fields have zero dimensions and need no correction.
+ const SCENE_BOX={jelly:[56,56],press:[58,34],glow:[68,68],ripple:[56,56],
+   float:[38,48],orbit:[63,63],twinkle:[66,66],heartbeat:[61,61],screen:[46,46],hold:[66,66]};
+ function positionTransient(node,x,y,reachX=0,reachY=0,boxW=0,boxH=0){
   const zoom=parseFloat(getComputedStyle(document.documentElement).zoom)||1;
-  node.style.left=x/zoom+'px';node.style.top=y/zoom+'px';
+  const viewport=window.visualViewport;
+  const w=viewport?.width||window.innerWidth,h=viewport?.height||window.innerHeight;
+  const ox=viewport?.offsetLeft||0,oy=viewport?.offsetTop||0;
+  const rx=Math.max(0,reachX)*zoom,ry=Math.max(0,reachY)*zoom;
+  const pad=2,maxShift=32*zoom;
+  const clampTo=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
+  const tx=clampTo(x,ox+pad,ox+w-pad),ty=clampTo(y,oy+pad,oy+h-pad);
+  // On current Safari the independent CSS scale property composes with the
+  // original transform keyframes, preserving each animation's distinctive shape.
+  // Older browsers retain the full-radius edge-safe positioning instead.
+  if(individualScale){
+   let cx=tx,cy=ty;
+   if(tx<ox+rx+pad)cx+=Math.min(maxShift,ox+rx+pad-tx);
+   else if(tx>ox+w-rx-pad)cx-=Math.min(maxShift,tx-(ox+w-rx-pad));
+   if(ty<oy+ry+pad)cy+=Math.min(maxShift,oy+ry+pad-ty);
+   else if(ty>oy+h-ry-pad)cy-=Math.min(maxShift,ty-(oy+h-ry-pad));
+   cx=clampTo(cx,ox+pad,ox+w-pad);
+   cy=clampTo(cy,oy+pad,oy+h-pad);
+   const factor=Math.min(1,rx>0?(cx-ox-pad)/rx:1,rx>0?(ox+w-cx-pad)/rx:1,
+     ry>0?(cy-oy-pad)/ry:1,ry>0?(oy+h-cy-pad)/ry:1);
+   if(factor<.999)node.style.scale=Math.max(0,factor).toFixed(3);
+   // A centered CSS scale composes *before* the scene's translate(-50%, -50%)
+   // transform. Compensate its (1-scale)*half-box drift without changing
+   // transform-origin, which must remain centered for rotations and jelly.
+   node.style.left=(cx/zoom-boxW*(1-factor)/2)+'px';
+   node.style.top=(cy/zoom-boxH*(1-factor)/2)+'px';
+   return;
+  }
+  const mx=Math.min(Math.max(0,w/2-1),rx+pad),my=Math.min(Math.max(0,h/2-1),ry+pad);
+  node.style.left=clampTo(tx,ox+mx,ox+w-mx)/zoom+'px';
+  node.style.top=clampTo(ty,oy+my,oy+h-my)/zoom+'px';
  }
  function particles(conf,x,y){
   if(!conf.enabled||reduced()||conf.particles==='none'||conf.particleCount===0)return;
@@ -257,10 +300,10 @@
   const total=clamp(conf.particleCount,0,12),duration=clamp(conf.duration+200,350,1100);
   if(!total)return;
   const field=document.createElement('span');field.className='mima-tap-particle-field';
-  positionTransient(field,x,y);field.style.setProperty('--tap-life',duration+'ms');
+  positionTransient(field,x,y,65,65);field.style.setProperty('--tap-life',duration+'ms');
   const fragment=document.createDocumentFragment();
   for(let i=0;i<total;i++){
-   const node=document.createElement('span');node.className='mima-tap-particle';node.textContent=choices[i%choices.length];
+   const node=document.createElement('span');node.className='mima-tap-particle';node.textContent=choices[i%choices.length];if(conf.particles==='paw'&&i%2===0)node.classList.add('mima-particle-paw');
    const a=Math.PI*2*((i+.1)/total),distance=26+(i%3)*10;
    node.style.setProperty('--dx',Math.round(Math.cos(a)*distance)+'px');
    node.style.setProperty('--dy',Math.round(Math.sin(a)*distance-12)+'px');
@@ -277,13 +320,14 @@
  function scene(conf,kind,x,y,{screen=false}={}){
   if(!conf.enabled||reduced()||conf.animation==='none'||!Number.isFinite(x)||!Number.isFinite(y))return null;
   const style=screen?'screen':kind;
-  if(!['jelly','press','glow','ripple','screen','hold'].includes(style))return null;
+  if(!['jelly','press','glow','ripple','float','orbit','twinkle','heartbeat','screen','hold'].includes(style))return null;
   const node=document.createElement('span');
   node.className=`mima-tap-scene mima-tap-scene--${style}`;
-  positionTransient(node,x,y);
+  const [boxW,boxH]=SCENE_BOX[style]||[62,62];
+  positionTransient(node,x,y,SCENE_REACH[style]||65,style==='float'?93:SCENE_REACH[style]||65,boxW,boxH);
   const dispose=trackTransient(node,transientScenes);
   document.body.appendChild(node);
-  const life=style==='glow'?780:style==='hold'?1800:style==='screen'?460:style==='ripple'?750:640;
+  const life=style==='hold'?1800:style==='screen'?460:style==='orbit'?870:style==='float'?820:style==='heartbeat'?840:style==='glow'?780:style==='ripple'?750:style==='twinkle'?710:640;
   if(style!=='hold'){
    node.addEventListener('animationend',e=>{if(e.target===node)dispose()},{once:true});
    setTimeout(dispose,life+170);

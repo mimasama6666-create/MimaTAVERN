@@ -14,7 +14,7 @@
     <title>咪嘛馆 · MimaTAVERN（酒馆） · Standalone（独立版）</title>
     <link rel="stylesheet" href="./style.css?settingsairp=20261114-v2&cssbatch=20261110-1&v548=20261103&v=20261025-r19-viewport-density-1&hotfix=1.1.3&release=1.3.1&auditfix=1.3.2&themefix=1.4.0&memoryfix=1.3.9&uihotfix=20261013-1&ctxsave=20261013-2&diagnostics=r8&r13=20261015-1&manualrecovery=20261015-r14-2&replylayout=20261016-r16.2&librarycss=20261019-r3&templateux=20261021-r13-generation-polish&r19manual=20261022-1&settingssheet=20261023-1&r19-dual-rework=20261024&keyboard=20261025-r3&p0recovery=20261025-ui-1&density=20261025-r3&taskviewer=20261025-r2&promptclean=20261025-r1&oct25rework=novel-assist-3&reworkfix=20261025-p1-4&readingui=20261029-1&fontpreview=20261029-v3&settingpaint=20261030-v516&urlpreview=20261030-v517&layoutfix=20261030-v519&previewgrid=20261103-v546&mimacssv2=20261104-p1-category-ui&v565=20261105-archive-ui&v572=20261106-template-css-fold&v573=20261106-bulk-archive-style&v574=20261106-bulk-hit-targets&v575=20261106-editor-keyboard&v576=20261106-hud-recovery&v577=20261106-canonical-resource-safety&v578=20261106-reader-announcements&v579=20261106-diagnostic-one-tap&v580=20261106-appearance-access&v581=20261106-ux-batch&v583=20261107-ios-composer-compact&v584=20261107-keyboard-theme-canvas&v585=20261107-composer-hud-focus&v586=20261107-input-small&v589=20261107-p1-cas-mobile-ux&v591=20261107-resource-order-preset-ui&v592=20261107-keyboard-theme-canvas-state&wgicons=20261108-a&bulkcomplete=20261108-r1&composerexpanded=20261108-r1&personaremark=20261109-v3&cssmenu=20261109-stacking-fix&sessionmenu=20261109-glass-scroll-r1">
     <link rel="stylesheet" href="./theme-skin.css?v=1.4.0">
-<link rel="stylesheet" href="./mima-interaction.css?v=20261115-v17-motion-selection">
+<link rel="stylesheet" href="./mima-interaction.css?v=20261115-v20">
 <link rel="stylesheet" href="./cloud-backup.css?v=20261104-cloud-v1">
     <link rel="stylesheet" href="./compat-style.css?v=r19-v572">
 <!-- v1.1.5 compatibility regression marker: release=1.1.5 -->
@@ -37,11 +37,11 @@
     <div class="drawer-head">
         <div>
             <div class="eyebrow">MimaTAVERN（咪嘛馆） · STANDALONE（独立版）</div>
-            <h1>🍷 咪嘛馆</h1>
+            <h1><span class="mima-oss-icon mima-oss-icon--wine" aria-hidden="true"></span> 咪嘛馆</h1>
         </div>
         <button class="icon-btn" onclick="closeDrawer()">✕</button>
     </div>
-    <div class="toolbar"><button class="primary-btn" id="compat-open">🎴 玩酒馆角色卡</button></div>
+    <div class="toolbar"><button class="primary-btn" id="compat-open"><span class="mima-oss-icon mima-oss-icon--cards" aria-hidden="true"></span> 玩酒馆角色卡</button></div>
     <div class="toolbar"><button class="primary-btn" style="flex:1" onclick="openNewSessionModal()">＋ 新建剧情</button><button class="ghost-btn" onclick="chooseSessionImport()">⇧ 导入</button></div>
     <div class="session-organizer-toolbar" aria-label="剧情收纳">
       <input id="session-search-input" class="session-search" type="search" placeholder="搜索剧情或面具名称" aria-label="搜索剧情或面具名称" oninput="sessionSearchTerm=this.value;renderSessions()">
@@ -67,8 +67,8 @@
       </div>
     </div>
     <div class="drawer-footer">
-        <button class="ghost-btn" onclick="openSettings('api')" title="API 接口设置" aria-label="API 接口设置">🔌 API</button>
-        <button class="ghost-btn" onclick="MimaThemeAtelier.open();closeDrawer()" title="打开主题工坊">🎨 主题</button>
+        <button class="ghost-btn" onclick="openSettings('api')" title="API 接口设置" aria-label="API 接口设置"><span class="mima-oss-icon mima-oss-icon--plug" aria-hidden="true"></span> API</button>
+        <button class="ghost-btn" onclick="MimaThemeAtelier.open();closeDrawer()" title="打开主题工坊"><span class="mima-oss-icon mima-oss-icon--palette" aria-hidden="true"></span> 主题</button>
         <button class="ghost-btn" id="mima-license-open" type="button" onclick="openMimaLicenseDialog()" title="阅读完整软件授权与免责声明">© 许可</button>
         <button class="ghost-btn" type="button" onclick="closeDrawer();openMimaGuide()"><img src="./assets/mima-gothic-guide.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> 教程</button>
         <div class="standalone-note">独立版 · 数据保存在本机浏览器 · 仅限成年人</div>
@@ -91,12 +91,12 @@
     <nav id="mima-feature-menu" class="mima-feature-menu hidden" aria-label="全部功能">
       <button onclick="MimaNovelStudio.open();MimaR6Nav.close()"><img src="./assets/mima-gothic-compose.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> 小说创作</button>
       <button onclick="MimaAssistantStudio.open('regex');MimaR6Nav.close()">✦ AI 工具（文字效果与美化）</button>
-      <button onclick="MimaCompatUI.open();MimaR6Nav.close()">🎴 玩酒馆角色卡</button>
+      <button onclick="MimaCompatUI.open();MimaR6Nav.close()"><span class="mima-oss-icon mima-oss-icon--cards" aria-hidden="true"></span> 玩酒馆角色卡</button>
       <button onclick="openSettings('roles');MimaR6Nav.close()"><span class="mima-gothic-inline-icon" aria-hidden="true"></span> 管理角色资料（高级）</button>
       <button onclick="openSettings('worldbook');MimaR6Nav.close()"><img src="./assets/mima-gothic-worldbook.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> 世界书</button>
       <button onclick="openSettings('memory');MimaR6Nav.close()"><img src="./assets/mima-gothic-memory.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> 剧情记忆</button>
-      <button onclick="MimaThemeAtelier.open();MimaR6Nav.close()">🎨 可视化主题工坊</button>
-      <button type="button" onclick="goPhone();MimaR6Nav.close()">📱 小手机（独立聊天）</button>
+      <button onclick="MimaThemeAtelier.open();MimaR6Nav.close()"><span class="mima-oss-icon mima-oss-icon--palette" aria-hidden="true"></span> 可视化主题工坊</button>
+      <button type="button" onclick="goPhone();MimaR6Nav.close()"><span class="mima-oss-icon mima-oss-icon--phone" aria-hidden="true"></span> 小手机（独立聊天）</button>
       <button type="button" onclick="openMimaGuide();MimaR6Nav.close()"><img src="./assets/mima-gothic-guide.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> 玩家使用手册 · 新手教程</button>
       <button type="button" onclick="openMimaLicenseDialog();MimaR6Nav.close()">© 版权与许可 · 软件免责声明</button>
     </nav>
@@ -105,7 +105,7 @@
 
     <main id="story-chat-box" class="tavern-story-scope chat-box">
         <div class="empty-state">
-            <div class="empty-icon">🍷</div>
+            <div class="empty-icon" aria-hidden="true"><span class="mima-oss-icon mima-oss-icon--wine" aria-hidden="true"></span></div>
             <h2>咪嘛馆已经开门</h2>
             <p>创建一个独立宇宙，挂载角色卡与世界书，然后开始长剧情。</p>
         </div>
@@ -248,7 +248,7 @@ window.addEventListener('message',function(ev){
     <div class="modal-head"><div><div class="eyebrow">有什么新变化？</div><h2 id="mima-release-note-title">咪嘛馆 · V5.80 更新</h2></div><button class="icon-btn" onclick="closeMimaReleaseNotice()" aria-label="关闭更新公告">✕</button></div>
     <div class="mima-release-note-content">
       <p class="mima-release-intro">咪嘛馆 V5.80 · 2026 年 11 月 6 日</p>
-      <h3>🌷 这次更新了什么？</h3>
+      <h3><span class="mima-oss-icon mima-oss-icon--flower" aria-hidden="true"></span> 这次更新了什么？</h3>
       <ul>
         <li><strong>字体设置不再藏在折叠库里：</strong>界面字体、剧情字体、独立字重和补字组合直接显示在外观页；顶部可以一键跳转本地字体、网络字体和 CSS 列表。</li>
         <li><strong>CSS 分类真的可以收纳：</strong>CSS 列表始终可见，点分类名称即可展开或收起，另有全部展开／全部收起；原有导入、编辑和应用功能都保留。</li>
@@ -259,9 +259,9 @@ window.addEventListener('message',function(ev){
         <li><strong>请求状态更清楚：</strong>继续区分请求准备、尝试发送和收到 HTTP 响应，不能把 HTTP 200 当成模型正常写完。</li>
         <li><strong>初始化失败时有明确操作：</strong>可以重试读取或刷新页面，也能导出错误诊断；不会主动清空存档。</li>
       </ul>
-      <h3>🐾 最近更新里你可能用得上的功能</h3>
+      <h3><span class="mima-oss-icon mima-oss-icon--paw" aria-hidden="true"></span> 最近更新里你可能用得上的功能</h3>
       <p>编辑人设和预设时，保存中／成功／失败会有更明显的提示；生成过程中可以继续写下一条草稿；剧情支持批量整理，生成失败面板也能直接打开快速手动恢复。</p>
-      <h3>💌 使用前的小提醒</h3>
+      <h3><span class="mima-oss-icon mima-oss-icon--envelope" aria-hidden="true"></span> 使用前的小提醒</h3>
       <p>重要剧情建议定期备份。遇到无法读取存档时，先尝试重新读取或刷新，<strong>不要清除网站数据</strong>。复杂正则和大型字体在 iPhone Safari 上的长时间稳定性，仍需真实设备检验。</p>
       <p class="mima-release-footnote">这里只放玩家需要知道的内容，不再展示历史工程日志。更新说明不会删除你的剧情历史、角色资料、预设或备份。</p>
       <label class="check-row"><input id="mima-release-note-optout" type="checkbox" onchange="setMimaReleaseNoticeOptOut(this.checked)">以后不再自动弹出更新公告（设置里仍可查看）</label>
@@ -286,14 +286,14 @@ window.addEventListener('message',function(ev){
             <button type="button" onclick="MimaPlayTools.open('native','theater')"><img src="./assets/mima-gothic-theater.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> 小剧场</button>
             <button data-tab="regex" onclick="switchSettingsTab('regex')"><img src="./assets/mima-gothic-regex.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> 正则</button>
             <button data-tab="templates" onclick="switchSettingsTab('templates')"><img src="./assets/mima-gothic-template.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> 设置模板</button>
-            <button data-tab="context" onclick="switchSettingsTab('context')">🧠 Context（上下文）</button>
+            <button data-tab="context" onclick="switchSettingsTab('context')"><span class="mima-oss-icon mima-oss-icon--brain" aria-hidden="true"></span> Context（上下文）</button>
             <button data-tab="memory" onclick="switchSettingsTab('memory')"><img src="./assets/mima-gothic-memory.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> 记忆</button>
-            <button data-tab="appearance" onclick="switchSettingsTab('appearance')">🎨 外观</button>
-            <button data-tab="api" onclick="switchSettingsTab('api')">🔌 API（接口）</button>
-            <button data-tab="prompt" onclick="switchSettingsTab('prompt')">🔬 Prompt（提示词）</button>
-            <button data-tab="diagnostics" onclick="switchSettingsTab('diagnostics')">🧾 诊断日志</button>
-            <button data-tab="performance" onclick="switchSettingsTab('performance')">⚡ 性能检查</button>
-            <button data-tab="updates" onclick="switchSettingsTab('updates')">🆕 更新公告</button>
+            <button data-tab="appearance" onclick="switchSettingsTab('appearance')"><span class="mima-oss-icon mima-oss-icon--palette" aria-hidden="true"></span> 外观</button>
+            <button data-tab="api" onclick="switchSettingsTab('api')"><span class="mima-oss-icon mima-oss-icon--plug" aria-hidden="true"></span> API（接口）</button>
+            <button data-tab="prompt" onclick="switchSettingsTab('prompt')"><span class="mima-oss-icon mima-oss-icon--flask" aria-hidden="true"></span> Prompt（提示词）</button>
+            <button data-tab="diagnostics" onclick="switchSettingsTab('diagnostics')"><span class="mima-oss-icon mima-oss-icon--receipt" aria-hidden="true"></span> 诊断日志</button>
+            <button data-tab="performance" onclick="switchSettingsTab('performance')"><span class="mima-oss-icon mima-oss-icon--bolt" aria-hidden="true"></span> 性能检查</button>
+            <button data-tab="updates" onclick="switchSettingsTab('updates')"><span class="mima-oss-icon mima-oss-icon--star" aria-hidden="true"></span> 更新公告</button>
             <button type="button" onclick="openMimaGuide()"><img src="./assets/mima-gothic-guide.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> 使用手册</button>
             <button data-tab="data" onclick="switchSettingsTab('data')"><img src="./assets/mima-gothic-backup.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> Data（数据）</button>
         </nav>
@@ -488,11 +488,11 @@ window.addEventListener('message',function(ev){
 <script src="./ui-layout.js?v=20261025-keyboard-viewport-origin-2&promptclean=20261025-r1&v575=20261106-viewport-dedupe&v584=20261107-theme-underlay&v592=20261107-keyboard-theme-canvas-state&v593=20261107-keyboard-session-lifecycle&v594=20261107-keyboard-bfcache-reacquire&composerexpanded=20261108-r1"></script>
 <link rel="stylesheet" href="./chat-wallpaper.css?v=20261021-r12-gpu">
 <script src="./chat-wallpaper.js?v=20261023-bfcache-exact&auditfix=20261025-p1-7&cssrepair=20261028-b8-complete-3"></script>
-<script src="./atelier/atelier-core.js?reaffirm=20261029-v56&v=20261027-interaction&ux=20261027-ux-container&auditfix=20261025-p1-7&compatfix=20261027f1&memfix=20261028-r19-b8&cssrepair=20261028-b8-complete-3"></script>
-<script src="./mima-interaction.js?v=20261115-v18-audited-motion"></script>
+<script src="./atelier/atelier-core.js?reaffirm=20261029-v56&v=20261027-interaction&ux=20261027-ux-container&auditfix=20261025-p1-7&compatfix=20261027f1&memfix=20261028-r19-b8&cssrepair=20261028-b8-complete-3&motion19=20261115-v19"></script>
+<script src="./mima-interaction.js?v=20261115-v21-edge-follow"></script>
 <script src="./atelier/atlas-catalog.js?v=20261018-atlas-r1"></script>
 <script src="./atelier/atlas-adapter.js?v=20261019-atlas-r3"></script>
-<script src="./atelier/atelier-ui.js?v=20261027-interaction&ux=20261027-ux-container&oct25rework=novel-assist-3&audit2=20261025-r2&perf-preview=20261026-b8-1&batch8rootfix=20261026-1&batch8rework2=20261026&draftfix=20261027r2&memfix=20261028-r19-b8&cssrepair=20261028-b8-complete-3&v558=css-settlement-20261105&v581=20261106-ux-batch&v582=20261107-split-touch-fix"></script>
+<script src="./atelier/atelier-ui.js?v=20261027-interaction&ux=20261027-ux-container&oct25rework=novel-assist-3&audit2=20261025-r2&perf-preview=20261026-b8-1&batch8rootfix=20261026-1&batch8rework2=20261026&draftfix=20261027r2&memfix=20261028-r19-b8&cssrepair=20261028-b8-complete-3&v558=css-settlement-20261105&v581=20261106-ux-batch&v582=20261107-split-touch-fix&motion19=20261115-v19"></script>
 
 <script src="./phone/phone-store.js?v=20261023-r19-phone1"></script>
 <script src="./phone/phone-resources.js?batch3=20261025&v=20261024-r19-rework-b2&audit2=20261025-r2"></script>
