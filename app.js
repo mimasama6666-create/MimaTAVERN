@@ -246,6 +246,10 @@ function r19SavedDraft(id){
 }
 function r19PersistReading(id=currentSessionId){
  if(!id||id!==currentSessionId)return;
+ // Reading is blocked by the editor overlay. During an iOS app switch, do
+ // not force layout/hit-testing of the entire themed chat behind that editor.
+ // The last committed reading anchor remains intact until normal reading resumes.
+ if(qs('editor-modal')?.classList.contains('hidden')===false)return;
  const box=qs('story-chat-box'),anchor=r19CaptureReadingAnchor(box);
  if(!anchor||!anchor.id||!arr(currentSessionData?.messages).some(m=>m.id===anchor.id))return;
  try{localStorage.setItem(R19_POSITION_PREFIX+id,JSON.stringify({version:1,messageId:anchor.id,offset:anchor.offset,scrollTop:anchor.scrollTop,updatedAt:Date.now()}));}
@@ -543,7 +547,7 @@ function closeEditor(){
  const modal=qs('editor-modal');modal.querySelector('.editor-discard-confirm')?.remove();modal.classList.add('hidden');
  // An edited preset can contain megabytes of text. Release its hidden textarea
  // after closing instead of pinning an extra copy until the next editor opens.
- if(['preset','mask','worldbook','regex-pack'].includes(editorState?.type)){
+ if(['preset','mask','worldbook','regex-pack','css-preset'].includes(editorState?.type)){
   qs('editor-body')?.replaceChildren();
   // Release the Save button before clearing the editor owner: otherwise the
   // successful save's finally block cannot re-enable it on the next edit.
@@ -1710,7 +1714,7 @@ function setupImmersiveReading(){
         }
     },true);
     root.addEventListener('dblclick',e=>{
-        if(!readingMode||r19ReaderInteractiveTarget(e.target)||window.getSelection()?.toString())return;
+        if(!readingMode||r19ReaderInteractiveTarget(e.target)||(window.getSelection()?.isCollapsed===false))return;
         e.preventDefault();e.stopPropagation();setImmersiveReading(false);
     });
     root.addEventListener('pointerdown',e=>{if(!readingMode||e.pointerType!=='touch')return;
@@ -1720,7 +1724,7 @@ function setupImmersiveReading(){
     root.addEventListener('pointerup',e=>{
         if(!readingMode||e.pointerType!=='touch')return;
         const start=readingTouchStart;readingTouchStart=null;
-        if(!start||r19ReaderInteractiveTarget(e.target)||r19ReaderInteractiveTarget(start.target)||window.getSelection()?.toString()||
+        if(!start||r19ReaderInteractiveTarget(e.target)||r19ReaderInteractiveTarget(start.target)||(window.getSelection()?.isCollapsed===false)||
             Math.abs(e.clientX-start.x)>12||Math.abs(e.clientY-start.y)>12||Math.abs(root.scrollTop-start.scrollTop)>5){
             readingLastTap=0;readingLastTapPoint=null;return;
         }

@@ -202,20 +202,37 @@ function viewport(){
 }
 
 function focusedControlVisible(){
- if(composing)return;
+ // WebKit can keep a large textarea focused while its copy-selection is active
+ // and the page is backgrounded. Never perform scroll corrections off-screen.
+ if(doc.hidden||composing)return;
  const active=doc.activeElement;if(!active?.matches?.('input,textarea,select,[contenteditable="true"]'))return;
  const modal=stack.filter(visible).at(-1);
  if(!modal?.contains(active))return;
- const body=active.closest('.editor-body,.settings-content,.modal-panel');if(!body)return;
- const scrollArea=body.matches('.editor-body,.settings-content')?body:body;
+ const scrollArea=active.closest('.editor-body,.settings-content,.modal-panel');if(!scrollArea)return;
  const a=active.getBoundingClientRect(),c=scrollArea.getBoundingClientRect();
- const top=c.top+14,bottom=c.bottom-14;
+ const top=c.top+14,bottom=c.bottom-14,available=bottom-top;
+ if(available<=0)return;
+ // A multiline editor taller than its scrollport CANNOT be made fully visible.
+ // The old top/bottom checks alternated opposing scrolls on consecutive iOS
+ // visualViewport changes (keyboard close, app switch, text selection). Leave
+ // partial visibility and native caret scrolling alone; only bring an entirely
+ // off-screen control back into view.
+ if(a.height>available){
+  const exposed=Math.min(48,available/2);
+  if(a.bottom<=top)scrollArea.scrollTop-=Math.min(4000,top-a.bottom+exposed);
+  else if(a.top>=bottom)scrollArea.scrollTop+=Math.min(4000,a.top-bottom+exposed);
+  return;
+ }
  // Only scroll the inner editor; do not scroll the document or rebuild focused DOM.
  if(a.top<top)scrollArea.scrollTop-=Math.min(4000,top-a.top);
  else if(a.bottom>bottom)scrollArea.scrollTop+=Math.min(4000,a.bottom-bottom);
 }
-function scheduled(){if(raf)return;raf=requestAnimationFrame(()=>{raf=0;viewport();focusedControlVisible();});}
+function scheduled(){
+ if(doc.hidden||raf)return;
+ raf=requestAnimationFrame(()=>{raf=0;if(doc.hidden)return;viewport();focusedControlVisible();});
+}
 function viewportChanged(){scheduled();}
+doc.addEventListener('visibilitychange',()=>{if(!doc.hidden)scheduled();},{passive:true});
 window.matchMedia?.('(prefers-color-scheme: dark)')?.addEventListener?.('change',scheduleKeyboardTheme);
 viewport();window.addEventListener('resize',viewportChanged,{passive:true});
 window.visualViewport?.addEventListener('resize',viewportChanged,{passive:true});
