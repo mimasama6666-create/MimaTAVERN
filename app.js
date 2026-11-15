@@ -1760,6 +1760,24 @@ function maybeShowMimaReleaseNotice(){
 }
 function renderMimaUpdatesTab(box){box.innerHTML=`<section class="settings-section"><h3>咪嘛馆更新说明</h3><p class="helper">当前版本：V5.80 · 2026年11月6日。这里介绍实际会影响使用的变化，不再展示开发日志。</p><button class="ghost-btn" onclick="openMimaReleaseNotice()">看看这次更新了什么</button><label class="check-row"><input type="checkbox" ${localStorage.getItem(MIMA_RELEASE_NOTES_OPTOUT)==='1'?'checked':''} onchange="setMimaReleaseNoticeOptOut(this.checked)">以后不再自动弹出更新公告</label></section>`}
 function renderSettings(){return renderSettingsContent().catch(error=>{r19Lifecycle('settings_render_error',{tab:settingsTab,message:String(error?.message||error).slice(0,250)});console.error('设置渲染失败',error);toast('设置显示失败：'+error.message);return false;});}
+// A custom CSS theme may paint a hand-drawn PNG on a tab pseudo-element.
+// Such artwork wins over an optional generic SVG; never render both on top
+// of one another. Without a custom icon, the ordinary OSS glyph remains.
+function reconcileIllustratedTabIcons(){
+ const strip=qs('settings-modal')?.querySelector('.settings-tabs');
+ if(!strip)return;
+ for(const button of strip.querySelectorAll('button')){
+  const generic=button.querySelector(':scope > .mima-oss-icon');
+  if(!generic)continue;
+  const illustrated=!!button.querySelector(':scope > img.mima-gothic-ui-icon,:scope > .mima-gothic-inline-icon');
+  const hasPseudoArt=['::before','::after'].some(part=>{
+   const c=getComputedStyle(button,part);
+   const image=[c.backgroundImage,c.maskImage,c.webkitMaskImage,c.content].join(' ');
+   return /url\s*\(/i.test(image);
+  });
+  generic.style.display=illustrated||hasPseudoArt?'none':'';
+ }
+}
 async function renderSettingsContent(){
     // Do not revoke the epoch of a genuine template-library response while its
     // committed save is re-rendering. A background settings refresh previously
@@ -1768,6 +1786,7 @@ async function renderSettingsContent(){
     if(settingsTab==='templates'&&(templateSaveBusy||templateMutationBusy||(templateEditorDirty&&liveTemplateEditor)))return;
     const renderEpoch=++settingsRenderEpoch;
     qsa('.settings-tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===settingsTab));
+    reconcileIllustratedTabIcons();
     // Auto-reveal the selected tab without scrolling the dialog vertically.
     const tabStrip=qs('settings-modal')?.querySelector('.settings-tabs');
     const activeTab=tabStrip?.querySelector('button.active');
@@ -3694,8 +3713,12 @@ async function resetMimaFeedbackSound(kind,button){
  try{await MimaInteraction.clearSound(kind);updateAppearanceSoundRows();toast('已恢复该类别的主题声音');}
  catch(error){if(button)button.disabled=false;toast('恢复主题声音失败：'+error.message);}
 }
+function previewMimaBuiltinSound(){
+ const selected=qs('mima-builtin-sound-style')?.value||'classic';
+ if(!window.MimaInteraction?.previewBuiltInSound?.(selected,'normal'))toast('点击音效已关闭，请先打开音效开关并调高音量');
+}
 function appearanceFeedbackHtml(){
- const p=window.MimaInteraction?.getPreferences?.()||{motionEnabled:true,soundEnabled:true,particleEnabled:true,transitionsEnabled:true,animation:'theme',volume:100,screenTouchEnabled:true};
+ const p=window.MimaInteraction?.getPreferences?.()||{motionEnabled:true,soundEnabled:true,particleEnabled:true,transitionsEnabled:true,animation:'theme',volume:100,screenTouchEnabled:true,soundStyle:'classic'};
  const checked=x=>x?'checked':'';
  const anims=[['theme','跟随当前主题','由当前主题决定反馈风格'],['jelly','果冻回弹','横纵软弹，像捏了一下果冻'],['press','柔软下陷','轻轻按下，再自然复位'],['glow','魔法光晕','一圈细腻微光向外扩散'],['ripple','水波扩散','双层涟漪缓缓散开'],['float','轻羽上浮','像小羽毛一样向上飘散'],['orbit','星轨旋绕','双环旋转，中心闪现一点星光'],['twinkle','水晶轻闪','一颗小星光闪烁后消散'],['heartbeat','心动轻跳','轻轻连续跳动两下'],['none','不播放按钮动画','关闭按钮动画，其他设置不变']];
  return `<section class="settings-section mima-feedback-settings mima-motion-settings" id="mima-motion-settings"><h3><span class="mima-oss-icon mima-oss-icon--star" aria-hidden="true"></span> 按钮动画</h3><p class="helper">立即生效并自动保存。选择风格、粒子和过渡效果，不会修改剧情或主题文件。</p>
@@ -3707,6 +3730,7 @@ function appearanceFeedbackHtml(){
  <p class="helper">动画受系统「减少动态效果」偏好约束。主题工坊还可以单独调整主题内的动画素材。</p></section>
  <section class="settings-section mima-feedback-settings mima-sound-settings"><h3><span class="mima-oss-icon mima-oss-icon--sound" aria-hidden="true"></span> 点击声音</h3><div class="mima-feedback-setting-row"><div><strong>点击音效</strong><small>关闭后只静音，按钮动画照常运行</small></div><label class="mima-feedback-switch"><input type="checkbox" ${checked(p.soundEnabled)} aria-label="开启点击音效" onchange="setMimaFeedbackPreference('soundEnabled',this.checked,this)"><span>${p.soundEnabled?'开启':'关闭'}</span></label></div>
  <div class="mima-feedback-slider"><label for="mima-feedback-volume">音效音量 <output id="mima-feedback-volume-value">${p.volume}%</output></label><input id="mima-feedback-volume" type="range" min="0" max="100" step="5" value="${p.volume}" oninput="document.getElementById('mima-feedback-volume-value').textContent=this.value+'%'" onchange="setMimaFeedbackPreference('volume',Number(this.value),this)"><small>100% 为主题原始音量，不会额外放大。</small></div>
+ <div class="mima-sound-style-choice"><label class="form-label" for="mima-builtin-sound-style">内置音效音色</label><select class="field" id="mima-builtin-sound-style" onchange="setMimaFeedbackPreference('soundStyle',this.value,this)">${[['classic','原版轻铃'],['glass','玻璃糖'],['soft','绵软轻音'],['wood','木珠轻叩'],['bubble','泡泡三连'],['chime','晶莹风铃'],['pixel','复古电子']].map(([id,label])=>`<option value="${id}" ${p.soundStyle===id?'selected':''}>${label}</option>`).join('')}</select><button type="button" class="ghost-btn" data-mima-no-interaction="" onclick="previewMimaBuiltinSound()">试听内置音效</button><small>内置音色只作用于尚未设置主题音频或个人音频的按钮；已经导入的音效优先保留，不会被覆盖。</small></div>
  <div class="mima-feedback-audio-head"><strong><span class="mima-oss-icon mima-oss-icon--music" aria-hidden="true"></span> 自定义点击音效</strong><small>导入后立即使用，只影响本机；不替换当前 CSS。每个文件最多 4MB。</small></div><div id="mima-personal-sound-rows">${appearancePersonalSoundRows()}</div>
  <button class="ghost-btn" type="button" onclick="MimaThemeAtelier.open()"><span class="mima-oss-icon mima-oss-icon--palette" aria-hidden="true"></span> 打开主题工坊配置音效</button></section>`;
 }
@@ -4201,6 +4225,7 @@ function applyCustomCss(options={}){
   await cssPaintFrame();cssAbort(signal);if(!safe)assertCssVisible();cssRecoveryPhase(generation,'visual_ready');
   for(const x of pending){if(!x.unchanged){const before=cssMounted.get(x.tag.id);x.result?.accept?.();before?.result?.release?.();if(!x.p?.atelierReleaseKey)engine?.releaseAssets?.(x.owner);cssMounted.set(x.tag.id,{signature:x.signature,source:x.source,css:x.css,p:x.p,result:x.result,sessionId:x.owner==='library-session'?paintSessionId:null});}}
   cssPaintRollback=null;lastCssThemeSettings=nextTheme;lastCssVisualProblem='';engine?.reaffirm?.();window.MimaInteraction?.apply?.(appPreset?.atelierReleaseKey?(next.result?.project?.interactions||engine?.getApplied?.()?.interactions):null);
+  if(isSettingsOpen())reconcileIllustratedTabIcons();
   if(!options.commitIntent)cssRecoveryClearPending(generation);
   r19Lifecycle('css_applied',{generation,globalId:appPreset?.id||null});
   perfCss?.detail('css_apply_success',perfCssStart===null?0:performance.now()-perfCssStart);

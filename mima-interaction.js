@@ -3,6 +3,9 @@
  'use strict';
  const FALLBACK={enabled:true,animation:'jelly',duration:340,particles:'sparkles',particleCount:5,transitions:true,soundEnabled:true,volume:24,sounds:{normal:'',send:'',menu:''}};
  const NOTES={normal:[587.33,783.99],send:[659.25,987.77],menu:[523.25,659.25]};
+ // Original tones remain bit-for-bit equivalent by default. Added timbres are
+ // original tiny synthesized UI cues (not prerecorded music or sound packs).
+ const BUILTIN_SOUND_STYLES=['classic','glass','soft','wood','bubble','chime','pixel'];
  const PREF_KEY='mima-r19-ui-feedback-prefs-v1';
  const AUDIO_DB='mima-personal-click-sounds-v1',AUDIO_STORE='sounds',KINDS=['normal','send','menu'];
  const MIME={mp3:'audio/mpeg',wav:'audio/wav',m4a:'audio/mp4',aac:'audio/aac'};
@@ -81,14 +84,15 @@
   for(const kind of KINDS)delete audioRecords[kind];for(const record of records)audioRecords[record.kind]=record;
   personalAudioRevision++;refreshEffective();return getSoundInfo();}
 
- const PREF_DEFAULTS=Object.freeze({motionEnabled:true,soundEnabled:true,particleEnabled:true,transitionsEnabled:true,screenTouchEnabled:true,animation:'theme',volume:100});
+ const PREF_DEFAULTS=Object.freeze({motionEnabled:true,soundEnabled:true,particleEnabled:true,transitionsEnabled:true,screenTouchEnabled:true,animation:'theme',volume:100,soundStyle:'classic'});
  const PREF_FIELDS=Object.keys(PREF_DEFAULTS);
  function normalizePreferences(raw){
   const p=raw&&typeof raw==='object'&&!Array.isArray(raw)?raw:{};
   return {motionEnabled:p.motionEnabled!==false,soundEnabled:p.soundEnabled!==false,
     particleEnabled:p.particleEnabled!==false,transitionsEnabled:p.transitionsEnabled!==false,screenTouchEnabled:p.screenTouchEnabled!==false,
     animation:['theme','jelly','press','glow','ripple','float','orbit','twinkle','heartbeat','none'].includes(p.animation)?p.animation:'theme',
-    volume:Math.max(0,Math.min(100,Number.isFinite(Number(p.volume))?Math.round(Number(p.volume)):100))};
+    volume:Math.max(0,Math.min(100,Number.isFinite(Number(p.volume))?Math.round(Number(p.volume)):100)),
+    soundStyle:BUILTIN_SOUND_STYLES.includes(p.soundStyle)?p.soundStyle:'classic'};
  }
  function readPreferences(){try{return normalizePreferences(JSON.parse(localStorage.getItem(PREF_KEY)||'null'));}
   catch(error){console.warn('[Interaction] personal preference read failed; previous data left unchanged',error);return normalizePreferences();}}
@@ -181,26 +185,47 @@
   try{const start=audio.play();if(start?.catch)start.catch(err=>{release();if(err?.name!=='NotAllowedError')console.warn('[Interaction] sound playback failed',err);});}
   catch(error){release();console.warn('[Interaction] sound playback failed',error);}
  }
- function synth(kind,volume){
+ function synth(kind,volume,style='classic'){
   const AC=window.AudioContext||window.webkitAudioContext;if(!AC)return;
   try{
    if(!ctx)ctx=new AC();
-   // AudioContext must be resumed directly in a real click event on iOS Safari.
+   // Must originate from the user's click/tap for iOS AudioContext unlock.
    if(ctx.state==='suspended')ctx.resume().catch(()=>{});
-   const now=ctx.currentTime;
-   for(const [i,freq] of (NOTES[kind]||NOTES.normal).entries()){
-    const oscillator=ctx.createOscillator(),gain=ctx.createGain();oscillator.type='sine';oscillator.frequency.setValueAtTime(freq,now+i*.055);
-    gain.gain.setValueAtTime(0,now+i*.055);gain.gain.linearRampToValueAtTime(volume*.095,now+i*.055+.016);
-    gain.gain.exponentialRampToValueAtTime(.0001,now+i*.055+.115);
-    oscillator.connect(gain);gain.connect(ctx.destination);oscillator.start(now+i*.055);oscillator.stop(now+i*.055+.13);
+   const now=ctx.currentTime,base=NOTES[kind]||NOTES.normal;
+   // Each voice gets its own gain envelope; no continuous processing or samples.
+   const plans={
+    classic:{type:'sine',notes:base.map((f,i)=>[f,i*.055,.115,.095]),rise:.016},
+    glass:{type:'sine',notes:[[base[0]*1.5,0,.26,.065],[base[1]*2,.035,.34,.048]],rise:.008},
+    soft:{type:'sine',notes:[[base[0]*.75,0,.17,.050],[base[0],.05,.22,.040]],rise:.022},
+    wood:{type:'triangle',notes:[[base[0]*.64,0,.075,.105],[base[0]*.97,.07,.10,.055]],rise:.004},
+    bubble:{type:'sine',notes:[[base[0]*.8,0,.13,.070],[base[0]*1.28,.075,.15,.066],[base[1]*1.35,.16,.12,.042]],rise:.007},
+    chime:{type:'sine',notes:[[base[0],0,.30,.046],[base[1]*1.25,.035,.38,.052],[base[0]*2,.075,.32,.022]],rise:.012},
+    pixel:{type:'square',notes:[[base[0]*.7,0,.058,.028],[base[1]*.9,.07,.058,.025],[base[1]*1.12,.14,.075,.024]],rise:.003}
+   };
+   const plan=plans[style]||plans.classic;
+   for(const [freq,delay,length,level] of plan.notes){
+    const osc=ctx.createOscillator(),gain=ctx.createGain(),t=now+delay;
+    osc.type=plan.type;osc.frequency.setValueAtTime(freq,t);
+    gain.gain.setValueAtTime(0,t);
+    gain.gain.linearRampToValueAtTime(volume*level,t+plan.rise);
+    gain.gain.exponentialRampToValueAtTime(.0001,t+length);
+    osc.connect(gain);gain.connect(ctx.destination);
+    osc.onended=()=>{osc.disconnect();gain.disconnect();};
+    osc.start(t);osc.stop(t+length+.015);
    }
   }catch(error){console.warn('[Interaction] built-in sound unavailable',error);}
+ }
+ function previewBuiltInSound(style,kind='normal'){
+  if(!settings.soundEnabled||!settings.volume)return false;
+  if(!BUILTIN_SOUND_STYLES.includes(style))return false;
+  synth(KINDS.includes(kind)?kind:'normal',clamp(settings.volume,0,100)/100,style);
+  return true;
  }
  function sound(conf,kind){if(!conf.soundEnabled||!conf.volume)return;
   const volume=clamp(conf.volume,0,100)/100;
   const asset=conf.sounds?.[kind];
   if(asset){try{playFile(asset,volume)}catch(error){console.warn('[Interaction] imported audio is unreadable',error);}return;}
-  synth(kind,volume);
+  synth(kind,volume,preferences.soundStyle);
  }
  // Keep button feedback on independent scale/opacity compositor properties.
  // Animating filter on the glassy theme buttons causes avoidable re-rasterization.
@@ -254,12 +279,12 @@
  // and compress only the temporary decoration when its full reach will not fit.
  // CSS zoom changes the *painted* reach; all comparisons below are in viewport
  // coordinates, then fixed-position coordinates are converted back for placement.
- const SCENE_REACH={jelly:64,press:60,glow:98,ripple:66,float:52,orbit:68,
-   twinkle:76,heartbeat:51,screen:48,hold:57};
+ const SCENE_REACH={jelly:64,press:60,glow:98,ripple:66,float:58,orbit:87,
+   twinkle:74,heartbeat:76,screen:48,hold:57};
  // CSS border-box dimensions; keeps a scaled scene's *painted* center on the
  // intended point. Particle fields have zero dimensions and need no correction.
  const SCENE_BOX={jelly:[56,56],press:[58,34],glow:[68,68],ripple:[56,56],
-   float:[38,48],orbit:[63,63],twinkle:[66,66],heartbeat:[61,61],screen:[46,46],hold:[66,66]};
+   float:[52,62],orbit:[72,72],twinkle:[70,70],heartbeat:[70,70],screen:[46,46],hold:[66,66]};
  function positionTransient(node,x,y,reachX=0,reachY=0,boxW=0,boxH=0){
   const zoom=parseFloat(getComputedStyle(document.documentElement).zoom)||1;
   const viewport=window.visualViewport;
@@ -323,11 +348,16 @@
   if(!['jelly','press','glow','ripple','float','orbit','twinkle','heartbeat','screen','hold'].includes(style))return null;
   const node=document.createElement('span');
   node.className=`mima-tap-scene mima-tap-scene--${style}`;
+  if(['float','orbit','twinkle','heartbeat','glow'].includes(style)){
+   const ornament=document.createElement('span'),accent=document.createElement('span');
+   ornament.className='mima-scene-glyph';accent.className='mima-scene-gleam';
+   node.append(ornament,accent);
+  }
   const [boxW,boxH]=SCENE_BOX[style]||[62,62];
-  positionTransient(node,x,y,SCENE_REACH[style]||65,style==='float'?93:SCENE_REACH[style]||65,boxW,boxH);
+  positionTransient(node,x,y,SCENE_REACH[style]||65,style==='float'?108:SCENE_REACH[style]||65,boxW,boxH);
   const dispose=trackTransient(node,transientScenes);
   document.body.appendChild(node);
-  const life=style==='hold'?1800:style==='screen'?460:style==='orbit'?870:style==='float'?820:style==='heartbeat'?840:style==='glow'?780:style==='ripple'?750:style==='twinkle'?710:640;
+  const life=style==='hold'?1800:style==='screen'?460:style==='orbit'?900:style==='float'?900:style==='heartbeat'?900:style==='glow'?860:style==='ripple'?750:style==='twinkle'?790:640;
   if(style!=='hold'){
    node.addEventListener('animationend',e=>{if(e.target===node)dispose()},{once:true});
    setTimeout(dispose,life+170);
@@ -336,7 +366,10 @@
  }
  function feedback(button,conf,kind,x,y,withSound=true){
   if(!button?.getBoundingClientRect)return;
-  const r=button.getBoundingClientRect();x=Number.isFinite(x)&&x>0?x:r.left+r.width/2;y=Number.isFinite(y)&&y>0?y:r.top+r.height/2;
+  const r=button.getBoundingClientRect();
+  const demo=button.classList?.contains('mima-motion-demo');
+  x=demo||!Number.isFinite(x)||x<=0?r.left+r.width/2:x;
+  y=demo||!Number.isFinite(y)||y<=0?r.top+r.height/2:y;
   bounce(button,conf);
   scene(conf,conf.animation,x,y);
   particles(conf,x,y);if(withSound)sound(conf,kind);
@@ -452,5 +485,5 @@
  const ready=reloadSounds().catch(error=>{console.warn('[Interaction] personal audio assets unavailable; records preserved',error);throw error;});
  ready.catch(()=>{}); // Deliberately keep the failure accessible to Settings; no unhandled rejection.
  window.addEventListener('storage',event=>{if(event.key===PREF_KEY)reloadPreferences();});
- window.MimaInteraction={apply,demo,demoCurrent,setSound,clearSound,getSoundInfo,exportSounds,validateSounds,importSounds,previewSoundMerge,mergeSounds,reloadSounds,ready,get:()=>({...settings,sounds:{...settings.sounds}}),getPreferences:()=>({...preferences}),setPreference,reloadPreferences,_normalize:normalize,preferenceKey:PREF_KEY};
+ window.MimaInteraction={apply,demo,demoCurrent,setSound,clearSound,getSoundInfo,exportSounds,validateSounds,importSounds,previewSoundMerge,mergeSounds,reloadSounds,ready,get:()=>({...settings,sounds:{...settings.sounds}}),getPreferences:()=>({...preferences}),setPreference,reloadPreferences,previewBuiltInSound,getBuiltInSoundStyles:()=>[...BUILTIN_SOUND_STYLES],_normalize:normalize,preferenceKey:PREF_KEY};
 })();
