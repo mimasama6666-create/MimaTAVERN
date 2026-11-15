@@ -66,9 +66,9 @@ html[data-mima-menu-motion="on"] .modal:not(.hidden) > .modal-panel{animation:mi
 }
 .mima-tap-scene::before{inset:12%;opacity:.52}
 .mima-tap-scene::after{inset:27%;border:0;opacity:.52;background:radial-gradient(circle,rgba(255,255,255,.9),currentColor 38%,transparent 73%)}
-.mima-tap-scene--jelly{width:56px;height:56px;border-width:2px;border-radius:46% 54% 55% 45%;box-shadow:0 0 0 1px rgba(255,255,255,.45) inset,0 0 12px currentColor;animation:mimaSceneJelly 580ms cubic-bezier(.33,.25,.67,.75) both}
-.mima-tap-scene--jelly::before{inset:10%;border-radius:55% 45% 52% 48%;transform:rotate(28deg)}
-.mima-tap-scene--jelly::after{inset:25%;clip-path:polygon(50% 0%,62% 37%,100% 50%,62% 63%,50% 100%,38% 63%,0 50%,38% 37%);background:currentColor}
+.mima-tap-scene--jelly{width:56px;height:56px;border-width:2px;border-radius:50%;box-shadow:0 0 0 1px rgba(255,255,255,.45) inset,0 0 12px currentColor;animation:mimaSceneJelly 580ms cubic-bezier(.33,.25,.67,.75) both}
+.mima-tap-scene--jelly::before{inset:10%;border-radius:50%;transform:none}
+.mima-tap-scene--jelly::after{inset:25%;border-radius:50%;clip-path:none;background:radial-gradient(circle,rgba(255,255,255,.95) 0%,currentColor 45%,transparent 72%)}
 .mima-tap-scene--press{width:58px;height:34px;border-radius:50%;box-shadow:0 0 0 1px rgba(255,255,255,.48) inset;animation:mimaScenePress 560ms cubic-bezier(.33,.25,.67,.75) both}
 .mima-tap-scene--press::before{inset:23% 10%;opacity:.65}
 .mima-tap-scene--press::after{inset:25% 30%;background:radial-gradient(ellipse,rgba(255,255,255,.95),currentColor 45%,transparent 80%)}
@@ -84,11 +84,11 @@ html[data-mima-menu-motion="on"] .modal:not(.hidden) > .modal-panel{animation:mi
 .mima-tap-scene--hold::before{inset:-15%;border-style:dashed;opacity:.4}
 .mima-tap-scene--hold.is-releasing{animation:mimaSceneRelease 250ms ease-in both}
 @keyframes mimaSceneJelly{
- 0%{opacity:0;transform:translate(-50%,-50%) scale(.25,.3) rotate(-8deg)}
- 23%{opacity:.82;transform:translate(-50%,-50%) scale(1.08,.82) rotate(2deg)}
- 45%{opacity:.76;transform:translate(-50%,-50%) scale(.88,1.1) rotate(-2deg)}
- 69%{opacity:.56;transform:translate(-50%,-50%) scale(1.045,.965) rotate(0deg)}
- 100%{opacity:0;transform:translate(-50%,-50%) scale(1.36) rotate(6deg)}
+ 0%{opacity:0;transform:translate(-50%,-50%) scale(.25,.3)}
+ 23%{opacity:.82;transform:translate(-50%,-50%) scale(1.08,.82)}
+ 45%{opacity:.76;transform:translate(-50%,-50%) scale(.88,1.1)}
+ 69%{opacity:.56;transform:translate(-50%,-50%) scale(1.045,.965)}
+ 100%{opacity:0;transform:translate(-50%,-50%) scale(1.36)}
 }
 @keyframes mimaScenePress{
  0%{opacity:0;transform:translate(-50%,-50%) scale(.48,.25)}
