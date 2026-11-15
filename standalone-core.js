@@ -4180,8 +4180,33 @@
       if(record.recoverySource!=='full_candidate'&&record.rawRejectedReply!==retained.text)
         throw new ApiError('E_GENERATION_RECOVERY_SOURCE_MISMATCH','恢复文本与原流式账本不一致，已阻止错写剧情。');
     }
-    if(pending.canonicalFingerprint!==memorySourceFingerprint(session.messages,session.messages.length))
-      throw new ApiError('E_CANONICAL_CONFLICT','失败后剧情正文或版本已变化，未覆盖当前时间线。');
+    const currentStoryFingerprint=memorySourceFingerprint(session.messages,session.messages.length);
+    const editedHistorySinceRequest=pending.canonicalFingerprint!==currentStoryFingerprint;
+    // Auto-commit MUST reject an altered source transcript.  That does not
+    // revoke the owner's ability to adopt the already-paid reply explicitly.
+    // Only the still-present final player submission from the exact failed SEND
+    // attempt may accept this opt-in append. Never replace an edited message,
+    // import an old assistant after a newer turn, or bypass the normal CAS.
+    const ownerTrace=String(record.traceId||'');
+    const matchingSubmission=session.messages.filter(m=>m.role==='user'&&m.metadata?.submissionTraceId===ownerTrace);
+    const originalSubmissionStillLast=matchingSubmission.length===1&&matchingSubmission[0]===lastMessage;
+    // A retry has a fresh transport trace but does not resend/recreate the
+    // existing player's message. Prove its ownership with the frozen prompt's
+    // exact canonical message ID instead of demanding the new trace on old text.
+    const retrySubmissionStillLast=Number(pending.attempt)>1&&lastMessage?.role==='user'&&
+      pending.snapshot?.operation==='send'&&
+      session.messages.filter(m=>m.id===lastMessage.id).length===1&&
+      !!lastMessage.metadata?.submissionTraceId&&
+      arr(pending.snapshot?.messageSources).some(source=>source.kind==='canonical_history'&&
+        source.originalRole==='user'&&source.messageId===lastMessage.id);
+    const editedSendEligible=editedHistorySinceRequest&&originalStillCurrent&&record.action==='send'&&
+      record.error?.code==='E_CANONICAL_CONFLICT'&&!!ownerTrace&&pending.ownerId===ownerTrace&&
+      (originalSubmissionStillLast||retrySubmissionStillLast);
+    if(editedHistorySinceRequest&&!editedSendEligible)
+      throw new ApiError('E_CANONICAL_CONFLICT','原任务已不再对应当前最后一条玩家消息，不能自动错写；诊断原文仍可查看和复制。');
+    if(editedSendEligible&&body.recoverEditedAsLatest!==true)
+      throw new ApiError('E_REPLY_RECOVERY_EDITED_TIMELINE','生成期间你编辑过剧情。原回复基于编辑前的上下文；可由你确认后，把这份已收到的回复追加到原玩家消息之后，不改写已编辑内容。');
+    const editedTimelineOwnerApproved=editedSendEligible&&body.recoverEditedAsLatest===true;
     const raw=String(record.rawRejectedReply),action=pending.action;
     let recoveredContent=raw,htmlRepair=null;
     if(body.htmlCandidateId){
@@ -4232,7 +4257,9 @@
     }
     target.metadata={...(target.metadata||{}),...(htmlRepair?{htmlCodeRepair:{candidateId:htmlRepair.id,originalRawPreserved:true,approvedAt:nowIso(),recoveryDiagnosticId:record.id}}:{}),generationSnapshot:action==='continue'?target.metadata?.generationSnapshot:pending.snapshot,
       manualRecoveryIds:[...new Set([...arr(target.metadata?.manualRecoveryIds),record.id])],
-      manualRecovery:{diagnosticId:record.id,generationId:pending.id,attempt:pending.attempt,action,restoredAt:nowIso(),providerFinishReason:record.finishReason||'',partialCapture:record.recoveryIsPartial===true,recoverySource:record.recoverySource,formatCheckOwnerOverride:!htmlRepair,olderSendAppend:olderSendAppend===true,originalRejectionCode:String(record.error?.code||''),contentFingerprint:manualReplyFingerprint(target)}};
+      manualRecovery:{diagnosticId:record.id,generationId:pending.id,attempt:pending.attempt,action,restoredAt:nowIso(),providerFinishReason:record.finishReason||'',partialCapture:record.recoveryIsPartial===true,recoverySource:record.recoverySource,formatCheckOwnerOverride:!htmlRepair,olderSendAppend:olderSendAppend===true,
+      editedTimelineOwnerApproved,originalSourceFingerprint:editedTimelineOwnerApproved?pending.canonicalFingerprint:undefined,
+      originalRejectionCode:String(record.error?.code||''),contentFingerprint:manualReplyFingerprint(target)}};
     target.renderedContent='';target.tokenEstimate=estimateTokens(target.content);
     // Explicit human action only: no Provider, retry or background summary.
     let saved;
@@ -4243,7 +4270,7 @@
       const committed=await window.MimaLocalStore.commitHtmlRepair(normalized,Number(persisted.storeRevision)||0,id,htmlRepair.messageId,htmlRepair.id,initialRecordRevision);
       saved=publishSession(normalizeSession(committed.session),committed.storeRevision);
     }else saved=await saveSession({...session,pendingGeneration:null,lastGeneration:{id:pending.id,attempt:pending.attempt,action,preparedAt:pending.preparedAt,settledAt:nowIso(),status:'completed',resultMessageId:target.id,manualRecovery:true},legacyMemoryQuarantined:true});
-    return {session:saved,messageId:target.id,alreadyRestored:false,action};
+    return {session:saved,messageId:target.id,alreadyRestored:false,action,editedTimelineOwnerApproved};
   }
   async function restoreFailedStreamLedger(id,body={}){
     if(body.confirmed!==true||body.allowPartial!==true)throw new ApiError('E_LEDGER_RECOVERY_CONFIRM','必须确认仅恢复本机实际保存的片段，不能补造末尾。');

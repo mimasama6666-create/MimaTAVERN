@@ -5378,6 +5378,11 @@ async function recoverDiagnosticReply(diagnosticId,expectedHudIdentity=null){
             result=await MimaCompatRuntime.restoreRejectedReply(diagnosticId,{confirmed:true,allowPartial:record.recoveryIsPartial===true});
         }else{
             let response=await fetchStory('/sessions/'+encodeURIComponent(record.sessionId)+'/recover-reply','POST',{diagnosticId,confirmed:true,allowPartial:record.recoveryIsPartial===true});
+            if(!response.success&&response.code==='E_REPLY_RECOVERY_EDITED_TIMELINE'&&record.action==='send'){
+                const approved=confirm('检测到你在本轮生成期间编辑了此前的剧情。\n\n这份回复是根据编辑前的上下文生成的，可能与现在的剧情或玩家消息不完全一致，但仍能核对到原来的最后一条玩家消息。\n\n要把已经收到的回复作为新角色回复保存吗？此前编辑的内容会完整保留，不会重新请求模型，也不会覆盖任何已有回复。');
+                if(!approved)return false;
+                response=await fetchStory('/sessions/'+encodeURIComponent(record.sessionId)+'/recover-reply','POST',{diagnosticId,confirmed:true,allowPartial:record.recoveryIsPartial===true,recoverEditedAsLatest:true});
+            }
             if(!response.success&&response.code==='E_REPLY_RECOVERY_STALE'&&record.action==='send'){
                 const approved=confirm('原失败请求已被后来的一次请求替换。若原用户消息仍是当前剧情最后一条、而新请求也已结束，可以把这份已收到的文字补回为单独的 Assistant 回复。\n\n不会重发 API、覆盖已有角色回复或改写其它剧情；若已有后续消息或请求还在进行，系统将拒绝。要核对并尝试补回吗？');
                 if(approved)response=await fetchStory('/sessions/'+encodeURIComponent(record.sessionId)+'/recover-reply','POST',{diagnosticId,confirmed:true,allowPartial:record.recoveryIsPartial===true,recoverSupersededAsLatest:true});
@@ -5399,7 +5404,7 @@ async function recoverDiagnosticReply(diagnosticId,expectedHudIdentity=null){
                 await refreshSessionSummaryList();
             }
         }catch(e){notice+='；界面刷新失败，请重新打开原剧情';console.error('手动恢复已提交，界面刷新失败',e);}
-        toast((result.alreadyRestored?'这条回复已经手动恢复，没有重复写入':record.recoveryIsPartial?'已恢复现有片段，缺失部分未补写，没有请求模型':'已手动恢复到原剧情，没有重新请求模型')+notice);
+        toast((result.alreadyRestored?'这条回复已经手动恢复，没有重复写入':result.editedTimelineOwnerApproved?'已按你的确认保存新回复，此前编辑保留，没有重新请求模型':record.recoveryIsPartial?'已恢复现有片段，缺失部分未补写，没有请求模型':'已手动恢复到原剧情，没有重新请求模型')+notice);
     }catch(e){toast((restored?'回复已保存，后续操作失败：':'无法恢复：')+e.message);}
     finally{diagnosticRecoveryBusy.delete(diagnosticId);if(settingsTab==='diagnostics')await refreshDiagnosticsView();}
     return restored;
