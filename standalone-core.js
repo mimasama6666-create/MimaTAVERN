@@ -210,7 +210,7 @@
         injectFacts:input.settings?.injectFacts!==false,
         // 0 explicitly means all eligible facts; no artificial 100-item ceiling.
         // Existing saved positive limits retain their exact meaning.
-        factInjectionLimit:clampInt(input.settings?.factInjectionLimit,0,Number.MAX_SAFE_INTEGER,12),
+        factInjectionLimit:clampInt(input.settings?.factInjectionLimit,0,Number.MAX_SAFE_INTEGER,0),
         factChunkRounds:clampInt(input.settings?.factChunkRounds,1,200,10),
         factTargetChars:clampInt(input.settings?.factTargetChars,80,12000,1800),
         factScope:input.settings?.factScope==='all'?'all':'recent',
