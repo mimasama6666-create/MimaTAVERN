@@ -6,7 +6,7 @@
   const DB_NAME = 'mimamao_tavern_standalone';
   // V6 fences older bundles so they cannot write obsolete whole-library state
   // over independent Session records and appearance/preset overlays.
-  const DB_VERSION = 7;
+  const DB_VERSION = 9;
   const STORE = 'kv';
   const STATE_KEY = 'state';
   const SESSION_HEAD_KEY = 'session_partition_head_v1';
@@ -14,6 +14,11 @@
   const LEGACY_STATE_KEY = 'state_pre_session_partition_v1';
   const APPEARANCE_KEY = 'appearance_v1';
   const APPEARANCE_META_KEY = 'appearance_revision_head_v1';
+  const CSS_SELECTION_KEY = 'css_selection_v2';
+  const CSS_CATALOG_KEY = 'css_catalog_v2';
+  // Immutable pre-split appearance source. Kept for recovery, never used as a second writer.
+  const CSS_LEGACY_BACKUP_KEY = 'css_migration_legacy_v1';
+  const CSS_BODY_PREFIX = 'css_body_v2:';
   const PRESETS_KEY = 'presets_overlay_head_v1';
   const PRESET_RECORD_PREFIX = 'presets_overlay_record_v1:';
   const PRESET_BASE_INDEX_KEY = 'presets_cas_baseline_v1';
@@ -133,6 +138,188 @@
       tx.oncomplete=()=>{db.close();resolve(result)};tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_ORGANIZATION_TX_ABORT'))};
     });
   }
+  function cssSelectionFromTheme(theme={},revision=0){
+    return {version:2,globalCssPresetId:theme.globalCssPresetId||null,
+      globalCssEnabled:theme.globalCssEnabled!==false,selectionRevision:revision,
+      updatedAt:theme.updatedAt||''};
+  }
+  function verifiedCssSelection(value){
+    if(!value||value.version!==2||!(value.globalCssPresetId===null||typeof value.globalCssPresetId==='string')||
+      typeof value.globalCssEnabled!=='boolean'||!Number.isSafeInteger(value.selectionRevision)||value.selectionRevision<0||
+      typeof value.updatedAt!=='string')throw Error('E_CSS_SELECTION_HEAD_CORRUPT: 主题选择记录不可验证');
+    return value;
+  }
+  function selectedTheme(theme,selection){
+    const head=verifiedCssSelection(selection);
+    return {...theme,globalCssPresetId:head.globalCssPresetId,
+      globalCssEnabled:head.globalCssEnabled,updatedAt:head.updatedAt};
+  }
+  // This transaction touches just the selection head. No CSS text, canonical
+  // resource library or SHA digest is read, cloned, or written.
+  async function commitGlobalCssDisable(expected={},clearSelection=true){
+    await ensureSessionPartition();const db=await openDb();return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE),req=kv.get(CSS_SELECTION_KEY);
+      let result,issue;
+      req.onsuccess=()=>{try{
+        const head=verifiedCssSelection(req.result);
+        if((Object.hasOwn(expected,'globalCssPresetId')&&(head.globalCssPresetId||null)!==(expected.globalCssPresetId||null))||
+           (Object.hasOwn(expected,'globalCssEnabled')&&head.globalCssEnabled!==(expected.globalCssEnabled!==false))||
+           (expected.selectionRevision!==undefined&&expected.selectionRevision!==head.selectionRevision))
+          throw Error('E_CSS_SELECTION_STALE: 其它窗口已改变全局 CSS 选择，本次未覆盖');
+        const stamp=new Date(Math.max(Date.now(),(Date.parse(head.updatedAt)||0)+1)).toISOString();
+        result={...head,globalCssPresetId:clearSelection?null:head.globalCssPresetId,
+          globalCssEnabled:false,selectionRevision:head.selectionRevision+1,updatedAt:stamp};
+        kv.put(result,CSS_SELECTION_KEY);
+      }catch(e){issue=e;tx.abort()}};
+      req.onerror=()=>{issue=req.error;tx.abort()};
+      tx.oncomplete=()=>{db.close();resolve(result)};
+      tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_CSS_SELECTION_ABORT'))};
+    });
+  }
+  async function loadGlobalCssSelection(){
+    await ensureSessionPartition();return verifiedCssSelection(await get(CSS_SELECTION_KEY));
+  }
+
+  // Once promoted, a single verified catalog owns CSS metadata and each ID owns
+  // precisely one full source record. The old appearance and canonical records
+  // are stripped only AFTER every body has committed and been read back.
+  let cssMigrationPromise=null;
+  function cssMeta(row,hash,revision){
+    const {css:_body,...other}=row;
+    return {...other,contentHash:hash,contentChars:row.css.length,contentRevision:revision};
+  }
+  function validCssCatalog(value){
+    if(!value||value.version!==2||!Array.isArray(value.entries)||
+       !Number.isSafeInteger(value.catalogRevision)||value.catalogRevision<0)
+      throw Error('E_CSS_CATALOG_INVALID: CSS 索引无法核实，原数据未修改');
+    const seen=new Set();
+    for(const row of value.entries){
+      if(!row||typeof row.id!=='string'||!row.id||seen.has(row.id)||
+         typeof row.contentHash!=='string'||!/^([a-f0-9]{64})$/.test(row.contentHash)||
+         !Number.isSafeInteger(row.contentChars)||row.contentChars<0||
+         !Number.isSafeInteger(row.contentRevision)||row.contentRevision<1||
+         Object.hasOwn(row,'css'))throw Error('E_CSS_CATALOG_ENTRY_INVALID: CSS 索引损坏，停止写入');
+      seen.add(row.id);
+    }
+    return value;
+  }
+  async function shaCss(css){
+    if(globalThis.crypto?.subtle&&globalThis.TextEncoder){
+      const bytes=new TextEncoder().encode(css),sum=await crypto.subtle.digest('SHA-256',bytes);
+      return [...new Uint8Array(sum)].map(n=>n.toString(16).padStart(2,'0')).join('');
+    }
+    // LAN HTTP/file deployments may have no SubtleCrypto. The core owns the
+    // same canonical SHA-256 byte algorithm (not a weaker checksum).
+    const identity=window.MimaStandalone?.cssSelectionIdentity?.({id:'',css,scope:'',surface:'',atelierReleaseKey:'',updatedAt:''});
+    const hash=identity&&JSON.parse(identity)?.[2];
+    if(typeof hash!=='string'||!/^[a-f0-9]{64}$/.test(hash))
+      throw Error('E_CSS_HASH_UNAVAILABLE: 无可用的完整 SHA-256 计算器，旧 CSS 保持原样');
+    return hash;
+  }
+  function ensureCssMigrated(){
+    if(cssMigrationPromise)return cssMigrationPromise;
+    cssMigrationPromise=(async()=>{
+      await ensureSessionPartition();
+      const exists=await get(CSS_CATALOG_KEY);
+      if(exists!==undefined){validCssCatalog(exists);return;}
+      const old=assertAppearance(await get(APPEARANCE_KEY));
+      const entries=[],seen=new Set();
+      // Read old CSS exactly once; each new body has its own committed tx.
+      for(const row of old.cssPresets){
+        if(!row||typeof row.id!=='string'||!row.id||typeof row.css!=='string'||seen.has(row.id))
+          throw Error('E_CSS_MIGRATION_SOURCE_INVALID: 旧 CSS 原件有缺失或重复，禁止初始化空库');
+        seen.add(row.id);
+        const hash=await shaCss(row.css),meta=cssMeta(row,hash,1),key=CSS_BODY_PREFIX+row.id;
+        await set(key,{version:2,id:row.id,css:row.css,hash,contentRevision:1,contentChars:row.css.length});
+        const check=await get(key);
+        if(check?.id!==row.id||check.hash!==hash||check.contentChars!==row.css.length||check.css!==row.css)
+          throw Error('E_CSS_MIGRATION_BODY_MISMATCH: CSS 原文回读不一致，旧库仍保留');
+        entries.push(meta);
+      }
+      const db=await openDb();
+      await new Promise((resolve,reject)=>{
+        const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE),
+          a=kv.get(APPEARANCE_KEY),b=kv.get(STATE_KEY),c=kv.get(CSS_CATALOG_KEY),d=kv.get(CSS_LEGACY_BACKUP_KEY);
+        let issue;
+        const inspect=()=>{if([a,b,c,d].some(r=>r.readyState!=='done'))return;try{
+          if(c.result!==undefined){validCssCatalog(c.result);return;}
+          const latest=assertAppearance(a.result);
+          if(latest.storeRevision!==old.storeRevision||latest.baseRevision!==old.baseRevision||
+             latest.cssPresets.length!==entries.length||
+             latest.cssPresets.some((x,i)=>x.id!==entries[i].id||x.css!==old.cssPresets[i].css||x.css.length!==entries[i].contentChars))
+            throw Error('E_CSS_MIGRATION_CONFLICT: 迁移期间资源已变化，旧库未切换');
+          if(b.result!==undefined&&!isCanonicalStateRecord(b.result))throw Error('E_CSS_MIGRATION_BASE_INVALID');
+          // Preserve the exact old appearance before removing its large CSS bodies.
+          // If quota is exhausted, this entire promotion aborts and old keys survive.
+          if(d.result===undefined)kv.add(latest,CSS_LEGACY_BACKUP_KEY);
+          kv.put({version:2,catalogRevision:1,entries},CSS_CATALOG_KEY);
+          kv.put({...latest,cssPresets:[]},APPEARANCE_KEY);
+          if(b.result!==undefined)kv.put({...b.result,cssPresets:[]},STATE_KEY);
+        }catch(e){issue=e;tx.abort()}};
+        for(const r of [a,b,c,d]){r.onsuccess=inspect;r.onerror=()=>{issue=r.error;tx.abort()}};
+        tx.oncomplete=()=>{db.close();resolve()};
+        tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_CSS_MIGRATION_ABORT'))};
+      });
+    })().catch(e=>{cssMigrationPromise=null;throw e;});
+    return cssMigrationPromise;
+  }
+  async function loadCssCatalog(){
+    await ensureCssMigrated();return validCssCatalog(await get(CSS_CATALOG_KEY)).entries.map(x=>({...x}));
+  }
+  async function loadCssContent(id){
+    await ensureCssMigrated();
+    const db=await openDb();const found=await new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readonly'),kv=tx.objectStore(STORE),a=kv.get(CSS_CATALOG_KEY),b=kv.get(CSS_BODY_PREFIX+id);
+      let issue;tx.oncomplete=()=>{db.close();resolve({catalog:a.result,body:b.result})};
+      for(const r of [a,b])r.onerror=()=>{issue=r.error;tx.abort()};
+      tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_CSS_BODY_READ_ABORT'))};
+    });
+    const meta=validCssCatalog(found.catalog).entries.find(x=>x.id===id);
+    if(!meta)return null;
+    const body=found.body;
+    if(body?.version!==2||body.id!==id||typeof body.css!=='string'||
+       body.hash!==meta.contentHash||body.contentChars!==meta.contentChars||
+       body.contentRevision!==meta.contentRevision||body.css.length!==meta.contentChars)
+      throw Error('E_CSS_BODY_MISSING_OR_CORRUPT: CSS 正文与目录不一致，禁止空正文覆盖');
+    // Verify the bytes when actually requested, not during list/selection reads.
+    if(await shaCss(body.css)!==meta.contentHash)throw Error('E_CSS_BODY_HASH_MISMATCH: CSS 正文损坏');
+    return {...meta,css:body.css};
+  }
+  async function hydrateCss(rows){
+    const full=[];for(const item of rows){const body=await loadCssContent(item.id);
+      if(!body)throw Error('E_CSS_BACKUP_MISSING: CSS 备份缺少 '+item.id);
+      full.push(body);
+    }return full;
+  }
+  function cssHashInWrite(row){
+    // Hash only an explicitly saved body, never a list or a selection change.
+    const identity=window.MimaStandalone?.cssSelectionIdentity?.(row);
+    const hash=identity&&JSON.parse(identity)?.[2];
+    if(typeof hash!=='string'||!/^([a-f0-9]{64})$/.test(hash))
+      throw Error('E_CSS_BODY_HASH_UNVERIFIED');
+    return hash;
+  }
+  function saveCatalogEdit(kv,previous,rows){
+    const old=validCssCatalog(previous),prior=new Map(old.entries.map(x=>[x.id,x]));
+    const added=new Set(),entries=[];
+    for(const row of rows){
+      if(!row||typeof row.id!=='string'||!row.id||added.has(row.id))throw Error('E_CSS_DUPLICATE_ID');
+      added.add(row.id);const earlier=prior.get(row.id),withSource=typeof row.css==='string';
+      if(!earlier&&!withSource)throw Error('E_CSS_BODY_REQUIRED: 新 CSS 缺少正文');
+      const hash=withSource?cssHashInWrite(row):earlier.contentHash;
+      const changed=withSource&&(!earlier||hash!==earlier.contentHash);
+      const revision=earlier?(changed?earlier.contentRevision+1:earlier.contentRevision):1;
+      const chars=withSource?row.css.length:earlier.contentChars;
+      const {css:_source,...metadata}=row;
+      entries.push({...metadata,contentHash:hash,contentChars:chars,contentRevision:revision});
+      if(changed||!earlier)kv.put({version:2,id:row.id,css:row.css,hash,contentChars:chars,contentRevision:revision},CSS_BODY_PREFIX+row.id);
+    }
+    for(const id of prior.keys())if(!added.has(id))kv.delete(CSS_BODY_PREFIX+id);
+    const next={version:2,catalogRevision:old.catalogRevision+1,entries};validCssCatalog(next);
+    if(JSON.stringify(old.entries)!==JSON.stringify(entries))kv.put(next,CSS_CATALOG_KEY);
+    return entries;
+  }
+
   function appearanceFromState(value) {
     return {version:1,baseRevision:Number(value?.storeRevision)||0,storeRevision:Number(value?.storeRevision)||0,
       cssPresets:value?.cssPresets||[],cssCategoriesV1:value?.cssCategoriesV1||[],themeSettings:value?.themeSettings||{...EMPTY_THEME},deletedCssIds:[],deletedCssAt:{},savedAt:value?.savedAt||''};
@@ -223,8 +410,8 @@
       throw Error('E_PRESET_BASE_INDEX_UNVERIFIED');
     return value;
   }
-  function resourceSignature(baseRev,appearanceRev,presetRev,templateRev){
-    return [baseRev,appearanceRev,presetRev,templateRev].join(':');
+  function resourceSignature(baseRev,appearanceRev,presetRev,templateRev,selectionRev=0){
+    return [baseRev,appearanceRev,presetRev,templateRev,selectionRev].join(':');
   }
   // Base snapshot owns every unmodified preset. Each modified preset has ONE
   // durable, ID-keyed record. No preset save rewrites a different preset.
@@ -366,12 +553,12 @@
       (assertPresetsOverlay(presets).storeRevision-baseRev)+(t?t.storeRevision-baseRev:0)+
       (head?verifiedSessionHead(head,baseRev).storeRevision-baseRev:0);
   }
-  function readCanonical(kv,sessionId=null){
+  function readCanonical(kv,sessionId=null,{allowVerifiedLegacyCssRescue=false}={}){
     const result={},requests={},fragments=new Map(),sessions=new Map();
     let pending=0,failed=false,head=null,base=null;
     const fail=e=>{if(failed)return;failed=true;result.error=e;result.onerror?.({target:result});};
-    const enqueue=(name,key,handler=null)=>{
-      pending++;const r=kv.get(key);requests[name]=r;
+    const enqueue=(name,key,handler=null,keyOnly=false)=>{
+      pending++;const r=keyOnly?kv.getKey(key):kv.get(key);requests[name]=r;
       r.onsuccess=()=>{if(failed)return;try{handler?.(r.result);pending--;if(pending===0)finish();}catch(e){fail(e);}};
       r.onerror=()=>fail(r.error||Error('E_CANONICAL_FRAGMENT_READ'));return r;
     };
@@ -395,19 +582,42 @@
           return row;
         });
       }
-      const merged=mergePresets(mergedBase,app,presets,changed);
+      const catalog=requests.cssCatalog.result;
+      const merged=mergePresets(mergedBase,{...app,cssPresets:catalog===undefined?app.cssPresets:validCssCatalog(catalog).entries},presets,changed);
+      const selection=requests.cssSelection.result;
+      if(selection!==undefined)merged.themeSettings=selectedTheme(merged.themeSettings,selection);
+      else if(base!==undefined){
+        // Only the explicit READ-ONLY rescue path may inspect a pre-CSS-v2
+        // canonical source without a selection head. It never creates one.
+        // A catalog or migration backup is evidence that CSS v2 promotion
+        // already started/completed: a missing head there is CORRUPTION.
+        if(!allowVerifiedLegacyCssRescue||catalog!==undefined||
+           requests.cssLegacyBackupKey?.result!==undefined||
+           !Array.isArray(app.cssPresets)||app.cssPresets.some(row=>
+             !row||typeof row.id!=='string'||!row.id||typeof row.css!=='string')||
+           new Set(app.cssPresets.map(row=>row.id)).size!==app.cssPresets.length)
+          throw Error('E_CSS_SELECTION_HEAD_MISSING: CSS 选择记录缺失，无法认定为未迁移旧库');
+        // Base, overlay, preset, template and Session revisions are already
+        // validated in this same readonly transaction. Keep legacy themeSettings
+        // as they were, including any user-selected ID, for backup/export.
+      }
       const overlay=verifiedTemplateOverlay(templates,baseRev);
       if(overlay){const removed=new Set(app.deletedCssIds||[]);
         merged.settingTemplates=overlay.templates.map(t=>removed.has(t.config?.customCssId)?
           {...t,config:{...t.config,customCssId:null,customCssEnabled:false}}:t);}
       merged.storeRevision=globalRevision(baseRev,app,presets,templates,head);
-      merged.__resourceSignature=resourceSignature(baseRev,app.storeRevision,presets.storeRevision,overlay?.storeRevision??baseRev);
+      merged.__resourceSignature=resourceSignature(baseRev,app.storeRevision,presets.storeRevision,overlay?.storeRevision??baseRev,selection?.selectionRevision||0);
+      merged.__cssSelectionRevision=selection?.selectionRevision||0;
       merged.sessionOrganizationV1=org;result.result=merged;
       result.onsuccess?.({target:result});
     }catch(e){fail(e);}}
     // Queue every dynamic fragment before its parent's completion is counted.
     enqueue('base',STATE_KEY);
     enqueue('appearance',APPEARANCE_KEY);
+    enqueue('cssCatalog',CSS_CATALOG_KEY);
+    enqueue('cssSelection',CSS_SELECTION_KEY);
+    if(allowVerifiedLegacyCssRescue)
+      enqueue('cssLegacyBackupKey',CSS_LEGACY_BACKUP_KEY,null,true);
     enqueue('organization',ORG_KEY);
     enqueue('templates',TEMPLATE_OVERLAY_KEY);
     enqueue('presets',PRESETS_KEY,value=>{for(const id of assertPresetsOverlay(value).changes)
@@ -420,7 +630,7 @@
     });
     return result;
   }
-  function putCanonical(kv,value,prior=null){
+  function putCanonical(kv,value,prior=null,restoreCss=null,preserveLegacyCss=false){
     const oldHead=kv.get(PRESETS_KEY);
     oldHead.onsuccess=()=>{try{for(const id of assertPresetsOverlay(oldHead.result).changes)kv.delete(PRESET_RECORD_PREFIX+id);}
       catch(_){try{kv.transaction.abort();}catch{}}};
@@ -433,9 +643,30 @@
     for(const session of value.sessions)kv.put(session,SESSION_PREFIX+session.id);
     kv.put({version:1,baseRevision:revision,storeRevision:revision,ids,
       directory:value.sessions.map(sessionDirectoryRow),updatedAt:new Date().toISOString()},SESSION_HEAD_KEY);
-    kv.put({...canonicalValue,sessions:[]},STATE_KEY);
+    kv.put(preserveLegacyCss?{...canonicalValue,sessions:[]}:{...canonicalValue,sessions:[],cssPresets:[]},STATE_KEY);
     kv.put(ids,SESSION_IDS_KEY);
-    kv.put(appearanceFromState(value),APPEARANCE_KEY);
+    kv.put(preserveLegacyCss?appearanceFromState(value):{...appearanceFromState(value),cssPresets:[]},APPEARANCE_KEY);
+    if(restoreCss){
+      const old=kv.get(CSS_CATALOG_KEY);
+      old.onsuccess=()=>{try{
+        const existing=old.result===undefined?{version:2,catalogRevision:0,entries:[]}:validCssCatalog(old.result);
+        const nextIds=new Set(restoreCss.entries.map(x=>x.id));
+        for(const prior of existing.entries)if(!nextIds.has(prior.id))kv.delete(CSS_BODY_PREFIX+prior.id);
+        for(const row of restoreCss.bodies)kv.put(row,CSS_BODY_PREFIX+row.id);
+        kv.put({version:2,catalogRevision:existing.catalogRevision+1,entries:restoreCss.entries},CSS_CATALOG_KEY);
+      }catch(e){try{kv.transaction.abort()}catch{}}};
+      old.onerror=()=>{try{kv.transaction.abort()}catch{}};
+    }
+    // Full restore/legacy promotion also advances the selection CAS. Reusing
+    // revision zero could let another tab's stale write pass after a restore.
+    if(restoreCss||preserveLegacyCss){
+      const cssBefore=kv.get(CSS_SELECTION_KEY);
+      cssBefore.onsuccess=()=>{try{
+        const revision=cssBefore.result===undefined?0:verifiedCssSelection(cssBefore.result).selectionRevision+1;
+        kv.put(cssSelectionFromTheme(value.themeSettings,revision),CSS_SELECTION_KEY);
+      }catch(error){try{kv.transaction.abort()}catch{}}};
+      cssBefore.onerror=()=>{try{kv.transaction.abort()}catch{}};
+    }
     kv.put(appearanceMeta(appearanceFromState(value)),APPEARANCE_META_KEY);
     kv.put(presetsFromState(value),PRESETS_KEY);
     kv.put(presetBaseIndexFromState(value),PRESET_BASE_INDEX_KEY);
@@ -467,7 +698,7 @@
             // pre-migration data, not an outdated base missing CSS/preset overlays.
             kv.add(canonical,LEGACY_STATE_KEY);
             const revised={...canonical,storeRevision:(Number(canonical.storeRevision)||0)+1};
-            putCanonical(kv,revised,canonical);created=true;
+            putCanonical(kv,revised,canonical,null,true);created=true;
           }catch(e){fail(e);}};
         };
         tx.oncomplete=()=>{db.close();resolve(created);};
@@ -479,17 +710,17 @@
   async function loadSessionRecord(id,{withRevision=false}={}){
     await ensureSessionPartition();if(typeof id!=='string'||!id)throw Error('E_SESSION_ID_INVALID');
     const db=await openDb();return new Promise((resolve,reject)=>{
-      const tx=db.transaction(STORE,'readonly'),kv=tx.objectStore(STORE),h=kv.get(SESSION_HEAD_KEY),r=kv.get(SESSION_PREFIX+id),a=kv.get(APPEARANCE_META_KEY),b=kv.get(BASE_REVISION_KEY),p=kv.get(PRESETS_KEY),t=kv.get(TEMPLATE_META_KEY);
+      const tx=db.transaction(STORE,'readonly'),kv=tx.objectStore(STORE),h=kv.get(SESSION_HEAD_KEY),r=kv.get(SESSION_PREFIX+id),a=kv.get(APPEARANCE_META_KEY),b=kv.get(BASE_REVISION_KEY),p=kv.get(PRESETS_KEY),t=kv.get(TEMPLATE_META_KEY),c=kv.get(CSS_SELECTION_KEY);
       let issue,result;
       tx.oncomplete=()=>{db.close();resolve(result)};
       tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_SESSION_READ_ABORT'))};
-      const inspect=()=>{if([h,r,a,b,p,t].some(req=>req.readyState!=='done'))return;try{
+      const inspect=()=>{if([h,r,a,b,p,t,c].some(req=>req.readyState!=='done'))return;try{
         const head=verifiedSessionHead(h.result),index=head.ids.indexOf(id),s=r.result;
         if(index<0){
           if(s!==undefined)throw Error('E_SESSION_ORPHAN_RECORD');
           result=withRevision?{session:null,
             storeRevision:globalRevisionLight(b.result.revision,a.result,p.result,t.result,head),
-            resourceSignature:resourceSignature(b.result.revision,a.result.storeRevision,p.result.storeRevision,t.result.storeRevision)}:null;
+            resourceSignature:resourceSignature(b.result.revision,a.result.storeRevision,p.result.storeRevision,t.result.storeRevision,verifiedCssSelection(c.result).selectionRevision)}:null;
           return;
         }
         if(!s||s.id!==id||Number(s.recordRevision||0)!==head.directory[index].recordRevision)
@@ -498,15 +729,42 @@
         const projected=deleted.has(s.customCssId)?{...s,customCssId:null,customCssEnabled:false,
           recordRevision:(Number(s.recordRevision)||0)+1}:s;
         result=withRevision?{session:projected,storeRevision:globalRevisionLight(b.result.revision,a.result,p.result,t.result,head),baseRevision:head.baseRevision,
-          resourceSignature:resourceSignature(b.result.revision,a.result.storeRevision,p.result.storeRevision,t.result.storeRevision)}:projected;
+          resourceSignature:resourceSignature(b.result.revision,a.result.storeRevision,p.result.storeRevision,t.result.storeRevision,verifiedCssSelection(c.result).selectionRevision)}:projected;
       }catch(e){issue=e;tx.abort();}};
-      for(const req of [h,r,a,b,p,t]){req.onsuccess=inspect;req.onerror=()=>{issue=req.error;tx.abort()}};
+      for(const req of [h,r,a,b,p,t,c]){req.onsuccess=inspect;req.onerror=()=>{issue=req.error;tx.abort()}};
     });
   }
   // One canonical resource snapshot, optionally with ONE requested Session.
   // It never reads another Session's History/Memory, even on a cross-tab refresh.
+  // The verified legacy snapshot can be READ without first duplicating large CSS
+  // into the v2 body store. This path never initializes, migrates or writes. It
+  // is used only for ?noCss=1 rescue and when CSS migration itself failed.
+  async function loadResourceSnapshotReadOnly(sessionId=undefined){
+    const db=await openDb();return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readonly'),req=readCanonical(tx.objectStore(STORE),sessionId,{allowVerifiedLegacyCssRescue:true});
+      let result,issue;
+      req.onsuccess=()=>{result=req.result};req.onerror=()=>{issue=req.error;try{tx.abort()}catch{}};
+      tx.oncomplete=()=>{db.close();resolve(result)};
+      tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_CSS_RESCUE_READ_ABORT'))};
+    });
+  }
+  async function hasVerifiedCssCatalog(){
+    const catalog=await get(CSS_CATALOG_KEY);
+    return catalog===undefined?false:!!validCssCatalog(catalog);
+  }
+  async function hasLegacyCssSources(){
+    const appearance=await get(APPEARANCE_KEY);
+    return appearance!==undefined&&assertAppearance(appearance).cssPresets.length>0;
+  }
   async function loadResourceSnapshot(sessionId=undefined){
-    await ensureSessionPartition();const db=await openDb();return new Promise((resolve,reject)=>{
+    try{await ensureCssMigrated();}
+    catch(failure){
+      // Do NOT silently switch to a new empty store or treat other failures as
+      // migration failures. The caller can explicitly enter verified read-only rescue.
+      const error=failure instanceof Error?failure:Error(String(failure));
+      error.mimaCssMigrationFailed=true;throw error;
+    }
+    const db=await openDb();return new Promise((resolve,reject)=>{
       const tx=db.transaction(STORE,'readonly'),req=readCanonical(tx.objectStore(STORE),sessionId);
       let result,issue;
       req.onsuccess=()=>{result=req.result};req.onerror=()=>{issue=req.error;try{tx.abort()}catch{}};
@@ -518,16 +776,16 @@
   async function loadResourceRevision(){
     await ensureSessionPartition();const db=await openDb();return new Promise((resolve,reject)=>{
       const tx=db.transaction(STORE,'readonly'),kv=tx.objectStore(STORE),b=kv.get(BASE_REVISION_KEY),
-        a=kv.get(APPEARANCE_META_KEY),p=kv.get(PRESETS_KEY),t=kv.get(TEMPLATE_META_KEY),h=kv.get(SESSION_HEAD_KEY);
+        a=kv.get(APPEARANCE_META_KEY),p=kv.get(PRESETS_KEY),t=kv.get(TEMPLATE_META_KEY),h=kv.get(SESSION_HEAD_KEY),c=kv.get(CSS_SELECTION_KEY);
       let result,issue;
-      const inspect=()=>{if([b,a,p,t,h].some(req=>req.readyState!=='done'))return;try{
+      const inspect=()=>{if([b,a,p,t,h,c].some(req=>req.readyState!=='done'))return;try{
         const base=b.result?.revision;
         result={resourceSignature:resourceSignature(base,
           assertAppearanceMeta(a.result,base).storeRevision,assertPresetsOverlay(p.result).storeRevision,
-          verifiedTemplateMeta(t.result,base).storeRevision),
+          verifiedTemplateMeta(t.result,base).storeRevision,verifiedCssSelection(c.result).selectionRevision),
           storeRevision:globalRevisionLight(base,a.result,p.result,t.result,h.result)};
       }catch(e){issue=e;tx.abort()}};
-      for(const req of [b,a,p,t,h]){req.onsuccess=inspect;req.onerror=()=>{issue=req.error;tx.abort()}};
+      for(const req of [b,a,p,t,h,c]){req.onsuccess=inspect;req.onerror=()=>{issue=req.error;tx.abort()}};
       tx.oncomplete=()=>{db.close();resolve(result)};
       tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_RESOURCE_REVISION_ABORT'))};
     });
@@ -537,12 +795,12 @@
     return head.directory.map(d=>({...d}));
   }
   async function loadCssSelectionSnapshot(ids=[]){
-    await ensureSessionPartition();const selected=[...new Set(ids)];
+    await ensureCssMigrated();const selected=[...new Set(ids)];
     const db=await openDb();return new Promise((resolve,reject)=>{
       const tx=db.transaction(STORE,'readonly'),kv=tx.objectStore(STORE),
-        h=kv.get(SESSION_HEAD_KEY),a=kv.get(APPEARANCE_KEY),b=kv.get(BASE_REVISION_KEY),
+        h=kv.get(SESSION_HEAD_KEY),a=kv.get(APPEARANCE_KEY),c=kv.get(CSS_CATALOG_KEY),s=kv.get(CSS_SELECTION_KEY),b=kv.get(BASE_REVISION_KEY),
         p=kv.get(PRESETS_KEY),t=kv.get(TEMPLATE_OVERLAY_KEY),rows=new Map();
-      let result,issue,done=0,need=5;
+      let result,issue,done=0,need=7;
       const fail=e=>{issue=e;try{tx.abort()}catch{}};
       const settle=()=>{if(++done!==need)return;try{
         const head=verifiedSessionHead(h.result,b.result?.revision);
@@ -553,14 +811,15 @@
           return deleted.has(row.customCssId)?{...row,customCssId:null,customCssEnabled:false,
             recordRevision:(Number(row.recordRevision)||0)+1}:row;
         }).filter(Boolean);
-        result={themeSettings:a.result.themeSettings,cssPresets:a.result.cssPresets,sessions,
+        result={themeSettings:selectedTheme(a.result.themeSettings,s.result),cssPresets:validCssCatalog(c.result).entries,sessions,
+          selectionRevision:verifiedCssSelection(s.result).selectionRevision,
           appearanceRevision:a.result.storeRevision,
           storeRevision:globalRevision(b.result.revision,a.result,p.result,t.result,head)};
       }catch(e){fail(e)}};
       h.onsuccess=()=>{try{const head=verifiedSessionHead(h.result);
         for(const id of selected.filter(x=>head.ids.includes(x))){need++;const r=kv.get(SESSION_PREFIX+id);r.onsuccess=()=>{rows.set(id,r.result);settle()};r.onerror=()=>fail(r.error);}
         settle();}catch(e){fail(e)}};
-      for(const r of [a,b,p,t]){r.onsuccess=settle;r.onerror=()=>fail(r.error)}
+      for(const r of [a,c,s,b,p,t]){r.onsuccess=settle;r.onerror=()=>fail(r.error)}
       tx.oncomplete=()=>{db.close();resolve(result)};
       tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_CSS_CANONICAL_READ_ABORT'))};
     });
@@ -694,7 +953,7 @@
        ids.some(id=>typeof id!=='string'||!id)||new Set(ids).size!==ids.length||
        !Number.isSafeInteger(expectedRevision)||expectedRevision<0)
       throw Error('E_BULK_DELETE_INVALID: 选择无效，原件未变更');
-    await ensureSessionPartition();
+    await ensureCssMigrated();
     const selected=new Set(ids),db=await openDb();
     return new Promise((resolve,reject)=>{
       const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE),data=new Map();
@@ -709,7 +968,7 @@
         }catch(e){fail(e)}};
         req.onerror=()=>fail(req.error);
       };
-      const snapshot={base:STATE_KEY,appearance:APPEARANCE_KEY,appearanceMeta:APPEARANCE_META_KEY,
+      const snapshot={base:STATE_KEY,appearance:APPEARANCE_KEY,cssCatalog:CSS_CATALOG_KEY,cssSelection:CSS_SELECTION_KEY,appearanceMeta:APPEARANCE_META_KEY,
         presets:PRESETS_KEY,presetIndex:PRESET_BASE_INDEX_KEY,
         templates:TEMPLATE_OVERLAY_KEY,templateMeta:TEMPLATE_META_KEY,
         head:SESSION_HEAD_KEY,organization:ORG_KEY,sessionIds:SESSION_IDS_KEY};
@@ -747,7 +1006,7 @@
         if(rev!==expectedRevision)
           throw Error('E_BULK_DELETE_CONFLICT: 资料库或剧情已在其他窗口更新，整批取消，请刷新选择');
         const catalog=kind==='sessions'?head.ids:
-          kind==='css'?app.cssPresets.map(x=>x.id):
+          kind==='css'?validCssCatalog(data.get('cssCatalog')).entries.map(x=>x.id):
           kind==='worldbook'?base.worldbooks.map(x=>x.id):
           [...new Set([...base.presets.map(x=>x.id),...preset.changes])];
         if(ids.some(id=>!catalog.includes(id)))
@@ -806,11 +1065,19 @@
         if(kind==='css'){
           const existing=new Set(app.deletedCssIds),deletedCssAt={...(app.deletedCssAt||{})};
           for(const id of ids){existing.add(id);deletedCssAt[id]=stamp;}
-          const nextApp={...app,cssPresets:app.cssPresets.filter(x=>!selected.has(x.id)),
+          const nextApp={...app,cssPresets:[],
             themeSettings:selected.has(app.themeSettings.globalCssPresetId)?
               {...app.themeSettings,globalCssPresetId:null,globalCssEnabled:false}:app.themeSettings,
             deletedCssIds:[...existing],deletedCssAt,storeRevision:app.storeRevision+1,savedAt:stamp};
           assertAppearance(nextApp);kv.put(nextApp,APPEARANCE_KEY);
+          const cssCat=validCssCatalog(data.get('cssCatalog'));
+          kv.put({...cssCat,catalogRevision:cssCat.catalogRevision+1,entries:cssCat.entries.filter(x=>!selected.has(x.id))},CSS_CATALOG_KEY);
+          for(const id of ids)kv.delete(CSS_BODY_PREFIX+id);
+          const selection=verifiedCssSelection(data.get('cssSelection'));
+          if(selected.has(selection.globalCssPresetId)){
+            kv.put({...selection,globalCssPresetId:null,globalCssEnabled:false,
+              selectionRevision:selection.selectionRevision+1,updatedAt:stamp},CSS_SELECTION_KEY);
+          }
           kv.put(appearanceMeta(nextApp),APPEARANCE_META_KEY);
         }
         if(rebase){
@@ -868,10 +1135,10 @@
   // enumerate/rewrite every Session. Validate the exact CSS candidate and the
   // target Session inside the same IDB commit (cross-tab edit/delete fencing).
   async function commitSessionCssSelection(id,expected,candidate,cssIdentity,validateIdentity){
-    await ensureSessionPartition();const db=await openDb();return new Promise((resolve,reject)=>{
-      const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE),h=kv.get(SESSION_HEAD_KEY),r=kv.get(SESSION_PREFIX+id),a=kv.get(APPEARANCE_KEY),b=kv.get(BASE_REVISION_KEY),p=kv.get(PRESETS_KEY),t=kv.get(TEMPLATE_META_KEY);
+    await ensureCssMigrated();const db=await openDb();return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE),h=kv.get(SESSION_HEAD_KEY),r=kv.get(SESSION_PREFIX+id),a=kv.get(APPEARANCE_KEY),c=kv.get(CSS_CATALOG_KEY),b=kv.get(BASE_REVISION_KEY),p=kv.get(PRESETS_KEY),t=kv.get(TEMPLATE_META_KEY);
       let result,issue;
-      const inspect=()=>{if([h,r,a,b,p,t].some(x=>x.readyState!=='done'))return;try{
+      const inspect=()=>{if([h,r,a,c,b,p,t].some(x=>x.readyState!=='done'))return;try{
         const head=verifiedSessionHead(h.result),index=head.ids.indexOf(id),session=r.result;
         if(index<0||!session||session.id!==id||Number(session.recordRevision||0)!==head.directory[index].recordRevision)
           throw Error('E_STORY_SESSION_MISSING');
@@ -880,7 +1147,7 @@
         if(Number(projected.recordRevision||0)!==Number(expected?.recordRevision)||
           (projected.customCssId||null)!==(expected?.customCssId||null)||
           (projected.customCssEnabled!==false)!==(expected?.customCssEnabled!==false))throw Error('E_CSS_SELECTION_STALE');
-        const selected=app.cssPresets.find(x=>x.id===candidate?.customCssId);
+        const selected=validCssCatalog(c.result).entries.find(x=>x.id===candidate?.customCssId);
         if(!selected||selected.scope==='app'||typeof validateIdentity!=='function'||!validateIdentity(selected,cssIdentity))
           throw Error('E_CSS_CANDIDATE_CHANGED');
         const globalRev=globalRevisionLight(b.result.revision,appearanceMeta(app),p.result,t.result,head),stamp=new Date().toISOString();
@@ -890,7 +1157,7 @@
         kv.put(value,SESSION_PREFIX+id);kv.put({...head,directory,storeRevision:head.storeRevision+1,updatedAt:stamp},SESSION_HEAD_KEY);
         result={session:value,storeRevision:globalRev+1};
       }catch(e){issue=e;tx.abort()}};
-      for(const req of [h,r,a,b,p,t]){req.onsuccess=inspect;req.onerror=()=>{issue=req.error;tx.abort()}};
+      for(const req of [h,r,a,c,b,p,t]){req.onsuccess=inspect;req.onerror=()=>{issue=req.error;tx.abort()}};
       tx.oncomplete=()=>{db.close();resolve(result)};tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_SESSION_CSS_SELECTION_ABORT'))};
     });
   }
@@ -927,32 +1194,44 @@
             kv.put({revision:Number(old.result?.storeRevision)||0},BASE_REVISION_KEY);}
           if(event.oldVersion<4)kv.put((old.result?.sessions||[]).map(s=>s.id),SESSION_IDS_KEY);
           if(event.oldVersion<7)kv.put(presetBaseIndexFromState(old.result),PRESET_BASE_INDEX_KEY);
+          if(event.oldVersion<8){
+            const oldAppearance=kv.get(APPEARANCE_KEY);
+            oldAppearance.onsuccess=()=>{try{
+              if(oldAppearance.result!==undefined){
+                const appearance=assertAppearance(oldAppearance.result);
+                kv.put(cssSelectionFromTheme(appearance.themeSettings),CSS_SELECTION_KEY);
+              }else if(old.result!==undefined){
+                kv.put(cssSelectionFromTheme(old.result.themeSettings),CSS_SELECTION_KEY);
+              }
+            }catch(e){upgradeIssue=e;req.transaction.abort()}};
+            oldAppearance.onerror=()=>{upgradeIssue=oldAppearance.error;req.transaction.abort()};
+          }
         }catch(error){upgradeIssue=error;req.transaction.abort();}};
       };
       req.onsuccess = () => {const db=req.result;db.onversionchange=()=>db.close();if(rejected)db.close();else resolve(db);};
       req.onerror = () => reject(upgradeIssue||req.error);
     });
   }
-  async function loadAppearance(){const value=await get(APPEARANCE_KEY);return assertAppearance(value);}
+  async function loadAppearance(){await ensureCssMigrated();const [value,head,cat]=await Promise.all([get(APPEARANCE_KEY),get(CSS_SELECTION_KEY),get(CSS_CATALOG_KEY)]);return {...assertAppearance(value),cssPresets:validCssCatalog(cat).entries,themeSettings:selectedTheme(value.themeSettings,head)};}
   // The appearance bytes and all five lightweight revision heads must come
   // from ONE IDB snapshot. Two independent reads can combine different tabs'
   // commits and incorrectly publish a stale resource signature to RAM.
   async function loadAppearanceWithRevision(){
-    await ensureSessionPartition();const db=await openDb();return new Promise((resolve,reject)=>{
+    await ensureCssMigrated();const db=await openDb();return new Promise((resolve,reject)=>{
       const tx=db.transaction(STORE,'readonly'),kv=tx.objectStore(STORE);
-      const a=kv.get(APPEARANCE_KEY),b=kv.get(BASE_REVISION_KEY),
+      const a=kv.get(APPEARANCE_KEY),catalog=kv.get(CSS_CATALOG_KEY),cssHead=kv.get(CSS_SELECTION_KEY),b=kv.get(BASE_REVISION_KEY),
         p=kv.get(PRESETS_KEY),t=kv.get(TEMPLATE_META_KEY),h=kv.get(SESSION_HEAD_KEY);
       let result,issue;
-      const inspect=()=>{if([a,b,p,t,h].some(req=>req.readyState!=='done'))return;try{
+      const inspect=()=>{if([a,catalog,cssHead,b,p,t,h].some(req=>req.readyState!=='done'))return;try{
         const appearance=assertAppearance(a.result),base=b.result?.revision;
         if(!Number.isSafeInteger(base)||appearance.baseRevision!==base)
           throw Error('E_APPEARANCE_BASE_CONFLICT: 外观版本与资料库基线不一致');
         const preset=assertPresetsOverlay(p.result),template=verifiedTemplateMeta(t.result,base);
         const global=globalRevisionLight(base,appearanceMeta(appearance),preset,template,h.result);
-        result={appearance,storeRevision:global,appearanceRevision:appearance.storeRevision,
-          resourceSignature:resourceSignature(base,appearance.storeRevision,preset.storeRevision,template.storeRevision)};
+        result={appearance:{...appearance,cssPresets:validCssCatalog(catalog.result).entries,themeSettings:selectedTheme(appearance.themeSettings,cssHead.result)},storeRevision:global,appearanceRevision:appearance.storeRevision,
+          resourceSignature:resourceSignature(base,appearance.storeRevision,preset.storeRevision,template.storeRevision,verifiedCssSelection(cssHead.result).selectionRevision)};
       }catch(e){issue=e;tx.abort()}};
-      for(const req of [a,b,p,t,h]){req.onsuccess=inspect;req.onerror=()=>{issue=req.error;tx.abort()}};
+      for(const req of [a,catalog,cssHead,b,p,t,h]){req.onsuccess=inspect;req.onerror=()=>{issue=req.error;tx.abort()}};
       tx.oncomplete=()=>{db.close();resolve(result)};
       tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_APPEARANCE_SNAPSHOT_ABORT'))};
     });
@@ -960,13 +1239,13 @@
   // edit is synchronous and receives a detached, small IDB clone. False means
   // no write; exceptions abort. No state document or message is read here.
   async function commitAppearance(edit,{signal=null,checkCanonical=null,withRevision=false}={}) {
-    const db=await openDb();
+    await ensureCssMigrated();const db=await openDb();
     if(signal?.aborted){db.close();throw new DOMException('外观保存已取消','AbortError');}
     return new Promise((resolve,reject)=>{
       const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE);let result,issue;
       const abort=()=>{issue=new DOMException('外观保存已取消','AbortError');try{tx.abort();}catch{}};
       signal?.addEventListener?.('abort',abort,{once:true});
-      const req=kv.get(APPEARANCE_KEY);
+      const req=kv.get(APPEARANCE_KEY),catalogReq=kv.get(CSS_CATALOG_KEY),cssHeadReq=kv.get(CSS_SELECTION_KEY);
       // Renderer-content PATCH is the only frequent appearance write that
       // needs the large canonical base. Keep ordinary category/name/preview
       // writes on the lightweight overlay-only path.
@@ -980,8 +1259,12 @@
       const templateHeadReq=withRevision?kv.get(TEMPLATE_META_KEY):null;
       const globalSessionHeadReq=withRevision&&!baseReq?kv.get(SESSION_HEAD_KEY):sessionHeadReq;
       let ready=0,receipt=null;
-      const inspect=()=>{if(++ready!==(baseReq?4:1)+(withRevision?(baseReq?3:4):0))return;try{
+      const inspect=()=>{if(++ready!==(baseReq?4:1)+(withRevision?(baseReq?3:4):0)+2)return;try{
         const value=assertAppearance(req.result),revision=value.storeRevision,baseRevision=value.baseRevision;
+        value.cssPresets=validCssCatalog(catalogReq.result).entries.map(x=>({...x}));
+        const cssHead=verifiedCssSelection(cssHeadReq.result);
+        value.themeSettings=selectedTheme(value.themeSettings,cssHead);
+        const oldCssSelection=cssSelectionFromTheme(value.themeSettings,cssHead.selectionRevision);
         if(baseReq){
           if(!isCanonicalStateRecord(baseReq.result)||Number(baseReq.result.storeRevision||0)!==baseRevision)
             throw Error('E_APPEARANCE_BASE_CONFLICT: CSS 引用基线无法核实，未覆盖');
@@ -996,6 +1279,7 @@
         else {
           result={...value,baseRevision,storeRevision:revision+1,savedAt:new Date().toISOString()};assertAppearance(result);
         }
+        const wanted=cssSelectionFromTheme(result.themeSettings,cssHead.selectionRevision);
         if(withRevision){
           const base=baseHeadReq.result?.revision,preset=assertPresetsOverlay(presetHeadReq.result),
             template=verifiedTemplateMeta(templateHeadReq.result,base);
@@ -1005,12 +1289,25 @@
           if(!Number.isSafeInteger(global)||global>=Number.MAX_SAFE_INTEGER)
             throw Error('E_CANONICAL_REVISION_OVERFLOW');
           receipt={appearance:result,storeRevision:global,appearanceRevision:result.storeRevision,
-            resourceSignature:resourceSignature(base,result.storeRevision,preset.storeRevision,template.storeRevision)};
+            resourceSignature:resourceSignature(base,result.storeRevision,preset.storeRevision,template.storeRevision,
+              (wanted.globalCssPresetId!==oldCssSelection.globalCssPresetId||wanted.globalCssEnabled!==oldCssSelection.globalCssEnabled)?cssHead.selectionRevision+1:cssHead.selectionRevision)};
         }
         if(outcome===false)return;
-        if(signal?.aborted){abort();return;}kv.put(result,APPEARANCE_KEY);kv.put(appearanceMeta(result),APPEARANCE_META_KEY);
+        if(signal?.aborted){abort();return;}
+        // Keep a single CSS-selection authority. A write to an unrelated
+        // appearance field never reactivates a disabled theme.
+        if(wanted.globalCssPresetId!==oldCssSelection.globalCssPresetId||wanted.globalCssEnabled!==oldCssSelection.globalCssEnabled){
+          kv.put({...wanted,selectionRevision:cssHead.selectionRevision+1},CSS_SELECTION_KEY);
+        }else if(wanted.updatedAt!==cssHead.updatedAt){
+          kv.put({...cssHead,updatedAt:wanted.updatedAt},CSS_SELECTION_KEY);
+        }
+        const entries=saveCatalogEdit(kv,catalogReq.result,result.cssPresets);
+        result.cssPresets=entries;
+        kv.put({...result,cssPresets:[]},APPEARANCE_KEY);kv.put(appearanceMeta(result),APPEARANCE_META_KEY);
       }catch(error){issue=error;tx.abort();}};
       req.onerror=()=>{issue=req.error;tx.abort();};req.onsuccess=inspect;
+      cssHeadReq.onerror=()=>{issue=cssHeadReq.error;tx.abort()};cssHeadReq.onsuccess=inspect;
+      catalogReq.onerror=()=>{issue=catalogReq.error;tx.abort()};catalogReq.onsuccess=inspect;
       if(baseReq){baseReq.onerror=()=>{issue=baseReq.error;tx.abort();};baseReq.onsuccess=inspect;
         sessionHeadReq.onerror=()=>{issue=sessionHeadReq.error;tx.abort()};sessionHeadReq.onsuccess=inspect;
         templateOverlayReq.onerror=()=>{issue=templateOverlayReq.error;tx.abort()};templateOverlayReq.onsuccess=inspect;}
@@ -1072,6 +1369,16 @@
   async function commitState(candidate, expectedRevision, {signal=null,organizationImport=false,expectedOrganizationRevision=null}={}) {
     await ensureSessionPartition();
     assertWritableState(candidate);
+    await ensureCssMigrated();
+    let restoreCss=null;
+    if(organizationImport){
+      const entries=[],bodies=[],ids=new Set();
+      for(const row of candidate.cssPresets){
+        if(!row||typeof row.css!=='string'||typeof row.id!=='string'||!row.id||ids.has(row.id))throw Error('E_CSS_RESTORE_SOURCE_INVALID');
+        ids.add(row.id);const hash=await shaCss(row.css),meta=cssMeta(row,hash,1);
+        entries.push(meta);bodies.push({version:2,id:row.id,css:row.css,hash,contentChars:row.css.length,contentRevision:1});
+      }restoreCss={entries,bodies};
+    }
     const db = await openDb();
     if(signal?.aborted){db.close();throw new DOMException('生成已取消，资料库未提交','AbortError');}
     return new Promise((resolve, reject) => {
@@ -1117,25 +1424,28 @@
           }
         }
         result = { ...candidate,sessionOrganizationV1:org, storeRevision: revision + 1, schemaVersion: 4, savedAt: new Date().toISOString() };
-        putCanonical(objectStore,result,current);
+        putCanonical(objectStore,result,current,restoreCss);
       };
       tx.oncomplete = () => { release();db.close();resolve(result); };
       tx.onabort = () => { release();db.close();reject(problem || tx.error || new Error('资料库事务中止')); };
       tx.onerror = () => { /* onabort retains the root cause */ };
     });
   }
+  // Historical public API: a complete canonical state, including Session
+  // partitions, preset/template overlays and full CSS bodies. Internal UI and
+  // story callers must use loadResourceSnapshot() so they never read all CSS.
+  // The split base `state` key alone is NOT a complete library.
   async function loadState() {
-    await ensureSessionPartition();
-    const existing = await get(STATE_KEY);
-    // Only an actually absent record authorizes first-run initialization.
-    // Null, arrays and partially damaged canonical snapshots are NOT absence.
-    if (existing !== undefined) {
-      if (!isCanonicalStateRecord(existing))
-        throw new Error('E_CANONICAL_STATE_UNVERIFIED: 已存在的本地资料库结构无法核实，停止初始化与写入');
-      return existing;
+    const readonly=window.MimaCssMigrationReadOnly===true;
+    const snapshot=readonly?await loadResourceSnapshotReadOnly():await loadResourceSnapshot();
+    // Before the catalog is promoted the verified appearance record still
+    // contains all source text; never force migration just to export a backup.
+    if(readonly){
+      if(!snapshot.cssPresets.every(p=>typeof p.css==='string'))
+        throw Error('E_CSS_RESCUE_BACKUP_UNVERIFIED: 存在无法核实的 CSS 正文，不能导出不完整备份');
+      return snapshot;
     }
-    const blank = {schemaVersion:4,sessions:[],masks:[],presets:[],worldbooks:[],cssPresets:[],regexPacks:[],theaterCards:[],quickCommands:[],settingTemplates:[],novelProjects:[],themeSettings:{...EMPTY_THEME}};
-    return blank; // verified nonexistent; first write still uses CAS
+    return {...snapshot,cssPresets:await hydrateCss(snapshot.cssPresets)};
   }
   async function saveState(state, expectedRevision, options={}) {
     // Never turn a missing caller field into an empty persisted collection.
@@ -1926,7 +2236,7 @@
     });
   }
   async function beginMemoryJob({sessionId,kind,options,sourceHash,sourceCount,sourceFingerprint,targetBaseline,configSignature,expectedReferenceContract=null,referenceSelection=null}){
-    const referenceContract=memoryReferenceContract(await loadState(),sessionId,referenceSelection);
+    const referenceContract=memoryReferenceContract(await loadResourceSnapshot(sessionId),sessionId,referenceSelection);
     if(expectedReferenceContract!==null&&referenceContract!==expectedReferenceContract)throw new Error('E_MEMORY_REFERENCE_CHANGED_BEFORE_REQUEST');
     return memoryJobTransaction(sessionId,kind,(old,kv,tx)=>{
       const live=old?.status==='running'&&Number(old.leaseUntilEpoch||0)>Date.now();
@@ -2488,5 +2798,5 @@
     if(text.length!==receipt.persistedChars)throw new Error('E_GENERATION_FRAGMENT_INCOMPLETE');
     return {receipt,text,complete:true};
   }
-  window.MimaLocalStore={commitBulkDelete,loadSessionRecord,loadResourceSnapshot,loadResourceRevision,loadAppearanceWithRevision,presetCasToken,loadSessionDirectory,loadCssSelectionSnapshot,commitSessionRecord,deleteSessionRecord,commitSessionCssSelection,commitSettingTemplates,validateSessionOrganization,loadSessionOrganization,commitSessionOrganization,commitPreset,putHtmlRepairDraft,getHtmlRepairDraft,loadAppearance,commitAppearance,mergeAppearance,exportPlayToolRecords,importPlayToolRecords,listPlayToolLocal,getPlayToolLocal:key=>get('play_tools_v1:'+key),putPlayToolLocal:(key,value)=>set('play_tools_v1:'+key,value),generationReceipt,generationAppendFragment,generationStatus,generationRead,getRollingPreflight,putRollingPreflight,clearRollingPreflight,commitHtmlRepair,putHtmlRepairCandidate,getHtmlRepairCandidate,setHtmlRepairCandidateState,listMemoryStages,inspectLegacyMemoryStages,putMemoryRejectedDraft,listMemoryRejectedDrafts,memoryReferenceContract,putFactRangeCandidate,listFactRangeCandidates,commitVerifiedFactRanges,getMergeStage,putMergeStage,getMergeDraft,createMergeDraft,updateMergeDraft,commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,loadSettingsSnapshotSummary,clearSettingsSnapshot,beginSettingsSnapshotV2,stageSettingsSnapshotFontV2,completeSettingsSnapshotV2,discardFailedSettingsSnapshotV2,hasIncompleteSettingsSnapshotV2,loadSettingsSnapshotFontV2,pruneOldSettingsSnapshotsV2,getMemoryJob,getMemoryStage,putMemoryStage,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
+  window.MimaLocalStore={commitBulkDelete,loadSessionRecord,loadResourceSnapshot,loadResourceSnapshotReadOnly,hasVerifiedCssCatalog,hasLegacyCssSources,loadResourceRevision,loadAppearanceWithRevision,presetCasToken,loadSessionDirectory,loadCssSelectionSnapshot,commitSessionRecord,deleteSessionRecord,commitSessionCssSelection,commitSettingTemplates,validateSessionOrganization,loadSessionOrganization,commitSessionOrganization,commitPreset,putHtmlRepairDraft,getHtmlRepairDraft,loadAppearance,loadGlobalCssSelection,loadCssCatalog,loadCssContent,commitGlobalCssDisable,commitAppearance,mergeAppearance,exportPlayToolRecords,importPlayToolRecords,listPlayToolLocal,getPlayToolLocal:key=>get('play_tools_v1:'+key),putPlayToolLocal:(key,value)=>set('play_tools_v1:'+key,value),generationReceipt,generationAppendFragment,generationStatus,generationRead,getRollingPreflight,putRollingPreflight,clearRollingPreflight,commitHtmlRepair,putHtmlRepairCandidate,getHtmlRepairCandidate,setHtmlRepairCandidateState,listMemoryStages,inspectLegacyMemoryStages,putMemoryRejectedDraft,listMemoryRejectedDrafts,memoryReferenceContract,putFactRangeCandidate,listFactRangeCandidates,commitVerifiedFactRanges,getMergeStage,putMergeStage,getMergeDraft,createMergeDraft,updateMergeDraft,commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,loadSettingsSnapshotSummary,clearSettingsSnapshot,beginSettingsSnapshotV2,stageSettingsSnapshotFontV2,completeSettingsSnapshotV2,discardFailedSettingsSnapshotV2,hasIncompleteSettingsSnapshotV2,loadSettingsSnapshotFontV2,pruneOldSettingsSnapshotsV2,getMemoryJob,getMemoryStage,putMemoryStage,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
 })();

@@ -895,7 +895,7 @@ async function refreshCompatSettingTemplates(){
  const explicit=select.dataset.mimaExplicitChoice==='1';
  const refreshEpoch=String(Number(select.dataset.mimaRefreshEpoch||'0')+1);
  select.dataset.mimaRefreshEpoch=refreshEpoch;
- const state=await root.MimaLocalStore.loadState();
+ const state=await root.MimaLocalStore.loadResourceSnapshot();
  if(select.dataset.mimaRefreshEpoch!==refreshEpoch)return; // stale asynchronous refresh
  if(!Array.isArray(state.settingTemplates))throw new Error('E_SETTINGS_TEMPLATE_STORE_UNVERIFIED');
  const livePrevious=select.value;

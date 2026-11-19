@@ -136,6 +136,18 @@ async function switchToTheme(next){if(changingProject)return;changingProject=tru
  draftConflict=null;draftVersions.set(project.id,project.draftVersion||0);sceneMode='day';
  window.sessionStorage.setItem('mima-atl-current',project.id);undo=[];redo=[];selected=['shell'];changed();render();
  }finally{changingProject=false;}}
+// The canonical CSS catalog carries SHA-256, not multi-MB body text.  A
+// published immutable release must compare the SAME strong content identity
+// whether the receipt is a full CSS object or a catalog-only record.
+function atelierBodyHash(css){
+ const identity=window.MimaStandalone?.cssSelectionIdentity?.({id:'',css,scope:'',surface:'',atelierReleaseKey:'',updatedAt:''});
+ const hash=identity&&JSON.parse(identity)?.[2];
+ if(typeof hash!=='string'||!/^[a-f0-9]{64}$/.test(hash))throw Error('工坊 CSS SHA-256 身份校验不可用');
+ return hash;
+}
+function atelierSameCss(row,hash){
+ return !!row&&(typeof row.css==='string'?atelierBodyHash(row.css)===hash:row.contentHash===hash);
+}
 async function saveCssToLibrary(source=project,{updateDraft=true,publish=false}={}){
  // Freeze a single immutable release candidate BEFORE the first await.
  // Edits made during digest/IDB work cannot mismatch the CSS and assets.
@@ -143,6 +155,7 @@ async function saveCssToLibrary(source=project,{updateDraft=true,publish=false}=
  const editorId=source?.id,editorTime=source?.updatedAt;
  if(typeof window.MimaStandalone?.handle!=='function')throw new Error('正式 CSS 资源库接口未就绪');
  const css=C.exportPresetCss(candidate);
+ const cssHash=atelierBodyHash(css);
  // Ignore volatile save timestamps and linked library id. Identical content always maps
  // to one immutable CSS asset snapshot, making retry after a lost receipt reconcilable.
  const persistent=C.clone(candidate);delete persistent.updatedAt;delete persistent.draftVersion;delete persistent.linkedCssId;
@@ -159,8 +172,8 @@ async function saveCssToLibrary(source=project,{updateDraft=true,publish=false}=
  if(collision&&collision.atelierReleaseKey!==releaseKey)throw Error('CSS 快照 ID 与另一发布版本冲突，拒绝覆盖旧资源');
  if(!(await C.get(releaseKey)))await C._historySave(releaseKey,candidate); // immutable snapshot
  
- if(existing&&String(existing.css)!==css)throw Error('已有 CSS 发布快照内容与当前版本不同，拒绝改写旧会话引用');
- if(collision&&String(collision.css)!==css)throw Error('确定性 CSS 资源 ID 已存在但内容不符，拒绝覆盖');
+ if(existing&&!atelierSameCss(existing,cssHash))throw Error('已有 CSS 发布快照内容与当前版本不同，拒绝改写旧会话引用');
+ if(collision&&!atelierSameCss(collision,cssHash))throw Error('确定性 CSS 资源 ID 已存在但内容不符，拒绝覆盖');
  const body={id:stableId,name:candidate.name+' · 工坊导出',css,scope:'app',surface:'global',category:'主题工坊',favorite:false,atelierReleaseKey:releaseKey};
  // Legacy records with the same releaseKey remain untouched. New releases always
  // create a distinct ID; a concurrent identical POST can only write same content.
@@ -169,7 +182,7 @@ async function saveCssToLibrary(source=project,{updateDraft=true,publish=false}=
    :existing?{success:true,data:existing}:await window.MimaStandalone.handle('/css-presets','POST',body);
  if(publish&&result?.success&&result.data?.preset)result={success:true,data:result.data.preset};
  if(!result?.success||!result.data?.id)throw new Error(result?.msg||result?.code||'CSS 预设提交失败');
- if(result.data.atelierReleaseKey!==releaseKey||String(result.data.css)!==css)throw Error('CSS 资源提交回执与预期快照不一致，拒绝结算成功');
+ if(result.data.atelierReleaseKey!==releaseKey||!atelierSameCss(result.data,cssHash))throw Error('CSS 资源提交回执与预期快照不一致，拒绝结算成功');
  if(updateDraft){
    // Publishing is immutable; the editable project is mutable. Link only the exact
    // still-open revision, and explicitly commit the link after the remote write.

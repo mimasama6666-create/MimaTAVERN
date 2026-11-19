@@ -1085,6 +1085,12 @@ async function importRecords(payload){
  });
 }
 let legacyMigrationPromise=null;
+function samePublishedCss(row,body){
+ const identity=window.MimaStandalone?.cssSelectionIdentity?.({id:'',css:body,scope:'',surface:'',atelierReleaseKey:'',updatedAt:''});
+ const expected=identity&&JSON.parse(identity)?.[2];
+ return !!row&&typeof expected==='string'&&/^[a-f0-9]{64}$/.test(expected)&&
+   (typeof row.css==='string'?row.css===body:row.contentHash===expected);
+}
 async function migrateLegacyTheme(){
  if(legacyMigrationPromise)return legacyMigrationPromise;
  legacyMigrationPromise=(async()=>{
@@ -1106,7 +1112,7 @@ async function migrateLegacyTheme(){
   if(!existing)await putMany([[releaseKey,project]]);
   const css=compile(project,'standalone',{assetMode:'omit'});
   const receipt=await window.MimaStandalone.handle('/atelier/publish','POST',{preset:{id:stableId,name:project.name+' · 旧工坊迁移',css,scope:'app',surface:'global',category:'主题工坊',atelierReleaseKey:releaseKey}});
-  if(!receipt?.success||receipt.data?.preset?.id!==stableId||receipt.data.preset.atelierReleaseKey!==releaseKey||receipt.data.preset.css!==css)throw Error(receipt?.msg||'旧主题迁移提交未通过核验');
+  if(!receipt?.success||receipt.data?.preset?.id!==stableId||receipt.data.preset.atelierReleaseKey!==releaseKey||!samePublishedCss(receipt.data.preset,css))throw Error(receipt?.msg||'旧主题迁移提交未通过核验');
   return {status:'MIGRATED',id:stableId};
  })();
  try{return await legacyMigrationPromise;}finally{legacyMigrationPromise=null;}

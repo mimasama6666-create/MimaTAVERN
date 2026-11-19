@@ -92,7 +92,9 @@
   }
   function cssSelectionIdentity(p){
     if(!p)return null;
-    return JSON.stringify(['css-selection-sha256-v1',p.id||'',cssSha256(p.css),p.scope||'',p.surface||'',p.atelierReleaseKey||'',p.updatedAt||'']);
+    const hash=typeof p.css==='string'?cssSha256(p.css):p.contentHash;
+    if(typeof hash!=='string'||!/^([a-f0-9]{64})$/.test(hash))throw Error('E_CSS_IDENTITY_MISSING');
+    return JSON.stringify(['css-selection-sha256-v1',p.id||'',hash,p.scope||'',p.surface||'',p.atelierReleaseKey||'',p.updatedAt||'']);
   }
   function memorySourceFingerprint(messages,count){return fingerprint((messages||[]).slice(0,count).map(m=>[m.id,m.role,m.content,m.rawContent,m.versions,m.isEdited,m.branchId]));}
   function manualReplyFingerprint(m){return fingerprint([String(m.content??m.canonicalContent??''),String(m.rawContent??m.content??m.canonicalContent??'')]);}
@@ -288,7 +290,14 @@
     const legacyScope=['story','global','app'].includes(p.scope)?p.scope:(['novel','assistant','chat'].includes(p.scope)?p.scope:'story');
     const inferredSurface=legacyScope==='app'?'global':(legacyScope==='novel'?'novel':(legacyScope==='assistant'?'assistant':'chat'));
     const surface=['global','chat','novel','assistant'].includes(p.surface)?p.surface:inferredSurface;
-    return { id:p.id || makeId('css'), name:text(p.name || '未命名 CSS'), css:String(p.css || ''), scope:legacyScope, surface, category:text(p.category||'未分类').slice(0,60), favorite:!!p.favorite, atelierReleaseKey:/^css-release:[a-zA-Z0-9:_-]{1,180}$/.test(String(p.atelierReleaseKey||''))?p.atelierReleaseKey:'', createdAt, updatedAt:p.updatedAt || createdAt };
+    return { id:p.id || makeId('css'), name:text(p.name || '未命名 CSS'),
+      ...(typeof p.css==='string'?{css:p.css}:{}),
+      ...(typeof p.contentHash==='string'?{contentHash:p.contentHash}:{}),
+      ...(Number.isSafeInteger(p.contentChars)?{contentChars:p.contentChars}:{}),
+      ...(Number.isSafeInteger(p.contentRevision)?{contentRevision:p.contentRevision}:{}),
+      scope:legacyScope, surface, category:text(p.category||'未分类').slice(0,60), favorite:!!p.favorite,
+      atelierReleaseKey:/^css-release:[a-zA-Z0-9:_-]{1,180}$/.test(String(p.atelierReleaseKey||''))?p.atelierReleaseKey:'',
+      createdAt, updatedAt:p.updatedAt || createdAt };
   }
 
   function normalizeWorldbookEntry(e = {}) {
@@ -463,8 +472,9 @@
     return {
       schemaVersion: 4, storeRevision: Math.max(0,Number(raw.storeRevision)||0),
       __resourceSignature:typeof raw.__resourceSignature==='string'?raw.__resourceSignature:null,
+      __cssSelectionRevision:Number.isSafeInteger(raw.__cssSelectionRevision)?raw.__cssSelectionRevision:undefined,
       __appearanceRevision:(()=>{const stamp=String(raw.__resourceSignature||'');
-        if(/^\d+:\d+:\d+:\d+$/.test(stamp)){const n=Number(stamp.split(':')[1]);if(Number.isSafeInteger(n))return n;}
+        if(/^\d+:\d+:\d+:\d+(?::\d+)?$/.test(stamp)){const n=Number(stamp.split(':')[1]);if(Number.isSafeInteger(n))return n;}
         return Number.isSafeInteger(raw.__appearanceRevision)?raw.__appearanceRevision:null;})(),
       sessions: legacyRoot(raw.sessions,'legacy_session',normalizeSession), masks: legacyRoot(raw.masks,'legacy_mask',normalizeMask),
       presets: legacyRoot(raw.presets,'legacy_preset',normalizePreset), worldbooks: legacyRoot(raw.worldbooks,'legacy_worldbook',normalizeWorldbook), cssPresets: legacyRoot(raw.cssPresets,'legacy_css',normalizeCssPreset),
@@ -484,7 +494,7 @@
   function commitLibraryEdit(edit){
     const commit=async()=>{
       try{
-        const stored=normalizeState(await window.MimaLocalStore.loadState());
+        const stored=normalizeState(await window.MimaLocalStore.loadResourceSnapshot());
         const result=edit(stored);
         if(result&&result[NO_LIBRARY_WRITE]===true){state=stored;return result.value;}
         const committed=await window.MimaLocalStore.saveState(stored,stored.storeRevision);
@@ -495,7 +505,7 @@
         // A real CAS refusal must not leave obsolete resources on screen. The
         // failed proposal has never touched state, and a verified reload may
         // safely expose the current winner without disguising the failure.
-        try{state=normalizeState(await window.MimaLocalStore.loadState());}
+        try{state=normalizeState(await window.MimaLocalStore.loadResourceSnapshot());}
         catch(readError){console.error('E_CANONICAL_REFRESH_FAILED_AFTER_WRITE',readError);}
         throw error;
       }
@@ -564,9 +574,10 @@
         // edited presets/templates before this appearance commit, while this
         // window still holds their old bytes. The next resource refresh must
         // not mistake that stale cache for a verified complete snapshot.
+        const cssHead=await window.MimaLocalStore.loadGlobalCssSelection();
         state={...window.MimaLocalStore.mergeAppearance(state,normalizeAppearance(receipt.appearance)),
           storeRevision:receipt.storeRevision,__resourceSignature:null,
-          __appearanceRevision:receipt.appearanceRevision};
+          __appearanceRevision:receipt.appearanceRevision,__cssSelectionRevision:cssHead.selectionRevision};
         return result;
       }catch(error){
         try{
@@ -583,7 +594,11 @@
     const task=sessionSaveTail.then(commit,commit);sessionSaveTail=task.then(()=>{},()=>{});return task;
   }
   function resourceChanged(a,b){return JSON.stringify(a) !== JSON.stringify(b);}
-  function cssRendererChanged(a,b){return ['css','scope','surface','atelierReleaseKey'].some(key=>(a?.[key]||'')!==(b?.[key]||''));}
+  function cssRendererChanged(a,b){
+    const previous=typeof a?.css==='string'?cssSha256(a.css):a?.contentHash;
+    const incoming=typeof b?.css==='string'?cssSha256(b.css):b?.contentHash;
+    return previous!==incoming||['scope','surface','atelierReleaseKey'].some(key=>(a?.[key]||'')!==(b?.[key]||''));
+  }
   function cssHasCanonicalReferences(base,appearance,id){
     // Base and overlay are read in one IDB write transaction with competing
     // session saves. Disabled but retained links are also protected.
@@ -685,7 +700,7 @@
       const saved=await window.MimaLocalStore.commitBulkDelete(kind,ids,expectedRevision);
       // Transaction completion is authoritative. A read failure afterwards is
       // a refresh failure, never evidence the already-committed delete failed.
-      try{state=normalizeState(await window.MimaLocalStore.loadState());}
+      try{state=normalizeState(await window.MimaLocalStore.loadResourceSnapshot());}
       catch(error){console.error('E_BULK_DELETE_POST_COMMIT_REFRESH',error);
         // Do not return failure, which would invite a repeat destructive request.
         return {...saved,refreshed:false,refreshError:String(error?.message||error)};
@@ -699,11 +714,31 @@
     return task;
   }
   async function init() {
-    state = normalizeState(await window.MimaLocalStore.loadState());window.MimaThemeEngine?.apply?.(state.themeSettings);
+    const safeQuery=typeof location!=='undefined'&&new URLSearchParams(location.search).get('noCss')==='1';
+    let snapshot=null,cssMigrationProblem=null;
+    const useLegacyRescue=safeQuery&&!(await window.MimaLocalStore.hasVerifiedCssCatalog())&&await window.MimaLocalStore.hasLegacyCssSources();
+    if(!useLegacyRescue){
+      try{snapshot=await window.MimaLocalStore.loadResourceSnapshot();}
+      catch(error){if(!error?.mimaCssMigrationFailed)throw error;cssMigrationProblem=error;}
+    }
+    if(useLegacyRescue||cssMigrationProblem){
+      // A safe-mode page must not be held hostage by a multi-MB CSS migration.
+      // A failed migration retains original records; read them without writes.
+      snapshot=await window.MimaLocalStore.loadResourceSnapshotReadOnly();
+      window.MimaCssMigrationReadOnly=true;
+      window.MimaCssMigrationIssue=cssMigrationProblem?.message||'CSS 尚未迁移；当前按原库只读查看';
+      window.MimaCssRecoveryBypass=true;
+    }else{window.MimaCssMigrationReadOnly=false;window.MimaCssMigrationIssue=null;}
+    state = normalizeState(snapshot);
+    if(!window.MimaCssMigrationReadOnly){
+      const cssHead=await window.MimaLocalStore.loadGlobalCssSelection();
+      state={...state,themeSettings:{...state.themeSettings,globalCssPresetId:cssHead.globalCssPresetId,globalCssEnabled:cssHead.globalCssEnabled,updatedAt:cssHead.updatedAt},__cssSelectionRevision:cssHead.selectionRevision};
+    }
+    window.MimaThemeEngine?.apply?.(state.themeSettings);
     // Browser-only startup: pick up a crashed Rolling job after its durable
     // owner lease has expired. A surviving other tab keeps its lease; no dual
     // settlement, and nothing here blocks a user's Direct Reply.
-    if(typeof document!=='undefined'&&typeof window.MimaLocalStore?.getMemoryJob==='function')
+    if(!window.MimaCssMigrationReadOnly&&typeof document!=='undefined'&&typeof window.MimaLocalStore?.getMemoryJob==='function')
       setTimeout(()=>resumeExpiredRollingJobs().catch(e=>console.warn('Memory recovery scan failed',{code:e.code||e.message,stage:'startup_scan'})),0);
     return state;
   }
@@ -745,11 +780,13 @@
     state={...state,sessions,storeRevision:revision};
     return session;
   }
-  // The durable resource signature consists of four monotone revision counters:
-  // base, appearance, presets, templates. A whole-library promotion raises the
+  // Durable resource signatures have four base counters and one CSS selection
+  // counter: base, appearance, presets, templates, cssSelection. Legacy four-
+  // component signatures remain parseable as selection revision zero.
+  // A whole-library promotion raises the
   // base to the latest global revision and resets overlays to that base; a
   // targeted resource commit increments exactly its own overlay counter.
-  // A Session-only write never advances these four counters.
+  // A Session-only write never advances these resource counters.
   const RESOURCE_PUBLICATION_FIELDS=['masks','presets','worldbooks','cssPresets',
     'cssCategoriesV1','resourceCategoriesV1','regexPacks','theaterCards',
     'quickCommands','settingTemplates','novelProjects','themeSettings'];
@@ -760,8 +797,9 @@
     return RESOURCE_PUBLICATION_FIELDS.some((key,i)=>state[key]!==captured[i]);
   }
   function parseResourceSignature(signature){
-    if(typeof signature!=='string'||!/^\d+:\d+:\d+:\d+$/.test(signature))return null;
+    if(typeof signature!=='string'||!/^\d+:\d+:\d+:\d+(?::\d+)?$/.test(signature))return null;
     const values=signature.split(':').map(Number);
+    if(values.length===4)values.push(0);
     return values.every(n=>Number.isSafeInteger(n)&&n>=0)?values:null;
   }
   // Called synchronously immediately before publishing any snapshot. Never
@@ -895,7 +933,7 @@
       state={...state,settingTemplates:committed.templates,storeRevision:committed.storeRevision,__resourceSignature:null};
       return committed.value;
     }catch(error){
-      try{state=normalizeState(await window.MimaLocalStore.loadState());}
+      try{state=normalizeState(await window.MimaLocalStore.loadResourceSnapshot());}
       catch(readError){console.error('E_TEMPLATE_REFRESH_FAILED_AFTER_WRITE',readError);}
       throw error;
     }};
@@ -939,7 +977,7 @@
         const committed=await window.MimaLocalStore.commitSessionRecord(candidate,0,{allowCreate:true,expectedGlobalRevision:stored.storeRevision});
         return publishSession(normalizeSession(committed.session),committed.storeRevision);
       }catch(error){
-        try{state=normalizeState(await window.MimaLocalStore.loadState());}
+        try{state=normalizeState(await window.MimaLocalStore.loadResourceSnapshot());}
         catch(readError){console.error('E_SESSION_TITLE_REFRESH_FAILED',readError);}
         throw error;
       }
@@ -963,7 +1001,7 @@
       const candidate=normalizeSession({...input,title,id:makeId('sess'),createdAt,updatedAt:createdAt,messages:[],recordRevision:0});
       const committed=await window.MimaLocalStore.commitSessionRecord(candidate,0,{allowCreate:true,expectedGlobalRevision:stored.storeRevision});
       return publishSession(normalizeSession(committed.session),committed.storeRevision);
-    }catch(error){try{state=normalizeState(await window.MimaLocalStore.loadState());}
+    }catch(error){try{state=normalizeState(await window.MimaLocalStore.loadResourceSnapshot());}
       catch(readError){console.error('E_SESSION_TEMPLATE_REFRESH_FAILED',readError);}throw error;}};
     const task=sessionSaveTail.then(commit,commit);sessionSaveTail=task.then(()=>{},()=>{});return task;
   }
@@ -1026,7 +1064,7 @@
     const result=await commitAppearanceEdit(stored=>{
       const preset=normalizeCssPreset({...input,createdAt:nowIso(),updatedAt:nowIso()});
       const old=stored.cssPresets.find(x=>x.id===preset.id||x.atelierReleaseKey===preset.atelierReleaseKey);
-      if(old&&(old.id!==preset.id||old.atelierReleaseKey!==preset.atelierReleaseKey||old.css!==preset.css))throw Error('同一工坊发布指纹对应不同 CSS，拒绝覆盖历史版本');
+      if(old&&(old.id!==preset.id||old.atelierReleaseKey!==preset.atelierReleaseKey||(old.contentHash||cssSha256(old.css))!==cssSha256(preset.css)))throw Error('同一工坊发布指纹对应不同 CSS，拒绝覆盖历史版本');
       if(!old)stored.cssPresets.push(preset);
       if(!body.prepareOnly)stored.themeSettings=window.MimaThemeEngine?.normalizeSettings?window.MimaThemeEngine.normalizeSettings({...stored.themeSettings,globalCssPresetId:preset.id,globalCssEnabled:true,updatedAt:nowIso()}):{...stored.themeSettings,globalCssPresetId:preset.id,globalCssEnabled:true,updatedAt:nowIso()};
       return {preset:clone(old||preset),themeSettings:clone(stored.themeSettings)};
@@ -1042,7 +1080,7 @@
     const result=await commitAppearanceEdit(stored=>{
       const preset=normalizeCssPreset({...input,atelierReleaseKey:'',updatedAt:nowIso()});
       const existing=stored.cssPresets.find(p=>p.id===preset.id);
-      if(existing&&(existing.css!==preset.css||existing.scope!=='app'||existing.atelierReleaseKey))throw Error('同 ID 助手 CSS 与原版本冲突；拒绝修改既有预设');
+      if(existing&&((existing.contentHash||cssSha256(existing.css))!==cssSha256(preset.css)||existing.scope!=='app'||existing.atelierReleaseKey))throw Error('同 ID 助手 CSS 与原版本冲突；拒绝修改既有预设');
       if(!existing)stored.cssPresets.push(preset);
       if(!body.prepareOnly)stored.themeSettings=window.MimaThemeEngine?.normalizeSettings?window.MimaThemeEngine.normalizeSettings({...stored.themeSettings,globalCssPresetId:preset.id,globalCssEnabled:true,updatedAt:nowIso()}):{...stored.themeSettings,globalCssPresetId:preset.id,globalCssEnabled:true,updatedAt:nowIso()};
       return {preset:clone(existing||preset),themeSettings:clone(stored.themeSettings)};
@@ -1130,6 +1168,8 @@
         {...current,globalCssPresetId:actual.id,globalCssEnabled:true,updatedAt:appliedAt};
       return clone(stored.themeSettings);
     });
+    const head=await window.MimaLocalStore.loadGlobalCssSelection();
+    state.__cssSelectionRevision=head.selectionRevision;
     try{window.MimaThemeEngine?.apply?.(next);}catch(error){console.error('E_THEME_APPLY_AFTER_CSS_SELECTION',error);}
     return next;
   }
@@ -1140,7 +1180,8 @@
       const persisted=await window.MimaLocalStore.loadCssSelectionSnapshot(sessionIds);
       for(const session of persisted.sessions)publishSession(normalizeSession(session));
       state={...state,themeSettings:persisted.themeSettings,cssPresets:persisted.cssPresets,
-        storeRevision:persisted.storeRevision,__appearanceRevision:persisted.appearanceRevision,
+        storeRevision:persisted.storeRevision,__cssSelectionRevision:persisted.selectionRevision,
+        __appearanceRevision:persisted.appearanceRevision,
         __resourceSignature:null};
       return persisted;
     };
@@ -4574,6 +4615,28 @@
   async function handle(endpoint,method='GET',body=null,signal=null,progress=null){
     try{
       const path=String(endpoint||'').split('?')[0];
+      if(window.MimaCssMigrationReadOnly===true){
+        // Explicit rescue mode is snapshot-only. No mutation is allowed to
+        // accidentally commit over an incomplete catalog, history or selection.
+        if(method!=='GET')return fail('CSS 迁移未完成；当前为只读救援，未保存任何操作。请先导出原资料后再恢复写入。',{code:'E_CSS_RESCUE_READ_ONLY'});
+        if(path==='/theme/css-selection-head')return ok({version:2,
+          globalCssPresetId:state.themeSettings?.globalCssPresetId||null,
+          globalCssEnabled:state.themeSettings?.globalCssEnabled!==false,
+          selectionRevision:state.__cssSelectionRevision||0,updatedAt:state.themeSettings?.updatedAt||''});
+        if(path==='/sessions/full')return ok(clone(state.sessions));
+        if(/^\/sessions\/[^/]+\/canonical-view$/.test(path)||/^\/sessions\/[^/]+$/.test(path)){
+          const id=decodeResourcePathId(path.split('/')[2]),row=getSession(id);
+          return row?ok(clone(row)):fail('救援快照中未找到该剧情',{code:'E_CSS_RESCUE_SESSION_MISSING'});
+        }
+        if(/^\/css-presets\/[^/]+\/content$/.test(path)){
+          const id=decodeResourcePathId(path.split('/')[2]),row=getCssPreset(id);
+          return row&&typeof row.css==='string'?ok(clone(row)):fail('旧库 CSS 原文不可验证',{code:'E_CSS_RESCUE_BODY_UNVERIFIED'});
+        }
+        if(path==='/css-presets'){
+          if(!state.cssPresets.every(p=>typeof p.css==='string'))return fail('CSS 原文不可验证，拒绝伪空库',{code:'E_CSS_RESCUE_BODY_UNVERIFIED'});
+          return ok(clone(state.cssPresets));
+        }
+      }
       if(path==='/css-selection/canonical-view'&&method==='POST'){
         if(!Array.isArray(body?.sessionIds)||body.sessionIds.some(id=>typeof id!=='string'))throw new ApiError('E_CSS_RECOVERY_INPUT','CSS 恢复会话列表无效');
         return ok(await readCssSelectionCanonical(body.sessionIds));
@@ -4585,16 +4648,18 @@
       if(path==='/assistant/regex-bundle'&&method==='POST')return ok(await publishAssistantRegexBundle(body));
       if(path==='/theme'&&method==='GET')return ok(clone(state.themeSettings));
       if(path==='/theme/css-selection'&&method==='POST')return ok(await commitGlobalCssSelection(body||{}));
-      if(path==='/theme/css-disable'&&method==='POST')return ok(await commitAppearanceEdit(stored=>{
-        const current=stored.themeSettings||{};
-        if(body?.expected&&((current.globalCssPresetId||null)!==(body.expected.globalCssPresetId||null)||
-          (current.globalCssEnabled!==false)!==(body.expected.globalCssEnabled!==false)||
-          (current.updatedAt||'')!==(body.expected.updatedAt||'')))
-          throw new ApiError('E_CSS_SELECTION_STALE','全局外观已改变，取消操作未覆盖其他窗口的新选择');
-        const appliedAt=new Date(Math.max(Date.now(),(Date.parse(current.updatedAt)||0)+1)).toISOString();
-        stored.themeSettings={...current,...(body?.clearSelection?{globalCssPresetId:null}:{}),globalCssEnabled:false,updatedAt:appliedAt};
-        return clone(stored.themeSettings);
-      }));
+      if(path==='/theme/css-selection-head'&&method==='GET')return ok(await window.MimaLocalStore.loadGlobalCssSelection());
+      if(path==='/theme/css-disable'&&method==='POST'){
+        const head=await window.MimaLocalStore.commitGlobalCssDisable({
+          ...(body?.expected||{}),
+          ...(body?.expected?.selectionRevision===undefined?{}:{selectionRevision:body.expected.selectionRevision})
+        },body?.clearSelection!==false);
+        state={...state,__cssSelectionRevision:head.selectionRevision,
+          themeSettings:{...state.themeSettings,globalCssPresetId:head.globalCssPresetId,
+            globalCssEnabled:head.globalCssEnabled,updatedAt:head.updatedAt}};
+        try{window.MimaThemeEngine?.apply?.(state.themeSettings);}catch(error){console.error('E_THEME_APPLY_AFTER_CSS_DISABLE',error);}
+        return ok(clone(state.themeSettings));
+      }
       if(path==='/theme'&&method==='PATCH')return ok(await saveThemeSettings(body||{}));
       if(path==='/novel-assets'&&method==='GET')return ok(novelAssets());
       if(path==='/novels'&&method==='GET')return ok(novelSummaries());
@@ -4635,7 +4700,7 @@
       if(path==='/session-organization'&&method==='GET')return ok(await window.MimaLocalStore.loadSessionOrganization());
       if(path==='/session-organization/actions'&&method==='POST')return ok(await organizationAction(body||{}));
       if(path==='/sessions'&&method==='GET')return ok(sessionSummaries());
-      if(path==='/sessions/full'&&method==='GET')return ok((await window.MimaLocalStore.loadState()).sessions);
+      if(path==='/sessions/full'&&method==='GET')return ok((await window.MimaLocalStore.loadResourceSnapshot()).sessions);
       if(path==='/sessions'&&method==='POST'){
         if(body?.settingTemplateId)return ok(await createSessionUsingTemplate(body));
         // With no naming preference, preserve the established ordinary-create
@@ -4726,7 +4791,18 @@
       m=path.match(/^\/resource-categories\/(css|presets|worldbook)$/);if(m&&method==='GET')return ok({records:categoryView(state,m[1]),storeRevision:state.storeRevision});
       if(m&&method==='POST')return ok(await changeCategories(m[1],body||{}));
       if(path==='/css-presets/import-batch'&&method==='POST')return ok(await importCssPresetsBatch(body||{}));
-      if(path==='/css-presets'&&method==='GET')return ok(state.cssPresets);
+      if(path==='/css-presets/catalog'&&method==='GET')return ok(state.cssPresets.map(({css:_source,...meta})=>meta));
+      m=resourcePathMatch(path,/^\/css-presets\/([^/]+)\/content$/);
+      if(m&&method==='GET'){
+        const full=await window.MimaLocalStore.loadCssContent(m[1]);
+        return full?ok(full):fail('未找到 CSS 正文',{code:'E_CSS_BODY_MISSING'});
+      }
+      if(path==='/css-presets'&&method==='GET'){
+        // Historical API contract: return full bodies only when explicitly requested.
+        const rows=[];for(const p of state.cssPresets){const full=await window.MimaLocalStore.loadCssContent(p.id);
+          if(!full)throw new ApiError('E_CSS_BODY_MISSING','CSS 原文缺失，拒绝返回伪空库');rows.push(full);}
+        return ok(rows);
+      }
       if(path==='/css-presets'&&method==='POST')return ok(await saveCssPreset(body||{}));
       m=resourcePathMatch(path,/^\/css-presets\/([^/]+)$/);if(m&&method==='PATCH'){const old=getCssPreset(m[1]);return old?ok(await saveCssPreset({...old,...body,id:m[1]})):fail('未找到 CSS Preset');}
       if(m&&method==='DELETE'){
@@ -4736,7 +4812,7 @@
       }
 
       if(path==='/regex-packs'&&method==='GET')return ok(state.regexPacks);
-      if(path==='/play-tools'&&method==='GET'){state=normalizeState(await window.MimaLocalStore.loadState());return ok({theaterCards:clone(state.theaterCards),quickCommands:clone(state.quickCommands)});}
+      if(path==='/play-tools'&&method==='GET'){state=normalizeState(await window.MimaLocalStore.loadResourceSnapshot());return ok({theaterCards:clone(state.theaterCards),quickCommands:clone(state.quickCommands)});}
       if(path==='/play-tools/import'&&method==='POST')return ok(await importPlayResources(body));
       const playRoute=path.match(/^\/(theater-cards|quick-commands)(?:\/([^/]+))?$/);
       if(playRoute){const table=playRoute[1]==='theater-cards'?'theaterCards':'quickCommands',id=playRoute[2]?decodeResourcePathId(playRoute[2]):null;
@@ -4761,7 +4837,7 @@
 
       if(path==='/worldbooks'&&method==='GET')return ok(state.worldbooks);
       if(path==='/worldbooks'&&method==='POST')return ok(await saveWorldbook(body||{}));
-      m=resourcePathMatch(path,/^\/worldbooks\/([^/]+)\/canonical-view$/);if(m&&method==='GET'){const persisted=normalizeState(await window.MimaLocalStore.loadState());const book=persisted.worldbooks.find(w=>w.id===m[1]);return book?ok(clone(book)):fail('已保存世界书未找到',{code:'E_WORLDBOOK_CANONICAL_MISSING'});}
+      m=resourcePathMatch(path,/^\/worldbooks\/([^/]+)\/canonical-view$/);if(m&&method==='GET'){const persisted=normalizeState(await window.MimaLocalStore.loadResourceSnapshot());const book=persisted.worldbooks.find(w=>w.id===m[1]);return book?ok(clone(book)):fail('已保存世界书未找到',{code:'E_WORLDBOOK_CANONICAL_MISSING'});}
       m=resourcePathMatch(path,/^\/worldbooks\/([^/]+)$/);if(m&&method==='GET'){const w=getWorldbook(m[1]);return w?ok(w):fail('未找到世界书');}
       if(m&&method==='PATCH'){const old=getWorldbook(m[1]);return old?ok(await saveWorldbook({...old,...body,id:m[1]})):fail('未找到世界书');}
       if(m&&method==='DELETE')return ok(await deleteResource('worldbooks',m[1],(db,id)=>{for(const s of db.sessions)if(s.worldbookIds.includes(id)){s.worldbookIds=s.worldbookIds.filter(x=>x!==id);s.recordRevision++;}for(const p of db.novelProjects)if(p.worldbookIds.includes(id)){p.worldbookIds=p.worldbookIds.filter(x=>x!==id);p.recordRevision++;}}));
@@ -4776,7 +4852,7 @@
   async function exportLibrary(){
     // schemaVersion=4 spans multiple historical release shapes; new backups
     // declare the independently versioned full-data contract on export.
-    const snapshot=normalizeState(await window.MimaLocalStore.loadState());
+    const snapshot=normalizeState(await window.MimaLocalStore.exportAll());
     delete snapshot.__resourceSignature; // internal cache stamp is not user backup data
     delete snapshot.__appearanceRevision; // internal UI CAS token never enters backups
     // Some historical/offline consumers supply only loadState/saveState. The
@@ -4794,7 +4870,7 @@
     if(!['replace','preserve','merge'].includes(templatePolicy))throw new ApiError('E_TEMPLATE_IMPORT_POLICY','未知的模板恢复策略，未写入资料库');
     // A fresh verified read is mandatory. Never take preservation templates from
     // a stale in-memory state or reinterpret an unreadable library as empty.
-    const before=normalizeState(await window.MimaLocalStore.loadState());
+    const before=normalizeState(await window.MimaLocalStore.exportAll());
     let next=normalizeState(verified);
     // Backup/imported authorizations cannot grant a new plugin private access.
     // Keep only permissions already granted locally for the identical source.
@@ -4906,5 +4982,5 @@
 
   window.MimaMemoryContracts=Object.freeze({normalizeManualMemory});
   // Normalized CSS presets contain scalar fields; copy their records without serializing History or immutable CSS strings.
-  window.MimaStandalone={getPlayTools:()=>({theaterCards:state.theaterCards.map(p=>({...p})),quickCommands:state.quickCommands.map(p=>({...p}))}),init,handle,previewMemoryPlan,memorySourceParts,memoryWorkPlan,runRecordedMemory,memorySourceFingerprint,memoryFactSignature,manualReplyFingerprint,isManuallyRecoveredReply,getApiConfig,saveApiConfig,validateApiConfigSnapshot,replaceApiConfigSnapshot,captureApiConfigBytes,restoreApiConfigBytes,apiCapacityIdentity,effectiveRequestConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,validateStoryReply,classifyStoryReply,applyRegexForSession,applyRegexForSessionAsync,applyRegexBatchForSessionAsync,hasActiveRegexForSession,resolveMacrosForSession,compileUserInputForPrompt,exportLibrary,importLibrary,previewLibraryImport,validateLibrary,assemble,getLastUsage,getPhoneResources:()=>({masks:clone(state.masks),presets:clone(state.presets),worldbooks:clone(state.worldbooks),themeSettings:clone(state.themeSettings),storeRevision:state.storeRevision}),getThemeSettings:()=>clone(state.themeSettings),cssSelectionIdentity,getResourceCategoryList:kind=>categorySpec[kind]?categoryView(state,kind):[],getStoreRevision:()=>state.storeRevision,getAppearanceRevision:()=>state.__appearanceRevision,getCssAppearance:()=>({themeSettings:clone(state.themeSettings),cssPresets:state.cssPresets.map(p=>({...p}))}),getState:()=>clone(state)};
+  window.MimaStandalone={getPlayTools:()=>({theaterCards:state.theaterCards.map(p=>({...p})),quickCommands:state.quickCommands.map(p=>({...p}))}),init,handle,previewMemoryPlan,memorySourceParts,memoryWorkPlan,runRecordedMemory,memorySourceFingerprint,memoryFactSignature,manualReplyFingerprint,isManuallyRecoveredReply,getApiConfig,saveApiConfig,validateApiConfigSnapshot,replaceApiConfigSnapshot,captureApiConfigBytes,restoreApiConfigBytes,apiCapacityIdentity,effectiveRequestConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,validateStoryReply,classifyStoryReply,applyRegexForSession,applyRegexForSessionAsync,applyRegexBatchForSessionAsync,hasActiveRegexForSession,resolveMacrosForSession,compileUserInputForPrompt,exportLibrary,importLibrary,previewLibraryImport,validateLibrary,assemble,getLastUsage,getPhoneResources:()=>({masks:clone(state.masks),presets:clone(state.presets),worldbooks:clone(state.worldbooks),themeSettings:clone(state.themeSettings),storeRevision:state.storeRevision}),getThemeSettings:()=>({...clone(state.themeSettings),selectionRevision:state.__cssSelectionRevision}),cssSelectionIdentity,getResourceCategoryList:kind=>categorySpec[kind]?categoryView(state,kind):[],getStoreRevision:()=>state.storeRevision,getAppearanceRevision:()=>state.__appearanceRevision,getCssAppearance:()=>({themeSettings:clone(state.themeSettings),cssPresets:state.cssPresets.map(p=>({...p}))}),getState:()=>clone(state)};
 })();

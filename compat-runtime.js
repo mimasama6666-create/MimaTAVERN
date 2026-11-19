@@ -475,8 +475,8 @@ function projectTemplateHistory(out,session){
 }
 async function prepareNativeTemplateBinding(templateId){
  if(!templateId)return null;
- if(!root.MimaLocalStore?.loadState)throw error('E_SETTINGS_TEMPLATE_STORE_UNAVAILABLE','原生设置库不可读取，未创建半挂载剧情');
- const canonical=await root.MimaLocalStore.loadState();
+ if(!root.MimaLocalStore?.loadResourceSnapshot)throw error('E_SETTINGS_TEMPLATE_STORE_UNAVAILABLE','原生设置库不可读取，未创建半挂载剧情');
+ const canonical=await root.MimaLocalStore.loadResourceSnapshot();
  if(!Array.isArray(canonical.settingTemplates))throw error('E_SETTINGS_TEMPLATE_STORE_UNVERIFIED','设置模板资料不完整');
  const template=templateId==='default'?canonical.settingTemplates.find(x=>x.isDefault):canonical.settingTemplates.find(x=>x.id===templateId);
  if(!template)throw error('E_SETTINGS_TEMPLATE_MISSING','设置模板不存在，未创建剧情');

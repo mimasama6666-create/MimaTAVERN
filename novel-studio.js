@@ -10,6 +10,7 @@
   const directorEditorKey=projectId=>JSON.stringify(['director',projectId]);
   const detailsKey=(projectId,stateKey)=>JSON.stringify([projectId,stateKey]);
   let novelMemoryTask=null;
+  let novelCssEpoch=0,novelCssCurrent=null,novelCssLoading=null,novelCssLease=null;
   let viewEpoch=0;
   // Serialise PATCHes only within the same novel: unrelated novels must remain navigable.
   const chapterSelectionQueues=new Map();
@@ -64,7 +65,13 @@
     }catch(e){if(epoch===viewEpoch)showLoadError(e,projectId);return project;}
   }
   async function open(projectId=null){$('novel-modal')?.classList.remove('hidden');mobileTab='reader';return refresh(projectId||project?.id||null);}
-  function close(){++viewEpoch;$('novel-modal')?.classList.add('hidden');root.MimaFontManager?.releaseUsage?.('novel-reader')}
+  function releaseNovelCssForRescue(){
+    // Invalidate any awaiting body/decode/compile continuation as well as the mounted lease.
+    ++novelCssEpoch;novelCssLoading=null;novelCssCurrent=null;
+    const tag=$('novel-project-custom-css');if(tag)tag.textContent='';
+    novelCssLease?.release?.();novelCssLease=null;
+  }
+  function close(){++viewEpoch;releaseNovelCssForRescue();$('novel-modal')?.classList.add('hidden');root.MimaFontManager?.releaseUsage?.('novel-reader')}
   async function createProject(){
     const title=prompt('小说项目名称','未命名小说');if(title===null)return;
     const epoch=++viewEpoch,created=await route('/novels','POST',{title});
@@ -271,7 +278,35 @@
   function applyProjectAppearance(){if(!project){root.MimaFontManager?.releaseUsage?.('novel-reader');return;}const a=project.appearance||{},el=$('novel-studio-root');if(!el)return;
     if($('novel-modal')?.classList.contains('hidden'))root.MimaFontManager?.releaseUsage?.('novel-reader');
     else root.MimaFontManager?.useFamily?.('novel-reader',a.fontFamily||'').catch(error=>console.warn('[Novel Studio] 阅读字体未能加载，原文件和选择保留',error));
-    const inheritedFont=root.MimaFontManager?.getSelected?.('story')||'inherit';el.style.setProperty('--novel-reader-font',a.fontFamily||inheritedFont);el.style.setProperty('--novel-reader-size',`${a.fontSize||17}px`);el.style.setProperty('--novel-reader-line-height',String(a.lineHeight||1.9));el.style.setProperty('--novel-reader-letter-spacing',`${a.letterSpacing||0}em`);el.style.setProperty('--novel-reader-paragraph-gap',`${a.paragraphGap||1}em`);el.style.setProperty('--novel-reader-indent',`${a.firstLineIndent??2}em`);el.style.setProperty('--novel-reader-max-width',`${a.maxWidth||760}px`);let style=$('novel-project-custom-css');if(!style){style=document.createElement('style');style.id='novel-project-custom-css';document.head.appendChild(style)}if(new URLSearchParams(location.search).get('noCss')==='1'||root.MimaCssRecoveryBypass===true){style.textContent='';return}const css=assets.cssPresets.find(x=>x.id===a.customCssId);const compiled=css?(root.MimaTavernBridge?.compileCustomCss?.(css,'novel')||''):'';style.textContent=a.customCssEnabled&&css?`/* Novel project custom CSS */\n${compiled}`:'';}
+    const inheritedFont=root.MimaFontManager?.getSelected?.('story')||'inherit';el.style.setProperty('--novel-reader-font',a.fontFamily||inheritedFont);el.style.setProperty('--novel-reader-size',`${a.fontSize||17}px`);el.style.setProperty('--novel-reader-line-height',String(a.lineHeight||1.9));el.style.setProperty('--novel-reader-letter-spacing',`${a.letterSpacing||0}em`);el.style.setProperty('--novel-reader-paragraph-gap',`${a.paragraphGap||1}em`);el.style.setProperty('--novel-reader-indent',`${a.firstLineIndent??2}em`);el.style.setProperty('--novel-reader-max-width',`${a.maxWidth||760}px`);let style=$('novel-project-custom-css');if(!style){style=document.createElement('style');style.id='novel-project-custom-css';document.head.appendChild(style)}if(new URLSearchParams(location.search).get('noCss')==='1'||root.MimaCssRecoveryBypass===true||a.customCssEnabled===false||!a.customCssId){
+      ++novelCssEpoch;novelCssLoading=null;novelCssCurrent=null;style.textContent='';novelCssLease?.release?.();novelCssLease=null;return;
+    }
+    const meta=assets.cssPresets.find(x=>x.id===a.customCssId);
+    if(!meta||!(meta.scope==='novel'||meta.surface==='novel')){
+      ++novelCssEpoch;novelCssLoading=null;novelCssCurrent=null;style.textContent='';novelCssLease?.release?.();novelCssLease=null;
+      notify('小说 CSS 已不存在或作用域被改变，原正文未修改');return;
+    }
+    const key=JSON.stringify([project.id,meta.id,meta.contentHash,meta.contentRevision]);
+    if(novelCssCurrent===key||novelCssLoading===key)return;
+    const epoch=++novelCssEpoch,owner=project.id,bodyId=meta.id;
+    novelCssLoading=key;novelCssCurrent=null;style.textContent='';novelCssLease?.release?.();novelCssLease=null;
+    void (async()=>{
+      let prepared=null;
+      try{
+        const full=await route(`/css-presets/${encodeURIComponent(bodyId)}/content`);
+        if(novelCssEpoch!==epoch||project?.id!==owner||project.appearance?.customCssId!==bodyId||project.appearance?.customCssEnabled===false)return;
+        if(full?.contentHash!==meta.contentHash||full?.contentRevision!==meta.contentRevision||typeof full.css!=='string')throw Error('CSS 版本变化，请刷新小说资源列表');
+        if(!root.MimaCssResources?.prepare||!root.MimaTavernBridge?.compileCustomCss)throw Error('小说 CSS 编译模块尚未就绪');
+        prepared=await root.MimaCssResources.prepare(full.css);
+        const compiled=root.MimaTavernBridge.compileCustomCss({...full,css:prepared.css},'novel');
+        if(novelCssEpoch!==epoch||project?.id!==owner||project.appearance?.customCssId!==bodyId||
+           project.appearance?.customCssEnabled===false||new URLSearchParams(location.search).get('noCss')==='1'||root.MimaCssRecoveryBypass===true)return;
+        style.textContent=`/* Novel project custom CSS */\n${compiled}`;
+        prepared.accept();novelCssLease=prepared;prepared=null;novelCssCurrent=key;
+      }catch(error){if(novelCssEpoch===epoch){console.error('[Novel Studio CSS]',error);notify('小说 CSS 未载入，原件保留：'+(error.message||String(error)))}}
+      finally{prepared?.discard?.();if(novelCssEpoch===epoch)novelCssLoading=null;}
+    })();
+  }
   function render(){const box=$('novel-studio-root');if(!box)return;
     if(lastRenderedProject===project?.id){
       box.querySelectorAll('details[data-state-key]').forEach(el=>expandedDetails.set(detailsKey(lastRenderedProject,el.dataset.stateKey),el.open));
@@ -288,7 +323,7 @@
   function setTab(tab){mobileTab=['chapters','reader','memory','settings'].includes(tab)?tab:'reader';render()}
   function download(name,text,type='text/plain;charset=utf-8'){const blob=new Blob([text],{type}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
   async function exportProject(kind){if(!project)return;const data=await route(`/novels/${encodeURIComponent(project.id)}/export/${kind}`);if(kind==='txt')download(data.name,data.text);else download(data.name,JSON.stringify(data.project,null,2),'application/json')}
-  root.MimaNovelStudio={open,close,refresh,createProject,chooseTxt,importTxt,reparseChapters,selectProject,selectChapter,discardEmptyAutoChapter,saveChapter,saveSegment,patchProject,chapterAction,renameChapter,splitChapter,moveChapter,deleteChapter,deleteProject,previewPrompt,continueNovel,continueDraft,testNovelConnection,resetModelSettings,editDraft,rejectDraft,regenerateDraft,acceptDraft,analyzeCurrent,rebuildMemory,setTheme,setProjectValue,toggleMount,setTab,filterChapters,reviewLegacyItem,exportProject,renderChapterArchive,formatMemoryObject,decodeTxtFile};
+  root.MimaNovelStudio={open,close,releaseNovelCssForRescue,refresh,createProject,chooseTxt,importTxt,reparseChapters,selectProject,selectChapter,discardEmptyAutoChapter,saveChapter,saveSegment,patchProject,chapterAction,renameChapter,splitChapter,moveChapter,deleteChapter,deleteProject,previewPrompt,continueNovel,continueDraft,testNovelConnection,resetModelSettings,editDraft,rejectDraft,regenerateDraft,acceptDraft,analyzeCurrent,rebuildMemory,setTheme,setProjectValue,toggleMount,setTab,filterChapters,reviewLegacyItem,exportProject,renderChapterArchive,formatMemoryObject,decodeTxtFile};
   // Dynamic IDs remain data, never inserted into JavaScript or event-handler source.
   const delegated={selectProject,selectChapter,saveSegment,continueDraft,editDraft,regenerateDraft,rejectDraft,acceptDraft,setTheme};
   document.addEventListener('click',event=>{

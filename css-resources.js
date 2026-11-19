@@ -9,6 +9,15 @@
  const raster = /^(?:image\/(?:png|jpeg|jpg|gif|webp|bmp|x-icon|vnd\.microsoft\.icon))$/i;
  const fonts = /^(?:font\/(?:woff2?|ttf|otf|sfnt|collection)|application\/(?:font-woff|x-font-(?:woff|ttf|opentype)|vnd\.ms-fontobject))$/i;
  const abortError = () => new DOMException('CSS resource preparation cancelled', 'AbortError');
+ // Yield at actual browser task boundaries during multi-MB CSS parsing and
+ // source decoding. This is cooperative cancellation, NOT a delay/retry.
+ function yieldBrowserTask() {
+  return new Promise(resolve => {
+   const channel=new MessageChannel();
+   channel.port1.onmessage=()=>{channel.port1.close();channel.port2.close();resolve();};
+   channel.port2.postMessage(0);
+  });
+ }
  function imageError(message) { return new Error('CSS image: ' + message); }
  function resourceLimits(options) {
   const limits = {maxImagePixels:DEFAULT_MAX_PIXELS, maxAnimationPixels:DEFAULT_MAX_ANIMATION_PIXELS, maxAnimationFrames:DEFAULT_MAX_ANIMATION_FRAMES};
@@ -161,9 +170,10 @@
   for (; p < css.length; p++) { if (css[p] === '\\') p++; else if (css[p] === quote) return p + 1; }
   return css.length;
  }
- function tokens(css) {
-  const found = [], stack = []; let p = 0, statement = 0;
+ async function tokens(css, check) {
+  const found = [], stack = []; let p = 0, statement = 0, lastYield = 0;
   while (p < css.length) {
+   if (p - lastYield >= 262144) {check();await yieldBrowserTask();check();lastYield=p;}
    const c = css[p];
    if (c === '/' && css[p + 1] === '*') { const end = css.indexOf('*/', p + 2); p = end < 0 ? css.length : end + 2; continue; }
    if (c === '"' || c === "'") { p = quotedEnd(css, p); continue; }
@@ -252,21 +262,25 @@
   signal?.addEventListener('abort', abort, {once:true});
   try {
    check();
-   const found = tokens(css);
+   const found = await tokens(css, check);
+   let decoded = 0;
    for (const token of found) {
     check();
+    if (decoded >= 524288) {await yieldBrowserTask();check();decoded=0;}
     let entry = owned.get(token.source);
     if (!entry) {
      entry = acquire(token, limits); owned.set(token.source, entry);
+     decoded += token.base64.length;
      await Promise.race([entry.promise, cancelled]);
      check();
     }
     token.url = entry.url;
    }
    check();
-   let transformed = '', cursor = 0;
-   for (const token of found) { transformed += css.slice(cursor, token.start) + token.url; cursor = token.end; }
-   transformed += css.slice(cursor);
+   const chunks=[]; let cursor = 0;
+   for (const token of found) { chunks.push(css.slice(cursor, token.start), token.url); cursor = token.end; }
+   chunks.push(css.slice(cursor));
+   const transformed=chunks.join('');
    return {
     css:transformed,
     accept() { check(); if (state === 'pending') { state = 'accepted'; signal?.removeEventListener('abort', abort); } },
