@@ -7,7 +7,7 @@
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{transition:none!important}}
 @media print{.sidebar,.toolbar,.jump-action,.back-top,.print-btn,.search-clear{display:none!important}.guide-layout{display:block}.main{padding:0}.guide-topic{break-inside:avoid;box-shadow:none;border:1px solid #ddd}.hero{padding-top:0}.topic-note{display:none}.goal-card{box-shadow:none}body{background:white}html{scroll-behavior:auto}}
 </style></head><body>
-<div class="guide-layout"><aside class="sidebar" aria-label="使用手册章节导航"><div class="brand"><img src="./icon-192.png" width="42" height="42" alt="咪嘛馆图标"><span><strong>咪嘛馆 · 使用手册</strong><small>R19 / 第八批 · 2026.10.27</small></span></div><div class="side-label">一步一步学</div><nav id="side-nav" class="side-nav" aria-label="章节目录"></nav><p class="side-note">独立阅读，不调用模型、不收费。<br>开发测试版 · 仅限成年人。</p></aside>
+<div class="guide-layout"><aside class="sidebar" aria-label="使用手册章节导航"><div class="brand"><img src="./icon-192.png" width="42" height="42" alt="咪嘛馆图标"><span><strong>咪嘛馆 · 使用手册</strong><small>R19 · V5.94 / V22.2 · 2026.11.22</small></span></div><div class="side-label">一步一步学</div><nav id="side-nav" class="side-nav" aria-label="章节目录"></nav><p class="side-note">独立阅读，不调用模型、不收费。<br>开发测试版 · 仅限成年人。</p></aside>
 <main class="main"><div class="toolbar"><strong>📖 一看就会</strong><div class="search-shell"><span class="search-icon" aria-hidden="true">⌕</span><input id="search" type="search" placeholder="搜问题：怎么备份、正则、主题……" aria-label="搜索使用手册教程"><button class="search-clear" id="clear-search" type="button" aria-label="清空搜索">×</button></div><button class="print-btn" id="print-guide" type="button" onclick="window.print()" aria-label="打印或另存为 PDF" title="打印或另存为 PDF"><span aria-hidden="true">⎙</span> 打印</button></div>
 <section id="intro"><div class="hero"><span class="eyebrow">MIMATAVERN · THE EASY GUIDE</span><h1>不会用？<br><em>点着点着就学会啦！</em></h1><p>完全不需要懂编程，也不需要看施工报告。先选你想做的事，每一步都告诉你<strong>点哪里、填什么、怎么看是否成功</strong>。</p><div class="hero-tags"><span>✓ 手机优先</span><span>✓ 没有技术门槛</span><span>✓ 避免误删存档</span><span>✓ 有问题可搜索</span></div></div>
 <h2 class="goals-title">你现在想做哪件事？</h2><div class="goal-grid"><a class="goal-card" href="#start"><span class="goal-emoji">🚀</span><span><strong>从零开始</strong><small>新建剧情、配置 API</small></span><span class="goal-arrow">›</span></a>
@@ -98,6 +98,21 @@
   <details class="topic-note"><summary>再多知道一点 <span aria-hidden="true">⌄</span></summary><p>换上自定义 CSS 后某处仍有灰底，可以在工坊试试「隐藏多余容器底色」，先预览再应用。</p></details>
   <a class="back-top" href="#intro">↑ 返回顶部</a>
  </article>
+<article id="local-fonts-guide" class="guide-topic" data-group="常用" tabindex="-1">
+  <div class="topic-kicker">常用 <span aria-hidden="true">/</span> 本地字体教程</div>
+  <div class="topic-heading"><span class="topic-emoji" aria-hidden="true">🔤</span><div><h2>本地字体：导入、预览、补字和删除</h2><p>TTF、OTF、TTC 字体文件，按需管理和备份</p></div></div>
+  <ol class="steps">
+    <li class="step"><span class="step-num">01</span><div class="step-body"><strong>找到本地字体管理</strong><p>打开「设置 → 外观 → 本地字体」，展开「本地字体管理」后点击「导入字体」。可以一次选多个文件；新字体仅保存到当前设备，不会自动替换正在使用的字体。</p><button type="button" class="jump-action" data-go="appearance">前往外观设置 <span aria-hidden="true">↗</span></button></div></li>
+    <li class="step"><span class="step-num">02</span><div class="step-body"><strong>从 TTC 集合里挑想要的字形</strong><p>导入 TTC/OTC 文件时会列出可选择的字体字形（Face），可全选、全不选或逐项勾选，再点击「导入所选」。导入后，同一集合在字体列表中折叠展示；点击集合名展开各个字形。只勾选需要的字形，省去不必要的导入。</p></div></li>
+    <li class="step"><span class="step-num">03</span><div class="step-body"><strong>按需预览，不让长列表一起加载</strong><p>默认关闭「自动预览字体」。点字体右边的「预览」，查看单款字体效果；需要检查字符是否齐全，先填「自定义字形测试句」，再点该字体的「更多 → 检查字形」。名称太长可长按或悬停查看完整名称。</p></div></li>
+    <li class="step"><span class="step-num">04</span><div class="step-body"><strong>界面和正文可以各自选择字体与补字</strong><p>在「外观 → 字体」分别设置 UI（界面）字体和剧情正文字体。缺少字形时，在本地字体对应行点「更多 → 界面补字」或「正文补字」加入对应组合；只会修改该用途的字体配置。</p></div></li>
+    <li class="step"><span class="step-num">05</span><div class="step-body"><strong>设置自定义字重</strong><p>「外观 → 字体」分别勾选界面或正文字重，选择 300–900 的档位；可变字体可检查 wght 轴后细调，静态字体只有文件自带字重，可选择允许浏览器模拟加粗。点「检查真实字重／可变轴」核实，别把输入数字当成已确认支持。</p></div></li>
+    <li class="step"><span class="step-num">06</span><div class="step-body"><strong>多选与删除</strong><p>本地字体列表左边可以逐个勾选，也可以点「全选」，然后「删除所选」并确认。只删单款时点「更多 → 删除」。删除正在使用的字体可能需要重新选择。先确认备份，避免误删。</p></div></li>
+    <li class="step"><span class="step-num">07</span><div class="step-body"><strong>查字体问题与备份</strong><p>字体列表下方展开「字体检查与诊断」，可以只读检查本地字体、查看未生效原因、复制诊断。备份点「分卷备份本地字体」；单卷最多 16 MiB，必须保存同一轮清单及全部分卷。恢复时点「导入本地字体备份」，一次选择清单及所有分卷；旧版字体 JSON 也仍可导入。支持选择文件夹的设备还可使用「一键保存到文件夹」。</p></div></li>
+  </ol>
+  <div class="result-lines"><p><strong>✓ 如何确认成功</strong>导入后字体出现在列表中；预览能打开；字体设置里对应字体被正确选中并加载。</p><p><strong>↪ 字体没显示时</strong>先检查文件格式和字形覆盖，打开「字体检查与诊断」。检查失败不会自动删除原文件；请避免直接清除网站数据。</p></div>
+  <a class="back-top" href="#intro">↑ 返回顶部</a>
+</article>
 <article id="sound" class="guide-topic" data-group="常用" tabindex="-1">
   <div class="topic-kicker">常用 <span aria-hidden="true">/</span> 5 步操作</div>
   <div class="topic-heading"><span class="topic-emoji" aria-hidden="true">✨</span><div><h2>按钮动画和自定义音效</h2><p>想换成猫爪粒子、可爱点击声？</p></div></div>
@@ -166,7 +181,7 @@
 <li class="step"><span class="step-num">02</span><div class="step-body"><strong>备份酒馆兼容剧情</strong><p>进「🎴 玩酒馆角色卡」的备份/恢复区；可选兼容单库或双库备份。</p><button type="button" class="jump-action" data-go="compat">立即打开 <span aria-hidden="true">↗</span></button></div></li>
 <li class="step"><span class="step-num">03</span><div class="step-body"><strong>备份小手机</strong><p>进入小手机“我的”相关备份入口，单独导出手机数据。</p><button type="button" class="jump-action" data-go="phone">立即打开 <span aria-hidden="true">↗</span></button></div></li>
 <li class="step"><span class="step-num">04</span><div class="step-body"><strong>检查文件确实存在</strong><p>看到实际文件在设备上，才算备份完成；建议在更新和换设备前做。</p></div></li></ol>
-  <div class="result-lines"><p><strong>✓ 做对了会怎样</strong>你应该拿到对应的真实备份文件。</p><p><strong>↪ 不对劲时先检查</strong>只导出“原生剧情与设置”并不等于已经备份小手机及酒馆兼容库。</p></div>
+  <div class="result-lines"><p><strong>单独备份字体</strong>打开「外观 → 本地字体管理」使用分卷备份；清单和所有分卷必须是同一轮的完整集合，恢复时一起选中。可参阅上方的本地字体教程。</p><p><strong>✓ 做对了会怎样</strong>你应该拿到对应的真实备份文件。</p><p><strong>↪ 不对劲时先检查</strong>只导出“原生剧情与设置”并不等于已经备份小手机及酒馆兼容库。</p></div>
   <details class="topic-note"><summary>再多知道一点 <span aria-hidden="true">⌄</span></summary><p>跨设备没有自动同步保证。恢复出现“部分成功”时先检查已恢复的内容，不要立即重复覆盖。</p></details>
   <a class="back-top" href="#intro">↑ 返回顶部</a>
  </article>
@@ -187,7 +202,7 @@
 <details><summary>为什么我设置了角色，AI 还是不认识？</summary><p>检查当前剧情是否“应用挂载”。再去“设置 → 🔬 Prompt（提示词）”看这次请求实际带了什么。</p></details>
 <details><summary>我调了 CSS，为什么没变化？</summary><p>先看是否只是“预览 / 试穿”。工坊要明确“应用全局主题”之后才改变正式界面。</p></details>
 <details><summary>我打开流式 HTML 后怎么不跟着往下走了？</summary><p>这是阅读保护。想再次追随新文字，点击剧情里的“跟随输出”。</p></details>
-<details><summary>手机换了/清除网站数据，会自动恢复存档吗？</summary><p>不会。原生剧情、酒馆兼容库、小手机分别导出文件，再在新设备各自恢复。</p></details>
+<details><summary>手机换了/清除网站数据，会自动恢复存档吗？</summary><p>不会。优先使用整馆归档；字体也可单独分卷备份。请确认实际备份文件已存到设备，换机恢复要检查全部分卷和清单。</p></details>
 <details><summary>百宝箱发送和仅填入有什么区别？</summary><p>“发送”就是像你亲自发了一条消息；“仅填入”不会发送，你可以先修改正文。</p></details>
 <details><summary>陌生 JS 小剧场可以放心点授权吗？</summary><p>不建议。运行 JS 和读取原文是不同权限；JS 有可能联网。只授权可信、能确认用途的脚本。</p></details></div></section>
 <section id="glossary-section" class="more-section"><h2>📚 看不懂这些词？</h2><dl class="glossary"><div><dt>剧情 / Session</dt><dd>一段独立聊天，不同剧情可以有不同人设。</dd></div>
@@ -199,7 +214,7 @@
 <div><dt>正则 / Regex</dt><dd>按规则替换或隐藏文字，分显示与发送等阶段。</dd></div>
 <div><dt>草稿 / Draft</dt><dd>还没正式采纳/提交的内容。</dd></div>
 <div><dt>备份 / Backup</dt><dd>实际导出到本机的文件，不等于网站自动云同步。</dd></div></dl></section>
-<footer class="footer"><strong>咪嘛馆 · R19 玩家帮助中心</strong><p>根据 2026-10-27 第八批可信完整生产包核对入口及主要使用方法。此版本仍为开发测试版；真实 iOS Safari、复杂外部插件和跨设备全库恢复尚未全部验证。使用前请备份重要数据。第三方角色卡、主题与插件需遵守各自的授权与安全要求。仅限 18 岁及以上使用。</p></footer></main></div><div class="jump-status" id="jump-status" role="status" aria-live="polite" hidden></div><script>
+<footer class="footer"><strong>咪嘛馆 · R19 玩家帮助中心</strong><p>依据 R19 V5.94 / V22.2（R4）完整生产源码核对使用入口。此版本仍为开发测试版；真实 iOS Safari、复杂外部插件和跨设备全库恢复尚未全部验证。使用前请备份重要数据。第三方角色卡、主题与插件需遵守各自的授权与安全要求。仅限 18 岁及以上使用。</p></footer></main></div><div class="jump-status" id="jump-status" role="status" aria-live="polite" hidden></div><script>
 (function(){
  'use strict';
  const q=document.getElementById('search');

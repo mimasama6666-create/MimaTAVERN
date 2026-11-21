@@ -12,7 +12,7 @@
     <meta name="apple-mobile-web-app-title" content="咪嘛馆">
     <link rel="manifest" href="./site.webmanifest?v=20261027-mima-r19-icon2">
     <title>咪嘛馆 · MimaTAVERN（酒馆） · Standalone（独立版）</title>
-    <link rel="stylesheet" href="./style.css?settingsairp=20261114-v2&cssbatch=20261110-1&v548=20261103&v=20261025-r19-viewport-density-1&hotfix=1.1.3&release=1.3.1&auditfix=1.3.2&themefix=1.4.0&memoryfix=1.3.9&uihotfix=20261013-1&ctxsave=20261013-2&diagnostics=r8&r13=20261015-1&manualrecovery=20261015-r14-2&replylayout=20261016-r16.2&librarycss=20261019-r3&templateux=20261021-r13-generation-polish&r19manual=20261022-1&settingssheet=20261023-1&r19-dual-rework=20261024&keyboard=20261025-r3&p0recovery=20261025-ui-1&density=20261025-r3&taskviewer=20261025-r2&promptclean=20261025-r1&oct25rework=novel-assist-3&reworkfix=20261025-p1-4&readingui=20261029-1&fontpreview=20261029-v3&settingpaint=20261030-v516&urlpreview=20261030-v517&layoutfix=20261030-v519&previewgrid=20261103-v546&mimacssv2=20261104-p1-category-ui&v565=20261105-archive-ui&v572=20261106-template-css-fold&v573=20261106-bulk-archive-style&v574=20261106-bulk-hit-targets&v575=20261106-editor-keyboard&v576=20261106-hud-recovery&v577=20261106-canonical-resource-safety&v578=20261106-reader-announcements&v579=20261106-diagnostic-one-tap&v580=20261106-appearance-access&v581=20261106-ux-batch&v583=20261107-ios-composer-compact&v584=20261107-keyboard-theme-canvas&v585=20261107-composer-hud-focus&v586=20261107-input-small&v589=20261107-p1-cas-mobile-ux&v591=20261107-resource-order-preset-ui&v592=20261107-keyboard-theme-canvas-state&wgicons=20261108-a&bulkcomplete=20261108-r1&composerexpanded=20261108-r1&personaremark=20261109-v3&cssmenu=20261109-stacking-fix&sessionmenu=20261109-glass-scroll-r1&font-family-bulk=20261121-r1&fontcollection-weight=20261121-v2&color-mode=20261121-v1&persona-editor=20261121-v1">
+    <link rel="stylesheet" href="./style.css?settingsairp=20261114-v2&cssbatch=20261110-1&v548=20261103&v=20261025-r19-viewport-density-1&hotfix=1.1.3&release=1.3.1&auditfix=1.3.2&themefix=1.4.0&memoryfix=1.3.9&uihotfix=20261013-1&ctxsave=20261013-2&diagnostics=r8&r13=20261015-1&manualrecovery=20261015-r14-2&replylayout=20261016-r16.2&librarycss=20261019-r3&templateux=20261021-r13-generation-polish&r19manual=20261022-1&settingssheet=20261023-1&r19-dual-rework=20261024&keyboard=20261025-r3&p0recovery=20261025-ui-1&density=20261025-r3&taskviewer=20261025-r2&promptclean=20261025-r1&oct25rework=novel-assist-3&reworkfix=20261025-p1-4&readingui=20261029-1&fontpreview=20261029-v3&settingpaint=20261030-v516&urlpreview=20261030-v517&layoutfix=20261030-v519&previewgrid=20261103-v546&mimacssv2=20261104-p1-category-ui&v565=20261105-archive-ui&v572=20261106-template-css-fold&v573=20261106-bulk-archive-style&v574=20261106-bulk-hit-targets&v575=20261106-editor-keyboard&v576=20261106-hud-recovery&v577=20261106-canonical-resource-safety&v578=20261106-reader-announcements&v579=20261106-diagnostic-one-tap&v580=20261106-appearance-access&v581=20261106-ux-batch&v583=20261107-ios-composer-compact&v584=20261107-keyboard-theme-canvas&v585=20261107-composer-hud-focus&v586=20261107-input-small&v589=20261107-p1-cas-mobile-ux&v591=20261107-resource-order-preset-ui&v592=20261107-keyboard-theme-canvas-state&wgicons=20261108-a&bulkcomplete=20261108-r1&composerexpanded=20261108-r1&personaremark=20261109-v3&cssmenu=20261109-stacking-fix&sessionmenu=20261109-glass-scroll-r1&font-family-bulk=20261121-r1&fontcollection-weight=20261121-v2&local-font-list=20261122-r4&release-note=20261122-r4&color-mode=20261121-v1&persona-editor=20261121-v1&font-ui=20261122-r4">
     <link rel="stylesheet" href="./theme-skin.css?v=1.4.0&nightfix=20261121-r3">
 <link rel="stylesheet" href="./mima-interaction.css?v=20261115-v20&v22-motion-visual&v22_1-jelly-circle">
 <link rel="stylesheet" href="./cloud-backup.css?v=20261104-cloud-v1">
@@ -198,8 +198,8 @@ function openMimaLicenseDialog() {
 
 <!-- 玩家帮助中心：独立页面按需装载，不触碰剧情、存档和页面缩放 -->
 <dialog id="mima-guide-dialog" aria-label="咪嘛馆玩家使用手册">
-  <header class="mima-guide-head"><strong><img src="./assets/mima-gothic-guide.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> 咪嘛馆 · 一看就会的使用手册</strong><div><a href="./guide.html" target="_blank" rel="noopener noreferrer" title="在新标签打开使用手册">独立打开 ↗</a><form method="dialog"><button type="submit" aria-label="关闭使用手册">关闭 ✕</button></form></div></header>
-  <iframe id="mima-guide-frame" title="咪嘛馆新手使用教程" data-src="./guide.html?v=20261027-audit3" referrerpolicy="same-origin"></iframe>
+  <header class="mima-guide-head"><strong><img src="./assets/mima-gothic-guide.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> 咪嘛馆 · 一看就会的使用手册</strong><div><a href="./guide.html?v=20261122-r4-font-guide" target="_blank" rel="noopener noreferrer" title="在新标签打开使用手册">独立打开 ↗</a><form method="dialog"><button type="submit" aria-label="关闭使用手册">关闭 ✕</button></form></div></header>
+  <iframe id="mima-guide-frame" title="咪嘛馆新手使用教程" data-src="./guide.html?v=20261122-r4-font-guide" referrerpolicy="same-origin"></iframe>
 </dialog>
 <style>
 #mima-guide-dialog{box-sizing:border-box;position:fixed;inset:0;margin:auto;padding:0;z-index:2147483500;width:min(1060px,calc(100vw - 18px));max-width:calc(100vw - 18px);height:min(94dvh,940px);max-height:94dvh;border:1px solid #d9bec9;border-radius:20px;box-shadow:0 24px 76px #0006;overflow:hidden;background:#f9f7f6;color:#493844;font:14px system-ui,-apple-system,sans-serif;zoom:1}
@@ -227,7 +227,7 @@ const choices={
 };
 window.openMimaGuide=function(){
  const d=document.getElementById('mima-guide-dialog');if(!d)return;
- if(typeof d.showModal!=='function'){window.open('./guide.html','_blank','noopener');return;}
+ if(typeof d.showModal!=='function'){window.open('./guide.html?v=20261122-r4-font-guide','_blank','noopener');return;}
  if(!d.open)d.showModal();
  const frame=document.getElementById('mima-guide-frame');
  if(!frame.getAttribute('src'))frame.setAttribute('src',frame.dataset.src);
@@ -242,28 +242,17 @@ window.addEventListener('message',function(ev){
 })();
 </script>
 
-<!-- 版本更新公告：不接入剧情数据，用户可永久关闭自动提醒 -->
+<!-- 版本更新公告：沿用永久关闭与已读标记逻辑，不读取剧情数据 -->
 <div id="mima-release-note-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mima-release-note-title">
   <div class="modal-panel compact-panel mima-release-note-panel">
-    <div class="modal-head"><div><div class="eyebrow">有什么新变化？</div><h2 id="mima-release-note-title">咪嘛馆 · V5.80 更新</h2></div><button class="icon-btn" onclick="closeMimaReleaseNotice()" aria-label="关闭更新公告">✕</button></div>
+    <div class="modal-head"><div><h2 id="mima-release-note-title">咪嘛馆 · 近期更新</h2></div><button class="icon-btn" onclick="closeMimaReleaseNotice()" aria-label="关闭更新公告">✕</button></div>
     <div class="mima-release-note-content">
-      <p class="mima-release-intro">咪嘛馆 V5.80 · 2026 年 11 月 6 日</p>
-      <h3><span class="mima-oss-icon mima-oss-icon--flower" aria-hidden="true"></span> 这次更新了什么？</h3>
+      <p class="mima-release-intro">2026 年 11 月 22 日</p>
       <ul>
-        <li><strong>字体设置不再藏在折叠库里：</strong>界面字体、剧情字体、独立字重和补字组合直接显示在外观页；顶部可以一键跳转本地字体、网络字体和 CSS 列表。</li>
-        <li><strong>CSS 分类真的可以收纳：</strong>CSS 列表始终可见，点分类名称即可展开或收起，另有全部展开／全部收起；原有导入、编辑和应用功能都保留。</li>
-        <li><strong>预设和世界书开关更清楚：</strong>可以分别设置「启用资源」和「挂载到剧情」。如果资源已挂载却停用，列表会直接提醒你。</li>
-        <li><strong>提示词检查不再让人误会：</strong>现在会明确告诉你哪些是「新请求预览」，哪些来自已记录的请求。不能用预览冒充模型已经收到。</li>
-        <li><strong>诊断正文一眼就能看：</strong>点开失败记录，就在原位置显示本机留存的原文，不用再找「查看正文」按钮；技术错误信息收进折叠详情。</li>
-        <li><strong>失败弹窗直接恢复：</strong>找到对应失败任务时，优先显示免费手动恢复；原文预览仍可选，但不是恢复前的必经步骤。</li>
-        <li><strong>请求状态更清楚：</strong>继续区分请求准备、尝试发送和收到 HTTP 响应，不能把 HTTP 200 当成模型正常写完。</li>
-        <li><strong>初始化失败时有明确操作：</strong>可以重试读取或刷新页面，也能导出错误诊断；不会主动清空存档。</li>
+        <li>优化了本地字体管理界面，操作更加方便。</li>
+        <li>完善了字体管理与设置操作体验。</li>
+        <li>调整了字体列表布局，并更新使用手册。</li>
       </ul>
-      <h3><span class="mima-oss-icon mima-oss-icon--paw" aria-hidden="true"></span> 最近更新里你可能用得上的功能</h3>
-      <p>编辑人设和预设时，保存中／成功／失败会有更明显的提示；生成过程中可以继续写下一条草稿；剧情支持批量整理，生成失败面板也能直接打开快速手动恢复。</p>
-      <h3><span class="mima-oss-icon mima-oss-icon--envelope" aria-hidden="true"></span> 使用前的小提醒</h3>
-      <p>重要剧情建议定期备份。遇到无法读取存档时，先尝试重新读取或刷新，<strong>不要清除网站数据</strong>。复杂正则和大型字体在 iPhone Safari 上的长时间稳定性，仍需真实设备检验。</p>
-      <p class="mima-release-footnote">这里只放玩家需要知道的内容，不再展示历史工程日志。更新说明不会删除你的剧情历史、角色资料、预设或备份。</p>
       <label class="check-row"><input id="mima-release-note-optout" type="checkbox" onchange="setMimaReleaseNoticeOptOut(this.checked)">以后不再自动弹出更新公告（设置里仍可查看）</label>
     </div><button class="primary-btn" onclick="closeMimaReleaseNotice()">知道了</button>
   </div>

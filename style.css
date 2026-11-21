@@ -2003,16 +2003,44 @@ button>.mima-gothic-ui-icon,summary>.mima-gothic-ui-icon{vertical-align:middle;m
 .mima-font-import-choice input{flex:none;width:18px;height:18px;accent-color:var(--accent)}
 .mima-font-import-actions .primary-btn:disabled{opacity:.5;cursor:not-allowed}
 
-/* Keep long CJK font names readable; never squeeze a face into one-character columns. */
-#font-list .font-row{display:grid;grid-template-columns:18px minmax(0,1fr);align-items:start;column-gap:10px;row-gap:7px;min-width:0}
-#font-list .font-row>.mima-font-bulk-checkbox{grid-column:1;grid-row:1;margin-top:4px}
-#font-list .font-row>.row-main{grid-column:2;grid-row:1;min-width:0;width:100%;overflow-wrap:anywhere}
-#font-list .font-row>.mima-font-row-actions{grid-column:2;grid-row:2;min-width:0;display:flex;flex-wrap:wrap;gap:6px}
-#font-list .mima-font-row-actions>button{flex:0 1 auto;min-width:0;min-height:34px;padding:6px 9px;font-size:.83em;line-height:1.4;white-space:normal}
-#font-list .font-row .row-sub{overflow-wrap:anywhere;word-break:break-word}
-.mima-font-collection>summary::after{content:'▾';font-size:.82em;color:var(--muted);margin-left:auto;flex:none}
-.mima-font-collection[open]>summary::after{content:'▴'}
+/* Compact local-font inventory only; no global typography, theme or zoom changes. */
+#font-list{min-width:0}
+#font-list .font-row{display:grid;grid-template-columns:17px minmax(0,1fr) auto;align-items:center;column-gap:9px;row-gap:6px;min-width:0;max-width:100%;margin-bottom:6px;padding:8px 9px;border-radius:11px}
+#font-list .font-row>.mima-font-bulk-checkbox{grid-column:1;grid-row:1;margin:0;align-self:center}
+#font-list .font-row>.row-main{grid-column:2;grid-row:1;min-width:0;width:100%;overflow:hidden;flex:none}
+#font-list .font-row .row-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:inherit;line-height:1.45}
+#font-list .font-row .row-sub{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;word-break:normal;font-size:.72rem;line-height:1.5}
+#font-list .font-row .mima-font-row-primary-actions{grid-column:3;grid-row:1;min-width:0;display:flex;align-items:center;gap:5px}
+#font-list .font-row .mima-font-row-primary-actions>button{flex:none;min-width:0;min-height:30px;padding:5px 8px;font-size:.76rem;line-height:1.35;white-space:nowrap}
+#font-list .font-row .mima-font-row-actions{grid-column:2 / 4;grid-row:2;min-width:0;display:flex;flex-wrap:wrap;gap:5px;padding-top:5px;border-top:1px solid var(--line)}
+#font-list .font-row .mima-font-row-actions[hidden]{display:none!important}
+#font-list .font-row .mima-font-row-actions>button{flex:0 1 auto;min-width:0;min-height:30px;padding:5px 8px;font-size:.76rem;line-height:1.35;white-space:nowrap}
+#font-list .font-row.mima-font-row-expanded .row-title,
+#font-list .font-row.mima-font-row-expanded .row-sub{overflow:visible;text-overflow:clip;white-space:normal;overflow-wrap:anywhere;word-break:normal}
+#font-list .font-row .mima-font-row-sample:not([hidden]){margin-top:7px;padding:7px;max-width:100%;font-size:1rem;white-space:normal}
+#font-list .mima-font-collection{min-width:0}
+#font-list .mima-font-collection>summary{display:flex;gap:7px;align-items:center;flex-wrap:nowrap;min-width:0;overflow:hidden;padding:8px 9px}
+#font-list .mima-font-collection-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#font-list .mima-font-collection>summary .row-sub{flex:0 1 auto;min-width:0;max-width:43%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0}
+#font-list .mima-font-collection>.font-row{margin:5px 6px}
+#font-list .mima-font-collection>summary::after{content:'▾';font-size:.82em;color:var(--muted);margin-left:0;flex:none}
+#font-list .mima-font-collection[open]>summary::after{content:'▴'}
+.mima-font-diagnostics{margin-top:9px;border:1px solid var(--line);border-radius:11px;overflow:hidden;background:color-mix(in srgb,var(--panel) 78%,transparent)}
+.mima-font-diagnostics>summary{padding:9px 11px;font-size:.84rem;line-height:1.5;cursor:pointer}
+.mima-font-diagnostic-actions{display:flex;flex-wrap:wrap;gap:6px;padding:0 9px 9px}
+.mima-font-diagnostic-actions>button{min-height:32px;min-width:0;padding:6px 8px;font-size:.77rem;white-space:normal}
+/* Small mobile widths retain 2 clear actions on the right, not a vertical pile. */
+@media(max-width:390px){#font-list .font-row{grid-template-columns:17px minmax(0,1fr) auto;column-gap:6px;padding:7px 6px}#font-list .font-row .mima-font-row-primary-actions{gap:3px}#font-list .font-row .mima-font-row-primary-actions>button{padding:5px 6px;font-size:.72rem}#font-list .font-row .mima-font-row-actions>button{padding:5px 7px}}
 
 /* Nested resource editor: skip repainting the already-obscured Settings glass.
    The settings DOM, inputs and history remain mounted and return unchanged. */
 html.mima-editor-open #settings-modal:not(.hidden){visibility:hidden!important}
+
+/* R19 R4: release note stays a short, readable update on phones. */
+#mima-release-note-modal .mima-release-note-panel{gap:7px}
+#mima-release-note-modal .mima-release-note-content{font-size:.86rem;line-height:1.55}
+#mima-release-note-modal .mima-release-intro{font-size:.79rem;font-weight:500;color:var(--muted);margin:0 0 8px}
+#mima-release-note-modal .mima-release-note-content ul{margin:4px 0 8px;padding-left:1.3em}
+#mima-release-note-modal .mima-release-note-content li{margin:4px 0}
+/* Keep this specific inventory's shell readable with the built-in Midnight skin. */
+html[data-mima-theme="midnight"][data-mima-effective-mode="night"] #mima-local-fonts{background:var(--skin-panel,#191c23);color:var(--text)}
