@@ -47,29 +47,43 @@ window.MimaFontCollection = (() => {
         }
         return {version,tables,count:offsets.length};
     }
-    function faceName(buffer,index){
-        try{
-            const {tables}=faceTables(buffer,index),view=new DataView(buffer), t=tables.find(x=>x.name==='name');
-            if(!t||t.length<6)return '字形 '+(index+1);
-            const n=view.getUint16(t.offset+2),base=view.getUint16(t.offset+4);check(t.length,6,n*12);
-            const choices=[];
-            for(let i=0;i<n;i++){
-                const p=t.offset+6+i*12,platform=view.getUint16(p),language=view.getUint16(p+4),nameId=view.getUint16(p+6);
-                if(nameId!==16&&nameId!==1&&nameId!==4)continue;
-                const length=view.getUint16(p+8),start=base+view.getUint16(p+10);
-                if(start+length>t.length||!length||length>2048)continue;
-                let text='';
-                const data=new Uint8Array(buffer,t.offset+start,length);
-                if(platform===0||platform===3){
-                    if(length%2)continue;
-                    text=dec?dec.decode(data):Array.from({length:length/2},(_,j)=>String.fromCharCode((data[j*2]<<8)|data[j*2+1])).join('');
-                } else if(platform===1)text=Array.from(data,b=>String.fromCharCode(b)).join('');
-                text=text.replace(/[\u0000-\u001f\u007f]/g,'').trim();
-                if(text)choices.push({score:(nameId===16?10:nameId===1?8:3)+(platform===3?3:platform===0?2:0)+(language===0x409?1:0),text});
-            }
-            choices.sort((a,b)=>b.score-a.score);
-            return (choices[0]?.text||'字形 '+(index+1)).slice(0,100);
-        }catch(_){return '字形 '+(index+1);}
+    // Identify each collection member by full name / style, rather than only
+    // typographic family. A TTC often contains several faces with identical
+    // family names but distinct weights and styles.
+    function faceInfo(buffer,index){
+        const {tables}=faceTables(buffer,index),view=new DataView(buffer),t=tables.find(x=>x.name==='name');
+        const os2=tables.find(x=>x.name==='OS/2');
+        const weight=os2&&os2.length>=8?view.getUint16(os2.offset+4):null;
+        if(!t||t.length<6)return {name:'字形 '+(index+1),weight};
+        const count=view.getUint16(t.offset+2),base=view.getUint16(t.offset+4);
+        check(t.length,6,count*12);
+        const candidates=new Map();
+        for(let i=0;i<count;i++){
+            const p=t.offset+6+i*12,platform=view.getUint16(p),language=view.getUint16(p+4),id=view.getUint16(p+6);
+            if(![1,2,4,16,17].includes(id))continue;
+            const length=view.getUint16(p+8),start=base+view.getUint16(p+10);
+            if(start+length>t.length||!length||length>2048)continue;
+            let value='';const data=new Uint8Array(buffer,t.offset+start,length);
+            if(platform===0||platform===3){
+                if(length%2)continue;
+                value=dec?dec.decode(data):Array.from({length:length/2},(_,j)=>String.fromCharCode((data[j*2]<<8)|data[j*2+1])).join('');
+            }else if(platform===1)value=Array.from(data,b=>String.fromCharCode(b)).join('');
+            value=value.replace(/[\u0000-\u001f\u007f]/g,'').trim();if(!value)continue;
+            const score=(platform===3?6:platform===0?5:0)+
+                (language===0x804?3:language===0x409?2:language===0x411?1:0);
+            const prior=candidates.get(id);if(!prior||score>prior.score)candidates.set(id,{value,score});
+        }
+        const pick=id=>candidates.get(id)?.value||'';
+        const family=pick(16)||pick(1),subfamily=pick(17)||pick(2),full=pick(4);
+        let name=full||family||'字形 '+(index+1);
+        if(subfamily&&!/^(regular|normal|book|roman|常规|标准)$/i.test(subfamily)&&
+            !name.toLocaleLowerCase().endsWith(subfamily.toLocaleLowerCase()))name+=' '+subfamily;
+        return {name:name.slice(0,120),family,style:subfamily,weight};
+    }
+    function faceName(buffer,index){try{return faceInfo(buffer,index).name}catch(_){return '字形 '+(index+1)}}
+    function estimateSize(buffer,index){
+        const {tables}=faceTables(buffer,index);
+        return 12+tables.length*16+tables.reduce((sum,table)=>sum+align4(table.length),0);
     }
     function extract(buffer,index){
         const {version,tables}=faceTables(buffer,index),count=tables.length;
@@ -95,5 +109,5 @@ window.MimaFontCollection = (() => {
         if(headOffset>=0)view.setUint32(headOffset+8,(0xB1B0AFBA-sum32(out,0,out.length))>>>0);
         return {buffer:out.buffer,format:version===0x4f54544f?'otf':'ttf',name:faceName(buffer,index),index,total:overview(buffer).length};
     }
-    return {overview,extract,faceName};
+    return {overview,extract,faceName,faceInfo,estimateSize};
 })();

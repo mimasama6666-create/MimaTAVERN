@@ -1403,16 +1403,23 @@ html.mima-settings-paint-guard .app-shell *::after{animation-play-state:paused!i
   }
 }
 
-/* V5.47: isolated native weight controls, with original theme CSS retaining
-   the higher-priority unlayered cascade and author-specified strong headings. */
-@layer mima-builtins {
- body {font-weight:var(--mima-ui-weight,inherit);font-synthesis-weight:var(--mima-ui-synthesis,auto)}
- .msg-content,.assistant-msg .msg-content.safe-html-content,.assistant-msg .story-prose,
- .user-msg .story-prose,.typography-preview-message .msg-content,
- .typography-preview-user .msg-content,.novel-prose-view,.novel-draft-prose,
- .novel-editor {font-weight:var(--mima-story-weight,inherit);font-synthesis-weight:var(--mima-story-synthesis,auto)}
- .msg-content strong,.story-prose strong,.novel-prose-view strong,.novel-draft-prose strong {font-weight:bolder}
-}
+/* User-selected weights override ordinary theme rules for the target text.
+   Off switches leave the author's CSS untouched; bold descendants still retain
+   their own emphasis. The old @layer rule lost to all unlayered theme CSS. */
+html[data-mima-ui-weight="on"] body{font-weight:var(--mima-ui-weight)!important;font-synthesis-weight:var(--mima-ui-synthesis,auto)}
+/* Directly styled UI controls do not inherit body weight. Let an explicit
+   UI weight choice reach them without touching the message/status-bar subtree. */
+html[data-mima-ui-weight="on"] :is(
+ .topbar,.topbar button,.settings-panel button,.settings-panel label,
+ .settings-panel input,.settings-panel select,.settings-panel textarea,
+ .settings-panel .row-title,.settings-panel .row-sub,
+ .modal-head h2,.mima-font-quick-menu,.mima-font-quick-button
+){font-weight:var(--mima-ui-weight)!important;font-synthesis-weight:var(--mima-ui-synthesis,auto)}
+html[data-mima-story-weight="on"] :is(.msg-content,.assistant-msg .msg-content.safe-html-content,
+ .assistant-msg .story-prose,.user-msg .story-prose,.typography-preview-message .msg-content,
+ .typography-preview-user .msg-content,.novel-prose-view,.novel-draft-prose,.novel-editor,
+ .mima-font-quick-story){font-weight:var(--mima-story-weight)!important;font-synthesis-weight:var(--mima-story-synthesis,auto)}
+html[data-mima-ui-weight="on"][data-mima-story-weight="off"] :is(.msg-content,.story-prose,.novel-prose-view,.novel-draft-prose,.novel-editor,.mima-font-quick-story){font-weight:400}
 .mima-weight-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:10px}
 .mima-weight-control{min-width:0;padding:12px 13px;border:1px solid var(--line);border-radius:15px;background:color-mix(in srgb,var(--panel) 78%,transparent)}
 .mima-weight-control legend{font-weight:700;font-size:.82rem;padding:0 5px}
@@ -1972,3 +1979,36 @@ button>.mima-gothic-ui-icon,summary>.mima-gothic-ui-icon{vertical-align:middle;m
 .mima-template-editor .mima-template-section>summary{min-height:30px;touch-action:manipulation;}
 .mima-template-editor .mima-template-section .field{min-width:0;width:100%;box-sizing:border-box;}
 @media(max-width:500px){.mima-template-editor .form-grid{grid-template-columns:minmax(0,1fr);}.mima-template-editor{max-width:100%;}.mima-template-output{max-height:230px;}}
+/* Local font bulk management: compact controls, no preview/decode on selection. */
+.mima-font-bulk-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 2px 11px}
+.mima-font-bulk-bar .row-sub{margin:0;flex:1 1 auto}
+.mima-font-bulk-select-all{display:inline-flex;align-items:center;gap:7px;cursor:pointer;font-size:inherit}
+.mima-font-bulk-select-all input,.mima-font-bulk-checkbox{width:17px;height:17px;flex:0 0 17px;accent-color:var(--accent,#3478f6);cursor:pointer}
+.mima-font-bulk-checkbox{margin:7px 3px 0 0}
+.mima-font-bulk-bar .danger-btn:disabled{opacity:.45;cursor:default}
+
+/* TTC collection browser and selective import */
+.mima-font-collection{margin:8px 0;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:color-mix(in srgb,var(--panel) 84%,transparent)}
+.mima-font-collection>summary{display:flex;gap:8px;flex-wrap:wrap;justify-content:space-between;align-items:center;padding:11px 12px;font-size:.86em;font-weight:650;cursor:pointer;list-style-position:inside;overflow-wrap:anywhere}
+.mima-font-collection>summary .row-sub{font-size:.83em;font-weight:400}
+.mima-font-collection>.font-row{margin:6px 8px}
+.mima-font-import-overlay{position:fixed;inset:0;z-index:2200;padding:calc(16px + env(safe-area-inset-top,0px)) 14px calc(16px + env(safe-area-inset-bottom,0px));background:rgba(0,0,0,.42);display:flex;align-items:center;justify-content:center;box-sizing:border-box}
+.mima-font-import-dialog{width:min(100%,490px);max-height:100%;overflow:hidden;display:flex;flex-direction:column;gap:10px;background:var(--panel-solid,#fff);color:var(--text);padding:17px;border:1px solid var(--line);border-radius:17px;box-shadow:0 14px 45px rgba(0,0,0,.18);box-sizing:border-box}
+.mima-font-import-dialog h3{font-size:1rem;font-weight:700;margin:0}
+.mima-font-import-dialog .row-sub{margin:0;font-size:.83em;overflow-wrap:anywhere}
+.mima-font-import-tools,.mima-font-import-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.mima-font-import-options{overflow:auto;overscroll-behavior:contain;min-height:60px;max-height:min(52dvh,390px);border:1px solid var(--line);border-radius:12px}
+.mima-font-import-choice{display:flex;gap:10px;align-items:center;min-height:40px;padding:8px 10px;border-bottom:1px solid var(--line);font-size:.86em;cursor:pointer;overflow-wrap:anywhere}
+.mima-font-import-choice:last-child{border-bottom:0}
+.mima-font-import-choice input{flex:none;width:18px;height:18px;accent-color:var(--accent)}
+.mima-font-import-actions .primary-btn:disabled{opacity:.5;cursor:not-allowed}
+
+/* Keep long CJK font names readable; never squeeze a face into one-character columns. */
+#font-list .font-row{display:grid;grid-template-columns:18px minmax(0,1fr);align-items:start;column-gap:10px;row-gap:7px;min-width:0}
+#font-list .font-row>.mima-font-bulk-checkbox{grid-column:1;grid-row:1;margin-top:4px}
+#font-list .font-row>.row-main{grid-column:2;grid-row:1;min-width:0;width:100%;overflow-wrap:anywhere}
+#font-list .font-row>.mima-font-row-actions{grid-column:2;grid-row:2;min-width:0;display:flex;flex-wrap:wrap;gap:6px}
+#font-list .mima-font-row-actions>button{flex:0 1 auto;min-width:0;min-height:34px;padding:6px 9px;font-size:.83em;line-height:1.4;white-space:normal}
+#font-list .font-row .row-sub{overflow-wrap:anywhere;word-break:break-word}
+.mima-font-collection>summary::after{content:'▾';font-size:.82em;color:var(--muted);margin-left:auto;flex:none}
+.mima-font-collection[open]>summary::after{content:'▴'}
