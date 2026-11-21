@@ -477,6 +477,113 @@
       tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_PRESET_COMMIT_ABORTED'))};
     });
   }
+  // Compare the author-visible normalized Persona fields, including historical
+  // aliases, without serializing its long content/avatar into JSON. An old card
+  // and its normalized editor view must have the same identity on first save.
+  const maskText=value=>String(value??'').replace(/\uFFFD+/g,'').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g,'').trim();
+  const maskList=value=>(Array.isArray(value)?value:[]).map(maskText).filter(Boolean);
+  function maskEffectiveField(row,key){
+    if(key==='enabled')return row.enabled!==false?'1':'0';
+    if(key==='type')return maskText(row.type||row.kind||'character')==='user'?'user':'character';
+    if(key==='source')return maskText(row.source||'manual');
+    if(key==='name')return maskText(row.name||'未命名面具');
+    if(key==='avatar')return maskText(row.avatar);
+    if(key==='content')return String(row.content??row.persona??row.description??'');
+    if(key==='firstMessage')return String(row.firstMessage??row.first_mes??'');
+    if(key==='exampleDialogue')return String(row.exampleDialogue??row.mes_example??'');
+    if(key==='creatorNotes')return String(row.creatorNotes??row.creator_notes??'');
+    if(key==='aliases'||key==='tags')return maskList(row[key]);
+    return String(row[key]??'');
+  }
+  function maskCasToken(row){
+    if(!row)return null;
+    const fields=['id','type','name','source','description','content','scenario','firstMessage',
+      'exampleDialogue','creatorNotes','remark','avatar','enabled','aliases','tags'];
+    let a=0x811c9dc5,b=0x9e3779b9,length=0;
+    const feed=value=>{const str=String(value);length+=str.length;
+      for(let i=0;i<str.length;i++){const ch=str.charCodeAt(i);a=Math.imul(a^ch,0x01000193);
+        b=Math.imul(b^ch,0x5bd1e995);}
+      a=Math.imul(a^0xffff,0x01000193);b=Math.imul(b^0xffff,0x5bd1e995);
+    };
+    for(const key of fields){const value=maskEffectiveField(row,key);
+      feed(Array.isArray(value)?value.join('\u0000'):value);}
+    return length+':'+(a>>>0).toString(16)+':'+(b>>>0).toString(16);
+  }
+  // Persona writes rebase resource metadata atomically without reading or rewriting
+  // unrelated History/Memory Session bodies. The previous full saveState path
+  // cloned every archived Session merely to edit one Persona.
+  async function commitMaskRecord(record,baseline=null,expectedToken=undefined){
+    if(!record||typeof record!=='object'||typeof record.id!=='string'||!record.id||
+       !['user','character'].includes(record.type)||
+       ['name','description','content','scenario','firstMessage','exampleDialogue','creatorNotes','remark','avatar'].some(k=>typeof record[k]!=='string')||
+       !Array.isArray(record.aliases)||!Array.isArray(record.tags)||
+       record.aliases.some(x=>typeof x!=='string')||record.tags.some(x=>typeof x!=='string')||
+       !(baseline===null||baseline&&typeof baseline==='object'&&baseline.id===record.id)||
+       !(expectedToken===undefined||expectedToken===null||typeof expectedToken==='string'))
+      throw Error('E_MASK_CANDIDATE_INVALID');
+    await ensureSessionPartition();await ensureCssMigrated();
+    const db=await openDb();
+    return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE);
+      const reads={base:STATE_KEY,baseRevision:BASE_REVISION_KEY,appearance:APPEARANCE_KEY,
+        appearanceMeta:APPEARANCE_META_KEY,presets:PRESETS_KEY,presetIndex:PRESET_BASE_INDEX_KEY,
+        templates:TEMPLATE_OVERLAY_KEY,templateMeta:TEMPLATE_META_KEY,head:SESSION_HEAD_KEY};
+      const results={},requests=Object.fromEntries(Object.entries(reads).map(([key,name])=>[key,kv.get(name)]));
+      let issue=null,receipt=null,ready=0;
+      const fail=e=>{if(issue)return;issue=e||Error('E_MASK_RECORD_READ');try{tx.abort()}catch{}};
+      const fields=['id','type','name','source','description','content','scenario','firstMessage',
+        'exampleDialogue','creatorNotes','remark','avatar','enabled'];
+      function sameMask(current,prior){
+        if(!current||!prior)return false;
+        return fields.every(key=>maskEffectiveField(current,key)===maskEffectiveField(prior,key))&&
+          ['createdAt','updatedAt'].every(key=>!current[key]||current[key]===prior[key])&&
+          ['aliases','tags'].every(key=>JSON.stringify(maskEffectiveField(current,key))===JSON.stringify(maskEffectiveField(prior,key)));
+      }
+      const commit=()=>{if(++ready!==Object.keys(requests).length)return;try{
+        const base=results.base,baseHead=results.baseRevision;
+        if(!isCanonicalStateRecord(base)||base.schemaVersion!==4||!Array.isArray(base.sessions)||base.sessions.length||
+           !baseHead||!Number.isSafeInteger(baseHead.revision)||baseHead.revision!==base.storeRevision)
+          throw Error('E_MASK_BASE_UNVERIFIED');
+        const baseRev=base.storeRevision,appearance=assertAppearance(results.appearance),
+          appMeta=assertAppearanceMeta(results.appearanceMeta,baseRev),presets=assertPresetsOverlay(results.presets),
+          index=verifiedPresetBaseIndex(results.presetIndex,baseRev),
+          templateMeta=verifiedTemplateMeta(results.templateMeta,baseRev),
+          templates=verifiedTemplateOverlay(results.templates,baseRev),
+          head=verifiedSessionHead(results.head,baseRev);
+        if(appearance.baseRevision!==baseRev||presets.baseRevision!==baseRev||
+           appMeta.storeRevision!==appearance.storeRevision||
+           templateMeta.storeRevision!==(templates?.storeRevision??baseRev))
+          throw Error('E_MASK_RESOURCE_REVISIONS_INCONSISTENT');
+        const current=base.masks.find(m=>m.id===record.id)||null;
+        // Never recreate a deleted card, or overwrite a competing editor's
+        // update. Compare the opened bytes rather than relying on a millisecond timestamp.
+        if((baseline===null?current!==null:!sameMask(current,baseline))||
+           (expectedToken!==undefined&&maskCasToken(current)!==expectedToken))
+          throw Error('E_MASK_RECORD_CONFLICT: 角色资料已被其他窗口修改，原编辑未覆盖');
+        if(baseRev>=Number.MAX_SAFE_INTEGER-1)throw Error('E_MASK_REVISION_OVERFLOW');
+        const newBase=baseRev+1,stamp=new Date().toISOString();
+        const masks=base.masks.slice(),at=masks.findIndex(m=>m.id===record.id);
+        if(at>=0)masks[at]=record;else masks.push(record);
+        const updatedBase={...base,masks,storeRevision:newBase};assertWritableState(updatedBase);
+        const updatedAppearance={...appearance,baseRevision:newBase,storeRevision:appearance.storeRevision+1};
+        const updatedPresets={...presets,baseRevision:newBase,storeRevision:presets.storeRevision+1};
+        const updatedHead={...head,baseRevision:newBase,storeRevision:head.storeRevision+1,updatedAt:stamp};
+        const updatedTemplateMeta={...templateMeta,baseRevision:newBase,storeRevision:templateMeta.storeRevision+1};
+        kv.put(updatedBase,STATE_KEY);kv.put({revision:newBase},BASE_REVISION_KEY);
+        kv.put(updatedAppearance,APPEARANCE_KEY);kv.put(appearanceMeta(updatedAppearance),APPEARANCE_META_KEY);
+        kv.put(updatedPresets,PRESETS_KEY);kv.put({...index,baseRevision:newBase},PRESET_BASE_INDEX_KEY);
+        kv.put(updatedHead,SESSION_HEAD_KEY);kv.put(updatedTemplateMeta,TEMPLATE_META_KEY);
+        if(templates)kv.put({...templates,baseRevision:newBase,storeRevision:templates.storeRevision+1},TEMPLATE_OVERLAY_KEY);
+        receipt={value:record,baseRevision:newBase,appearanceRevision:updatedAppearance.storeRevision,
+          storeRevision:globalRevisionLight(newBase,appearanceMeta(updatedAppearance),updatedPresets,updatedTemplateMeta,updatedHead)};
+      }catch(e){fail(e)}};
+      for(const [key,req]of Object.entries(requests)){
+        req.onsuccess=()=>{results[key]=req.result;commit()};req.onerror=()=>fail(req.error);
+      }
+      tx.oncomplete=()=>{db.close();resolve(receipt)};
+      tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_MASK_COMMIT_ABORTED'))};
+    });
+  }
   function verifiedTemplateOverlay(value,baseRevision){
     if(value===undefined)return null;
     if(!value||value.version!==1||value.baseRevision!==baseRevision||
@@ -2798,5 +2905,5 @@
     if(text.length!==receipt.persistedChars)throw new Error('E_GENERATION_FRAGMENT_INCOMPLETE');
     return {receipt,text,complete:true};
   }
-  window.MimaLocalStore={commitBulkDelete,loadSessionRecord,loadResourceSnapshot,loadResourceSnapshotReadOnly,hasVerifiedCssCatalog,hasLegacyCssSources,loadResourceRevision,loadAppearanceWithRevision,presetCasToken,loadSessionDirectory,loadCssSelectionSnapshot,commitSessionRecord,deleteSessionRecord,commitSessionCssSelection,commitSettingTemplates,validateSessionOrganization,loadSessionOrganization,commitSessionOrganization,commitPreset,putHtmlRepairDraft,getHtmlRepairDraft,loadAppearance,loadGlobalCssSelection,loadCssCatalog,loadCssContent,commitGlobalCssDisable,commitAppearance,mergeAppearance,exportPlayToolRecords,importPlayToolRecords,listPlayToolLocal,getPlayToolLocal:key=>get('play_tools_v1:'+key),putPlayToolLocal:(key,value)=>set('play_tools_v1:'+key,value),generationReceipt,generationAppendFragment,generationStatus,generationRead,getRollingPreflight,putRollingPreflight,clearRollingPreflight,commitHtmlRepair,putHtmlRepairCandidate,getHtmlRepairCandidate,setHtmlRepairCandidateState,listMemoryStages,inspectLegacyMemoryStages,putMemoryRejectedDraft,listMemoryRejectedDrafts,memoryReferenceContract,putFactRangeCandidate,listFactRangeCandidates,commitVerifiedFactRanges,getMergeStage,putMergeStage,getMergeDraft,createMergeDraft,updateMergeDraft,commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,loadSettingsSnapshotSummary,clearSettingsSnapshot,beginSettingsSnapshotV2,stageSettingsSnapshotFontV2,completeSettingsSnapshotV2,discardFailedSettingsSnapshotV2,hasIncompleteSettingsSnapshotV2,loadSettingsSnapshotFontV2,pruneOldSettingsSnapshotsV2,getMemoryJob,getMemoryStage,putMemoryStage,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
+  window.MimaLocalStore={commitBulkDelete,loadSessionRecord,commitMaskRecord,maskCasToken,loadResourceSnapshot,loadResourceSnapshotReadOnly,hasVerifiedCssCatalog,hasLegacyCssSources,loadResourceRevision,loadAppearanceWithRevision,presetCasToken,loadSessionDirectory,loadCssSelectionSnapshot,commitSessionRecord,deleteSessionRecord,commitSessionCssSelection,commitSettingTemplates,validateSessionOrganization,loadSessionOrganization,commitSessionOrganization,commitPreset,putHtmlRepairDraft,getHtmlRepairDraft,loadAppearance,loadGlobalCssSelection,loadCssCatalog,loadCssContent,commitGlobalCssDisable,commitAppearance,mergeAppearance,exportPlayToolRecords,importPlayToolRecords,listPlayToolLocal,getPlayToolLocal:key=>get('play_tools_v1:'+key),putPlayToolLocal:(key,value)=>set('play_tools_v1:'+key,value),generationReceipt,generationAppendFragment,generationStatus,generationRead,getRollingPreflight,putRollingPreflight,clearRollingPreflight,commitHtmlRepair,putHtmlRepairCandidate,getHtmlRepairCandidate,setHtmlRepairCandidateState,listMemoryStages,inspectLegacyMemoryStages,putMemoryRejectedDraft,listMemoryRejectedDrafts,memoryReferenceContract,putFactRangeCandidate,listFactRangeCandidates,commitVerifiedFactRanges,getMergeStage,putMergeStage,getMergeDraft,createMergeDraft,updateMergeDraft,commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,loadSettingsSnapshotSummary,clearSettingsSnapshot,beginSettingsSnapshotV2,stageSettingsSnapshotFontV2,completeSettingsSnapshotV2,discardFailedSettingsSnapshotV2,hasIncompleteSettingsSnapshotV2,loadSettingsSnapshotFontV2,pruneOldSettingsSnapshotsV2,getMemoryJob,getMemoryStage,putMemoryStage,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
 })();

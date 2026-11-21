@@ -15,28 +15,52 @@
     {id:'fluent-blue',name:'Fluent Blue · 微软系',description:'清澈蓝灰、柔光亚克力与 Fluent 风格层次'}
   ]);
   const IDS=new Set(BUILTINS.map(x=>x.id));
-  function normalizeSettings(input={}){const requested=String(input?.theme||input?.themeId||'default').trim().toLowerCase();return{theme:IDS.has(requested)?requested:'default',globalCssPresetId:typeof input?.globalCssPresetId==='string'?input.globalCssPresetId:null,globalCssEnabled:input?.globalCssEnabled!==false,updatedAt:input?.updatedAt||''};}
+  const COLOR_MODES=new Set(['system','day','night']);
+  const systemDark=typeof root.matchMedia==='function'?root.matchMedia('(prefers-color-scheme: dark)'):null;
+  let appliedSettings=null;
+  function normalizeSettings(input={}){const requested=String(input?.theme||input?.themeId||'default').trim().toLowerCase();const mode=String(input?.colorMode||(requested==='midnight'?'night':'system')).toLowerCase();return{theme:IDS.has(requested)?requested:'default',colorMode:COLOR_MODES.has(mode)?mode:'system',globalCssPresetId:typeof input?.globalCssPresetId==='string'?input.globalCssPresetId:null,globalCssEnabled:input?.globalCssEnabled!==false,updatedAt:input?.updatedAt||''};}
   function apply(input={}){
     const settings=normalizeSettings(input);
+    appliedSettings=settings;
     if(typeof document!=='undefined'&&document.documentElement){
       const bypass=new URLSearchParams(typeof location==='undefined'?'':location.search).get('noCss')==='1'||root.MimaCssRecoveryBypass===true;
       const custom=!bypass&&settings.globalCssEnabled!==false&&!!settings.globalCssPresetId;
       // Reapplying a theme after CSS/Atelier notifications must not needlessly
       // invalidate the entire DOM's styles when the effective theme is unchanged.
       const element=document.documentElement;
-      // Read-only appearance contract: preserve the selected day/night identity while custom CSS owns paint.
-      if(element.getAttribute('data-mima-selected-theme')!==settings.theme)element.setAttribute('data-mima-selected-theme',settings.theme);
-      const nextTheme=custom||settings.theme==='default'?null:settings.theme;
+      // The effective scheme is CSS-owned: never remount or rewrite a large theme when it changes.
+      const effective=settings.colorMode==='system'?(systemDark?.matches?'night':'day'):settings.colorMode;
+      if(element.getAttribute('data-mima-effective-mode')!==effective)element.setAttribute('data-mima-effective-mode',effective);
+      // The original default theme has no separate dark preset. In automatic
+      // mode, use the existing Midnight skin when the system is dark; for
+      // custom CSS, retain its own art and switch only its day/night selectors.
+      // Explicitly chosen built-in skins keep their original identities.
+      const themeIdentity=custom||settings.theme==='default'
+        ?(effective==='night'?'midnight':'default'):settings.theme;
+      if(element.getAttribute('data-mima-selected-theme')!==themeIdentity)element.setAttribute('data-mima-selected-theme',themeIdentity);
+      const nextTheme=custom?null:(settings.theme==='default'&&effective==='night'?'midnight':settings.theme==='default'?null:settings.theme);
       if(element.getAttribute('data-mima-theme')!==nextTheme){
         if(nextTheme===null)element.removeAttribute('data-mima-theme');
         else element.setAttribute('data-mima-theme',nextTheme);
       }
-      const scheme=!custom&&settings.theme==='midnight'?'dark':'light';
+      // Native form controls and iOS browser chrome must reflect the same
+      // effective mode as authored CSS. A chosen built-in skin remains intact.
+      const scheme=effective==='night'?'dark':'light';
       if(element.style.colorScheme!==scheme)element.style.colorScheme=scheme;
-      const meta=document.querySelector?.('meta[name="theme-color"]');if(meta){const colors={default:'#dfe1e4',midnight:'#111216',eink:'#c8c9c2',paper:'#e8dfcf','seoul-mist':'#f1f2f4','sakura-milk':'#fff0f5','lilac-cloud':'#f3effb','aqua-sky':'#eaf8fd','material-snow':'#f6f8fc','fluent-blue':'#eef5fe'};const nextColor=colors[settings.theme]||colors.default;if(meta.getAttribute('content')!==nextColor)meta.setAttribute('content',nextColor);}
+      const meta=document.querySelector?.('meta[name="theme-color"]');if(meta){
+        const dayColors={default:'#dfe1e4',midnight:'#e4e8ed',eink:'#c8c9c2',paper:'#e8dfcf','seoul-mist':'#f1f2f4','sakura-milk':'#fff0f5','lilac-cloud':'#f3effb','aqua-sky':'#eaf8fd','material-snow':'#f6f8fc','fluent-blue':'#eef5fe'};
+        const nightColors={default:'#111216',midnight:'#111216',eink:'#1a1e1a',paper:'#201c19','seoul-mist':'#151a20','sakura-milk':'#20171d','lilac-cloud':'#191721','aqua-sky':'#121e25','material-snow':'#171b22','fluent-blue':'#151c26'};
+        const chromeTheme=custom||settings.theme==='default'?themeIdentity:settings.theme;
+        const nextColor=(effective==='night'?nightColors:dayColors)[chromeTheme]||(effective==='night'?nightColors.default:dayColors.default);
+        if(meta.getAttribute('content')!==nextColor)meta.setAttribute('content',nextColor);
+      }
     }
     return settings;
   }
   function getBuiltins(){return BUILTINS.map(x=>({...x}));}
+  // Native system changes only affect automatic mode. The explicit preference stays untouched.
+  const systemChanged=()=>{if(appliedSettings?.colorMode==='system')apply(appliedSettings);};
+  if(systemDark?.addEventListener)systemDark.addEventListener('change',systemChanged);
+  else if(systemDark?.addListener)systemDark.addListener(systemChanged);
   root.MimaThemeEngine={normalizeSettings,apply,getBuiltins};
 })();

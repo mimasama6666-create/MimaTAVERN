@@ -1005,7 +1005,28 @@
       catch(readError){console.error('E_SESSION_TEMPLATE_REFRESH_FAILED',readError);}throw error;}};
     const task=sessionSaveTail.then(commit,commit);sessionSaveTail=task.then(()=>{},()=>{});return task;
   }
-  async function saveMask(m){return commitResource('masks',normalizeMask({...m,updatedAt:nowIso()}),m.updatedAt);}
+  async function saveMask(m,expectedToken=undefined,{compactUnchangedAvatarReceipt=false}={}){
+    const record=normalizeMask({...m,updatedAt:nowIso()});
+    const before=getMask(record.id)||null;
+    const commit=async()=>{
+      const saved=await window.MimaLocalStore.commitMaskRecord(record,before,expectedToken);
+      const masks=state.masks.slice(),index=masks.findIndex(x=>x.id===record.id);
+      if(index<0)masks.push(record);else masks[index]=record;
+      state={...state,masks,storeRevision:Math.max(state.storeRevision,saved.storeRevision),
+        __resourceSignature:null,__appearanceRevision:saved.appearanceRevision};
+      // The interactive editor already holds the unchanged embedded avatar.
+      // Do not JSON.stringify/parse that multi-MB image again just to acknowledge
+      // a successful edit. This opt-in is only allowed for a verified unchanged
+      // avatar on PATCH; existing callers still receive the complete record.
+      if(compactUnchangedAvatarReceipt&&before?.avatar===record.avatar&&/^data:image\//i.test(record.avatar)){
+        const {avatar:_unchanged,...result}=record;
+        return {...result,avatarUnchanged:true};
+      }
+      return clone(record);
+    };
+    const task=sessionSaveTail.then(commit,commit);sessionSaveTail=task.then(()=>{},()=>{});
+    return task;
+  }
   async function savePreset(p,expectedToken){return commitResource('presets',normalizePreset({...p,updatedAt:nowIso()}),p.updatedAt,expectedToken);}
   async function saveWorldbook(w){return commitResource('worldbooks',normalizeWorldbook({...w,updatedAt:nowIso()}),w.updatedAt);}
   async function saveCssPreset(p){return commitResource('cssPresets',normalizeCssPreset({...p,updatedAt:nowIso()}),p.updatedAt);}
@@ -4778,7 +4799,14 @@
       if(path==='/resources/bulk-delete'&&method==='POST')return ok(await bulkDeleteCanonical(body?.kind,body||{}));
       if(path==='/masks'&&method==='GET')return ok(state.masks);
       if(path==='/masks'&&method==='POST')return ok(await saveMask(body||{}));
-      m=resourcePathMatch(path,/^\/masks\/([^/]+)$/);if(m&&method==='PATCH'){const old=getMask(m[1]);return old?ok(await saveMask({...old,...body,id:m[1]})):fail('未找到面具');}
+      m=resourcePathMatch(path,/^\/masks\/([^/]+)$/);if(m&&method==='PATCH'){
+        const old=getMask(m[1]);if(!old)return fail('未找到面具');
+        const compact=body?.compactUnchangedAvatarReceipt===true&&
+          !Object.prototype.hasOwnProperty.call(body,'avatar')&&
+          typeof old.avatar==='string'&&/^data:image\//i.test(old.avatar);
+        return ok(await saveMask({...old,...body,id:m[1]},body?.expectedMaskToken,
+          {compactUnchangedAvatarReceipt:compact}));
+      }
       if(m&&method==='DELETE')return ok(await deleteResource('masks',m[1],(db,id)=>{for(const s of db.sessions){if(s.loadedCharMaskId===id||s.loadedUserMaskId===id){if(s.loadedCharMaskId===id)s.loadedCharMaskId=null;if(s.loadedUserMaskId===id)s.loadedUserMaskId=null;s.recordRevision++;}}for(const project of db.novelProjects){let changed=false;if(project.macroUserMaskId===id){project.macroUserMaskId=null;changed=true;}if(project.macroCharMaskId===id){project.macroCharMaskId=null;changed=true;}if(changed)project.recordRevision=(Number(project.recordRevision)||0)+1;}}));
 
       m=resourcePathMatch(path,/^\/presets\/([^/]+)\/latest$/);
@@ -4885,7 +4913,7 @@
       // Empty-only includes appearance configuration. A browser with only a
       // chosen theme/CSS is NOT an empty target. Old checks counted arrays
       // exclusively and silently overwrote the owner's only local settings.
-      const themeAppearance=t=>JSON.stringify([t?.theme,t?.globalCssPresetId,t?.globalCssEnabled]);
+      const themeAppearance=t=>JSON.stringify([t?.theme,t?.colorMode||'system',t?.globalCssPresetId,t?.globalCssEnabled]);
       const emptyTheme=normalizeState({}).themeSettings;
       const existingCustomizedTheme=themeAppearance(before.themeSettings)!==themeAppearance(emptyTheme);
       const existingCategories=before.cssCategoriesV1.length||before.resourceCategoriesV1.presets.length||before.resourceCategoriesV1.worldbook.length;

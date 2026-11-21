@@ -2012,3 +2012,7 @@ button>.mima-gothic-ui-icon,summary>.mima-gothic-ui-icon{vertical-align:middle;m
 #font-list .font-row .row-sub{overflow-wrap:anywhere;word-break:break-word}
 .mima-font-collection>summary::after{content:'▾';font-size:.82em;color:var(--muted);margin-left:auto;flex:none}
 .mima-font-collection[open]>summary::after{content:'▴'}
+
+/* Nested resource editor: skip repainting the already-obscured Settings glass.
+   The settings DOM, inputs and history remain mounted and return unchanged. */
+html.mima-editor-open #settings-modal:not(.hidden){visibility:hidden!important}

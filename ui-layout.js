@@ -96,7 +96,7 @@ function toggleKeyboardTheme(visible){
   // Observe only genuine theme mutations, not our own root class/variables.
   keyboardBackingObserver=new MutationObserver(scheduleKeyboardTheme);
   keyboardBackingObserver.observe(doc.head,{subtree:true,childList:true,characterData:true});
-  keyboardBackingObserver.observe(doc.documentElement,{attributes:true,attributeFilter:['data-mima-theme','class']});
+  keyboardBackingObserver.observe(doc.documentElement,{attributes:true,attributeFilter:['data-mima-theme','data-mima-selected-theme','data-mima-effective-mode','class']});
   keyboardBackingObserver.observe(doc.body,{attributes:true,attributeFilter:['class','style']});
  }else{
   keyboardBackingObserver?.disconnect();keyboardBackingObserver=null;
