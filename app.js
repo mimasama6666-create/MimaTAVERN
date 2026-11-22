@@ -6597,12 +6597,12 @@ function persistStoryUiTiming(owner,phase,st=null){
 // Keep unchanged streamed DOM branches stable across paints. Every update still
 // runs the FULL Regex + Safe HTML sanitation pipeline before incremental DOM
 // reconciliation; no user text, History, event or security path is skipped.
-function patchLiveRenderedChildren(oldParent,newParent){
+function patchLiveRenderedChildren(oldParent,newParent,startAt=0){
  const incoming=Array.from(newParent.childNodes);
  const sameAttributes=(a,b)=>a.attributes.length===b.attributes.length&&
   Array.from(a.attributes).every(attr=>b.getAttribute(attr.name)===attr.value);
  for(let i=0;i<incoming.length;i++){
-  const next=incoming[i],old=oldParent.childNodes[i];
+  const next=incoming[i],old=oldParent.childNodes[startAt+i];
   if(!old){oldParent.appendChild(next);continue;}
   if(old.isEqualNode(next))continue;
   if(old.nodeType===1&&next.nodeType===1&&old.tagName===next.tagName&&
@@ -6620,7 +6620,7 @@ function patchLiveRenderedChildren(oldParent,newParent){
     if(old.textContent!==next.textContent)old.textContent=next.textContent;
   }else oldParent.replaceChild(next,old);
  }
- while(oldParent.childNodes.length>incoming.length)oldParent.lastChild.remove();
+ while(oldParent.childNodes.length>startAt+incoming.length)oldParent.lastChild.remove();
 }
 // Fast path is valid only if neither arbitrary display regex nor macro expansion
 // can alter earlier text. Re-render only the actively growing paragraph; every
@@ -6681,16 +6681,16 @@ function patchPlainStreamSuffix(st,raw,token){
  cache.appendSafe=!/[\\*]/.test(unfinished);
  cache.previous=normalized;
 }
-// Conservative Safe HTML stable-root caching. Only independently balanced
-// top-level elements with ordinary, well-formed HTML are committed. All
-// incomplete/mixed/ambiguous content falls back to the original whole-text
-// sanitizer; arbitrary display regex is NEVER assumed incrementally safe.
+// Conservative Safe HTML stable-root caching. Commit only independently
+// balanced top-level roots. For display regex, the native Worker still applies
+// EVERY rule to the complete snapshot first; only the *verified transformed*
+// prefix can be reused. A later cross-boundary replacement invalidates it.
 function r19SafeHtmlStableBoundary(tail){
  if(/<\s*(?:style|script|template|table|tbody|thead|tfoot|tr|td|th|select|svg|math|iframe|textarea|noscript)\b/i.test(tail)||/<!--[\s\S]*?-->|<!/i.test(tail))return null;
  const tags=/<(\/)?([a-z][a-z0-9-]*)(?:\s+(?:[^\"'<>]|\"[^\"<>]*\"|'[^'<>]*')*)?\s*(\/?)>/gi;
- const rootTags=new Set(['DIV','SECTION','ARTICLE','ASIDE','DETAILS','P','HEADER','FOOTER','NAV']);
+ const rootTags=new Set(['SYSTEM','DIV','SECTION','ARTICLE','ASIDE','DETAILS','P','HEADER','FOOTER','NAV']);
  const voidTags=new Set(['BR','HR']);
- const allowed=new Set(['DIV','SECTION','ARTICLE','ASIDE','DETAILS','SUMMARY','P','HEADER','FOOTER','NAV','SPAN','STRONG','B','EM','I','SMALL','MARK','S','U','SUB','SUP','KBD','BLOCKQUOTE','PRE','CODE','H1','H2','H3','H4','H5','H6','UL','OL','LI','DL','DT','DD','BR','HR','PROGRESS','METER']);
+ const allowed=new Set(['SYSTEM','DIV','SECTION','ARTICLE','ASIDE','DETAILS','SUMMARY','P','HEADER','FOOTER','NAV','SPAN','STRONG','B','EM','I','SMALL','MARK','S','U','SUB','SUP','KBD','BLOCKQUOTE','PRE','CODE','H1','H2','H3','H4','H5','H6','UL','OL','LI','DL','DT','DD','BR','HR','PROGRESS','METER']);
  let stack=[],lastEnd=0,lastTagEnd=0,seenRoot=false,tag;
  while((tag=tags.exec(tail))){
    const name=tag[2].toUpperCase();
@@ -6717,32 +6717,55 @@ function r19SafeHtmlStableBoundary(tail){
 }
 function r19PatchSafeHtmlSuffix(st,raw,token){
  let cache=st.safeHtmlStream;
- if(!cache||cache.token!==token||!raw.startsWith(cache.previous)){
-   st.contentNode.replaceChildren();
-   const scope='mima_'+Math.random().toString(36).slice(2,12);
-   st.contentNode.dataset.mimaHtmlScope=scope;
-   cache={token,previous:'',committedChars:0,prefixNodes:0,scope};st.safeHtmlStream=cache;
+ // Rewritten Worker output or changed regex identity needs the original DOM
+ // reconciler. A probe must never destroy the live nodes before deciding that
+ // the optimized path is safe (especially with embedded <style>).
+ if(cache&&(cache.token!==token||!raw.startsWith(cache.previous))){
+   st.safeHtmlStream=null;return false;
  }
- const tail=raw.slice(cache.committedChars),cut=r19SafeHtmlStableBoundary(tail);
+ const tail=raw.slice(cache?.committedChars||0);
+ const cut=r19SafeHtmlStableBoundary(tail);
  if(cut===null){st.safeHtmlStream=null;return false;}
- if(raw===cache.previous)return true;
- // Remove only the mutable suffix; completed HTML nodes (incl. expanded
- // details, CSS animation state and DOM references) remain untouched.
- while(st.contentNode.childNodes.length>cache.prefixNodes)st.contentNode.lastChild.remove();
+ if(cache&&raw===cache.previous)return true;
+ if(!cache){
+   // Starting after a prior conservative fallback must preserve reader-operated
+   // <details> and stable DOM branches. Build the first snapshot offscreen and
+   // reconcile it instead of replaceChildren() on the visible message.
+   const scope=st.contentNode.dataset.mimaHtmlScope||'mima_'+Math.random().toString(36).slice(2,12);
+   const staged=document.createElement('div');staged.dataset.mimaHtmlScope=scope;
+   if(cut){appendRenderedContent(staged,raw.slice(0,cut),true,true);st.htmlSanitizedChars=(st.htmlSanitizedChars||0)+cut;}
+   const prefixNodes=staged.childNodes.length;
+   if(tail.length>cut){
+     appendRenderedContent(staged,tail.slice(cut),true,true);
+     st.htmlSanitizedChars=(st.htmlSanitizedChars||0)+tail.length-cut;
+   }
+   const hadNodes=st.contentNode.hasChildNodes();
+   st.contentNode.dataset.mimaHtmlScope=scope;
+   patchLiveRenderedChildren(st.contentNode,staged);
+   cache={token,previous:raw,committedChars:cut,prefixNodes,scope};
+   st.safeHtmlStream=cache;
+   if(hadNodes)st.fullDomPatches=(st.fullDomPatches||0)+1;
+   st.htmlCachedChars=(st.htmlCachedChars||0)+cut;
+   return true;
+ }
+ // Reconcile the mutable tail in place. A partially streamed <details>
+ // is already interactive; replacing it on every token would collapse an
+ // expanded panel, restart animations and discard references. Closed roots
+ // before prefixNodes are never visited by this offset-aware reconciliation.
+ const staged=document.createElement('div');staged.dataset.mimaHtmlScope=cache.scope;
  if(cut){
-   const staged=document.createElement('div');staged.dataset.mimaHtmlScope=cache.scope;
-   st.htmlSanitizedChars=(st.htmlSanitizedChars||0)+cut;
    appendRenderedContent(staged,tail.slice(0,cut),true,true);
-   while(staged.firstChild)st.contentNode.appendChild(staged.firstChild);
-   cache.committedChars+=cut;cache.prefixNodes=st.contentNode.childNodes.length;
+   st.htmlSanitizedChars=(st.htmlSanitizedChars||0)+cut;
  }
- const unfinished=raw.slice(cache.committedChars);
+ const newlyCommittedNodes=staged.childNodes.length;
+ const unfinished=tail.slice(cut);
  if(unfinished){
-   const staged=document.createElement('div');staged.dataset.mimaHtmlScope=cache.scope;
-   st.htmlSanitizedChars=(st.htmlSanitizedChars||0)+unfinished.length;
    appendRenderedContent(staged,unfinished,true,true);
-   while(staged.firstChild)st.contentNode.appendChild(staged.firstChild);
+   st.htmlSanitizedChars=(st.htmlSanitizedChars||0)+unfinished.length;
  }
+ patchLiveRenderedChildren(st.contentNode,staged,cache.prefixNodes);
+ cache.committedChars+=cut;
+ cache.prefixNodes+=newlyCommittedNodes;
  st.htmlCachedChars=(st.htmlCachedChars||0)+cache.committedChars;
  cache.previous=raw;
  return true;
@@ -6779,6 +6802,7 @@ async function renderLiveStreamText(){
         st.plainStream=null;
         const canReuseHtml=renderMode==='safe_html'&&
           !MimaStandalone.hasActiveRegexForSession(st.owner.sessionId,'display')&&!raw.includes('{');
+        let safeHtmlFastRejected=false;
         if(canReuseHtml){
           st.contentNode.className='msg-content tavern-story-content live-stream-content safe-html-content';
           if(r19PatchSafeHtmlSuffix(st,raw,token)){
@@ -6790,13 +6814,19 @@ async function renderLiveStreamText(){
             const box=qs('story-chat-box');if(box&&st.followTail!==false&&!readingMode)box.scrollTop=box.scrollHeight;
             updateStoryFollowButton();return;
           }
-        }else st.safeHtmlStream=null;
+          safeHtmlFastRejected=true;
+        }else if(renderMode!=='safe_html')st.safeHtmlStream=null;
         st.regexController=new AbortController();
         let rendered;
         st.regexParsedChars=(st.regexParsedChars||0)+raw.length;
         try{rendered=await MimaStandalone.applyRegexForSessionAsync(st.owner.sessionId,raw,'display',null,{signal:st.regexController.signal});}
         catch(e){
-          if(liveStreamState===st&&ownsVisibleGeneration(st.owner)&&token===r19RegexRenderToken()&&!st.regexDirty&&st.displayText===raw)st.contentNode.textContent=`正则未执行（${e.code||'E_REGEX_WORKER_FAILED'}）：${e.message}。本轮原始流仍保留。`;
+          if(liveStreamState===st&&ownsVisibleGeneration(st.owner)&&token===r19RegexRenderToken()&&!st.regexDirty&&st.displayText===raw){
+            // The error text replaces the live tree, invalidating cached node
+            // offsets; a later valid Worker result must start from a clean tree.
+            st.safeHtmlStream=null;st.plainStream=null;
+            st.contentNode.textContent=`正则未执行（${e.code||'E_REGEX_WORKER_FAILED'}）：${e.message}。本轮原始流仍保留。`;
+          }
           if(st.displayText!==raw||token!==r19RegexRenderToken()||renderMode!==currentSessionData?.renderMode)st.regexDirty=true;
           return;
         }
@@ -6810,10 +6840,22 @@ async function renderLiveStreamText(){
         const allowHtml=currentSessionData?.renderMode==='safe_html';
         st.contentNode.className=`msg-content tavern-story-content live-stream-content${allowHtml?' safe-html-content':''}`;
         const perfDomAt=window.MimaPerfDiagnostics?.isRunning()?performance.now():0;
-        st.fullDomPatches=(st.fullDomPatches||0)+1;
-        if(allowHtml)st.htmlSanitizedChars=(st.htmlSanitizedChars||0)+rendered.length;
-        const staged=document.createElement('div');if(allowHtml){if(!st.contentNode.dataset.mimaHtmlScope)st.contentNode.dataset.mimaHtmlScope='mima_'+Math.random().toString(36).slice(2,12);staged.dataset.mimaHtmlScope=st.contentNode.dataset.mimaHtmlScope;}appendRenderedContent(staged,rendered,allowHtml,true);
-        patchLiveRenderedChildren(st.contentNode,staged);
+        // The Worker has just evaluated ALL display rules and resolved macros
+        // against this complete cumulative snapshot. startsWith(cache.previous)
+        // inside r19PatchSafeHtmlSuffix proves that the previously committed
+        // output is unchanged *for this snapshot*. If a later capture, anchor,
+        // or multiline rule changes it, the helper discards the cache and
+        // renders the new complete output. No regex rule is skipped or sliced.
+        // The raw snapshot already failed the conservative boundary check.
+        // An unchanged Worker result must not scan the same unsafe HTML twice.
+        const patchedSuffix=allowHtml&&!(safeHtmlFastRejected&&rendered===raw)&&r19PatchSafeHtmlSuffix(st,rendered,token);
+        if(!patchedSuffix){
+          st.safeHtmlStream=null;
+          st.fullDomPatches=(st.fullDomPatches||0)+1;
+          if(allowHtml)st.htmlSanitizedChars=(st.htmlSanitizedChars||0)+rendered.length;
+          const staged=document.createElement('div');if(allowHtml){if(!st.contentNode.dataset.mimaHtmlScope)st.contentNode.dataset.mimaHtmlScope='mima_'+Math.random().toString(36).slice(2,12);staged.dataset.mimaHtmlScope=st.contentNode.dataset.mimaHtmlScope;}appendRenderedContent(staged,rendered,allowHtml,true);
+          patchLiveRenderedChildren(st.contentNode,staged);
+        }
         if(perfDomAt)window.MimaPerfDiagnostics?.mark('stream_dom_patch',performance.now()-perfDomAt);
         const box=qs('story-chat-box');if(box&&st.followTail!==false&&!readingMode)box.scrollTop=box.scrollHeight;
         st.lastPaintDurationMs=Math.round((performance.now()-started)*100)/100;
