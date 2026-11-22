@@ -11,7 +11,7 @@
 <main class="main"><div class="toolbar"><strong>📖 一看就会</strong><div class="search-shell"><span class="search-icon" aria-hidden="true">⌕</span><input id="search" type="search" placeholder="搜问题：怎么备份、正则、主题……" aria-label="搜索使用手册教程"><button class="search-clear" id="clear-search" type="button" aria-label="清空搜索">×</button></div><button class="print-btn" id="print-guide" type="button" onclick="window.print()" aria-label="打印或另存为 PDF" title="打印或另存为 PDF"><span aria-hidden="true">⎙</span> 打印</button></div>
 <section id="intro"><div class="hero"><span class="eyebrow">MIMATAVERN · THE EASY GUIDE</span><h1>不会用？<br><em>点着点着就学会啦！</em></h1><p>完全不需要懂编程，也不需要看施工报告。先选你想做的事，每一步都告诉你<strong>点哪里、填什么、怎么看是否成功</strong>。</p><div class="hero-tags"><span>✓ 手机优先</span><span>✓ 没有技术门槛</span><span>✓ 避免误删存档</span><span>✓ 有问题可搜索</span></div></div>
 <h2 class="goals-title">你现在想做哪件事？</h2><div class="goal-grid"><a class="goal-card" href="#start"><span class="goal-emoji">🚀</span><span><strong>从零开始</strong><small>新建剧情、配置 API</small></span><span class="goal-arrow">›</span></a>
-<a class="goal-card" href="#tavern"><span class="goal-emoji">🎴</span><span><strong>玩角色卡</strong><small>PNG / JSON / CHARX</small></span><span class="goal-arrow">›</span></a>
+<a class="goal-card" href="#tavern"><span class="goal-emoji">🎴</span><span><strong>解析角色卡</strong><small>PNG / JSON / CHARX</small></span><span class="goal-arrow">›</span></a>
 <a class="goal-card" href="#appearance"><span class="goal-emoji">🎨</span><span><strong>美化界面</strong><small>换主题、字体和音效</small></span><span class="goal-arrow">›</span></a>
 <a class="goal-card" href="#toolbox"><span class="goal-emoji">🪎</span><span><strong>快捷发指令</strong><small>推进剧情不用重打</small></span><span class="goal-arrow">›</span></a>
 <a class="goal-card" href="#phone"><span class="goal-emoji">📱</span><span><strong>玩虚拟手机</strong><small>私聊、群聊和动态</small></span><span class="goal-arrow">›</span></a>
@@ -32,12 +32,12 @@
  </article>
 <article id="tavern" class="guide-topic" data-group="入门" tabindex="-1">
   <div class="topic-kicker">入门 <span aria-hidden="true">/</span> 4 步操作</div>
-  <div class="topic-heading"><span class="topic-emoji" aria-hidden="true">🎴</span><div><h2>玩下载的酒馆角色卡</h2><p>手里只有一张 PNG？从这里开始</p></div></div>
-  <ol class="steps"><li class="step"><span class="step-num">01</span><div class="step-body"><strong>打开酒馆入口</strong><p>点页面顶部「功能」→「🎴 玩酒馆角色卡」，也可以从剧情侧栏进入。</p><button type="button" class="jump-action" data-go="compat">立即打开 <span aria-hidden="true">↗</span></button></div></li>
-<li class="step"><span class="step-num">02</span><div class="step-body"><strong>选择角色卡</strong><p>在兼容游玩页点击「选择 PNG / JSON / CHARX」，选你的文件。</p></div></li>
+  <div class="topic-heading"><span class="topic-emoji" aria-hidden="true">🎴</span><div><h2>尝试解析 SillyTavern 角色卡</h2><p>手里只有一张 PNG？从这里开始</p></div></div>
+  <ol class="steps"><li class="step"><span class="step-num">01</span><div class="step-body"><strong>打开角色卡解析入口</strong><p>点页面顶部「功能」→「🎴 尝试解析 SillyTavern 角色卡」，也可以从剧情侧栏进入。</p><button type="button" class="jump-action" data-go="compat">立即打开 <span aria-hidden="true">↗</span></button></div></li>
+<li class="step"><span class="step-num">02</span><div class="step-body"><strong>选择角色卡</strong><p>在角色卡解析页点击「选择 PNG / JSON / CHARX」，选你的文件。</p></div></li>
 <li class="step"><span class="step-num">03</span><div class="step-body"><strong>确认人物和开场</strong><p>按页面提示选择角色卡版本、开场白及玩家称呼。</p></div></li>
 <li class="step"><span class="step-num">04</span><div class="step-body"><strong>创建并开始</strong><p>保存或进入故事，像普通聊天一样在底部发送消息。</p></div></li></ol>
-  <div class="result-lines"><p><strong>✓ 做对了会怎样</strong>看到角色的开场白、可以输入聊天，就是打开成功。</p><p><strong>↪ 不对劲时先检查</strong>酒馆兼容模式的故事和原生剧情是两套存档，请分别备份。</p></div>
+  <div class="result-lines"><p><strong>✓ 做对了会怎样</strong>看到角色的开场白、可以输入聊天，就是打开成功。</p><p><strong>↪ 不对劲时先检查</strong>外部角色卡剧情和原生剧情是两套存档，请分别备份。</p></div>
   <details class="topic-note"><summary>再多知道一点 <span aria-hidden="true">⌄</span></summary><p>角色卡里的全部外部脚本不保证可执行；“成功导入”不等于第三方插件百分百兼容。</p></details>
   <a class="back-top" href="#intro">↑ 返回顶部</a>
  </article>
@@ -176,12 +176,12 @@
 <article id="backup" class="guide-topic" data-group="必读" tabindex="-1">
   <div class="topic-kicker">必读 <span aria-hidden="true">/</span> 4 步操作</div>
   <div class="topic-heading"><span class="topic-emoji" aria-hidden="true">💾</span><div><h2>如何备份？先看这章！</h2><p>推荐整馆归档；旧 JSON 入口按各自范围保留</p></div></div>
-  <div class="result-lines"><p><strong>推荐：一份整馆归档</strong>在「设置 → 数据备份」选择「导出整馆归档」，保存 <code>.mimatavern</code> 文件。包含原生剧情、酒馆兼容库、小手机和媒体原件，以及工坊、字体、壁纸、个人音效和工具草稿。导出时先暂停编辑与生成。</p><p><strong>换设备恢复</strong>选择「预检整馆归档」，查看冲突后点「继续已预检恢复」。只新增缺失记录，同一条资料内容不同会停止并说明；已有界面偏好优先。各库分阶段提交，中断后可在本页继续；看到全部完成再刷新页面。原有 JSON 备份仍按下面方式使用。</p></div>
+  <div class="result-lines"><p><strong>推荐：一份整馆归档</strong>在「设置 → 数据备份」选择「导出整馆归档」，保存 <code>.mimatavern</code> 文件。包含原生剧情、外部角色卡剧情库、小手机和媒体原件，以及工坊、字体、壁纸、个人音效和工具草稿。导出时先暂停编辑与生成。</p><p><strong>换设备恢复</strong>选择「预检整馆归档」，查看冲突后点「继续已预检恢复」。只新增缺失记录，同一条资料内容不同会停止并说明；已有界面偏好优先。各库分阶段提交，中断后可在本页继续；看到全部完成再刷新页面。原有 JSON 备份仍按下面方式使用。</p></div>
   <ol class="steps"><li class="step"><span class="step-num">01</span><div class="step-body"><strong>备份原生剧情</strong><p>「设置 → 💾 Data（数据）」→「导出剧情与设置」，把文件保存到手机“文件”里。</p><button type="button" class="jump-action" data-go="data">立即打开 <span aria-hidden="true">↗</span></button></div></li>
-<li class="step"><span class="step-num">02</span><div class="step-body"><strong>备份酒馆兼容剧情</strong><p>进「🎴 玩酒馆角色卡」的备份/恢复区；可选兼容单库或双库备份。</p><button type="button" class="jump-action" data-go="compat">立即打开 <span aria-hidden="true">↗</span></button></div></li>
+<li class="step"><span class="step-num">02</span><div class="step-body"><strong>备份外部角色卡剧情</strong><p>进「🎴 尝试解析 SillyTavern 角色卡」的备份/恢复区；可选兼容单库或双库备份。</p><button type="button" class="jump-action" data-go="compat">立即打开 <span aria-hidden="true">↗</span></button></div></li>
 <li class="step"><span class="step-num">03</span><div class="step-body"><strong>备份小手机</strong><p>进入小手机“我的”相关备份入口，单独导出手机数据。</p><button type="button" class="jump-action" data-go="phone">立即打开 <span aria-hidden="true">↗</span></button></div></li>
 <li class="step"><span class="step-num">04</span><div class="step-body"><strong>检查文件确实存在</strong><p>看到实际文件在设备上，才算备份完成；建议在更新和换设备前做。</p></div></li></ol>
-  <div class="result-lines"><p><strong>单独备份字体</strong>打开「外观 → 本地字体管理」使用分卷备份；清单和所有分卷必须是同一轮的完整集合，恢复时一起选中。可参阅上方的本地字体教程。</p><p><strong>✓ 做对了会怎样</strong>你应该拿到对应的真实备份文件。</p><p><strong>↪ 不对劲时先检查</strong>只导出“原生剧情与设置”并不等于已经备份小手机及酒馆兼容库。</p></div>
+  <div class="result-lines"><p><strong>单独备份字体</strong>打开「外观 → 本地字体管理」使用分卷备份；清单和所有分卷必须是同一轮的完整集合，恢复时一起选中。可参阅上方的本地字体教程。</p><p><strong>✓ 做对了会怎样</strong>你应该拿到对应的真实备份文件。</p><p><strong>↪ 不对劲时先检查</strong>只导出“原生剧情与设置”并不等于已经备份小手机及外部角色卡剧情库。</p></div>
   <details class="topic-note"><summary>再多知道一点 <span aria-hidden="true">⌄</span></summary><p>跨设备没有自动同步保证。恢复出现“部分成功”时先检查已恢复的内容，不要立即重复覆盖。</p></details>
   <a class="back-top" href="#intro">↑ 返回顶部</a>
  </article>
@@ -197,8 +197,8 @@
   <details class="topic-note"><summary>再多知道一点 <span aria-hidden="true">⌄</span></summary><p>禁止用“清除网站数据”当万能修复，更不要把 API Key 或私人 Prompt 发给陌生人。</p></details>
   <a class="back-top" href="#intro">↑ 返回顶部</a>
  </article>
-<section id="question-section" class="more-section"><h2>💬 最常问的八个问题</h2><div class="faqs"><details><summary>点哪儿能看使用手册？</summary><p>从顶栏“功能 → 📖 使用手册”或“设置 → 📖 使用手册”打开；酒馆兼容页的工具菜单也有入口。</p></details>
-<details><summary>别人给了 PNG 角色卡，我应该用哪个按钮？</summary><p>点“功能 → 🎴 玩酒馆角色卡”，选择 PNG/JSON/CHARX。不要只在原生资源检查器里浏览却忘记创建故事。</p></details>
+<section id="question-section" class="more-section"><h2>💬 最常问的八个问题</h2><div class="faqs"><details><summary>点哪儿能看使用手册？</summary><p>从顶栏“功能 → 📖 使用手册”或“设置 → 📖 使用手册”打开；角色卡解析页的工具菜单也有入口。</p></details>
+<details><summary>别人给了 PNG 角色卡，我应该用哪个按钮？</summary><p>点“功能 → 🎴 尝试解析 SillyTavern 角色卡”，选择 PNG/JSON/CHARX。不要只在原生资源检查器里浏览却忘记创建故事。</p></details>
 <details><summary>为什么我设置了角色，AI 还是不认识？</summary><p>检查当前剧情是否“应用挂载”。再去“设置 → 🔬 Prompt（提示词）”看这次请求实际带了什么。</p></details>
 <details><summary>我调了 CSS，为什么没变化？</summary><p>先看是否只是“预览 / 试穿”。工坊要明确“应用全局主题”之后才改变正式界面。</p></details>
 <details><summary>我打开流式 HTML 后怎么不跟着往下走了？</summary><p>这是阅读保护。想再次追随新文字，点击剧情里的“跟随输出”。</p></details>

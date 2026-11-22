@@ -1,5 +1,5 @@
 /**
- * 🪄 MIMAMAO Tavern Persona Macro Resolver
+ * 🪄 MimaTAVERN Persona Macro Resolver
  * v1.1.6 additive sidecar.
  *
  * Natural-language macros only. This file never rewrites API roles, IDs, Store keys,

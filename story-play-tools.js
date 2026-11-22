@@ -152,7 +152,7 @@
  function paint(){if(!dialog)return;gothicLabel($('mima-play-title'),tab==='theater'?'theater':'treasure',tab==='theater'?'小剧场':'百宝箱');for(const b of dialog.querySelectorAll('[data-play-tab]'))b.setAttribute('aria-selected',String(b.dataset.playTab===tab));
   bodyNode.replaceChildren();if(editing){paintEditor();return;}
   if(drafts.has(table())){const note=node('div',{className:'mima-play-note',text:'有未保存的编辑草稿。'},bodyNode);button('继续草稿',()=>{editing=drafts.get(table());paint();},note);button('放弃草稿',discardDraft,note);}
-  node('p',{className:'mima-play-note',text:tab==='theater'?'素材保存在共用库，勾选后只挂载到当前剧情的开场白之前。支持普通 HTML 与 JS；酒馆专用接口尚不保证等价。':'点指令即可发送，也可只填入输入框。支持自建指令、JSON 指令集和酒馆 Quick Reply v2 的手动文本按钮。'},bodyNode);
+  node('p',{className:'mima-play-note',text:tab==='theater'?'素材保存在共用库，勾选后只挂载到当前剧情的开场白之前。支持普通 HTML 与 JS；SillyTavern 专用接口尚不保证等价。':'点指令即可发送，也可只填入输入框。支持自建指令、JSON 指令集和SillyTavern Quick Reply v2 的手动文本按钮。'},bodyNode);
   const tools=node('div',{className:'mima-play-toolbar'},bodyNode);button(tab==='theater'?'＋ 新建小剧场':'＋ 新建指令',()=>edit(null),tools,'primary-btn');
   if(tab==='theater')button('重试清理挂载',async()=>{const ok=await recoverUnlinks(true);for(const p of providers.values())await p.reload?.();if(ok)statusNode.textContent='清理已完成；已核对失效引用，原始挂载记录保留在本机。已恢复素材的旧清理任务保持暂停。';},tools);
   button('导入',chooseImport,tools);button('导出全部',exportResources,tools);
@@ -186,7 +186,7 @@
   const checkLabel=node('label',{className:'mima-play-check'},form),check=node('input',{id:'mima-play-enabled',type:'checkbox'},checkLabel);check.checked=d.enabled!==false;checkLabel.append(' 启用');
   const content=field(tab==='theater'?'完整 HTML / JS 内容':'发送的指令正文','mima-play-content',d.content,'textarea',form);content.spellcheck=false;
   if(tab==='theater'){
-   node('p',{className:'mima-play-note',text:'JS 在独立页面运行。MimaTheater.send(text) 由按钮发送；fill(text) 填入；getMessages() 仅在你逐素材授权后读取本剧情。导入默认无权限，修改源码会清除下面的授权选项。外链 JS/高级酒馆接口尚未支持。'},form);
+   node('p',{className:'mima-play-note',text:'JS 在独立页面运行。MimaTheater.send(text) 由按钮发送；fill(text) 填入；getMessages() 仅在你逐素材授权后读取本剧情。导入默认无权限，修改源码会清除下面的授权选项。外链 JS/SillyTavern 高级接口尚未支持。'},form);
    const trustLabel=node('label',{className:'mima-play-check'},form),trust=node('input',{id:'mima-play-scripts',type:'checkbox'},trustLabel);trust.checked=d.access?.runScripts===true;trustLabel.append(' 信任并运行此源码的脚本（允许任意联网，含 WebRTC 等协议）');
    const label=node('label',{className:'mima-play-check'},form),read=node('input',{id:'mima-play-read',type:'checkbox'},label);read.checked=d.access?.readMessages===true;label.append(' 另行允许读取当前剧情原文（包括历史私密内容）');
    const origins=field('允许联网的 HTTPS 来源（每行一个，例如 https://example.com；留空只使用本地素材）','mima-play-origins',(d.access?.origins||[]).join('\n'),'textarea',form);origins.rows=2;
@@ -225,7 +225,7 @@
    let source=command.content,meta=null;try{meta=JSON.parse(command.sourceData||'null');}catch{}
    if(meta?.quickReply&&meta.group.injectInput&&p.draft())source=meta.group.placeBeforeInput?source+' '+p.draft():p.draft()+' '+source;
    const script=meta?.quickReply&&source.startsWith('/')&&!fillOnly&&command.mode!=='fill';
-   if(script){if(!p.runScript)throw Error('此按钮是酒馆斜杠脚本，请在兼容故事使用；未当作普通台词发送');if(!live(ticket))throw Error('剧情已变化');await retainEdit();const receipt=await p.runScript(source,ticket);if(receipt?.accepted===true){if(live(ticket))dialog.close();}else throw Error(receipt?.reason||'脚本未执行，请检查确认或错误提示');return;}
+   if(script){if(!p.runScript)throw Error('此按钮是SillyTavern 斜杠脚本，请在兼容故事使用；未当作普通台词发送');if(!live(ticket))throw Error('剧情已变化');await retainEdit();const receipt=await p.runScript(source,ticket);if(receipt?.accepted===true){if(live(ticket))dialog.close();}else throw Error(receipt?.reason||'脚本未执行，请检查确认或错误提示');return;}
    const content=await p.expand(source);if(!live(ticket)||p.isBusy())throw Error('当前剧情状态已变化，未重复发送');
    if(fillOnly||command.mode==='fill'){p.fill(content);statusNode.textContent='已填入，可修改后发送。';dialog.close();return;}
    await retainEdit();let accepted=false;const acknowledge=receipt=>{if(receipt?.accepted===true){accepted=true;if(live(ticket)&&scope===ticket.scope&&view===commandView&&tab==='commands'&&!editing&&dialog.open)dialog.close();}};

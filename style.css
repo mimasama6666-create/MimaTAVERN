@@ -2044,3 +2044,8 @@ html.mima-editor-open #settings-modal:not(.hidden){visibility:hidden!important}
 #mima-release-note-modal .mima-release-note-content li{margin:4px 0}
 /* Keep this specific inventory's shell readable with the built-in Midnight skin. */
 html[data-mima-theme="midnight"][data-mima-effective-mode="night"] #mima-local-fonts{background:var(--skin-panel,#191c23);color:var(--text)}
+
+/* Keep the external-format import entry legible in the existing drawer width. */
+@layer mima-builtins {
+  .session-drawer #compat-open { width:100%; min-width:0; max-width:100%; white-space:normal; overflow-wrap:anywhere; text-align:center; line-height:1.3; }
+}

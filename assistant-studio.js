@@ -1,5 +1,5 @@
 /**
- * ✦ MIMAMAO Tavern Assistant Studio
+ * ✦ MimaTAVERN Assistant Studio
  * Regex Assistant / Preset Assistant / CSS Beauty Assistant
  * Uses the story API connection, but keeps an independent model / temperature / persona per assistant.
  */

@@ -161,7 +161,7 @@ function reportImportFailure(e,file){
   }catch(ex){message('复制不可用，请手动选择上方诊断文字。','error');}
  }},detail);
 }
-function readableResource(item){const labels={character:'人物设定',world_info:'世界设定',regex:'文字效果',script_source:'互动脚本',css:'外观效果',prompt_presets:'提示词设置',variable_schema:'变量状态',media:'媒体文件',raw_unknown:'原始内容'};return `${labels[item.kind]||item.kind} · ${item.name} · ${item.kind==='script_source'?'需授权/部分脚本仅完整酒馆可用':item.kind==='raw_unknown'?'可查看原始资料':'已识别（不代表所有规则已运行）'}`;}
+function readableResource(item){const labels={character:'人物设定',world_info:'世界设定',regex:'文字效果',script_source:'互动脚本',css:'外观效果',prompt_presets:'提示词设置',variable_schema:'变量状态',media:'媒体文件',raw_unknown:'原始内容'};return `${labels[item.kind]||item.kind} · ${item.name} · ${item.kind==='script_source'?'需授权/部分脚本仅在完整 SillyTavern 中可用':item.kind==='raw_unknown'?'可查看原始资料':'已识别（不代表所有规则已运行）'}`;}
 function diagnostics(){
  const output=$('compat-report');clear(output);if(!scan)return;
  const counts={};for(const resource of scan.resources)counts[resource.kind]=(counts[resource.kind]||0)+1;
@@ -724,7 +724,7 @@ async function saveWorldInfoScanDepth(){
  finally{button.disabled=false;}
 }
 function actualRequestView(owner,generation){return event=>{if(event?.type!=='request'||activeId!==owner||sessionGeneration!==generation)return;$('compat-prompt').textContent=JSON.stringify({view:'Provider 最终发送请求',request:event.request,messageSources:event.messageSources||[]},null,2);};}
-async function inspectPreview(){const owner=activeId,generation=sessionGeneration;if(!owner)return;try{const preview=await r().preview(owner,$('compat-input').value||'（未输入）');if(activeId!==owner||sessionGeneration!==generation)return;$('compat-prompt').textContent=JSON.stringify({view:'发送前预检（实际请求以发送日志为准）',...preview},null,2);$('compat-gap').textContent=preview.gaps.length?'提醒：这张卡有 '+preview.gaps.length+' 项高级效果尚未完整适配。可以直接进行基础剧情；未适配的手机、插件或复杂演出不会自动运行。具体影响请展开本轮追踪。':'人物设定可以用于基础剧情；本引擎尚未与原版酒馆逐项对照。';$('compat-accept-gaps').closest('label').hidden=true;}catch(e){if(activeId===owner&&sessionGeneration===generation)$('compat-prompt').textContent=`${e.code||'E_PREVIEW'}: ${e.message}`;}}
+async function inspectPreview(){const owner=activeId,generation=sessionGeneration;if(!owner)return;try{const preview=await r().preview(owner,$('compat-input').value||'（未输入）');if(activeId!==owner||sessionGeneration!==generation)return;$('compat-prompt').textContent=JSON.stringify({view:'发送前预检（实际请求以发送日志为准）',...preview},null,2);$('compat-gap').textContent=preview.gaps.length?'提醒：这张卡有 '+preview.gaps.length+' 项高级效果尚未完整适配。可以直接进行基础剧情；未适配的手机、插件或复杂演出不会自动运行。具体影响请展开本轮追踪。':'人物设定可以用于基础剧情；本引擎尚未与SillyTavern逐项对照。';$('compat-accept-gaps').closest('label').hidden=true;}catch(e){if(activeId===owner&&sessionGeneration===generation)$('compat-prompt').textContent=`${e.code||'E_PREVIEW'}: ${e.message}`;}}
 async function send(explicitText=null,options={}){
  const blocked=reason=>({accepted:false,status:'blocked',reason});let accepted=null;
  if(!activeId)return blocked('请先进入一个兼容剧情');
@@ -741,13 +741,13 @@ async function send(explicitText=null,options={}){
    if(gaps.length){
      $('compat-gap').textContent=`本次预计有 ${gaps.length} 项高级规则不能保证运行。基础聊天仍可使用人物设定；未适配的脚本或演出不会擅自执行。点击“查看本轮发送内容”可查看具体缺口。`;
      $('compat-prompt').textContent=JSON.stringify({view:'发送前预检（实际请求以发送日志为准）',...preflight},null,2);
-   }else $('compat-gap').textContent='已完成当前已支持规则的发送前检查；不代表与原版酒馆全部功能等价。';
+   }else $('compat-gap').textContent='已完成当前已支持规则的发送前检查；不代表与SillyTavern全部功能等价。';
    if(strict&&gaps.length){messageFor(sessionId,generation,'严格模式已在发送前阻止：请展开本轮发送内容检查缺口，或明确选择基础聊天。','error');return blocked('严格模式阻止了本次发送，请查看兼容缺口');}
    if(!strict){
      const signature=JSON.stringify(gaps);
      if(gaps.length&&approvedBasicPreflights.get(sessionId)!==signature){
        const detail=gaps.slice(0,4).map(x=>x.reason||x.slot||x.entryId||'高级规则缺口').join('；');
-       const notice=`这张角色卡将以“基础聊天”方式发送。\n高级脚本、动态状态栏及部分世界书/正则规则未保证按原版酒馆运行。${gaps.length?`\n检测到 ${gaps.length} 项差异：${detail}${gaps.length>4?' 等':''}`:''}\n是否确认使用基础聊天？取消不会发送消息或扣费。`;
+       const notice=`这张角色卡将以“基础聊天”方式发送。\n高级脚本、动态状态栏及部分世界书/正则规则未保证按SillyTavern运行。${gaps.length?`\n检测到 ${gaps.length} 项差异：${detail}${gaps.length>4?' 等':''}`:''}\n是否确认使用基础聊天？取消不会发送消息或扣费。`;
        if(!root.confirm(notice)){messageFor(sessionId,generation,'已取消发送，输入仍然保留。');return blocked('已取消基础聊天预检确认；没有发送');}
        approvedBasicPreflights.set(sessionId,signature);
      }
@@ -916,7 +916,7 @@ function closeSheet(){const sheet=$('compat-sheet');if(sheet?.open)sheet.close()
 function selectPane(pane){sheetPane=['character','effects','settings','archive'].includes(pane)?pane:'effects';for(const button of document.querySelectorAll('[data-compat-pane]')){const selected=button.dataset.compatPane===sheetPane;button.setAttribute('aria-selected',String(selected));button.tabIndex=selected?0:-1;}for(const section of document.querySelectorAll('.compat-sheet-pane'))section.hidden=section.id!=='compat-pane-'+sheetPane;}
 function openSheet(pane='effects'){if(!activeId)return;selectPane(pane);const sheet=$('compat-sheet');if(!sheet.open)sheet.showModal();$('compat-game-drawer').open=true;$('compat-manage-toggle').setAttribute('aria-expanded','true');}
 function toggleManage(){if($('compat-sheet')?.open)closeSheet();else openSheet('effects');}
-function showLibrary(){++sessionGeneration;suspendReaderResources();root.MimaPlayTools?.pause('compat');root.MimaAuthorHost?.unmountAll('已返回故事库；已提交变量保留');if(activeId){stashStoryDraft(activeId,$('compat-input').value);flushStoryDraft(activeId).catch(e=>draftStatus('草稿保存失败：'+e.message,true));}closeSheet();$('compat-lab').classList.remove('in-chat');$('compat-head-title').textContent='酒馆游玩版';$('compat-head-subtitle').textContent='打开一个故事，慢慢读下去。';$('compat-head-avatar').replaceChildren(document.createTextNode('馆'));const notice=$('compat-notice');if(notice)$('compat-import-panel').append(notice);}
+function showLibrary(){++sessionGeneration;suspendReaderResources();root.MimaPlayTools?.pause('compat');root.MimaAuthorHost?.unmountAll('已返回故事库；已提交变量保留');if(activeId){stashStoryDraft(activeId,$('compat-input').value);flushStoryDraft(activeId).catch(e=>draftStatus('草稿保存失败：'+e.message,true));}closeSheet();$('compat-lab').classList.remove('in-chat');$('compat-head-title').textContent='外部角色卡剧情';$('compat-head-subtitle').textContent='打开一个故事，慢慢读下去。';$('compat-head-avatar').replaceChildren(document.createTextNode('馆'));const notice=$('compat-notice');if(notice)$('compat-import-panel').append(notice);}
 async function loadSession(id){
  const ticket=++draftLoadSerial,oldId=activeId,inputRevision=draftInputSerial;
  if(oldId){stashStoryDraft(oldId,$('compat-input').value);try{await flushStoryDraft(oldId);}catch(e){message('离开前草稿保存失败，当前输入仍在页面内：'+e.message,'error');return;}}
@@ -963,7 +963,7 @@ function setupPlaySheet(){
  const roleInfo=el('div',{id:'compat-role-info'},character);character.append($('compat-mount-status'));
  const sourceActions=el('div',{className:'compat-tool-actions'});$('compat-report').before(sourceActions);sourceActions.append($('compat-scan'),$('compat-save'));
  $('compat-continue').textContent='续写';$('compat-continue').title='续写最近的角色回复';$('compat-preview').textContent='本轮内容';$('compat-preview').title='查看本轮实际发送内容';$('compat-manage-toggle').textContent='⋯';$('compat-manage-toggle').title='正则、外观与更多工具';
- for(const detail of [...tools.children]){const heading=detail.querySelector('summary')?.textContent||'';if(/互动功能/.test(heading))effects.append(detail);else if(/卡片|备份|酒馆服务|Prompt/.test(heading))archive.append(detail);else settings.append(detail);}
+ for(const detail of [...tools.children]){const heading=detail.querySelector('summary')?.textContent||'';if(/互动功能/.test(heading))effects.append(detail);else if(/卡片|备份|SillyTavern 服务|Prompt/.test(heading))archive.append(detail);else settings.append(detail);}
  archive.append($('compat-diagnostics-panel'));
  $('compat-sheet-close').addEventListener('click',closeSheet);$('compat-sheet').addEventListener('close',()=>{$('compat-game-drawer').open=false;$('compat-manage-toggle').setAttribute('aria-expanded','false');});
  for(const button of document.querySelectorAll('[data-compat-pane]'))button.addEventListener('click',()=>selectPane(button.dataset.compatPane));
@@ -1013,7 +1013,7 @@ async function refreshMountStatus(sessionId,generation){
   el('small',{text:'以下列出已绑定资源，不代表本轮全部触发。原卡声明启用的安全 CSS 会用于隔离 HTML 状态栏，插件脚本仍需单独授权。'},status);
   const list=el('div',{className:'compat-mount-grid'},status);
   for(const [kind,label] of byKind){const group=resources.filter(x=>x.kind===kind),row=el('div',{className:'compat-mount-item'},list);el('strong',{text:label+' '+group.length},row);el('small',{text:kind==='script_source'?'仅保留 · 需授权':kind==='world_info'?'按原卡 enabled 与关键词触发':kind==='regex'?'仅规则适配成功后应用':kind==='html_template'?'HTML 模板可手动安全嵌入':kind==='css'?'原卡安全 CSS 自动作用于隔离状态栏':'按所选版本绑定'},row);}
-  const role=$('compat-role-heading');if(role)role.textContent=ses.title||'当前角色剧情';const heading=$('compat-head-title');if(heading)heading.textContent=ses.title||'当前角色剧情';const subheading=$('compat-head-subtitle');if(subheading)subheading.textContent='酒馆角色剧情 · 独立存档';
+  const role=$('compat-role-heading');if(role)role.textContent=ses.title||'当前角色剧情';const heading=$('compat-head-title');if(heading)heading.textContent=ses.title||'当前角色剧情';const subheading=$('compat-head-subtitle');if(subheading)subheading.textContent='外部角色卡剧情 · 独立存档';
  }catch(e){if(activeId===sessionId&&sessionGeneration===generation){clear(status);el('span',{text:'资源核对失败（没有更改挂载）：'+(e.code||'E_MOUNT_STATUS')+' '+e.message},status);}}
 }
 function bootstrap(){

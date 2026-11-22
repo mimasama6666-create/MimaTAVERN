@@ -162,7 +162,7 @@ window.MimaSettingsJsonStream = (() => {
   if(!names.length)return '没有待保存的临时设置 JSON 文件';
   names.sort().reverse();const tmp=names[0],file=await (await dir.getFileHandle(tmp)).getFile();
   if(!file.size)throw Error('临时 JSON 文件为空，请清理后重做');
-  const name=tmp.includes('--')?tmp.split('--').slice(1).join('--'):'mimamao-tavern-settings-recovered.json';
+  const name=tmp.includes('--')?tmp.split('--').slice(1).join('--'):'mimatavern-settings-recovered.json';
   showReady({name,file,tmp,dir});
   return '已打开最近的临时 JSON，请点击保存到设备';
  }

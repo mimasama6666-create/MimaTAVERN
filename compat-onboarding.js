@@ -41,7 +41,7 @@ function make(resources,selected){
  const name=String(selected.raw?.nickname||selected.raw?.name||selected.name||'未命名角色');
  const flags={hasSystemPrompt:!!String(selected.raw?.system_prompt||'').trim(),hasPostHistory:!!String(selected.raw?.post_history_instructions||'').trim()};
  const warnings=[];
- if(manual.some(x=>x.kind==='script_source'))warnings.push('酒馆助手 JavaScript 仍需单独授权，不能通过一键挂载自动运行');
+ if(manual.some(x=>x.kind==='script_source'))warnings.push('Tavern Helper JavaScript 仍需单独授权，不能通过一键挂载自动运行');
  if(manual.some(x=>x.kind==='css'||x.kind==='html_template'))warnings.push('原卡启用的安全 CSS 自动用于隔离 HTML；独立模板需手动选择，脚本需另行授权');
  if(counts.worldbookEntries>counts.worldbookEnabled)warnings.push('世界书中禁用的条目保持禁用，关键词条目只有命中时才发送');
  return Object.freeze({name,selectedId:selected.id||null,selectedPath:selected.path,sourceId:selected.sourceId||null,resources:included,active,manual,counts,flags,warnings});

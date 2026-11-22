@@ -88,7 +88,7 @@
     for(const reply of group.replies){const item=element('details',undefined,block);element('summary',reply.label+(reply.isHidden?'（原始隐藏）':''),item);element('pre',reply.message,item);if(reply.automatic.length||reply.hasContext)element('small','保留但未运行：'+[...reply.automatic,...(reply.hasContext?['contextList']:[])].join('、'),item);}
    }
   }
-  if(!current.size)element('p','没有已识别的快捷回复。可在“我的卡片与外部资源”导入酒馆 v2 快捷回复 JSON，并挂载到当前故事。',section);
+  if(!current.size)element('p','没有已识别的快捷回复。可在“我的卡片与外部资源”导入SillyTavern Quick Reply v2 JSON，并挂载到当前故事。',section);
   paint();
  }
  root.MimaCompatQuickReply=Object.freeze({version:'mima-quick-reply/1',parse,expand,render});

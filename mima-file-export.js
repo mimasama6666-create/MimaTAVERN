@@ -7,7 +7,7 @@
 (function(root){
   'use strict';
   let pending=null;
-  function safeName(s){const n=String(s||'mimamao-export').replace(/[\\/:*?"<>|\x00-\x1f]/g,'_');if(n.length<=180)return n;const extension=/\.[a-z0-9]{1,12}$/i.exec(n)?.[0]||'';return n.slice(0,180-extension.length)+extension;}
+  function safeName(s){const n=String(s||'mimatavern-export').replace(/[\\/:*?"<>|\x00-\x1f]/g,'_');if(n.length<=180)return n;const extension=/\.[a-z0-9]{1,12}$/i.exec(n)?.[0]||'';return n.slice(0,180-extension.length)+extension;}
   function isAppleTouch(){const n=root.navigator||{};return /iPhone|iPad|iPod/.test(n.userAgent||'')||(n.platform==='MacIntel'&&n.maxTouchPoints>1);}
   function announce(text){const el=root.document?.getElementById('mima-export-task-status');if(el)el.textContent=text;}
   function taskUI(){

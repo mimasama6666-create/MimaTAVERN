@@ -83,7 +83,7 @@ function create(panel,bridge){
   if(ownerId!==ticket.id){ownerId=ticket.id;editing=null;editorOwner=null;editor.hidden=true;status.textContent='';}
   else if(editing&&editorOwner?.id===ticket.id)editorOwner=ticket;
   rules=runtime().regexRules(resources,session);list.replaceChildren();
-  if(!rules.length)node('div',{className:'compat-soft-empty',text:'还没有正则规则。可以导入酒馆导出的单条 JSON，也可以新建。'},list);
+  if(!rules.length)node('div',{className:'compat-soft-empty',text:'还没有正则规则。可以导入SillyTavern 导出的单条 JSON，也可以新建。'},list);
   for(const [index,rule]of rules.entries()){
    const ref=rule.__mimaRegexRef,row=node('article',{className:'compat-regex-row','data-regex-key':ref.key},list),top=node('div',{className:'compat-regex-row-head'},row),toggleLabel=node('label',{className:'compat-rule-switch'},top),toggle=node('input',{type:'checkbox','aria-label':'启用 '+(rule.scriptName||'规则')},toggleLabel);toggle.checked=!rule.disabled;
    node('strong',{text:rule.scriptName||'未命名规则'},toggleLabel);node('span',{className:'compat-rule-scope',text:ref.scope==='card'?'卡内':'外置'},top);

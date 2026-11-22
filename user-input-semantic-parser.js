@@ -1,5 +1,5 @@
 /**
- * 🎭 MIMAMAO Tavern User Input Semantic Parser
+ * 🎭 MimaTAVERN User Input Semantic Parser
  * v1.1.8; V5 original classification + V8 linear matching and markup escaping.
  *
  * Goal: preserve the player's raw message in Store/UI while compiling a model-facing

@@ -406,7 +406,7 @@ function templateCapabilityContract(config={}){
  const ok=(field,note)=>translated.push({field,note});
  const gap=(field,note)=>notEquivalent.push({field,note});
  ok('presetIds','mounted source-bound system messages');
- if((config.worldbookIds||[]).length)gap('worldbookIds','已挂载来源快照并按兼容世界书规则触发，但部分原生语义与酒馆兼容规则不完全等价');
+ if((config.worldbookIds||[]).length)gap('worldbookIds','已挂载来源快照并按兼容世界书规则触发，但部分原生语义与SillyTavern 兼容规则不完全等价');
  if((config.regexPackIds||[]).length)gap('regexPackIds','已挂载兼容正则执行器；原生输入/输出/显示阶段与兼容投影仍可能存在语义差异');
  ok('loadedUserMaskId','projected as player persona');
  ok('customCssId','filtered into compatibility display sandbox');
@@ -507,7 +507,7 @@ async function prepareNativeTemplateBinding(templateId){
  for(const id of c.regexPackIds||[]){const pack=find('regexPacks',id,'正则');if(pack.enabled===false)continue;
    const rules=(pack.rules||[]).filter(x=>x.enabled!==false).map(rule=>{
      if(!rule.pattern||!['display','prompt','input','output'].includes(rule.phase)||!root.MimaRegexEngine?.compileRule?.(rule)?.ok)
-       throw error('E_SETTINGS_TEMPLATE_INCOMPATIBLE','正则无法安全投影到酒馆兼容模式：'+rule.name);
+       throw error('E_SETTINGS_TEMPLATE_INCOMPATIBLE','正则无法安全投影到角色卡兼容模式：'+rule.name);
      return {scriptName:rule.name,findRegex:rule.pattern,replaceString:rule.replacement,
        flags:rule.flags||'g',placement:rule.phase==='input'?[1]:rule.phase==='output'?[2]:rule.phase==='prompt'?[1,2]:[2],
        promptOnly:rule.phase==='prompt',markdownOnly:rule.phase==='display',disabled:false};
@@ -1244,7 +1244,7 @@ async function continueAssistantUnfenced(sessionId,options={}){
 async function restoreRejectedReply(diagnosticId,{confirmed=false,allowPartial=false}={}){
  if(confirmed!==true)throw error('E_REPLY_RECOVERY_CONFIRM','请先确认手动恢复正文。');
  const record=await root.MimaDiagnosticJournal.recoveryCandidate(diagnosticId,{allowPartial:allowPartial===true}),sessionId=record.sessionId;
- if(!['compat_send','compat_continue'].includes(record.action))throw error('E_REPLY_RECOVERY_OWNER','本诊断不属于酒馆兼容回合。');
+ if(!['compat_send','compat_continue'].includes(record.action))throw error('E_REPLY_RECOVERY_OWNER','本诊断不属于角色卡兼容回合。');
  root.MimaAuthorHost?.stopSession(sessionId,'手动恢复原回复，作者页面已停止；已提交变量保留');
  const records=await readAtomicStores(['compat_sessions','messages','events_jobs'],sessionId),session=records.compat_sessions[0],job=records.events_jobs.find(x=>x.id===record.turnId);
  if(!session||!job)throw error('E_REPLY_RECOVERY_STALE','原剧情或失败回合已不存在。');

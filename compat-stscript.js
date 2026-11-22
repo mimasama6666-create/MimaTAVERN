@@ -41,7 +41,7 @@ function compile(src){return split(src).map((chunk,i)=>{
   if(['getvar','incvar','decvar','flushvar'].includes(cmd)&&rest)throw err('E_STSCRIPT_UNSUPPORTED','/'+cmd+' 有未支持的附加参数');
  }
  if(['abort','len'].includes(cmd)&&rest)throw err('E_STSCRIPT_UNSUPPORTED','/'+cmd+' 暂不支持附加参数');
- if(/^(?:index|at|scope|rule|else)=/i.test(rest))throw err('E_STSCRIPT_UNSUPPORTED','复杂命令参数需要原版酒馆解析器');
+ if(/^(?:index|at|scope|rule|else)=/i.test(rest))throw err('E_STSCRIPT_UNSUPPORTED','复杂命令参数需要SillyTavern 脚本解析器');
  return{cmd,key,rest,index:i+1};
  });}
 function expand(raw,ctx){const source=String(raw);let unresolved=null;const result=source.replace(/\{\{\s*([^{}]*?)\s*\}\}/g,(token,id)=>{

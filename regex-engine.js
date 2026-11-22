@@ -1,5 +1,5 @@
 /**
- * 🧬 MIMAMAO Tavern Regex Engine
+ * 🧬 MimaTAVERN Regex Engine
  * Additive sidecar: safe JavaScript RegExp replacement only. No eval / no executable code.
  */
 (() => {

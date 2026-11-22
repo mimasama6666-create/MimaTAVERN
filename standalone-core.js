@@ -1,7 +1,7 @@
 /**
  * 🍷 咪嘛馆 Standalone Core
  * 浏览器本地 Story DB + Prompt Assembler + OpenAI-compatible API client。
- * 与 MIMAMAO Telegram / 宅邸后端完全隔离。
+ * 剧情、角色卡与接口配置由咪嘛馆本地管理。
  */
 (() => {
   'use strict';
