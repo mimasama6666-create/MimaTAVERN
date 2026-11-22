@@ -8,6 +8,8 @@
 
 ## 安装与使用
 
+**点击即玩（推荐）：** [打开咪嘛馆在线版](https://mimasama6666-create.github.io/MimaTAVERN/)。无需下载或自行部署；使用模型功能时，请在应用中配置自己的 API。
+
 本项目的静态入口为 `index.html`。本地推荐使用可信的静态 HTTP 服务（例如在目录执行 `python -m http.server 8000`）并访问 `http://localhost:8000/`；无需后端服务。直接打开本地 HTML 的功能可受浏览器 file:// 安全策略限制。用户选择的模型 API/Provider 按各自配置和协议提供服务，软件不会自动提供模型额度。
 
 ## 玩家使用手册
