@@ -90,7 +90,7 @@
  const htmlToken=/^<(\/)?([a-z][a-z0-9:-]*)(?=[\s/>])(?:[^<>"']|"[^"]*"|'[^']*')*>/i;
  function hasLocals(st){return st.schema.local||!!st.schema.localRoots?.length;}
  function htmlLocalHost(parent,name,source){return (parent.kind==='html'?parent.localHtmlTree:parent.kind==='root'||parent.kind==='prose')&&narrativeHtmlTags.has(name)&&!['pre','code','kbd','samp'].includes(name)&&![...source.matchAll(/\bclass\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi)].some(m=>statusHtml.test(m[1]||m[2]||m[3]));}
- function fenceLineStart(raw,at){let i=at;while(i>0&&at-i<3&&raw[i-1]===' ')i--;return i===0||raw[i-1]==='\n';}
+ function fenceLineStart(raw,at,hostStart=0){let i=at;while(i>hostStart&&at-i<3&&raw[i-1]===' ')i--;return i===hostStart||raw[i-1]==='\n';}
  function confirmedLocal(node){return node.complete||node.bounded;}
  function narrativeHtml(st,node){
   const raw=st.raw.slice(node.rawStart,node.rawEnd);
@@ -126,28 +126,67 @@
   const raw=st.raw,issue=(code,description,node)=>st.diagnostics.push({code,description,start:node.rawStart,record:node.stableId,...(node.localOwner?{localRoot:node.localOwner}:{}),path:node.path});
   let pos=st.cursor;
   while(pos<raw.length){
-   let start=raw.indexOf('<',pos);
    const prose=st.stack.at(-1);
-   if(hasLocals(st)&&(prose.kind==='root'&&st.schema.local||prose.kind==='prose'||prose.kind==='html'&&prose.localHtmlTree)){
-    // A code sample is ordinary narrative, never a request to mount a card.
-    // Keep code delimiters in the source, including when a run spans chunks.
-    if(st.codeRun){
-     const mark=st.codeRun,at=raw.indexOf(mark,pos),line=mark.length<3?raw.indexOf('\n',pos):-1;
-     if(line>=0&&(at<0||line<at)){addText(st,pos,line+1);pos=line+1;st.codeRun=null;continue;}
-     if(at<0){const keep=Math.min(mark.length-1,raw.length-pos);addText(st,pos,raw.length-keep);pos=raw.length-keep;break;}
-     addText(st,pos,at+mark.length);pos=at+mark.length;st.codeRun=null;continue;
+   const protectCode=hasLocals(st)&&(prose.kind==='root'||prose.kind==='prose'||prose.kind==='html'&&prose.localHtmlTree);
+   if(protectCode&&st.codeRun){
+    const code=st.codeRun;
+    // A fence opener owns its info line. No markup in that line is semantic.
+    if(code.opening){
+     const line=raw.indexOf('\n',pos);
+     if(line<0){addText(st,pos,raw.length);pos=raw.length;break;}
+     addText(st,pos,line+1);pos=line+1;code.opening=false;continue;
     }
+    const at=raw.indexOf(code.char,pos),line=code.kind==='inline'?raw.indexOf('\n',pos):-1;
+    if(line>=0&&(at<0||line<at)){addText(st,pos,line+1);pos=line+1;st.codeRun=null;continue;}
+    if(at<0){addText(st,pos,raw.length);pos=raw.length;break;}
+    let end=at+1;while(raw[end]===code.char)end++;
+    if(code.kind==='fence'){
+     // Only a line-start run of sufficient length, followed by whitespace
+     // through the newline, can close a block. Keep an undecided close prefix
+     // at the cursor so future chunks cannot turn a premature close into text.
+     if(fenceLineStart(raw,at,prose.innerStart)){
+      if(end===raw.length){addText(st,pos,at);pos=at;break;}
+      if(end-at>=code.length){
+       let tail=end;while(raw[tail]===' '||raw[tail]==='\t')tail++;
+       if(raw[tail]==='\r')tail++;
+       if(tail===raw.length){addText(st,pos,at);pos=at;break;}
+       if(raw[tail]==='\n'){addText(st,pos,tail+1);pos=tail+1;st.codeRun=null;continue;}
+      }
+     }
+     addText(st,pos,end);pos=end;continue;
+    }
+    // Inline backticks close only on an equal, complete run, regardless of
+    // length. Preserve the existing single-line recovery for unclosed spans.
+    if(end===raw.length){addText(st,pos,at);pos=at;break;}
+    addText(st,pos,end);pos=end;if(end-at===code.length)st.codeRun=null;continue;
+   }
+   const start=raw.indexOf('<',pos);
+   if(protectCode){
     const tick=raw.indexOf('`',pos);
     // Retain a line-start run even when only one or two tildes have arrived.
     let tilde=raw.indexOf('~~~',pos);
-    while(tilde>=0&&(start<0||tilde<start)&&!fenceLineStart(raw,tilde))tilde=raw.indexOf('~~~',tilde+3);
+    while(tilde>=0&&(start<0||tilde<start)&&!fenceLineStart(raw,tilde,prose.innerStart))tilde=raw.indexOf('~~~',tilde+3);
     const pending=raw.endsWith('~~')?raw.length-2:raw.endsWith('~')?raw.length-1:-1;
-    if(tilde<0&&pending>=pos&&fenceLineStart(raw,pending))tilde=pending;
+    if(tilde<0&&pending>=pos&&fenceLineStart(raw,pending,prose.innerStart))tilde=pending;
     const next=[tick,tilde].filter(n=>n>=0&&(start<0||n<start)).sort((a,b)=>a-b)[0];
     if(next!==undefined){
-     const mark=raw[next],run=new RegExp('^'+mark+'+').exec(raw.slice(next))[0];
-     if(next+run.length===raw.length){addText(st,pos,next);pos=next;break;}
-     if(mark==='`'||fenceLineStart(raw,next)){addText(st,pos,next+run.length);pos=next+run.length;st.codeRun=run;continue;}
+     const char=raw[next];let end=next+1;while(raw[end]===char)end++;
+     if(end===raw.length){addText(st,pos,next);pos=next;break;}
+     const length=end-next;
+     let fence=length>=3&&fenceLineStart(raw,next,prose.innerStart);
+     if(fence&&char==='`'){
+      // A backtick in the info string invalidates a backtick fence. Delay
+      // this decision until a newline or such a backtick is actually received.
+      // Resume the pending info scan rather than searching old chunks again.
+      const scan=st.pendingFenceOpen?.start===next?st.pendingFenceOpen.scan:end;
+      const line=raw.indexOf('\n',scan),tick=raw.indexOf('`',scan);
+      if(line<0&&tick<0){st.pendingFenceOpen={start:next,scan:raw.length};addText(st,pos,next);pos=next;break;}
+      st.pendingFenceOpen=null;
+      if(tick>=0&&(line<0||tick<line))fence=false;
+     }
+     if(fence||char==='`'){
+      addText(st,pos,end);pos=end;st.codeRun={kind:fence?'fence':'inline',char,length,opening:fence};continue;
+     }
     }
    }
    if(start<0){addText(st,pos,raw.length);pos=raw.length;break;}
