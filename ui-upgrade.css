@@ -109,3 +109,38 @@
 #editor-modal[data-editor-type="message"] #editor-body>.mima-template-choice,
 #editor-modal[data-editor-type="message"] #editor-body>.helper{flex:0 0 auto;margin:0;}
 #editor-modal[data-editor-type="message"] #message-edit-content.field{flex:1 0 calc(140px * var(--mima-component-unit));height:auto;min-height:calc(140px * var(--mima-component-unit));max-height:none;resize:none;box-sizing:border-box;overflow-y:auto;}
+
+/* Long-form editors: expand the writing surface, not the font or controls.
+   The outer editor remains the existing viewport-aware scroll container. */
+#settings-modal .mima-regex-contract [hidden]{display:none!important;}
+#editor-modal[data-editor-type="preset"] #editor-body{display:flex;flex-direction:column;min-height:0;}
+#editor-modal .mima-preset-edit-grid{display:flex;flex-direction:column;flex:1 0 auto;gap:calc(10px * var(--mima-component-unit));min-width:0;}
+#editor-modal .mima-preset-main-content{display:flex;flex-direction:column;flex:1 0 auto;min-width:0;}
+#editor-modal .mima-preset-main-content #pre-content.field{flex:1 0 auto;min-height:min(calc(380px * var(--mima-component-unit)),52dvh);height:auto;max-height:none;overflow:auto;resize:vertical;box-sizing:border-box;}
+#editor-modal .mima-preset-metadata>.form-grid{padding-block:calc(8px * var(--mima-component-unit));}
+#editor-modal[data-editor-type="mask"] textarea.field,
+#editor-modal[data-editor-type="worldbook"] textarea[data-f="content"].field,
+#editor-modal[data-editor-type="css-preset"] #css-pre-code.field,
+#editor-modal[data-editor-type="native-protocol"] #native-schema.field,
+#editor-modal[data-editor-type="native-protocol"] #native-sample.field,
+#editor-modal[data-editor-type="custom-protocol"] #custom-protocol-sample.field,
+#editor-modal[data-editor-type="html_repair_draft"] textarea.field,
+#editor-modal[data-editor-type="html_code_repair"] textarea.field,
+#editor-modal[data-editor-type="rejected_html_code_repair"] textarea.field{min-height:min(calc(350px * var(--mima-component-unit)),50dvh);height:auto;max-height:none;resize:vertical;overflow:auto;}
+#editor-modal[data-editor-type="mask"] #mask-content.field,
+#editor-modal[data-editor-type="css-preset"] #css-pre-code.field,
+#editor-modal[data-editor-type="native-protocol"] #native-schema.field{min-height:min(calc(540px * var(--mima-component-unit)),60dvh);}
+#editor-modal[data-editor-type="regex-pack"] textarea.regex-source-editor[data-rf="replacement"],
+#editor-modal[data-editor-type="regex-pack"] #regex-test-input.field{min-height:min(calc(350px * var(--mima-component-unit)),50dvh);max-height:none;}
+#editor-modal[data-editor-type="short-protocol"] textarea.field{min-height:min(calc(180px * var(--mima-component-unit)),32dvh);resize:vertical;}
+.mima-play-editor #mima-play-content.field{min-height:min(calc(380px * var(--mima-component-unit)),52dvh);max-height:none;resize:vertical;overflow:auto;}
+
+#settings-modal .mima-template-editor [hidden]{display:none!important;}
+.assistant-history-editor textarea.field,#assistant-task-source.field,.assistant-config-body textarea.field[onchange*="setProfileField"]{min-height:min(calc(320px * var(--mima-component-unit)),45dvh);max-height:none;resize:vertical;}
+textarea.novel-editor[data-novel-segment-editor],textarea#novel-chapter-editor{min-height:min(calc(400px * var(--mima-component-unit)),55dvh);max-height:none;resize:vertical;}
+
+/* The native editor exposes one selected tag at a time; the full JSON remains optional. */
+#editor-modal[data-editor-type="native-protocol"] #native-tag-search{margin-bottom:calc(6px * var(--mima-component-unit));}
+#editor-modal[data-editor-type="native-protocol"] #native-tag-fields{display:grid;gap:calc(8px * var(--mima-component-unit));margin-block:calc(10px * var(--mima-component-unit));min-width:0;}
+#editor-modal[data-editor-type="native-protocol"] #native-tag-fields>.form-label{display:grid;gap:calc(4px * var(--mima-component-unit));margin:0;min-width:0;}
+#editor-modal[data-editor-type="native-protocol"] #native-tag-fields textarea{min-height:calc(120px * var(--mima-component-unit));resize:vertical;}

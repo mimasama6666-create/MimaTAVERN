@@ -299,10 +299,12 @@
   const packs=(session?.regexPackIds||[]).map(id=>(resources.regexPacks||[]).find(p=>p.id===id)).filter(p=>p&&(p.protocolResource||p.compactContract||window.MimaDisplayContract?.isLegacyConverter(p)));
   const presets=(session?.presetIds||[]).map(id=>(resources.presets||[]).find(p=>p.id===id)).filter(p=>p&&p.type==='format');
   const candidates=[];
-  for(const pack of packs)for(const preset of presets)try{
-   if(pack.protocolResource?.presetId&&pack.protocolResource.presetId!==preset.id)continue;
+  for(const pack of packs){const binding=session?.promptSettings?.displayContract?.packId===pack.id?session.promptSettings.displayContract:null;
+   const sample=binding?.numberedSample||pack.compactContract?.sample||'';
+   const choices=pack.protocolResource?[presets.find(p=>p.id===(binding?binding.presetId:pack.protocolResource.presetId))||null]:presets.length?presets:sample?[null]:[];
+   for(const preset of choices)try{
    let schema=pack.protocolResource?.schema,legacySemantic=null;
-   if(!schema&&!pack.compactContract){
+   if(!schema&&!pack.compactContract&&preset){
     // A legacy converter has no native grammar of its own. An explicitly
     // imported native resource can supply the grammar only when its content
     // signatures prove this converter and the paired preset describes it.
@@ -311,17 +313,18 @@
      schema=r.schema;legacySemantic={compatibilityPackIds:r.compatibilityPackIds||[],compatibilityDecoders:r.compatibilityDecoders||[]};break;
     }
    }
-   schema ||= templateSchema(preset.content,{terminal:pack.compactContract?.terminal||''});
-   if(schema.kind==='semantic'&&schema.rootOrder.some(tag=>!preset.content.includes('<'+tag+'>')))continue;
-   candidates.push({pack,preset,schema,...(legacySemantic?{legacySemantic}:{})});
-  }catch(_){}
+   schema ||= templateSchema(preset?.content||sample,{terminal:binding?.terminal||pack.compactContract?.terminal||''});
+   if(!pack.protocolResource&&schema.kind==='semantic'&&schema.rootOrder.some(tag=>!preset.content.includes('<'+tag+'>')))continue;
+   candidates.push({pack,preset,schema,...(!preset&&!pack.protocolResource&&sample?{numberedSample:sample}:{}),...(legacySemantic?{legacySemantic}:{})});
+   }catch(_){}
+  }
   return candidates;
  }
  function legacyEvidence(session,message,candidates=[]){
   const metadata=message?.metadata,source=String(message?.content??'');
   if(metadata?.replyProtocolRef===null||metadata?.replyProtocolRef||metadata?.displayAppliedPackIds?.length)return {sources:[],frozenSource:false,missingSource:false};
   const saved=(metadata?.legacyProtocolCandidateRefs||[]).map(id=>(session?.displayProtocols||[]).find(row=>row.id===id)).filter(Boolean).map(row=>({...row.contract,snapshotId:row.id}));
-  const sources=[...saved,...candidates.filter(c=>!saved.some(v=>v.pack.id===c.pack.id&&v.preset.id===c.preset.id))].filter(c=>legacySourceMatches(source,c.schema));
+  const sources=[...saved,...candidates.filter(c=>!saved.some(v=>v.pack.id===c.pack.id&&(v.preset?.id||'')===(c.preset?.id||'')))].filter(c=>legacySourceMatches(source,c.schema));
   return {sources,frozenSource:(session?.displayProtocols||[]).some(record=>legacySourceMatches(source,record.contract?.schema)),missingSource:reservedSource(source)};
  }
  function readMessage(session,message,options={}){

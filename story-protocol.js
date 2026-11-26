@@ -18,7 +18,7 @@
  function canonicalTag(def,tag){if(!def?.aliases)return tag;const key=aliasKey(tag);for(const [alias,target] of Object.entries(def.aliases))if(aliasKey(alias)===key)return target;return tag;}
  function verify(schema){
   if(verified.has(schema))return schema;
-  if(schema?.kind!=='semantic'||schema.version!==1||!schema.id||!Array.isArray(schema.rootOrder)||schema.rootOrder.length<2||
+  if(schema?.kind!=='semantic'||schema.version!==1||!schema.id||!Array.isArray(schema.rootOrder)||schema.rootOrder.length<(schema.local?1:2)||
     !schema.definitions||schema.terminal!=='</'+schema.rootOrder.at(-1)+'>')throw fault('语义标签定义或结束标记不完整');
   const defs=schema.definitions;
   for(const [path,d]of Object.entries(defs)){
@@ -138,11 +138,11 @@
  const nodeValue=(st,node)=>decode(st.raw.slice(node.innerStart,node.innerEnd??st.raw.length));
  function report(st,{prefix=false,partial=false}={}){
   const allRoots=st.root.children.filter(n=>n.kind!=='text');
-  const firstEnd=allRoots.find(n=>n.tag===st.schema.rootOrder.at(-1)&&n.complete)?.rawEnd??-1;
+  const firstEnd=st.schema.local?-1:allRoots.find(n=>n.tag===st.schema.rootOrder.at(-1)&&n.complete)?.rawEnd??-1;
   const issues=st.diagnostics.filter(x=>firstEnd<0||x.start<firstEnd).map(x=>({...x})),roots=allRoots.filter(n=>firstEnd<0||n.rawStart<firstEnd),records=[],pages=[],containerFields=[],containers=[];
   const add=(code,description,node,extra={})=>issues.push({code,description,start:node?.rawStart||0,record:node?.stableId,...extra});
   const rootTags=roots.map(n=>n.tag);
-  if(rootTags.join('|')!==st.schema.rootOrder.join('|'))add('root_order','根栏目需按 '+st.schema.rootOrder.join(' → ')+' 各出现一次',roots[0]);
+  if(!st.schema.local&&rootTags.join('|')!==st.schema.rootOrder.join('|'))add('root_order','根栏目需按 '+st.schema.rootOrder.join(' → ')+' 各出现一次',roots[0]);
   function walk(node,pageTag=''){
    if(node.kind==='text')return;
    const def=definition(st,node);
@@ -188,13 +188,13 @@
   }
   for(const root of roots)walk(root);
   for(const row of containerFields){const page=pages.find(page=>page.tag===row.page);if(page){if(!page.extraFields)page.extraFields=[];page.extraFields.push(...row.fields.map(field=>({...field,path:row.path,actualCount:row.actualCount})));}}
-  const finalRoot=roots.find(n=>n.tag===st.schema.rootOrder.at(-1)),end=finalRoot?.complete?finalRoot.rawEnd:-1;
+  const finalRoot=roots.find(n=>n.tag===st.schema.rootOrder.at(-1)),end=st.schema.local?st.raw.length:finalRoot?.complete?finalRoot.rawEnd:-1;
   const tail=end<0?'':st.raw.slice(end);
   // Non-whitespace between protocol roots has no semantic owner.
-  for(const n of st.root.children)if(n.kind==='text'&&st.raw.slice(n.rawStart,n.rawEnd).trim()&&(end<0||n.rawStart<end))add('unassigned_text','栏目之外有未归属内容',n);
-  if(end<0&&!partial)add('incomplete','缺少外层结束标签 '+st.schema.terminal,finalRoot);
+  for(const n of st.root.children)if(!st.schema.local&&n.kind==='text'&&st.raw.slice(n.rawStart,n.rawEnd).trim()&&(end<0||n.rawStart<end))add('unassigned_text','栏目之外有未归属内容',n);
+  if(!st.schema.local&&end<0&&!partial)add('incomplete','缺少外层结束标签 '+st.schema.terminal,finalRoot);
   if(tail.trim()&&!prefix)add('trailing_text','档案结束之后还有内容',finalRoot);
-  const narrativeNode=roots.find(n=>n.kind==='prose'),narrative=narrativeNode?nodeValue(st,narrativeNode).trim():'';
+  const narrativeNode=roots.find(n=>n.kind==='prose'),narrative=st.schema.local||!roots.some(n=>st.schema.rootOrder.includes(n.tag))?st.root.children.filter(n=>n.kind==='text'||n.kind==='unknown').map(n=>st.raw.slice(n.rawStart,n.rawEnd)).join(''):narrativeNode?nodeValue(st,narrativeNode).trim():'';
   for(const issue of issues)issue.line=st.raw.slice(0,issue.start||0).split('\n').length;
   const result={ok:end>=0&&issues.length===0,complete:end>=0,end,tail,issues,narrative,pages,records:records.length,recordRows:records,editableRows:[...records,...containerFields],containers,scannedChars:st.scannedChars};
   Object.defineProperty(result,'ast',{value:st});return result;
@@ -268,8 +268,10 @@
  }
  function readable(raw,schema,options={}){
   const result=inspect(raw,schema,options);
-  if(options.narrativeOnly){const body=stateFor(String(raw),schema,options.owner).root.children.find(n=>n.kind==='prose');return {...result,text:body?.complete?result.narrative:'',...(!body?.complete||!result.ok?{narrativeWarning:body?.complete?'格式不完整，仅导出已确认正文':'正文边界无法确认，本条已跳过'}:{})};}
-  const text=['【正文】\n'+result.narrative];
+  if(options.narrativeOnly){const roots=stateFor(String(raw),schema,options.owner).root.children;const body=roots.find(n=>n.kind==='prose');if(schema.local||!roots.some(n=>schema.rootOrder.includes(n.tag)))return {...result,text:schema.local?roots.filter(n=>n.kind==='text'||n.kind==='unknown').map(n=>String(raw).slice(n.rawStart,n.rawEnd)).join(''):String(raw)};return {...result,text:body?.complete?result.narrative:'',...(!body?.complete||!result.ok?{narrativeWarning:body?.complete?'格式不完整，仅导出已确认正文':'正文边界无法确认，本条已跳过'}:{})};}
+  const roots=result.ast.root.children;const plain=roots.filter(n=>n.kind==='text'||n.kind==='unknown').map(n=>String(raw).slice(n.rawStart,n.rawEnd)).join('');
+  if(!roots.some(n=>schema.rootOrder.includes(n.tag)))return {...result,text:String(raw)};
+  const text=['【正文】\n'+(schema.local?plain:result.narrative)];
   for(const page of result.pages)text.push('【'+page.tag+'】\n'+page.records.map(row=>'['+category(row.path)+'] '+row.tag+'：'+row.fields.map((f,i)=>'['+category(row.path+'/'+(f.name||row.labels[i]||''))+'] '+(row.labels[i]||f.name)+'：'+f.text).join(' ｜ ')).join('\n'));
   for(const page of result.pages)for(const field of page.extraFields||[])text.push('['+category(field.path)+'] '+field.path+' / '+field.name+'：'+field.text+'（实际 '+field.actualCount+' 条回帖）');
   if(!result.ok)text.push('【保留原文 · 格式待核实】\n'+String(raw));
@@ -294,14 +296,14 @@
   const fragment='<'+def.tag+'>'+body+'</'+def.tag+'>',end=parent.innerEnd;
   return raw.slice(0,end)+fragment+'\n'+raw.slice(end);
  }
- function createBundle({name,id,presetId,proseTag,terminalTag,sample,extraInstructions=''}){
+ function createBundle({name,id,presetId,proseTag,terminalTag,sample,extraInstructions='',local=false}){
   name=String(name||'').trim();sample=String(sample||'').trim();proseTag=String(proseTag||'').trim();terminalTag=String(terminalTag||'').trim();
-  if(!name||!tagName.test(proseTag)||!tagName.test(terminalTag)||!sample)throw fault('请填写名称、正文标签、结尾标签和完整格式样例');
+  if(!name||!sample||!local&&(!tagName.test(proseTag)||!tagName.test(terminalTag)))throw fault('请填写名称、正文标签、结尾标签和完整格式样例');
   if(/<!DOCTYPE|<!ENTITY|<\?/i.test(sample))throw fault('格式样例只支持普通命名标签，不支持 XML 声明或实体定义');
   const parsed=new DOMParser().parseFromString('<mima-root>'+sample+'</mima-root>','application/xml');
   if(parsed.querySelector('parsererror'))throw fault('样例的开闭标签必须配对；字段里的 &、<、> 请转义');
   const nodes=[...parsed.documentElement.children],rootOrder=nodes.map(el=>el.tagName),defs=Object.create(null);
-  if(rootOrder.length<2||new Set(rootOrder).size!==rootOrder.length||!rootOrder.includes(proseTag)||rootOrder.at(-1)!==terminalTag||terminalTag===proseTag)throw fault('正文标签须独立出现一次；最后一个根标签必须与结尾标签相同');
+  if(local){if(!rootOrder.length||new Set(rootOrder).size!==rootOrder.length)throw fault('请提供至少一个不同名称的标签样例');proseTag='';terminalTag=rootOrder.at(-1);}else if(rootOrder.length<2||new Set(rootOrder).size!==rootOrder.length||!rootOrder.includes(proseTag)||rootOrder.at(-1)!==terminalTag||terminalTag===proseTag)throw fault('正文标签须独立出现一次；最后一个根标签必须与结尾标签相同');
   const tagLabel=tag=>esc(tag);
   function build(group,parent='',isRoot=false){
    const tag=group[0].tagName,path=parent+'/'+tag;
@@ -324,10 +326,10 @@
    }
   }
   for(const el of nodes)build([el],'',true);
-  const schema={kind:'semantic',version:1,id,rootOrder,terminal:'</'+terminalTag+'>',definitions:defs,pageTags:rootOrder.filter(tag=>tag!==proseTag)};
+  const schema={kind:'semantic',version:1,id,rootOrder,...(local?{local:true}:{}),terminal:'</'+terminalTag+'>',definitions:defs,pageTags:rootOrder.filter(tag=>tag!==proseTag)};
   const protocolResource={format:'mima-semantic-protocol',schemaVersion:1,schema,sample,presetId};
   verify(schema);const report=inspect(sample,schema);if(!report.ok)throw fault('格式样例：'+report.issues[0]?.description);
-  const content='按以下命名标签格式输出。标签名称和开闭顺序保持一致，所有示例值替换为当轮真实内容。正文写在 <'+proseTag+'> 与 </'+proseTag+'> 之间。最后以 '+schema.terminal+' 结束，之后不添加内容。字段内字面的 &、<、> 使用实体转义。\n'+(extraInstructions?extraInstructions+'\n':'')+sample;
+  const content=(local?'需要美化的局部内容可使用以下标签，其余正文正常书写。\n': '按以下命名标签格式输出。标签名称和开闭顺序保持一致，所有示例值替换为当轮真实内容。正文写在 <'+proseTag+'> 与 </'+proseTag+'> 之间。最后以 '+schema.terminal+' 结束，之后不添加内容。字段内字面的 &、<、> 使用实体转义。\n')+(extraInstructions?extraInstructions+'\n':'')+sample;
   return {format:'mimamao-semantic-protocol-bundle',version:1,data:{regexPack:{id,name,description:'自定义语义标签',priority:50,enabled:true,rules:[],displayStyles:[],protocolResource},preset:{id:presetId,name:name+' · 输出格式',type:'format',priority:50,enabled:true,content}}};
  }
  async function preflight(resource){

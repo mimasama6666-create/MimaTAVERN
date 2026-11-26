@@ -1,0 +1,57 @@
+{
+  "format": "mimamao-semantic-protocol-bundle",
+  "version": 1,
+  "data": {
+    "regexPack": {
+      "id": "mima-example-local-tag-v1",
+      "name": "通用示例 · 心情标签",
+      "description": "仅美化心情标签，普通正文保持独立。",
+      "priority": 50,
+      "enabled": true,
+      "rules": [],
+      "displayStyles": [],
+      "protocolResource": {
+        "format": "mima-semantic-protocol",
+        "schemaVersion": 1,
+        "schema": {
+          "kind": "semantic",
+          "version": 1,
+          "id": "mima-example-local-tag-v1",
+          "local": true,
+          "rootOrder": [
+            "心情"
+          ],
+          "terminal": "</心情>",
+          "pageTags": [
+            "心情"
+          ],
+          "definitions": {
+            "/心情": {
+              "path": "/心情",
+              "tag": "心情",
+              "kind": "record",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"mima-custom-protocol-record\"><strong>心情</strong><div>$1</div></div>"
+                }
+              ]
+            }
+          }
+        },
+        "sample": "<心情>平静</心情>",
+        "presetId": "mima-example-local-tag-v1-format"
+      }
+    },
+    "preset": {
+      "id": "mima-example-local-tag-v1-format",
+      "name": "通用示例 · 可选输出说明",
+      "type": "format",
+      "priority": 50,
+      "enabled": true,
+      "content": "需要显示心情时使用 <心情>平静</心情>，其余内容正常输出。"
+    }
+  }
+}
