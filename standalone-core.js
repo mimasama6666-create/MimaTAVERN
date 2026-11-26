@@ -154,7 +154,7 @@
       recentMessageLimit: clampInt(input.recentMessageLimit, 6, 100000, 34),
       ...([1,2,3].includes(input.displayContract?.version)&&typeof input.displayContract.packId==='string'?{displayContract:{
         version:input.displayContract.version,packId:input.displayContract.packId,presetId:String(input.displayContract.presetId||''),canonical:'compact',
-        numbered:input.displayContract.numbered===true||!!text(input.displayContract.terminal),terminal:text(input.displayContract.terminal)}}:{}),
+        numbered:input.displayContract.version!==3&&(input.displayContract.numbered===true||!!text(input.displayContract.terminal)),terminal:text(input.displayContract.terminal)}}:{}),
       protocolViewpoint:text(input.protocolViewpoint),
       worldbookProtocolRange:typeof input.worldbookProtocolRange==='string'?input.worldbookProtocolRange:'all',
       // Prompt-only, full-turn trimming. Does NOT alter the independent
@@ -404,6 +404,8 @@
     if(include.userMask===true)c.loadedUserMaskId=session.loadedUserMaskId||null;
     if(include.css===true){c.customCssId=session.customCssId||null;c.customCssEnabled=session.customCssEnabled!==false;}
     if(include.context!==false){c.promptSettings=clone(session.promptSettings);if(c.promptSettings.outputContract)c.promptSettings.outputContract.templateMessageId='';c.promptSettings.autoRollingEnabled=false;c.promptSettings.summaryEnabled=false;c.renderMode=session.renderMode;}
+    if(include.context===false){c.contextSettingsEnabled=false;c.renderMode=session.renderMode;c.promptSettings={};for(const key of ['displayContract','protocolViewpoint','worldbookProtocolRange','outputContract','showInjectionLabels'])if(Object.hasOwn(session.promptSettings||{},key))c.promptSettings[key]=clone(session.promptSettings[key]);}
+    if(c.promptSettings?.displayContract&&(include.regex===false||include.presets===false))delete c.promptSettings.displayContract;
     if(include.memoryInject===true)c.memoryInject={injectCore:session.manualMemory.settings.injectCore,injectFacts:session.manualMemory.settings.injectFacts};
     if(session.promptSettings?.inputSemanticExplicit===true)c.inputSemanticMode=session.promptSettings.inputSemanticMode;
     c.canonLevel=session.canonLevel;
@@ -425,7 +427,8 @@
       // Output contracts and context budgets are independent settings. An HTML-only
       // template must not silently overwrite a fresh session's History limits.
       if(key==='promptSettings'&&c.contextSettingsEnabled===false){
-        if(c.promptSettings?.outputContract)next.promptSettings={...(next.promptSettings||{}),outputContract:clone(c.promptSettings.outputContract)};
+        const format={};for(const name of ['outputContract','displayContract','protocolViewpoint','worldbookProtocolRange','showInjectionLabels'])if(Object.hasOwn(c.promptSettings||{},name))format[name]=clone(c.promptSettings[name]);
+        if(Object.keys(format).length)next.promptSettings={...(next.promptSettings||{}),...format};
         continue;
       }
       next[key]=clone(c[key]);
@@ -681,7 +684,7 @@
           if((current?MimaLocalStore.presetCasToken(current):null)!==expectedPresetToken)throw new ApiError('E_PRESET_RECORD_CONFLICT','预设已在其他窗口更新，旧编辑未覆盖');
           const directory=await window.MimaLocalStore.loadSessionDirectory();
           stored.sessions=(await Promise.all(directory.filter(row=>arr(row.presetIds).includes(input.id)).map(row=>window.MimaLocalStore.loadSessionRecord(row.id)))).filter(Boolean).map(normalizeSession);
-          const changed=await preserveLegacyLibrary(stored,session=>legacyResourceDependency(session,stored,'presets',[input.id]),{affected:{presets:[input.id]}});
+          const changed=await preserveLegacyLibrary(stored,session=>legacyResourceDependency(session,stored,'presets',[input.id]),{preserveUnresolved:true,affected:{presets:[input.id]}});
           if(changed){
             const full=normalizeState(await window.MimaLocalStore.loadResourceSnapshot());
             if(full.storeRevision!==stored.storeRevision)throw new ApiError('E_CANONICAL_CONFLICT','旧历史在预检后变化，本次未覆盖');
@@ -701,21 +704,24 @@
       };
       const task=sessionSaveTail.then(commit,commit);sessionSaveTail=task.then(()=>{},()=>{});return task;
     }
-    return table==='cssPresets'?commitAppearanceEdit(edit,{checkCanonical:checkReference}):commitLibraryEdit(async stored=>{if(table==='regexPacks')await preserveLegacyLibrary(stored,session=>legacyResourceDependency(session,stored,table,[input.id]),{affected:{[table]:[input.id]}});return edit(stored);});
+    return table==='cssPresets'?commitAppearanceEdit(edit,{checkCanonical:checkReference}):commitLibraryEdit(async stored=>{if(table==='regexPacks')await preserveLegacyLibrary(stored,session=>legacyResourceDependency(session,stored,table,[input.id]),{preserveUnresolved:true,affected:{[table]:[input.id]}});return edit(stored);});
   }
   function unlinkTemplateResource(db,table,id){
     const mapping={masks:'loadedUserMaskId',presets:'presetIds',worldbooks:'worldbookIds',cssPresets:'customCssId',regexPacks:'regexPackIds',theaterCards:'theaterCardIds'};
     const key=mapping[table];if(!key)return;
     for(const template of db.settingTemplates){
       const config=template.config||{};
-      const old=config[key];
+      const old=config[key],binding=config.promptSettings?.displayContract;
+      let bindingRemoved=false;
+      if(table==='presets'&&binding?.presetId===id){delete config.promptSettings.displayContract;config.regexPackIds=arr(config.regexPackIds).filter(x=>x!==binding.packId);bindingRemoved=true;}
+      if(table==='regexPacks'&&binding?.packId===id){delete config.promptSettings.displayContract;config.presetIds=arr(config.presetIds).filter(x=>x!==binding.presetId);bindingRemoved=true;}
       if(Array.isArray(old)){
-        if(!old.includes(id))continue;
+        if(!old.includes(id)&&!bindingRemoved)continue;
         config[key]=old.filter(x=>x!==id);
       }else if(old===id){
         config[key]=null;
         if(key==='customCssId')config.customCssEnabled=false;
-      }else continue;
+      }else if(!bindingRemoved)continue;
       template.revision=(Number(template.revision)||0)+1;
       template.updatedAt=nowIso();
     }
@@ -731,7 +737,7 @@
       return {deleted:true,id};
     });
     return commitLibraryEdit(async stored=>{
-      if(['presets','regexPacks'].includes(table))await preserveLegacyLibrary(stored,session=>legacyResourceDependency(session,stored,table,[id]),{affected:{[table]:[id]}});
+      if(['presets','regexPacks'].includes(table))await preserveLegacyLibrary(stored,session=>legacyResourceDependency(session,stored,table,[id]),{preserveUnresolved:true,affected:{[table]:[id]}});
       const current=assertResourceFresh(table,id,stored);
       if(!current)return {[NO_LIBRARY_WRITE]:true,value:{deleted:false}};
       stored[table]=stored[table].filter(item=>item.id!==id);
@@ -761,7 +767,7 @@
         stored.sessions=(await Promise.all(directory.filter(row=>arr(row.presetIds).some(id=>ids.includes(id))).map(row=>window.MimaLocalStore.loadSessionRecord(row.id)))).filter(Boolean).map(normalizeSession);
         if(stored.storeRevision!==expectedRevision)throw new ApiError('E_CANONICAL_CONFLICT','资源已变化，请刷新后再删除');
         for(const session of stored.sessions)if(legacyResourceDependency(session,stored,'presets',ids)){
-          await preserveLegacyProtocols(session,stored,{affected:{presets:ids}});legacySessions.push(session);
+          await preserveLegacyProtocols(session,stored,{preserveUnresolved:true,affected:{presets:ids}});legacySessions.push(session);
         }
       }
       const saved=await window.MimaLocalStore.commitBulkDelete(kind,ids,expectedRevision,{legacySessions});
@@ -1041,7 +1047,8 @@
         const title=String(body.title||'').trim()||uniqueTemplateTitle({sessionTitlePattern:pattern},stored,createdAt,sessionTitleCharacterName(body,stored),titleDirectory)||'未命名咪嘛宇宙';
         const {sessionTitlePattern:_localOnly,settingTemplateId:_templateOnly,...rest}=body;
         const candidate=normalizeSession({...rest,id:makeId('sess'),title,createdAt,updatedAt:createdAt,messages:[],recordRevision:0});
-        const committed=await window.MimaLocalStore.commitSessionRecord(candidate,0,{allowCreate:true,expectedGlobalRevision:stored.storeRevision});
+        assertNewDisplayBinding(candidate,stored);
+      const committed=await window.MimaLocalStore.commitSessionRecord(candidate,0,{allowCreate:true,expectedGlobalRevision:stored.storeRevision});
         return publishSession(normalizeSession(committed.session),committed.storeRevision);
       }catch(error){
         try{state=normalizeState(await window.MimaLocalStore.loadResourceSnapshot());}
@@ -1220,7 +1227,7 @@
       if(!sample.ok)throw protocolFailure(sample);
     }
     const receipt=await commitLibraryEdit(async stored=>{
-      await preserveLegacyLibrary(stored,s=>((regex.compactContract||regex.protocolResource)&&s.id===body.sessionId&&legacyResourceDependency(s,stored,'regexPacks',s.regexPackIds))||legacyResourceDependency(s,stored,'regexPacks',[regex.id])||legacyResourceDependency(s,stored,'presets',[preset.id]),s=>({affected:{regexPacks:[regex.id],presets:[preset.id],all:s.id===body.sessionId&&!!(regex.compactContract||regex.protocolResource)}}));
+      await preserveLegacyLibrary(stored,s=>((regex.compactContract||regex.protocolResource)&&s.id===body.sessionId&&legacyResourceDependency(s,stored,'regexPacks',s.regexPackIds))||legacyResourceDependency(s,stored,'regexPacks',[regex.id])||legacyResourceDependency(s,stored,'presets',[preset.id]),s=>({preserveUnresolved:true,affected:{regexPacks:[regex.id],presets:[preset.id],all:s.id===body.sessionId&&!!(regex.compactContract||regex.protocolResource)}}));
       const oldRegex=stored.regexPacks.find(x=>x.id===regex.id),oldPreset=stored.presets.find(x=>x.id===preset.id);
       const replacing=body.replaceBundle===true;
       if(replacing&&((oldRegex?.updatedAt??null)!==(body.expectedResources?.regexUpdatedAt??null)||(oldPreset?.updatedAt??null)!==(body.expectedResources?.presetUpdatedAt??null)))throw new ApiError('E_REGEX_BUNDLE_CONFLICT','协议或配套预设已在其他窗口更新，请刷新后再导入');
@@ -1237,7 +1244,7 @@
         session.presetIds=replaceMountedId(session.presetIds,previous?.presetId,preset.id);
         if(regex.protocolResource)session.renderMode='safe_html';
         if(regex.compactContract||regex.protocolResource)session.promptSettings={...session.promptSettings,
-          displayContract:{version:regex.protocolResource?3:2,packId:regex.id,presetId:preset.id,canonical:'compact',numbered:!!terminal,terminal}};
+          displayContract:{version:regex.protocolResource?3:2,packId:regex.id,presetId:preset.id,canonical:'compact',numbered:!regex.protocolResource&&!!terminal,terminal}};
         session.recordRevision=(Number(session.recordRevision)||0)+1;
         session.updatedAt=nowIso();
       }
@@ -1372,7 +1379,8 @@
         typeof value.preset?.content!=='string'||!Array.isArray(value.pack?.rules)||typeof value.terminal!=='string'||
         'protocol_'+await exactDigest(value)!==row.id)
         throw new ApiError('E_PROTOCOL_VERSION_INVALID','存档中的短协议版本或内容校验不一致');
-      if(value.schema&&JSON.stringify(value.version===3?MimaStoryProtocol.verify(value.pack.protocolResource.schema):MimaShortProtocol.templateSchema(value.preset.content,{terminal:value.terminal}))!==JSON.stringify(value.schema))
+      if(value.legacySemantic){if(value.version!==1||value.schema?.kind!=='semantic'||MimaRegexEngine.protocolDisplayPacks([value.pack],value.legacySemantic)[0]===value.pack||!value.schema.rootOrder.every(tag=>value.preset.content.includes('<'+tag+'>')))throw new ApiError('E_PROTOCOL_VERSION_INVALID','旧语义转换器的来源证明不一致');MimaStoryProtocol.verifyTemplates(value.schema);}
+      if(value.schema&&!value.legacySemantic&&JSON.stringify(value.version===3?MimaStoryProtocol.verify(value.pack.protocolResource.schema):MimaShortProtocol.templateSchema(value.preset.content,{terminal:value.terminal}))!==JSON.stringify(value.schema))
         throw new ApiError('E_PROTOCOL_VERSION_INVALID','存档中的栏位定义与配套预设不一致');
       if(value.terminal&&!value.schema||MimaStoryDisplay.inspectPack(value.pack).problems.length)
         throw new ApiError('E_PROTOCOL_VERSION_INVALID','存档中的短协议缺少完整栏位或固定样式');
@@ -1381,7 +1389,7 @@
       dependencies.add(row.id);
     }
     const check=meta=>{
-      for(const ref of [meta?.replyProtocolRef,meta?.displayResourceProtocolRef,meta?.generationSnapshot?.replyProtocolRef])
+      for(const ref of [meta?.replyProtocolRef,meta?.displayResourceProtocolRef,meta?.generationSnapshot?.replyProtocolRef,...arr(meta?.legacyProtocolCandidateRefs)])
         if(ref&&!dependencies.has(ref))throw new ApiError('E_PROTOCOL_VERSION_MISSING','存档缺少消息依赖的原格式版本');
     };
     check(session.pendingGeneration?.snapshot);
@@ -1405,22 +1413,9 @@
       }});
     }return rows;
   }
-  async function preserveLegacyProtocols(session,resources=state,{preview=false,selection=null,prepareOnly=false,allowPartial=false,affected=null}={}){
-    const packs=arr(session.regexPackIds).map(id=>resources.regexPacks.find(p=>p.id===id)).filter(p=>p&&(p.protocolResource||p.compactContract||MimaDisplayContract.isLegacyConverter(p)));
-    const presets=arr(session.presetIds).map(id=>resources.presets.find(p=>p.id===id)).filter(p=>p&&p.type==='format');
-    const candidates=[];
-    for(const pack of packs)for(const preset of presets)try{
-      const schema=pack.protocolResource?.schema||MimaShortProtocol.templateSchema(preset.content,{terminal:pack.compactContract?.terminal||''});
-      if(pack.protocolResource&&schema.rootOrder.some(tag=>!preset.content.includes('<'+tag+'>')))continue;
-      candidates.push({pack,preset,schema});
-    }catch(_){}
-    const sourceMatches=(raw,schema)=>{
-      if(MimaShortProtocol.isSource(raw,schema))return true;
-      const first=String(raw).trimStart().split(/\r?\n/,1)[0].trim();
-      const starts=schema.kind==='semantic'?schema.rootOrder.map(tag=>'<'+tag+'>'):schema.steps.filter(step=>step.kind==='open').map(step=>step.text);
-      return first.length>=4&&starts.some(start=>start.startsWith(first));
-    };
-    const records=legacyProtocolRows(session).map(item=>({item,sources:candidates.filter(c=>sourceMatches(item.content,c.schema)),frozenSource:arr(session.displayProtocols).some(record=>record.contract?.schema&&sourceMatches(item.content,record.contract.schema)),missingSource:/^\s*(?:[【［\[]\/?MIMA[\w-]*[】］\]]|<(?:环境|剧情正文|档案)(?=\s|>))/u.test(item.content)})).filter(row=>row.sources.length||row.frozenSource||row.missingSource);
+  async function preserveLegacyProtocols(session,resources=state,{preview=false,selection=null,prepareOnly=false,allowPartial=false,preserveUnresolved=false,affected=null}={}){
+    const candidates=MimaShortProtocol.legacyCandidates(session,resources);
+    const records=legacyProtocolRows(session).map(item=>({item,...MimaShortProtocol.legacyEvidence(session,item.row,candidates)})).filter(row=>row.sources.length||row.frozenSource||row.missingSource);
     if(!records.length){if(arr(selection?.choices).length)throw new ApiError('E_LEGACY_SELECTION_STALE','选择已不对应当前协议历史，请重新预览');const empty=[];Object.defineProperty(empty,'identityChanged',{value:false});return empty;}
     const sourceProofs=[];
     if(!preview){
@@ -1436,10 +1431,16 @@
     const findings=[],selections=new Map();let identityChanged=false;
     for(const choice of arr(selection?.choices)){if(!choice?.key||selections.has(choice.key))throw new ApiError('E_LEGACY_SELECTION_INVALID','旧历史选择重复或缺少身份');selections.set(choice.key,choice);}
     const consumed=new Set();
+    async function snapshotCandidate(candidate){
+      if(candidate.snapshotId)return candidate.snapshotId;
+      const {pack,preset,schema}=candidate,contract={version:pack.protocolResource?3:pack.compactContract?2:1,packId:pack.id,presetId:preset.id,pack,preset,schema,...(candidate.legacySemantic?{legacySemantic:candidate.legacySemantic}:{}),terminal:schema.terminal,numbered:schema.kind!=='semantic',outputContract:session.promptSettings?.outputContract||null,packIndex:session.regexPackIds.indexOf(pack.id),presetIndex:session.presetIds.indexOf(preset.id),packOrder:session.regexPackIds.slice(),presetOrder:session.presetIds.slice()};
+      const id='protocol_'+await exactDigest(contract);session.displayProtocols ||= [];if(!session.displayProtocols.some(v=>v.id===id))session.displayProtocols.push(shareFrozen({id,contract}));return id;
+    }
     for(const {item,sources,frozenSource,missingSource}of records){
+      if(affected&&!sources.length&&!item.row.metadata?.legacyProtocolCandidateRefs?.length)continue;
       const matches=[];
       for(const c of sources){
-        const report=MimaShortProtocol.inspect(item.content,c.schema);
+        try{const report=MimaShortProtocol.inspect(item.content,c.schema);
         const input=c.pack.protocolResource?MimaStoryProtocol.render(item.content,c.schema):item.content;
         const [result]=await MimaRegexEngine.applyBatchAsync([{input,phase:'display'}],c.pack.protocolResource?MimaRegexEngine.protocolDisplayPacks([c.pack],c.pack.protocolResource):[c.pack],{tracePackId:c.pack.id});
         if(!c.pack.protocolResource&&!result.matchedPack)continue;
@@ -1447,10 +1448,11 @@
         if(!/<[a-z][^>]*>/i.test(safe.html))continue;
         const balance=MimaHtmlStructure.rawBalance(safe.html),leftovers=c.schema.kind==='semantic'?c.schema.rootOrder.some(tag=>safe.html.includes('<'+tag+'>')):c.schema.steps.some(step=>step.kind==='open'&&safe.html.includes(step.text))||/^\s*[0-9０-９]{2}\s*[¦|｜ǀ∣│┃]/m.test(safe.html);
         matches.push({...c,previewHtml:output,resources:[...MimaStoryDisplay.inspectPack(c.pack).resources.values()],complete:report.ok&&balance.ok&&!leftovers,output:safe.html,issues:[...report.issues,...(!balance.ok||leftovers?[{description:'转换结果尚有未展开内容或结构缺漏'}]:[])]});
+        }catch(error){if(!preserveUnresolved)throw error;console.warn('旧格式预览失败，保留原文和候选版本',error);}
       }
       if(affected&&!affected.all){
         const owns=c=>arr(affected.regexPacks).includes(c.pack.id)||arr(affected.presets).includes(c.preset.id);
-        const explicit=sources.some(c=>owns(c)&&(c.pack.protocolResource||c.pack.compactContract||session.promptSettings?.displayContract?.packId===c.pack.id));
+        const explicit=sources.some(c=>owns(c)&&(c.pack.protocolResource||c.pack.compactContract||c.legacySemantic||session.promptSettings?.displayContract?.packId===c.pack.id));
         // A regular HTML replacement can match words inside a protocol field.
         // It owns no decoder dependency while every protocol framing marker survives.
         const decoded=matches.some(c=>owns(c)&&(c.schema.kind==='semantic'?c.schema.rootOrder.some(tag=>item.content.includes('<'+tag+'>')&&!c.output.includes('<'+tag+'>')):c.schema.steps.some(step=>step.kind==='open'&&item.content.includes(step.text)&&!c.output.includes(step.text))));
@@ -1459,38 +1461,34 @@
       const identified=item.identify();identityChanged ||= identified.changed;
       const identity=identified.identity,sourceDigest=await exactDigest(item.content),key='legacy_'+await exactDigest({...identity,sourceDigest});
       const proven=matches.filter(m=>m.complete),choice=selections.get(key);let chosen=proven.length===1?proven[0]:null;
-      if(choice){consumed.add(key);if(JSON.stringify(choice.identity)!==JSON.stringify(identity)||choice.sourceDigest!==sourceDigest)throw new ApiError('E_LEGACY_SELECTION_STALE','该条旧历史已变化，请重新预览');chosen=choice.defer?null:matches.find(m=>m.pack.id===choice.packId&&m.preset.id===choice.presetId);if(!choice.defer&&!chosen)throw new ApiError('E_LEGACY_SELECTION_INVALID','所选格式已不能核实这条记录；原文及资源保留');}
-      findings.push({key,identity,sourceDigest,storeRevision:resources.storeRevision,recordRevision:session.recordRevision,source:item.content,candidates:matches.map(m=>({packId:m.pack.id,presetId:m.preset.id,name:m.pack.name+' / '+m.preset.name,complete:m.complete,html:m.output,previewHtml:m.previewHtml,resources:m.resources,issues:m.issues})),resolved:!!chosen});
+      if(choice){consumed.add(key);if(JSON.stringify(choice.identity)!==JSON.stringify(identity)||choice.sourceDigest!==sourceDigest)throw new ApiError('E_LEGACY_SELECTION_STALE','该条旧历史已变化，请重新预览');chosen=choice.defer?null:matches.find(m=>m.pack.id===choice.packId&&m.preset.id===choice.presetId&&(choice.snapshotId||null)===(m.snapshotId||null));if(!choice.defer&&!chosen)throw new ApiError('E_LEGACY_SELECTION_INVALID','所选格式已不能核实这条记录；原文及资源保留');}
+      findings.push({key,identity,sourceDigest,storeRevision:resources.storeRevision,recordRevision:session.recordRevision,source:item.content,candidates:matches.map(m=>({packId:m.pack.id,presetId:m.preset.id,snapshotId:m.snapshotId||null,name:m.pack.name+' / '+m.preset.name,complete:m.complete,html:m.output,previewHtml:m.previewHtml,resources:m.resources,issues:m.issues})),resolved:!!chosen});
       if(preview||prepareOnly)continue;
-      if(!chosen){if(allowPartial)continue;throw new ApiError('E_LEGACY_PROTOCOL_CHOICE_REQUIRED','仍有旧历史格式待核实。请在“核实旧历史格式”中逐条选择；可以先保存已核实的记录，原资源和原文保留。');}
-      const {pack,preset,schema}=chosen,contract={version:pack.protocolResource?3:pack.compactContract?2:1,packId:pack.id,presetId:preset.id,pack,preset,schema,terminal:schema.terminal,numbered:schema.kind!=='semantic',outputContract:session.promptSettings?.outputContract||null,packIndex:session.regexPackIds.indexOf(pack.id),presetIndex:session.presetIds.indexOf(preset.id),packOrder:session.regexPackIds.slice(),presetOrder:session.presetIds.slice()};
-      const record=shareFrozen({id:'protocol_'+await exactDigest(contract),contract});session.displayProtocols ||= [];if(!session.displayProtocols.some(v=>v.id===record.id))session.displayProtocols.push(record);
-      item.install();item.row.metadata={...item.row.metadata,replyProtocolRef:record.id,legacyProtocolVerified:{packId:pack.id,presetId:preset.id,explicit:!!choice}};
-      // Frozen request snapshots carry their original reply decoder as well.
-      if(item.row.metadata.generationSnapshot&&!item.row.metadata.generationSnapshot.replyProtocolRef)item.row.metadata.generationSnapshot.replyProtocolRef=record.id;
+      if(!chosen){
+        if(preserveUnresolved){
+          const refs=new Set(arr(item.row.metadata?.legacyProtocolCandidateRefs));
+          for(const candidate of sources)refs.add(await snapshotCandidate(candidate));
+          if(refs.size){identityChanged ||= JSON.stringify([...refs])!==JSON.stringify(item.row.metadata?.legacyProtocolCandidateRefs||[]);item.install();item.row.metadata={...item.row.metadata,legacyProtocolCandidateRefs:[...refs]};}
+          continue;
+        }
+        if(allowPartial)continue;
+        throw new ApiError('E_LEGACY_PROTOCOL_CHOICE_REQUIRED','旧消息的原格式不唯一。可在自定义标签页面查看旧消息格式；不会删除原文。');
+      }
+      const {pack,preset}=chosen,ref=await snapshotCandidate(chosen);
+      item.install();item.row.metadata={...item.row.metadata,replyProtocolRef:ref,legacyProtocolVerified:{packId:pack.id,presetId:preset.id,explicit:!!choice}};delete item.row.metadata.legacyProtocolCandidateRefs;
+      if(item.row.metadata.generationSnapshot&&!item.row.metadata.generationSnapshot.replyProtocolRef)item.row.metadata.generationSnapshot.replyProtocolRef=ref;
     }
     if(consumed.size!==selections.size)throw new ApiError('E_LEGACY_SELECTION_STALE','部分选择已不对应当前历史，请重新预览；本次未提交');
     if(!preview){for(const proof of sourceProofs.sort((a,b)=>a.count-b.count)){const after=memorySourceFingerprint(proof.timeline,proof.count);if(after!==proof.before){proof.snapshot.sourceFingerprint=after;proof.snapshot.legacyProtocolAnnotation={previousFingerprint:proof.before,verifiedFingerprint:after,reason:'protocol_ownership_only'};}}for(const proof of memoryProofs){if(proof.prefix)proof.item.sourceFingerprint=memorySourceFingerprint(session.messages,proof.count);if(proof.rangeValid)proof.item.sourceHash=memorySourceFingerprint(proof.range,proof.range.length);}if(factsProof)session.manualMemory.core.sourceFactsHash=fingerprint(session.manualMemory.facts);if(rollingProof)session.rollingSourceFingerprint=memorySourceFingerprint(session.messages,session.rollingSourceCount);}
     Object.defineProperty(findings,'identityChanged',{value:identityChanged});return findings;
   }
   async function preserveLegacyLibrary(stored,filter=null,options={}){
-    let changed=0;for(const session of stored.sessions){if(filter&&!filter(session))continue;const before=JSON.stringify(session.displayProtocols),count=legacyProtocolRows(session).length;if(!count)continue;await preserveLegacyProtocols(session,stored,typeof options==='function'?options(session):options);if(before!==JSON.stringify(session.displayProtocols)||legacyProtocolRows(session).length<count){session.recordRevision=(Number(session.recordRevision)||0)+1;session.updatedAt=nowIso();changed++;}}return changed;
+    let changed=0;for(const session of stored.sessions){if(filter&&!filter(session))continue;const before=JSON.stringify(session.displayProtocols),count=legacyProtocolRows(session).length;if(!count)continue;const findings=await preserveLegacyProtocols(session,stored,typeof options==='function'?options(session):options);if(findings.identityChanged||before!==JSON.stringify(session.displayProtocols)||legacyProtocolRows(session).length<count){session.recordRevision=(Number(session.recordRevision)||0)+1;session.updatedAt=nowIso();changed++;}}return changed;
   }
   // Only decoders with a verifiable source grammar own legacy dependencies.
   // A display regex producing ordinary HTML is not by itself a protocol decoder.
   function legacyResourceDependency(session,resources,table,ids){
-    const chosen=new Set(ids),packs=arr(session.regexPackIds).map(id=>resources.regexPacks.find(p=>p.id===id)).filter(Boolean);
-    const presets=arr(session.presetIds).map(id=>resources.presets.find(p=>p.id===id)).filter(p=>p?.type==='format');
-    for(const pack of packs){
-      if(!(pack.protocolResource||pack.compactContract||MimaDisplayContract.isLegacyConverter(pack)))continue;
-      for(const preset of presets){
-        if(table==='regexPacks'?!chosen.has(pack.id):!chosen.has(preset.id))continue;
-        if(pack.protocolResource?.presetId&&pack.protocolResource.presetId!==preset.id)continue;
-        try{const schema=pack.protocolResource?.schema||MimaShortProtocol.templateSchema(preset.content,{terminal:pack.compactContract?.terminal||''});
-          if(schema&&(schema.kind!=='semantic'||schema.rootOrder.every(tag=>preset.content.includes('<'+tag+'>'))))return true;
-        }catch(_){}
-      }
-    }return false;
+    const chosen=new Set(ids);return MimaShortProtocol.legacyCandidates(session,resources).some(c=>chosen.has(table==='regexPacks'?c.pack.id:c.preset.id));
   }
   function legacyResourceUsed(resources,table,ids){return legacyResourceDependency({presetIds:table==='presets'?ids:resources.presets.map(p=>p.id),regexPackIds:table==='regexPacks'?ids:resources.regexPacks.map(p=>p.id)},resources,table,ids);}
   const frozenProtocolIds=new WeakMap();
@@ -1533,7 +1531,11 @@
     const version=requireReplyProtocol(session,ref),current=session?.promptSettings?.displayContract?.packId;
     const historicalIds=new Set(arr(session?.displayProtocols).map(v=>v.contract?.packId));
     const mounted=arr(session?.regexPackIds).map(getRegexPack).filter(Boolean);
-    const knownIds=new Set([current,...mounted.filter(pack=>historicalIds.has(pack.id)&&(pack.protocolResource||pack.compactContract||MimaDisplayContract.isLegacyConverter(pack))).map(pack=>pack.id)]);
+    const native=version?.contract.pack?.protocolResource;
+    // The native projector removes only the proved decoder rules. A legacy
+    // pack that is still mounted can carry user-authored display rules; keep
+    // it in the original slot so those rules survive the projection.
+    const knownIds=new Set([current,...mounted.filter(pack=>historicalIds.has(pack.id)&&(pack.protocolResource||pack.compactContract||MimaDisplayContract.isLegacyConverter(pack))&&!(native&&MimaRegexEngine.protocolDisplayPacks([pack],native)[0]!==pack)).map(pack=>pack.id)]);
     return replaceFrozenResource(mounted,version?.contract.pack,current,knownIds,version?.contract.packIndex,version?.contract.packOrder).filter(pack=>pack.enabled!==false)
       .sort((a,b)=>Number(a.priority??50)-Number(b.priority??50));
   }
@@ -5403,13 +5405,13 @@
       }));
       m=pathIdMatch(path,/^\/sessions\/([^/]+)$/);if(m&&method==='GET'){await refreshPersistedSession(m[1]);const s=getSession(m[1]);return s?ok(s):fail('未找到剧本');}
       if(m&&method==='PATCH'){
-        const current=getSession(m[1]);if(!current)return fail('未找到剧本');const proposal={...current,...body};
+        const current=getSession(m[1]);if(!current)return fail('未找到剧本');const oldBinding=current.promptSettings?.displayContract;if(oldBinding&&!Object.hasOwn(body?.promptSettings||{},'displayContract')&&(body.regexPackIds&&!body.regexPackIds.includes(oldBinding.packId)||body.presetIds&&!body.presetIds.includes(oldBinding.presetId))){body={...body,promptSettings:{...current.promptSettings,...body.promptSettings,displayContract:null},regexPackIds:arr(body.regexPackIds??current.regexPackIds).filter(id=>id!==oldBinding.packId),presetIds:arr(body.presetIds??current.presetIds).filter(id=>id!==oldBinding.presetId)};}const proposal={...current,...body};
         const changesProtocol=Object.hasOwn(body?.promptSettings||{},'displayContract')&&resourceChanged(current.promptSettings?.displayContract,body.promptSettings.displayContract)||body.regexPackIds&&legacyResourceDependency(current,state,'regexPacks',arr(current.regexPackIds).filter(id=>!body.regexPackIds.includes(id)))||body.presetIds&&legacyResourceDependency(current,state,'presets',arr(current.presetIds).filter(id=>!body.presetIds.includes(id)));
         if(!changesProtocol)return ok(await saveSession({...proposal,id:current.id,createdAt:current.createdAt}));
         const baselineRevision=current.recordRevision;
         return ok(await commitLibraryEdit(async stored=>{
           const original=stored.sessions.find(s=>s.id===m[1]);if(!original||original.recordRevision!==baselineRevision)throw new ApiError('E_CANONICAL_CONFLICT','剧情已在其他窗口变化，请刷新后再修改格式；旧修改未覆盖');
-          const migrated=clone(original);const bindingChanged=Object.hasOwn(body?.promptSettings||{},'displayContract')&&resourceChanged(original.promptSettings?.displayContract,body.promptSettings.displayContract);await preserveLegacyProtocols(migrated,stored,{affected:{all:bindingChanged,regexPacks:body.regexPackIds?arr(original.regexPackIds).filter(id=>!body.regexPackIds.includes(id)):[],presets:body.presetIds?arr(original.presetIds).filter(id=>!body.presetIds.includes(id)):[]}});
+          const migrated=clone(original);const bindingChanged=Object.hasOwn(body?.promptSettings||{},'displayContract')&&resourceChanged(original.promptSettings?.displayContract,body.promptSettings.displayContract);await preserveLegacyProtocols(migrated,stored,{preserveUnresolved:true,affected:{all:bindingChanged,regexPacks:body.regexPackIds?arr(original.regexPackIds).filter(id=>!body.regexPackIds.includes(id)):[],presets:body.presetIds?arr(original.presetIds).filter(id=>!body.presetIds.includes(id)):[]}});
           const protectedFields=new Set(['messages','deletedMessages','archivedBranches','displayProtocols','manualMemory','rollingSourceFingerprint','rollingSourceCount','rollingSummary','rollingArchive','rollingVerification','lastSummarizedIndex','summary','longSummary','pendingGeneration','lastGeneration','recordRevision','createdAt','id']);
           for(const [key,value]of Object.entries(body||{})){
             if(protectedFields.has(key)){
@@ -5418,6 +5420,7 @@
               continue;
             }migrated[key]=value;
           }
+          const binding=migrated.promptSettings?.displayContract;if(binding&&(!arr(migrated.regexPackIds).includes(binding.packId)||!arr(migrated.presetIds).includes(binding.presetId))){delete migrated.promptSettings.displayContract;}
           if(Object.hasOwn(body?.promptSettings||{},'displayContract')&&resourceChanged(original.promptSettings?.displayContract,body.promptSettings.displayContract))assertNewDisplayBinding(migrated,stored);migrated.recordRevision=original.recordRevision+1;migrated.updatedAt=nowIso();const next=normalizeSession(migrated);stored.sessions[stored.sessions.indexOf(original)]=next;return next;
         }));
       }
@@ -5499,7 +5502,7 @@
       if(path==='/presets'&&method==='GET')return ok(state.presets);
       if(path==='/presets'&&method==='POST')return ok(await savePreset(body||{},null));
       m=resourcePathMatch(path,/^\/presets\/([^/]+)$/);if(m&&method==='PATCH'){const old=getPreset(m[1]);return old?ok(await savePreset({...old,...body,id:m[1]},body?.expectedToken)):fail('未找到预设');}
-      if(m&&method==='DELETE')return ok(await deleteResource('presets',m[1],(db,id)=>{for(const s of db.sessions)if(s.presetIds.includes(id)){s.presetIds=s.presetIds.filter(x=>x!==id);s.recordRevision++;}for(const p of db.novelProjects)if(p.presetIds.includes(id)){p.presetIds=p.presetIds.filter(x=>x!==id);p.recordRevision++;}}));
+      if(m&&method==='DELETE')return ok(await deleteResource('presets',m[1],(db,id)=>{for(const s of db.sessions)if(s.presetIds.includes(id)){s.presetIds=s.presetIds.filter(x=>x!==id);const binding=s.promptSettings?.displayContract;if(binding?.presetId===id){s.regexPackIds=s.regexPackIds.filter(x=>x!==binding.packId);delete s.promptSettings.displayContract;}s.recordRevision++;}for(const p of db.novelProjects)if(p.presetIds.includes(id)){p.presetIds=p.presetIds.filter(x=>x!==id);p.recordRevision++;}}));
 
       m=path.match(/^\/resource-categories\/(css|presets|worldbook)$/);if(m&&method==='GET')return ok({records:categoryView(state,m[1]),storeRevision:state.storeRevision});
       if(m&&method==='POST')return ok(await changeCategories(m[1],body||{}));
@@ -5552,7 +5555,8 @@
         return ok(await saveRegexPack(pack,{repair:true}));
       }
       m=resourcePathMatch(path,/^\/regex-packs\/([^/]+)$/);if(m&&method==='PATCH'){const old=getRegexPack(m[1]);return old?ok(await saveRegexPack({...old,...body,id:m[1]})):fail('未找到正则包');}
-      if(m&&method==='DELETE')return ok(await deleteResource('regexPacks',m[1],(db,id)=>{for(const sess of db.sessions)if(sess.regexPackIds.includes(id)){sess.regexPackIds=sess.regexPackIds.filter(x=>x!==id);sess.recordRevision++;}}));
+      if(m&&method==='DELETE')return ok(await deleteResource('regexPacks',m[1],(db,id)=>{for(const sess of db.sessions){const binding=sess.promptSettings?.displayContract;if(!sess.regexPackIds.includes(id)&&binding?.packId!==id)continue;
+        sess.regexPackIds=sess.regexPackIds.filter(x=>x!==id);if(binding?.packId===id){sess.presetIds=sess.presetIds.filter(x=>x!==binding.presetId);delete sess.promptSettings.displayContract;}sess.recordRevision++;sess.updatedAt=nowIso();}}));
 
       if(path==='/worldbooks'&&method==='GET')return ok(state.worldbooks);
       if(path==='/worldbooks'&&method==='POST')return ok(await saveWorldbook(body||{}));

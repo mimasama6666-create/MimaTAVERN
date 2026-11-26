@@ -14,6 +14,8 @@
  });
  const integerValue=value=>String(value).trim().replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xfee0));
  const percentValue=value=>integerValue(value).replace(/％/g,'%').replace(/%$/,'').trim();
+ const aliasKey=tag=>/^[\x00-\x7f]+$/.test(tag)?tag.toLowerCase():tag;
+ function canonicalTag(def,tag){if(!def?.aliases)return tag;const key=aliasKey(tag);for(const [alias,target] of Object.entries(def.aliases))if(aliasKey(alias)===key)return target;return tag;}
  function verify(schema){
   if(verified.has(schema))return schema;
   if(schema?.kind!=='semantic'||schema.version!==1||!schema.id||!Array.isArray(schema.rootOrder)||schema.rootOrder.length<2||
@@ -24,7 +26,8 @@
    if(d.kind==='container'&&(!Array.isArray(d.children)||d.children.some(c=>!defs[c.path]||c.path.slice(0,c.path.lastIndexOf('/'))!==path||!Number.isInteger(c.min)||c.min<0||c.max!=null&&(!Number.isInteger(c.max)||c.max<c.min))))throw fault('栏目子项或数量无效：'+path);
    if(d.kind==='record'&&(!Array.isArray(d.fields)||d.fields.some(f=>!tagName.test(f))||new Set(d.fields).size!==d.fields.length||!Array.isArray(d.templates)||!d.templates.length||d.templates.some(t=>typeof t.html!=='string'||!Array.isArray(t.fields)||t.fields.some(f=>!d.fields.includes(f)))))throw fault('记录字段或呈现结构无效：'+path);
    if(d.kind==='record')for(const template of d.templates){const slots=[...template.html.matchAll(/\$(\d+)/g)].map(m=>Number(m[1]));const maximum=d.fields.length?template.fields.length:1;if(slots.some(slot=>slot<1||slot>maximum)||template.fields.some((field,i)=>!slots.includes(i+1)))throw fault('呈现结构的字段引用不完整：'+path);}
-   if(d.aliases&&Object.entries(d.aliases).some(([alias,target])=>!tagName.test(alias)||!(d.kind==='record'?d.fields:(d.children||[]).map(child=>defs[child.path].tag)).includes(target)))throw fault('别名未指向已声明的字段或记录：'+path);
+   if(d.aliases&&Object.entries(d.aliases).some(([alias,target])=>!tagName.test(alias)||!(d.kind==='record'?d.fields:[...(d.children||[]).map(child=>defs[child.path].tag),d.replyCountField].filter(Boolean)).includes(target)))throw fault('别名未指向已声明的字段或记录：'+path);
+   if(d.aliases){const names=d.kind==='record'?d.fields:[...(d.children||[]).map(c=>defs[c.path].tag),d.replyCountField].filter(Boolean),seen=new Set();for(const [alias,target] of Object.entries(d.aliases)){const key=aliasKey(alias);if(seen.has(key)||names.some(name=>aliasKey(name)===key))throw fault('别名与现有标签冲突：'+path+'/'+alias);seen.add(key);}}
    const pieces=d.kind==='record'?d.templates.map(t=>t.html):[d.openHtml||'',d.closeHtml||''];
    for(const html of pieces){
     if(typeof html!=='string'||/<\/?(?:script|iframe|object|embed|form|input|button|select|textarea|link|meta|base)\b|\bon\w+\s*=|javascript\s*:/i.test(html))throw fault('呈现结构含不可执行之外的内容：'+path);
@@ -62,12 +65,15 @@
  function definition(st,node){return st.schema.definitions[node.path];}
  function childDefinition(st,parent,tag){
   if(parent.kind==='root')return st.schema.rootOrder.includes(tag)?st.schema.definitions['/'+tag]:null;
-  const def=definition(st,parent);tag=def?.aliases?.[tag]||tag;
+  const def=definition(st,parent);tag=canonicalTag(def,tag);
   if(def?.kind==='container')return def.children.some(c=>c.path===parent.path+'/'+tag)?st.schema.definitions[parent.path+'/'+tag]:
     def.replyCountField===tag?{tag,path:parent.path+'/@'+tag,kind:'field'}:null;
   if(def?.kind==='record'&&def.fields.includes(tag))return {tag,path:parent.path+'/@'+tag,kind:'field'};
   return null;
  }
+ function matchesClose(st,index,tag){const node=st.stack[index];if(!node||index===0)return false;if(node.kind==='unknown')return node.sourceTag===tag;return childDefinition(st,st.stack[index-1],tag)?.path===node.path;}
+ const separators=/^[\s\u200B\u2060:：|¦｜,，;；、*_`]*$/u;
+ function structuralText(st,node,start,end){const raw=st.raw.slice(start,end),def=definition(st,node);if(!raw.trim())return true;if(def?.structuralSeparators!==true)return false;if(separators.test(raw))return true;const next=node.children.find(child=>child.rawStart===end&&child.kind==='field');if(!next)return false;const match=raw.match(/^([\s\S]*?)([\p{L}\p{N}_-]+)[\s\u200B\u2060]*[:：][\s\u200B\u2060]*$/u);return !!match&&separators.test(match[1])&&canonicalTag(def,match[2])===next.tag;}
  function addText(st,start,end){
   if(end<=start)return;
   const parent=st.stack.at(-1),last=parent.children.at(-1);
@@ -92,10 +98,10 @@
    const end=start+m[0].length-1;
    const closing=!!m[1],tag=m[2],top=st.stack.at(-1);
    // A terminal mentioned inside prose or a field is content, not a root close.
-   if((top.kind==='prose'||top.kind==='field'||top.kind==='record'&&!definition(st,top)?.fields.length)&&tag!==(top.sourceTag||top.tag)&&closing){addText(st,start,end+1);pos=end+1;continue;}
-   if(top.kind==='prose'&&!(closing&&tag===(top.sourceTag||top.tag))){addText(st,start,end+1);pos=end+1;continue;}
+   if((top.kind==='prose'||top.kind==='field'||top.kind==='record'&&!definition(st,top)?.fields.length)&&!matchesClose(st,st.stack.length-1,tag)&&closing){addText(st,start,end+1);pos=end+1;continue;}
+   if(top.kind==='prose'&&!(closing&&matchesClose(st,st.stack.length-1,tag))){addText(st,start,end+1);pos=end+1;continue;}
    if(closing){
-    let index=st.stack.length-1;while(index>0&&(st.stack[index].sourceTag||st.stack[index].tag)!==tag)index--;
+    let index=st.stack.length-1;while(index>0&&!matchesClose(st,index,tag))index--;
     if(!index){addText(st,start,end+1);issue('unexpected_close','未配对的结束标签 '+tag,{rawStart:start});}
     else{
      while(st.stack.length-1>index){const node=st.stack.pop();node.rawEnd=start;node.innerEnd=start;issue('missing_close','缺少 </'+node.tag+'>',node);}
@@ -156,13 +162,13 @@
     if(def.replyGroupMinimum&&!node.children.some(c=>['展开回复','折叠回复'].includes(c.tag)))add('missing_record','缺少楼内回复栏目',node,{page});
     if(def.replyCountField){
      const fields=node.children.filter(c=>c.tag===def.replyCountField),count=node.children.filter(c=>c.tag==='回帖').length;
-     for(const field of fields.length?fields:[null])containerFields.push({page,path:node.path,tag:node.tag,sourceTag:node.sourceTag,id:node.stableId,start:node.rawStart,end:node.rawEnd,labels:[def.replyCountField],fields:[{name:def.replyCountField,text:field?nodeValue(st,field):'',start:field?.innerStart,end:field?.innerEnd}],actualCount:count});
+     for(const field of fields.length?fields:[null])containerFields.push({page,path:node.path,tag:node.tag,sourceTag:node.sourceTag,id:node.stableId,start:node.rawStart,end:node.rawEnd,innerEnd:node.innerEnd,complete:node.complete,labels:[def.replyCountField],fields:[{name:def.replyCountField,text:field?nodeValue(st,field):'',start:field?.innerStart,end:field?.innerEnd}],actualCount:count});
      if(fields.length!==1||!/^\d+$/.test(integerValue(nodeValue(st,fields[0]||node)))||Number(integerValue(nodeValue(st,fields[0]||node)))!==count)
       add('reply_count','回复数与实际 '+count+' 条回帖不一致',node,{page,fieldName:def.replyCountField});
     }
    }
    if(def.kind==='record'){
-    const row={id:node.stableId,tag:node.tag,sourceTag:node.sourceTag,path:node.path,start:node.rawStart,end:node.rawEnd,labels:def.fields.length?def.fields:[node.tag],fields:[]};
+    const row={id:node.stableId,tag:node.tag,sourceTag:node.sourceTag,path:node.path,start:node.rawStart,end:node.rawEnd,innerEnd:node.innerEnd,complete:node.complete,labels:def.fields.length?def.fields:[node.tag],fields:[]};
     if(def.fields.length){
      for(let i=0;i<def.fields.length;i++){
       const name=def.fields[i],fields=node.children.filter(n=>n.kind==='field'&&n.tag===name),field=fields[0],rule=def.fieldRules?.[name]||{};
@@ -178,7 +184,7 @@
     }
     records.push(row);let p=pages.find(p=>p.tag===page);if(!p){p={tag:page,records:[]};pages.push(p);}p.records.push(row);
    }
-   for(const child of node.children){if(child.kind==='text'&&(def.kind==='container'||def.kind==='record'&&def.fields.length)&&st.raw.slice(child.rawStart,child.rawEnd).trim())add('unassigned_text','命名栏目或字段之外有未归属内容',child,{page,path:node.path});else if(child.kind!=='field')walk(child,page);}
+   for(const child of node.children){if(child.kind==='text'&&(def.kind==='container'||def.kind==='record'&&def.fields.length)&&!structuralText(st,node,child.rawStart,child.rawEnd))add('unassigned_text','命名栏目或字段之外有未归属内容',child,{page,path:node.path});else if(child.kind!=='field')walk(child,page);}
   }
   for(const root of roots)walk(root);
   for(const row of containerFields){const page=pages.find(page=>page.tag===row.page);if(page){if(!page.extraFields)page.extraFields=[];page.extraFields.push(...row.fields.map(field=>({...field,path:row.path,actualCount:row.actualCount})));}}
@@ -217,18 +223,20 @@
   else if(def.kind==='container'){
    let open=def.openHtml||'';
    if(def.replyCountField)open=open.replace('展开楼内回复','展开楼内回复 · '+children.filter(c=>c.tag==='回帖').length+'条');
-   html=open+children.filter(c=>c.kind!=='field').map(c=>renderNode(st,c)).join('')+(def.closeHtml||'');
+   html=open+children.filter(c=>c.kind!=='field'&&(c.kind!=='text'||!structuralText(st,node,c.rawStart,c.rawEnd))).map(c=>renderNode(st,c)).join('')+(def.closeHtml||'');
   }else{
    const seen=children.filter(c=>c.kind==='field'),names=new Set(seen.map(c=>c.tag));
    const variant=def.templates.slice().sort((a,b)=>b.fields.length-a.fields.length).find(t=>t.fields.every(f=>names.has(f)))||def.templates[0];
-   const values=def.fields.length?variant.fields.map(name=>{const field=seen.find(c=>c.tag===name);return field?nodeValue(st,field):'';}):[nodeValue(st,node)];
+   const merged=new Set();
+   const values=def.fields.length?variant.fields.map(name=>{const first=seen.find(c=>c.tag===name);if(!first)return complete&&def.structuralSeparators&&def.fieldRules?.[name]?.required?'〔缺少：'+name+'〕':'';const fields=[first];merged.add(first);if(def.mergeAdjacentFields?.includes(name)){for(let i=children.indexOf(first)+1;i<children.length;i++){const next=children[i];if(next.kind==='text'&&structuralText(st,node,next.rawStart,next.rawEnd))continue;if(next.kind!=='field'||next.tag!==name)break;fields.push(next);merged.add(next);}}return fields.map(field=>nodeValue(st,field)).join(' / ');}):[nodeValue(st,node)];
    const percentIndex=variant.fields.indexOf('数值');
    const amount=def.fieldRules?.数值?.type==='percent'?percentValue(values[percentIndex]):null;
    if(amount!==null&&/^\d{1,3}$/.test(amount)&&Number(amount)<=100)values[percentIndex]=amount;
    html=textTemplate(variant.html,values,amount!==null&&/^\d{1,3}$/.test(amount)&&Number(amount)<=100?Number(amount):null);
    // Preserve duplicate/unknown input alongside its own record, never put it in a different field.
-   const included=new Set();for(const child of seen){if(included.has(child.tag)||!variant.fields.includes(child.tag))html+='<div>'+esc(child.tag)+'：'+esc(nodeValue(st,child))+'</div>';included.add(child.tag);}
-   for(const child of children)if(child.kind==='unknown'||def.fields.length&&child.kind==='text')html+=renderNode(st,child);
+   if(complete&&def.structuralSeparators)for(const name of def.fields)if(def.fieldRules?.[name]?.required&&!names.has(name)&&!variant.fields.includes(name))html+='<div>〔缺少：'+esc(name)+'〕</div>';
+   for(const child of seen)if(!merged.has(child))html+='<div>'+esc(child.tag)+'：'+esc(nodeValue(st,child))+'</div>';
+   for(const child of children)if(child.kind==='unknown'||def.fields.length&&child.kind==='text'&&!structuralText(st,node,child.rawStart,child.rawEnd))html+=renderNode(st,child);
   }
   if(complete)node.rendered=html;return html;
  }
@@ -244,7 +252,7 @@
     const count=def.replyCountField?receivedChildren(st,node).filter(c=>c.tag==='回帖').length:null;
     let unit=node.projected;
     if(!unit){unit={id,parent,container:true,html:(def.openHtml||'')+'<!--mima-protocol-slot-->'+(def.closeHtml||'')};node.projected=unit;}
-    units.push({...unit,count});for(const child of receivedChildren(st,node))visit(child,id);
+    units.push({...unit,count});for(const child of receivedChildren(st,node))if(child.kind!=='text'||!structuralText(st,node,child.rawStart,child.rawEnd))visit(child,id);
    }else{
     let unit=node.projected;
     if(!unit||!unit.complete||node.rawEnd>st.raw.length){const html=renderNode(st,node);unit={id,parent,html,complete:!!node.complete&&node.rawEnd<=st.raw.length};if(unit.complete)node.projected=unit;}
@@ -273,8 +281,8 @@
   const field=row.fields.find(f=>f.name===fieldName),replacement=String(value??'');
   if(!field)throw fault('无法定位命名字段');
   if(Number.isInteger(field.start))return raw.slice(0,field.start)+esc(replacement)+raw.slice(field.end);
-  const tag=row.tag,close='</'+(row.sourceTag||tag)+'>',end=raw.indexOf(close,row.start);
-  if(end<0)throw fault('请先用原文编辑补齐该记录的结束标签');
+  const end=row.innerEnd;
+  if(!row.complete||!Number.isInteger(end))throw fault('请先用原文编辑补齐该记录的结束标签');
   return raw.slice(0,end)+'<'+fieldName+'>'+esc(replacement)+'</'+fieldName+'>'+raw.slice(end);
  }
  function addRecord(raw,schema,{parentStart,recordPath,values={}}){
@@ -286,6 +294,42 @@
   const fragment='<'+def.tag+'>'+body+'</'+def.tag+'>',end=parent.innerEnd;
   return raw.slice(0,end)+fragment+'\n'+raw.slice(end);
  }
+ function createBundle({name,id,presetId,proseTag,terminalTag,sample,extraInstructions=''}){
+  name=String(name||'').trim();sample=String(sample||'').trim();proseTag=String(proseTag||'').trim();terminalTag=String(terminalTag||'').trim();
+  if(!name||!tagName.test(proseTag)||!tagName.test(terminalTag)||!sample)throw fault('请填写名称、正文标签、结尾标签和完整格式样例');
+  if(/<!DOCTYPE|<!ENTITY|<\?/i.test(sample))throw fault('格式样例只支持普通命名标签，不支持 XML 声明或实体定义');
+  const parsed=new DOMParser().parseFromString('<mima-root>'+sample+'</mima-root>','application/xml');
+  if(parsed.querySelector('parsererror'))throw fault('样例的开闭标签必须配对；字段里的 &、<、> 请转义');
+  const nodes=[...parsed.documentElement.children],rootOrder=nodes.map(el=>el.tagName),defs=Object.create(null);
+  if(rootOrder.length<2||new Set(rootOrder).size!==rootOrder.length||!rootOrder.includes(proseTag)||rootOrder.at(-1)!==terminalTag||terminalTag===proseTag)throw fault('正文标签须独立出现一次；最后一个根标签必须与结尾标签相同');
+  const tagLabel=tag=>esc(tag);
+  function build(group,parent='',isRoot=false){
+   const tag=group[0].tagName,path=parent+'/'+tag;
+   if(!tagName.test(tag)||group.some(el=>el.attributes.length))throw fault('标签只能使用文字、数字、下划线或连字符，不支持属性：'+tag);
+   if(isRoot&&tag===proseTag){defs[path]={path,tag,kind:'prose'};return;}
+   const children=group.flatMap(el=>[...el.children]);
+   const nested=children.some(el=>el.children.length);
+   const repeated=group.some(el=>new Set([...el.children].map(c=>c.tagName)).size!==el.children.length);
+   if(group.some(el=>[...el.childNodes].some(n=>n.nodeType===3&&n.textContent.trim())&&el.children.length))throw fault('有子标签的栏目不能混入无标签文字：'+tag);
+   if(nested||repeated){
+    const byTag=new Map();for(const child of children){if(!byTag.has(child.tagName))byTag.set(child.tagName,[]);byTag.get(child.tagName).push(child);}
+    const spec=[...byTag].map(([key,items])=>{const counts=group.map(el=>[...el.children].filter(c=>c.tagName===key).length);build(items,path);return {path:path+'/'+key,min:Math.min(...counts),max:null};});
+    defs[path]={path,tag,kind:'container',children:spec,openHtml:'<div class="mima-custom-protocol"><details open><summary>'+tagLabel(tag)+'</summary><div>',closeHtml:'</div></details></div>'};
+   }else{
+    const fields=[...new Set(children.map(el=>el.tagName))];
+    if(children.some(el=>!tagName.test(el.tagName)||el.attributes.length))throw fault('字段标签无效：'+tag);
+    const fieldRules=Object.fromEntries(fields.map(field=>[field,{required:group.every(el=>[...el.children].some(c=>c.tagName===field))}]));
+    const body=fields.length?fields.map((field,i)=>'<div><strong>'+tagLabel(field)+'：</strong>$'+(i+1)+'</div>').join(''):'<div>$1</div>';
+    defs[path]={path,tag,kind:'record',fields,fieldRules,templates:[{fields,html:'<div class="mima-custom-protocol-record"><strong>'+tagLabel(tag)+'</strong>'+body+'</div>'}]};
+   }
+  }
+  for(const el of nodes)build([el],'',true);
+  const schema={kind:'semantic',version:1,id,rootOrder,terminal:'</'+terminalTag+'>',definitions:defs,pageTags:rootOrder.filter(tag=>tag!==proseTag)};
+  const protocolResource={format:'mima-semantic-protocol',schemaVersion:1,schema,sample,presetId};
+  verify(schema);const report=inspect(sample,schema);if(!report.ok)throw fault('格式样例：'+report.issues[0]?.description);
+  const content='按以下命名标签格式输出。标签名称和开闭顺序保持一致，所有示例值替换为当轮真实内容。正文写在 <'+proseTag+'> 与 </'+proseTag+'> 之间。最后以 '+schema.terminal+' 结束，之后不添加内容。字段内字面的 &、<、> 使用实体转义。\n'+(extraInstructions?extraInstructions+'\n':'')+sample;
+  return {format:'mimamao-semantic-protocol-bundle',version:1,data:{regexPack:{id,name,description:'自定义语义标签',priority:50,enabled:true,rules:[],displayStyles:[],protocolResource},preset:{id:presetId,name:name+' · 输出格式',type:'format',priority:50,enabled:true,content}}};
+ }
  async function preflight(resource){
   if(resource?.format!=='mima-semantic-protocol'||resource.schemaVersion!==1)throw fault('不支持的语义协议资源版本');
   const schema=verify(resource.schema),contexts=verifyTemplates(schema),sample=inspect(resource.sample,schema);
@@ -294,5 +338,5 @@
   for(const row of [...contexts,{path:'完整样例',html}]){const safe=MimaStoryDisplay.inspectionHtml(row.html,'semantic_preflight',{resources});const fatal=safe.diagnostics.filter(d=>['element','resource'].includes(d.kind));if(fatal.length)throw fault(row.path+' 呈现结构未通过：'+fatal[0].reason);}
   return resource;
  }
- window.MimaStoryProtocol={verify,verifyTemplates,templateContexts,createState,append,accumulate:(raw,schema,owner)=>stateFor(String(raw??''),schema,owner),parse:(raw,schema,options={})=>inspect(raw,schema,options),inspect,render,project,readable,replaceField,addRecord,preflight,decode};
+ window.MimaStoryProtocol={createBundle,verify,verifyTemplates,templateContexts,createState,append,accumulate:(raw,schema,owner)=>stateFor(String(raw??''),schema,owner),parse:(raw,schema,options={})=>inspect(raw,schema,options),inspect,render,project,readable,replaceField,addRecord,preflight,decode};
 })();

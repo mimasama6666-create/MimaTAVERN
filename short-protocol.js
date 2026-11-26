@@ -280,26 +280,65 @@
   const at=next?.start??target.closeStart,eol=source.includes('\r\n')?'\r\n':'\n';
   return source.slice(0,at)+record+'¦'+fields.join('¦')+eol+source.slice(at);
  }
- function looksNumbered(source){
-  const first=/^\s*([【［\[])([\p{L}\p{N}_-]+)([】］\]])\s*\r?\n\s*[0-9０-９]{2}\s*[¦|｜ǀ∣│┃]/u.exec(source);
-  return !!first&&source.includes(first[1]+'/'+first[2]+first[3]);
- }
- function looksProtocol(source){return looksNumbered(source)||/^\s*<环境\s*>/.test(source)&&/<档案\s*>/.test(source);}
  function isSource(source,schema){
   const raw=String(source??'');
   if(schema?.kind==='semantic')return schema.rootOrder.some(tag=>new RegExp('^<'+tag+'(?=\\s|>)').test(raw.trimStart()));
   return schema?.steps?.some(step=>step.kind==='open'&&raw.trimStart().startsWith(step.text))===true;
  }
+ // Match the same actual format framing used by legacy migration, including
+ // an incomplete opening marker. A heading plus numbered list is not evidence.
+ function legacySourceMatches(raw,schema){
+  if(!schema)return false;
+  if(isSource(raw,schema))return true;
+  const first=String(raw??'').trimStart().split(/\r?\n/,1)[0].trim();
+  const starts=schema.kind==='semantic'?(schema.rootOrder||[]).map(tag=>'<'+tag+'>'):(schema.steps||[]).filter(step=>step.kind==='open').map(step=>step.text);
+  return first.length>=4&&starts.some(start=>start.startsWith(first));
+ }
+ function reservedSource(raw){return /^\s*(?:[【［\[]\/?MIMA[\w-]*[】］\]]|<(?:环境|剧情正文|档案)(?=\s|>))/u.test(String(raw??''));}
+ function legacyCandidates(session,resources={}){
+  const packs=(session?.regexPackIds||[]).map(id=>(resources.regexPacks||[]).find(p=>p.id===id)).filter(p=>p&&(p.protocolResource||p.compactContract||window.MimaDisplayContract?.isLegacyConverter(p)));
+  const presets=(session?.presetIds||[]).map(id=>(resources.presets||[]).find(p=>p.id===id)).filter(p=>p&&p.type==='format');
+  const candidates=[];
+  for(const pack of packs)for(const preset of presets)try{
+   if(pack.protocolResource?.presetId&&pack.protocolResource.presetId!==preset.id)continue;
+   let schema=pack.protocolResource?.schema,legacySemantic=null;
+   if(!schema&&!pack.compactContract){
+    // A legacy converter has no native grammar of its own. An explicitly
+    // imported native resource can supply the grammar only when its content
+    // signatures prove this converter and the paired preset describes it.
+    for(const native of resources.regexPacks||[]){const r=native.protocolResource;if(!r||!r.schema.rootOrder.every(tag=>preset.content.includes('<'+tag+'>')))continue;
+     if(MimaRegexEngine.protocolDisplayPacks([pack],r)[0]===pack)continue;
+     schema=r.schema;legacySemantic={compatibilityPackIds:r.compatibilityPackIds||[],compatibilityDecoders:r.compatibilityDecoders||[]};break;
+    }
+   }
+   schema ||= templateSchema(preset.content,{terminal:pack.compactContract?.terminal||''});
+   if(schema.kind==='semantic'&&schema.rootOrder.some(tag=>!preset.content.includes('<'+tag+'>')))continue;
+   candidates.push({pack,preset,schema,...(legacySemantic?{legacySemantic}:{})});
+  }catch(_){}
+  return candidates;
+ }
+ function legacyEvidence(session,message,candidates=[]){
+  const metadata=message?.metadata,source=String(message?.content??'');
+  if(metadata?.replyProtocolRef===null||metadata?.replyProtocolRef||metadata?.displayAppliedPackIds?.length)return {sources:[],frozenSource:false,missingSource:false};
+  const saved=(metadata?.legacyProtocolCandidateRefs||[]).map(id=>(session?.displayProtocols||[]).find(row=>row.id===id)).filter(Boolean).map(row=>({...row.contract,snapshotId:row.id}));
+  const sources=[...saved,...candidates.filter(c=>!saved.some(v=>v.pack.id===c.pack.id&&v.preset.id===c.preset.id))].filter(c=>legacySourceMatches(source,c.schema));
+  return {sources,frozenSource:(session?.displayProtocols||[]).some(record=>legacySourceMatches(source,record.contract?.schema)),missingSource:reservedSource(source)};
+ }
  function readMessage(session,message,options={}){
   const ref=message?.metadata?.replyProtocolRef,source=String(message?.content??'');
   const unknown=description=>({ok:false,text:options.narrativeOnly?'':source,issues:[{description}],...(options.narrativeOnly?{narrativeWarning:description+'，正文范围无法确认，本条已跳过'}:{})});
-  const protocolLike=looksProtocol(source)||options.narrativeOnly&&(/^\s*(?:<(?:环境|剧情正文|档案)(?=\s|>)|[【［\[]\/?MIMA[\w-]*[】］\]])/u.test(source)||/^\s*[【［\[][\p{L}\p{N}_-]+[】］\]]\s*\r?\n\s*[0-9０-９]{2}\s*[¦|｜ǀ∣│┃]/u.test(source));
-  if(!ref)return options.annotateUnknown&&protocolLike?unknown('此历史消息未记录配套格式'):null;
+  if(!ref){
+   if(!options.annotateUnknown)return null;
+   const evidence=legacyEvidence(session,message,options.legacyCandidates);
+   return evidence.sources.length||evidence.frozenSource||evidence.missingSource?unknown('此历史消息未记录配套格式'):null;
+  }
   const version=session?.displayProtocols?.find(row=>row.id===ref);
   if(!version)return unknown('存档缺少原格式版本');
-  const schema=version.contract.schema;
-  return schema?(options.structureOnly?inspect(source,schema):readable(source,schema,options)):
-    options.annotateUnknown&&protocolLike?unknown('旧版配对未记录栏位定义'):null;
+  const schema=version.contract?.schema;
+  if(schema)return options.structureOnly?inspect(source,schema):readable(source,schema,options);
+  // Older non-numbered HTML contracts can still use the HTML projector.
+  const evidence=legacyEvidence(session,{...message,metadata:{...message.metadata,replyProtocolRef:undefined}},options.legacyCandidates);
+  return options.annotateUnknown&&(evidence.sources.length||evidence.frozenSource||evidence.missingSource)?unknown('旧版配对未记录栏位定义'):null;
  }
- window.MimaShortProtocol={isSource,templateSchema,verifySchema,inspect,readable,readMessage,replaceField,addRecord};
+ window.MimaShortProtocol={isSource,legacyCandidates,legacyEvidence,templateSchema,verifySchema,inspect,readable,readMessage,replaceField,addRecord};
 })();

@@ -21,3 +21,7 @@
 #mima-play-origins{min-height: calc(64px * var(--mima-component-unit));white-space:pre-wrap}
 #compat-lab #compat-primary-actions #mima-compat-toolbox-open{order:2;margin-left:0}
 #compat-lab #compat-primary-actions #mima-compat-toolbox-open+#compat-send{margin-left:0}
+
+/* Keep tool controls compact without changing the composer trigger or theme colors. */
+#mima-play-tools :is(.mima-play-toolbar,.mima-play-actions,.mima-play-tabs,.mima-play-head,.mima-play-note)>button{flex:0 0 auto;width:auto;min-width:0;min-height:calc(30px * var(--mima-component-unit));height:auto;padding:calc(4px * var(--mima-component-unit)) calc(9px * var(--mima-component-unit));font-size:calc(.82rem * var(--mima-component-unit));line-height:1.25;border-radius:calc(8px * var(--mima-component-unit));white-space:nowrap;}
+#mima-play-tools :is(.mima-play-toolbar,.mima-play-actions,.mima-play-tabs){gap:calc(5px * var(--mima-component-unit));}#mima-play-tools .mima-play-head{padding:calc(8px * var(--mima-component-unit)) calc(12px * var(--mima-component-unit));}#mima-play-tools .mima-play-head h2{font-size:calc(1rem * var(--mima-component-unit));}#mima-play-tools .mima-play-tabs{padding:calc(6px * var(--mima-component-unit)) calc(12px * var(--mima-component-unit));}#mima-play-tools .mima-play-row{padding:calc(8px * var(--mima-component-unit));margin:calc(5px * var(--mima-component-unit)) 0;}#mima-play-tools .mima-play-search{flex:1 1 140px;min-width:0;min-height:calc(30px * var(--mima-component-unit));}

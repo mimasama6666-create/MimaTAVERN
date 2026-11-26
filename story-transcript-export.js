@@ -28,17 +28,18 @@
     }
     return unknown();
   }
-  function build(session,{narrativeOnly=false}={}){
+  function build(session,{narrativeOnly=false,resources}={}){
     if(!session||!Array.isArray(session.messages))throw new Error('E_TRANSCRIPT_SOURCE_UNVERIFIED: 剧情消息列表无法核实，未生成不完整的导出');
     if(!root.MimaHistoryHtmlProjection?.project)throw new Error('E_TRANSCRIPT_PROJECTOR_UNAVAILABLE: 剧情 HTML 净化器尚未就绪');
     const messages=[],warnings=[];
+    const legacyCandidates=root.MimaShortProtocol?.legacyCandidates(session,resources)||[];
     for(const [sourceIndex,m] of session.messages.entries()){
       if(!m||!['assistant','user'].includes(m.role))continue;
       const original=m.role==='user'&&typeof m.rawContent==='string'?m.rawContent:m.content;
       if(typeof original!=='string')throw new Error('E_TRANSCRIPT_CONTENT_UNVERIFIED: 剧情正文不是字符串，已停止导出');
       let content=original,warning='';
       if(m.role==='assistant'){
-        const short=root.MimaShortProtocol?.readMessage(session,m,{narrativeOnly,annotateUnknown:true});
+        const short=root.MimaShortProtocol?.readMessage(session,m,{narrativeOnly,annotateUnknown:true,legacyCandidates});
         if(short){
           content=short.text;
           if(!short.ok||short.narrativeWarning)warning=short.narrativeWarning||(narrativeOnly?'格式不完整，仅导出可确认正文':short.issues[0]?.description||'栏位未完整识别，已保留原文');

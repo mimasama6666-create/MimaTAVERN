@@ -98,3 +98,14 @@
  height:calc(var(--mima-viewport-height,100dvh) / var(--mima-legacy-coordinate-scale,.8));
 }
 :root[data-mima-density-coordinates="components"] #compat-lab .tavern-story-content{zoom:1}
+
+/* Compact story-list appearance switch, shared with the existing appearance setting. */
+.session-drawer .drawer-footer>.mima-drawer-color{grid-column:1/-1;display:flex;align-items:center;gap:calc(5px * var(--mima-component-unit));min-width:0;padding:0 0 calc(4px * var(--mima-component-unit));font-size:calc(.8rem * var(--mima-component-unit));}
+.mima-drawer-color>span{color:var(--muted);white-space:nowrap;margin-right:auto}.session-drawer .mima-drawer-color>button{flex:0 1 auto;min-width:0;min-height:calc(30px * var(--mima-component-unit));padding:calc(4px * var(--mima-component-unit)) calc(8px * var(--mima-component-unit));font-size:inherit;line-height:1.25;white-space:nowrap;border-radius:calc(9px * var(--mima-component-unit));}.mima-drawer-color>button[aria-pressed=true]{box-shadow:inset 0 0 0 1px currentColor;font-weight:600;}
+
+/* Message editing: use the existing dialog height, never enlarge typography. */
+#editor-modal[data-editor-type="message"] #editor-body{display:flex;flex-direction:column;gap:calc(8px * var(--mima-component-unit));min-height:0;}
+#editor-modal[data-editor-type="message"] #editor-body>.form-label,
+#editor-modal[data-editor-type="message"] #editor-body>.mima-template-choice,
+#editor-modal[data-editor-type="message"] #editor-body>.helper{flex:0 0 auto;margin:0;}
+#editor-modal[data-editor-type="message"] #message-edit-content.field{flex:1 0 calc(140px * var(--mima-component-unit));height:auto;min-height:calc(140px * var(--mima-component-unit));max-height:none;resize:none;box-sizing:border-box;overflow-y:auto;}

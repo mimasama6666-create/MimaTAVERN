@@ -2,7 +2,7 @@
 (()=>{'use strict';
  const groups=[['story','剧情',['roles','context','memory','prompt']],['library','资料库',['png-resources','worldbook','presets','regex','templates']],['appearance','外观',['appearance']],['connection','连接',['api']],['tools','管理',['data','diagnostics','performance','updates']]];
  const searchIndex=[
- ['角色与用户人设','roles','角色 persona 面具 挂载 开场白'],['上下文与模型容量','context','历史 窗口 保留 裁剪 温度'],['输入与历史格式','context','输入语义 历史html 纯文本','ctx-airp-mode'],['状态栏与HTML检查','context','html 选择器 短协议 正则 合同 完整性','ctx-complete-html'],['记忆与摘要','memory','核心 事实 总结 滚动 手动恢复'],['世界书','worldbook','关键词 常驻 条目'],['预设','presets','提示词 规则 风格'],['正则转换与预览','regex','regex 美化 状态栏 助手 测试'],['设置模板','templates','默认 模板 配置'],['角色卡资源解析','png-resources','png 导入 sillytavern'],['本地字体管理','appearance','字体 ttf ttc otf woff 补字 批量 字重','mima-local-fonts'],['字体与阅读排版','appearance','字号 行距 字体 预览 正文','mima-font-settings'],['网络字体管理','appearance','字体 链接 url','mima-remote-fonts'],['CSS与主题','appearance','css 主题 日夜 夜间 美化 布局 工坊'],['界面显示比例','appearance','大小 密度 缩放 80 100','mima-ui-density'],['API连接与模型','api','接口 地址 key 模型 流式 tokens'],['提示词检查','prompt','prompt 实际请求 注入'],['备份与恢复','data','数据 备份 导入 导出 云端 github hf'],['故障诊断','diagnostics','坏回复 错误 日志 恢复 html'],['性能检查','performance','压力 卡顿 运行'],['更新说明','updates','版本 更新 公告']
+ ['角色与用户人设','roles','角色 persona 面具 挂载 开场白'],['上下文与模型容量','context','历史 窗口 保留 裁剪 温度'],['输入与历史格式','context','输入语义 历史html 纯文本','ctx-airp-mode'],['状态栏与HTML检查','context','html 选择器 短协议 正则 合同 完整性','ctx-complete-html'],['记忆与摘要','memory','核心 事实 总结 滚动 手动恢复'],['世界书','worldbook','关键词 常驻 条目'],['预设','presets','提示词 规则 风格'],['正则转换与预览','regex','regex 美化 状态栏 助手 测试'],['自定义标签与结尾标签','regex','语义标签 自定义标签 结尾 结束标记 协议','regex-contract-pack'],['设置模板','templates','默认 模板 配置'],['角色卡资源解析','png-resources','png 导入 sillytavern'],['本地字体管理','appearance','字体 ttf ttc otf woff 补字 批量 字重','mima-local-fonts'],['字体与阅读排版','appearance','字号 行距 字体 预览 正文','mima-font-settings'],['网络字体管理','appearance','字体 链接 url','mima-remote-fonts'],['CSS与主题','appearance','css 主题 日夜 夜间 美化 布局 工坊'],['界面显示比例','appearance','大小 密度 缩放 80 100','mima-ui-density'],['API连接与模型','api','接口 地址 key 模型 流式 tokens'],['提示词检查','prompt','prompt 实际请求 注入'],['备份与恢复','data','数据 备份 导入 导出 云端 github hf'],['故障诊断','diagnostics','坏回复 错误 日志 恢复 html'],['性能检查','performance','压力 卡顿 运行'],['更新说明','updates','版本 更新 公告']
  ];
  const foldStates=new Map();let observer=null;
  const $=id=>document.getElementById(id);
@@ -44,7 +44,7 @@
  function enhance(tab){
   const root=$('settings-content');if(!root||!root.firstElementChild)return;const first=root.firstElementChild;if(first.dataset.mimaLayout===tab)return;first.dataset.mimaLayout=tab;
   if(tab==='context')context(root);if(tab==='memory')memory(root);
-  if(tab==='templates')for(const d of root.querySelectorAll('.mima-template-section')){const key='template-'+d.querySelector('summary')?.textContent.trim();d.open=foldStates.get(key)||false;d.addEventListener('toggle',()=>foldStates.set(key,d.open));}
+  if(tab==='templates')for(const d of root.querySelectorAll('.mima-template-section')){const key='template-'+d.querySelector('summary')?.textContent.trim();d.open=foldStates.has(key)?foldStates.get(key):d.dataset.defaultOpen==='true';d.addEventListener('toggle',()=>foldStates.set(key,d.open));}
  }
  window.MimaSettingsLayout={directory,enhance};
 })();

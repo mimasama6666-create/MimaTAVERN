@@ -35,7 +35,11 @@
  function serializeRule(rule){if(rule.style){const text=restoredStyle(rule);if(rule.selectorText&&rule.cssRules?.length)return rule.selectorText+'{'+text+';'+[...rule.cssRules].map(serializeRule).join('\n')+'}';if(text!==rule.style.cssText){const header=rule.selectorText||rule.keyText||rule.cssText.slice(0,rule.cssText.indexOf('{'));return header+'{'+text+'}';}return rule.cssText;}if(rule.cssRules)return rule.cssText.slice(0,rule.cssText.indexOf('{'))+'{'+[...rule.cssRules].map(serializeRule).join('\n')+'}';return rule.cssText;}
  const sourceTag=document.createElement('style');sourceTag.id='mima-theme-canvas-source';document.head.append(sourceTag);
  const mediaQueries=new Map();let backgroundAnimations=[];
- let inlineBackground='',probeCss='',catalogSelectors=[],catalogVariables=new Set(),catalogColor=false,dependenciesDirty=false;
+ let inlineBackground='',probeCss='',catalogSelectors=[],catalogVariables=new Set(),catalogColor=false,dependenciesDirty=false,nativeStructure=false;
+ // CSSOM expands a variable shorthand into longhands whose individual values
+ // can be empty. Keep the actual shorthand and authored background declarations.
+ const backgroundText=text=>layers(text||'',';').filter(part=>/^background(?:-|\s*:)/i.test(layers(part,':')[0].trim()+':')).join(';');
+ const inlinePaint=el=>backgroundText(el.getAttribute('style')||el.style.cssText);
  const refs=value=>[...String(value).matchAll(/var\(\s*(--[\w-]+)/g)].map(m=>m[1]);
  function sourceRules(){
   if(!stylesDirty){if(dependenciesDirty)refreshDependencies();updateInline();return;}stylesDirty=false;stats.catalogBuilds++;
@@ -96,33 +100,41 @@
   const values=[...catalogSelectors.flatMap(row=>row.values),...inline.filter(([name])=>name==='color'||name.startsWith('--'))];
   function add(value){for(const name of refs(value))variableDependencies.add(name);if(/\bcurrentColor\b/i.test(value))colorDependency=true;}
   for(const [name,value]of inline)if(/^background(?:-|$)|^--mima-keyboard-root-/.test(name))add(value);
+  for(const el of [root,body]){add(el.style.getPropertyValue('background'));add(inlinePaint(el));}
   for(const row of catalogSelectors)for(const [name,value]of row.values)if(name.startsWith('--mima-keyboard-root-'))add(value);
   let previous;do{previous=variableDependencies.size+Number(colorDependency);for(const [name,value]of values)if(variableDependencies.has(name)||colorDependency&&name==='color')add(value);}while(previous!==variableDependencies.size+Number(colorDependency));
   paintSelectors=catalogSelectors.filter(row=>row.background||row.pseudo||row.contract||row.context||colorDependency&&row.color||row.values.some(([name])=>variableDependencies.has(name)));
+  // An injected body child cannot preserve structural selector truth. In
+  // that narrow case let the native document keep painting, as for native
+  // composited decorations; neither a probe nor a backing changes its tree.
+  nativeStructure=paintSelectors.some(row=>/:(?:first|last|only|nth|nth-last)-(?:child|of-type)\b|:empty\b|:has\([^)]*[+~]/i.test(row.selector));
   lastMatches=matchesKey();
   updateProbes();
  }
  // Native selector invalidation, including descendant changes, drives tiny
  // layout probes. No observer or scan of the story subtree is installed.
  function updateProbes(){
-  const selectors=[...new Set(paintSelectors.map(row=>row.selector).filter(selector=>/:has\(/i.test(selector)))];
+  const selectors=nativeStructure?[]:[...new Set(paintSelectors.map(row=>row.selector).filter(selector=>/:has\(/i.test(selector)))];
   if(selectors.length===probeSelectors.length&&selectors.every((v,i)=>v===probeSelectors[i]))return;
   probeSelectors=selectors;probeObserver.disconnect();probeHost?.remove();probeHost=null;probeCss='';
   if(!selectors.length)return;
   probeHost=document.createElement('mima-canvas-dependency-probes');probeHost.setAttribute('aria-hidden','true');
   probeHost.style.cssText='all:initial!important;display:block!important;position:fixed!important;inset:0 auto auto 0!important;width:0!important;height:0!important;contain:strict!important;overflow:hidden!important;visibility:hidden!important;pointer-events:none!important';
+  // Keep observation inside the existing canvas backing. Shadow children
+  // cannot become additional matches of the author's document selectors.
+  const shadow=probeHost.attachShadow({mode:'closed'});
   selectors.forEach((selector,i)=>{
    const probe=document.createElement('mima-canvas-dependency-probe');probe.dataset.mimaCanvasProbe=String(i);
-   probe.style.cssText='all:initial!important;display:block!important;position:absolute!important;box-sizing:content-box!important;width:var(--mima-canvas-probe-w,1px)!important;height:var(--mima-canvas-probe-h,1px)!important';
-   probeHost.append(probe);
-   const tail='>:where(mima-canvas-dependency-probes)>:where([data-mima-canvas-probe="'+i+'"])';
-   probeCss+=':is('+selector+')'+tail+'{--mima-canvas-probe-w:2px!important}'+':is('+selector+')>body'+tail+'{--mima-canvas-probe-h:2px!important}';
+   probe.style.cssText='all:initial!important;display:block!important;position:absolute!important;box-sizing:content-box!important;width:var(--mima-canvas-probe-w-'+i+',1px)!important;height:var(--mima-canvas-probe-h-'+i+',1px)!important';
+   shadow.append(probe);
+   const tail='>:where(#mima-keyboard-theme-underlay)>:where(mima-canvas-dependency-probes)';
+   probeCss+=':is('+selector+')'+tail+'{--mima-canvas-probe-w-'+i+':2px!important}'+':is('+selector+')>body'+tail+'{--mima-canvas-probe-h-'+i+':2px!important}';
    probeObserver.observe(probe);
   });
-  body.append(probeHost);
+  ensureBacking().append(probeHost);
  }
  function updateInline(){
-  inlineBackground=layers(body.style.cssText,';').filter(part=>/^background(?:-|\s*:)/i.test(layers(part,':')[0].trim()+':')).join(';');
+  inlineBackground=inlinePaint(body);
   const css=cachedCss+probeCss+(inlineBackground?'body > :where(#mima-keyboard-theme-underlay) > .mima-theme-canvas-surface{'+inlineBackground+';}':'');
   if(sourceTag.textContent!==css){rawCache.delete(sourceTag);sourceTag.textContent=css;}
  }
@@ -162,14 +174,16 @@
    geometryOf.set(proxy,{css:plainStyle(css),position:css.position});proxy.style.setProperty('position','absolute','important');
    proxy.dataset.mimaCanvasKind=eligible;proxy.dataset.mimaCanvasZ=css.zIndex==='auto'?'0':css.zIndex;root.setAttribute('data-mima-canvas-'+side,'');
   }
-  if(!proxies.size&&!grouped){backing?.remove();backing=null;surface=null;root.removeAttribute('data-mima-canvas-overlay');}else root.setAttribute('data-mima-canvas-overlay','');
+  if(!proxies.size&&!grouped&&!probeHost){backing?.remove();backing=null;surface=null;root.removeAttribute('data-mima-canvas-overlay');}else root.setAttribute('data-mima-canvas-overlay','');
   // Align existing CSS animation timelines once at an appearance commit.
   for(const row of native){for(const a of row.proxy.getAnimations()){const old=row.animations.find(x=>x.animationName===a.animationName);if(old&&old.currentTime!==null)a.currentTime=old.currentTime;}reconcileBackground(row.proxy,row.css);}
  }
  const ignoredSheet=node=>node===sourceTag||node?.matches?.('[data-mima-display-sheet],[data-mima-display-guard],[data-mima-display-boundary-layer]');
  const styleNode=node=>node?.nodeType===1&&node.matches?.('style,link[rel="stylesheet"]')&&!ignoredSheet(node);
  function changedClasses(oldValue,node){const old=new Set(String(oldValue||'').split(/\s+/)),now=new Set(node.classList);return [...new Set([...old,...now])].filter(name=>name&&old.has(name)!==now.has(name)&&(!ignoredClass.test(name)||broadClassDependency||dependencies[node===root?'root':'body'].has(name)));}
- function styleChanged(record){const before=document.createElement('span').style;before.cssText=record.oldValue||'';const now=record.target.style;return [...new Set([...before,...now])].some(name=>(/^background(?:-|$)|^--mima-keyboard-root-/.test(name)||record.target===body&&/^(?:opacity|isolation|filter|backdrop-filter|transform|perspective|contain|position|z-index|zoom)$/.test(name)||variableDependencies.has(name)||colorDependency&&name==='color')&&(before.getPropertyValue(name)!==now.getPropertyValue(name)||before.getPropertyPriority(name)!==now.getPropertyPriority(name)));}
+ function styleChanged(record){const before=document.createElement('span').style;before.cssText=record.oldValue||'';const now=record.target.style;
+  if(before.getPropertyValue('background')!==now.getPropertyValue('background')||before.getPropertyPriority('background')!==now.getPropertyPriority('background')||backgroundText(record.oldValue)!==inlinePaint(record.target))return true;
+  return [...new Set([...before,...now])].some(name=>(/^background(?:-|$)|^--mima-keyboard-root-/.test(name)||record.target===body&&/^(?:opacity|isolation|filter|backdrop-filter|transform|perspective|contain|position|z-index|zoom)$/.test(name)||variableDependencies.has(name)||colorDependency&&name==='color')&&(before.getPropertyValue(name)!==now.getPropertyValue(name)||before.getPropertyPriority(name)!==now.getPropertyPriority(name)));}
  function matchesKey(){return paintSelectors.map(row=>{try{return (root.matches(row.selector)?'r':'')+(body.matches(row.selector)?'b':'');}catch(_){return '';}}).join('|');}
  function relevant(record){
   if(record.type==='attributes'){
@@ -225,6 +239,16 @@
   root.removeAttribute('data-mima-canvas-ready');root.removeAttribute('data-mima-canvas-before');root.removeAttribute('data-mima-canvas-after');
   // Sample authored sources with our own paint substitution inactive. This is
   // one synchronous appearance transaction, never a viewport/animation read.
+  if(nativeStructure){
+   // Restore the real document before any selector or paint sampling. Native
+   // CSS then handles descendant and positional state changes without polling.
+   for(const row of backgroundAnimations)row.animation.cancel();backgroundAnimations=[];
+   backing?.remove();backing=null;surface=null;proxies.clear();grouped=false;lastPaint='';
+   root.removeAttribute('data-mima-canvas-overlay');
+   const contract=styleOf(root).getPropertyValue('--mima-keyboard-root-contract').trim()==='1';
+   root.setAttribute('data-mima-canvas-source',contract?'contract':'body-native');
+   root.setAttribute('data-mima-canvas-ready','');lastMatches=matchesKey();stats.syncs++;return;
+  }
   const html=styleOf(root),contract=html.getPropertyValue('--mima-keyboard-root-contract').trim()==='1';
   const bs=styleOf(body);
   const paint=JSON.stringify([stylesDirty,sourceTag.textContent,root.getAttribute('data-mima-effective-mode'),...fields.map(name=>html.getPropertyValue('background-'+name)),...['contract',...fields].map(name=>html.getPropertyValue('--mima-keyboard-root-'+name)),...fields.map(name=>bs.getPropertyValue('background-'+name)),...['isolation','opacity','transform','perspective','filter','position','zIndex','contain','zoom'].map(name=>bs[name]),...['before','after'].map(side=>{const css=styleOf(body,'::'+side);return ['display','visibility','content','backgroundImage','backgroundColor','opacity','position','zIndex','width','height','top','right','bottom','left','transform','animationName','boxShadow','borderTopWidth','borderRightWidth','borderBottomWidth','borderLeftWidth','mixBlendMode','backdropFilter','webkitBackdropFilter'].map(name=>css[name]);})]);
@@ -252,7 +276,7 @@
    surface.style.zIndex=bodyContext?'-1':'1';
    surface.toggleAttribute('data-mima-canvas-contract',contract);
    source+='-layered';root.setAttribute('data-mima-canvas-overlay','');
-  }else{surface?.remove();surface=null;if(!proxies.size){backing?.remove();backing=null;root.removeAttribute('data-mima-canvas-overlay');}}
+  }else{surface?.remove();surface=null;if(!proxies.size&&!probeHost){backing?.remove();backing=null;root.removeAttribute('data-mima-canvas-overlay');}}
   for(const name of fields)root.style.removeProperty('--mima-kb-canvas-'+name);
   updateGeometry();syncBackgroundAnimations();if(surface&&!contract)reconcileBackground(surface,bs);root.setAttribute('data-mima-canvas-source',source);root.setAttribute('data-mima-canvas-ready','');
  }

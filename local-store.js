@@ -1151,7 +1151,7 @@
             if(sessionGenerationUnsettled(row))
               throw Error('E_BULK_DELETE_GENERATING: 有剧情正在使用选中资源生成，整批取消');
             if(kind==='css')next={...row,customCssId:null,customCssEnabled:false};
-            else if(kind==='presets'){const frozen=migrated.get(row.id);if(frozen&&frozen.recordRevision!==row.recordRevision)throw Error('E_LEGACY_DELETE_CONFLICT');next={...(frozen||row),presetIds:unlinkIds(row.presetIds)};}
+            else if(kind==='presets'){const frozen=migrated.get(row.id);if(frozen&&frozen.recordRevision!==row.recordRevision)throw Error('E_LEGACY_DELETE_CONFLICT');next={...(frozen||row),presetIds:unlinkIds(row.presetIds)};const binding=next.promptSettings?.displayContract;if(binding&&selected.has(binding.presetId)){next.regexPackIds=(next.regexPackIds||[]).filter(id=>id!==binding.packId);next.promptSettings={...next.promptSettings};delete next.promptSettings.displayContract;}}
             else next={...row,worldbookIds:unlinkIds(row.worldbookIds)};
             next.recordRevision=meta.recordRevision+1;next.updatedAt=stamp;
             kv.put(next,SESSION_PREFIX+meta.id);changedSessions++;
@@ -1220,8 +1220,7 @@
             Array.isArray(config[key])&&config[key].some(id=>selected.has(id));
           if(!linked)return template;
           updatedTemplates++;
-          return {...template,config:kind==='css'?{...config,customCssId:null,customCssEnabled:false}:
-            {...config,[key]:unlinkIds(config[key])},revision:(Number(template.revision)||0)+1,updatedAt:stamp};
+          const nextConfig=kind==='css'?{...config,customCssId:null,customCssEnabled:false}:{...config,[key]:unlinkIds(config[key])};const binding=nextConfig.promptSettings?.displayContract;if(kind==='presets'&&binding&&selected.has(binding.presetId)){nextConfig.regexPackIds=(nextConfig.regexPackIds||[]).filter(id=>id!==binding.packId);nextConfig.promptSettings={...nextConfig.promptSettings};delete nextConfig.promptSettings.displayContract;}return {...template,config:nextConfig,revision:(Number(template.revision)||0)+1,updatedAt:stamp};
         });
         if(updatedTemplates||rebase){
           const nextTemplateRev=(oldTemplate?.storeRevision??oldBaseRev)+(rebase?1:0)+(updatedTemplates?1:0);
