@@ -7200,6 +7200,7 @@ async function renderLiveStreamText(){
     try{
         const projection=renderMode==='safe_html'?MimaStandalone.nativeDisplayProjection(st.owner.sessionId,raw,{protocolRef:st.owner.protocolRef,protocolOwner:'turn:'+st.owner.sessionId+':'+st.owner.generationId+':'+st.owner.generationAttempt}):null;
         if(projection){
+          st.safeHtmlStream=null; // native DOM ownership supersedes any previous ordinary suffix cache
           st.contentNode.className='msg-content tavern-story-content live-stream-content safe-html-content';r19PatchNativeProjection(st.contentNode,projection,token,st);
           st.paints=(st.paints||0)+1;st.lastPaintDurationMs=performance.now()-started;
           st.totalPaintDurationMs=(st.totalPaintDurationMs||0)+st.lastPaintDurationMs;st.maxPaintDurationMs=Math.max(st.maxPaintDurationMs||0,st.lastPaintDurationMs);
@@ -8328,8 +8329,8 @@ function reviewSemanticProtocol(message,{report,schema,expectedRevision},ticket)
  const id=ticket.sessionId,path='/sessions/'+encodeURIComponent(id)+'/messages/'+encodeURIComponent(message.id)+'/short-protocol';
  const own=editorState={type:'short-protocol',sessionId:id,msg:message,saving:false},body=qs('editor-body');body.replaceChildren();
  qs('editor-title').textContent='语义标签检查';qs('editor-eyebrow').textContent='按记录与字段修改原文';
- const status=document.createElement('p');status.className='helper';status.textContent=report.ok?'已核对 '+report.records+' 条记录':'发现 '+report.issues.length+' 处缺漏或格式错误';body.append(status);
- const list=document.createElement('ul');for(const item of report.issues){const li=document.createElement('li');li.textContent=(item.path||item.page||'')+' · '+item.description;list.append(li);}body.append(list);
+ const status=document.createElement('p');status.className='helper';const localIssues=report.localIssues||[];status.textContent=(report.ok?'已核对 '+report.records+' 条记录':'发现 '+report.issues.length+' 处'+(schema.local?'局部标签':'完整格式')+'缺漏或错误')+(localIssues.length?'；另有 '+localIssues.length+' 处局部标签提示，不影响完整格式检查':'');body.append(status);
+ const list=document.createElement('ul');for(const item of [...report.issues,...localIssues]){const li=document.createElement('li');li.textContent=(item.localRoot?'局部标签 '+item.localRoot:(item.path||item.page||''))+' · '+item.description;list.append(li);}body.append(list);
  const record=document.createElement('select'),field=document.createElement('select'),value=document.createElement('textarea');
  record.className=field.className='field';value.className='field textarea';value.rows=4;
  for(const row of report.editableRows||report.recordRows)record.add(new Option(row.path+' · '+(row.fields.find(f=>f.name==='姓名')?.text||row.id.split(':').at(-1)),String(row.start)));

@@ -79,6 +79,20 @@
   return verify(schema);
  }
  function localRoot(schema,tag){return (schema.local?schema.rootOrder:schema.localRoots||[]).includes(tag);}
+ // HTML is ordinary source, not a semantic record. Classification here only
+ // assigns narrative ownership; all markup still goes through StoryDisplay.
+ const htmlTags=new Set('a abbr address article aside b bdi bdo blockquote br caption cite code col colgroup data dd del details dfn div dl dt em figcaption figure footer h1 h2 h3 h4 h5 h6 header hr i img ins kbd li main mark menu nav ol p picture pre q rp rt ruby s samp section small span strong sub summary sup table tbody td tfoot th thead time tr u ul var wbr style script iframe object embed form input button select textarea option link meta base svg math video audio source track canvas noscript template mima-style html head body'.split(' '));
+ const narrativeHtmlTags=new Set('a abbr b bdi bdo blockquote br cite code data del em h1 h2 h3 h4 h5 h6 hr i img ins kbd li mark ol p pre q rp rt ruby s samp small span strong sub sup time u ul var wbr div section article'.split(' '));
+ const htmlVoids=new Set('area base br col embed hr img input link meta param source track wbr'.split(' '));
+ const rawHtmlTags=new Set(['style','script','textarea','title','xmp','iframe','noembed','noframes','noscript']);
+ const statusHtml=/\b(?:mima-(?:current|gaze|bond|abyss|pulse|cocoon|echo|pets|nexus|status|custom-protocol)|c-(?:status|archive|panel))\b/i;
+ const htmlToken=/^<(\/)?([a-z][a-z0-9:-]*)(?=[\s/>])(?:[^<>"']|"[^"]*"|'[^']*')*>/i;
+ function confirmedLocal(node){return node.complete||node.bounded;}
+ function narrativeHtml(st,node){
+  const raw=st.raw.slice(node.rawStart,node.rawEnd);
+  // Do not import known status panels or ambiguous structured widgets into prose.
+  return narrativeHtmlTags.has(node.tag)&&![...raw.matchAll(/\bclass\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi)].some(m=>statusHtml.test(m[1]||m[2]||m[3]))&&!(['div','section','article'].includes(node.tag)&&/<(?:details|table|aside|form|mima-style)\b/i.test(raw));
+ }
  function createState(schema){
   verify(schema);
   const root={tag:'',path:'',kind:'root',children:[],rawStart:0,innerStart:0,complete:false};
@@ -94,7 +108,7 @@
   if(def?.kind==='record'&&def.fields.includes(tag))return {tag,path:parent.path+'/@'+tag,kind:'field'};
   return null;
  }
- function matchesClose(st,index,tag){const node=st.stack[index];if(!node||index===0)return false;if(node.kind==='unknown')return node.sourceTag===tag;return childDefinition(st,st.stack[index-1],tag)?.path===node.path;}
+ function matchesClose(st,index,tag){const node=st.stack[index];if(!node||index===0)return false;if(node.kind==='unknown')return node.sourceTag===tag;if(node.kind==='html')return node.tag===tag.toLowerCase();return childDefinition(st,st.stack[index-1],tag)?.path===node.path;}
  const separators=/^[\s\u200B\u2060:：|¦｜,，;；、*_`]*$/u;
  function structuralText(st,node,start,end){const raw=st.raw.slice(start,end),def=definition(st,node);if(!raw.trim())return true;if(def?.structuralSeparators!==true)return false;if(separators.test(raw))return true;const next=node.children.find(child=>child.rawStart===end&&child.kind==='field');if(!next)return false;const match=raw.match(/^([\s\S]*?)([\p{L}\p{N}_-]+)[\s\u200B\u2060]*[:：][\s\u200B\u2060]*$/u);return !!match&&separators.test(match[1])&&canonicalTag(def,match[2])===next.tag;}
  function addText(st,start,end){
@@ -105,13 +119,65 @@
  }
  function append(st,delta){
   st.raw+=String(delta??'');st.version++;
-  const raw=st.raw,issue=(code,description,node)=>st.diagnostics.push({code,description,start:node.rawStart,record:node.stableId});
+  const raw=st.raw,issue=(code,description,node)=>st.diagnostics.push({code,description,start:node.rawStart,record:node.stableId,...(node.localOwner?{localRoot:node.localOwner}:{}),path:node.path});
   let pos=st.cursor;
   while(pos<raw.length){
-   const start=raw.indexOf('<',pos);
+   let start=raw.indexOf('<',pos);
+   const prose=st.stack.at(-1);
+   if(prose.kind==='root'&&st.schema.local){
+    // A code sample is ordinary narrative, never a request to mount a card.
+    // Keep code delimiters in the source, including when a run spans chunks.
+    if(st.codeRun){
+     const mark=st.codeRun,at=raw.indexOf(mark,pos),line=mark.length<3?raw.indexOf('\n',pos):-1;
+     if(line>=0&&(at<0||line<at)){addText(st,pos,line+1);pos=line+1;st.codeRun=null;continue;}
+     if(at<0){const keep=Math.min(mark.length-1,raw.length-pos);addText(st,pos,raw.length-keep);pos=raw.length-keep;break;}
+     addText(st,pos,at+mark.length);pos=at+mark.length;st.codeRun=null;continue;
+    }
+    const tick=raw.indexOf('`',pos);
+    const tilde=raw.indexOf('~~~',pos);
+    const next=[tick,tilde].filter(n=>n>=0&&(start<0||n<start)).sort((a,b)=>a-b)[0];
+    if(next!==undefined){
+     const mark=raw[next],run=new RegExp('^'+mark+'+').exec(raw.slice(next))[0];
+     if(next+run.length===raw.length){addText(st,pos,next);pos=next;break;}
+     if(mark==='`'||/^ {0,3}$/.test(raw.slice(raw.lastIndexOf('\n',next-1)+1,next))){addText(st,pos,next+run.length);pos=next+run.length;st.codeRun=run;continue;}
+    }
+   }
    if(start<0){addText(st,pos,raw.length);pos=raw.length;break;}
    addText(st,pos,start);
-   const rest=raw.slice(start),m=/^<(\/)?([\p{L}_][\p{L}\p{N}_-]*)\s*>/u.exec(rest);
+   const rest=raw.slice(start),parent=st.stack.at(-1);
+   // Parse ordinary HTML only outside semantic records. Keep its entire
+   // source interval (including attributes and void tags) opaque to local tags.
+   if(parent.kind==='root'||parent.kind==='html'){
+    if(parent.kind==='html'&&rawHtmlTags.has(parent.tag)&&!new RegExp('^</'+parent.tag+'\\s*>','i').test(rest)){if(('</'+parent.tag+'>').startsWith(rest.toLowerCase())||new RegExp('^</'+parent.tag+'\\s*$','i').test(rest)){pos=start;break;}addText(st,start,start+1);pos=start+1;continue;}
+    if(rest.startsWith('<!--')){const end=raw.indexOf('-->',start+4);if(end<0){pos=start;break;}addText(st,start,end+3);pos=end+3;continue;}
+    const h=htmlToken.exec(rest),name=h?.[2].toLowerCase();
+    if(h&&htmlTags.has(name)&&(parent.kind==='html'||!childDefinition(st,parent,h[2]))){
+     const after=start+h[0].length;
+     if(h[1]){
+      let index=st.stack.length-1;while(index>0&&st.stack[index].kind==='html'&&st.stack[index].tag!==name)index--;
+      if(index>0&&st.stack[index].kind==='html'){
+       while(st.stack.length-1>index){const n=st.stack.pop();n.rawEnd=n.innerEnd=start;}
+       const n=st.stack.pop();n.complete=true;n.innerEnd=start;n.rawEnd=after;
+      }else addText(st,start,after);
+     }else{
+      const closed=htmlVoids.has(name)||/\/\s*>$/.test(h[0]);
+      const n={tag:name,kind:'html',path:parent.path+'/?'+name,rawStart:start,innerStart:after,rawEnd:after,innerEnd:after,children:[],complete:closed};
+      parent.children.push(n);if(!closed)st.stack.push(n);
+     }
+     pos=after;continue;
+    }
+    // Attribute-bearing tags split across chunks must not become bare text.
+    if(!h&&/^<\/?[a-z][a-z0-9:-]*(?:[\s/][^<>]*)?$/i.test(rest)){pos=start;break;}
+    if(parent.kind==='html'){
+     // A new semantic root outside an unclosed HTML element is an explicit
+     // boundary. An HTML element itself never owns a semantic record.
+     const candidate=/^<([\p{L}_][\p{L}\p{N}_-]*)\s*>/u.exec(rest);
+     if(candidate&&childDefinition(st,st.root,candidate[1])&&!localRoot(st.schema,candidate[1])&&!st.stack.some(n=>n.kind==='html'&&['code','pre'].includes(n.tag))){
+      while(st.stack.at(-1).kind==='html'){const n=st.stack.pop();n.rawEnd=n.innerEnd=start;}
+     }else{addText(st,start,start+1);pos=start+1;continue;}
+    }
+   }
+   const m=/^<(\/)?([\p{L}_][\p{L}\p{N}_-]*)\s*>/u.exec(rest);
    if(!m){
     // Only a still-valid partial tag can wait for another chunk. A literal
     // '<' must never consume the next real '</field>' while looking for '>'.
@@ -122,15 +188,18 @@
    const closing=!!m[1],tag=m[2],top=st.stack.at(-1);
    // A mounted local root may be used in narrative or at the outer level,
    // not to break out of a different field, record, or unknown HTML.
-   if(localRoot(st.schema,tag)&&top.kind!=='root'&&top.kind!=='prose'&&(top.kind==='unknown'||!localRoot(st.schema,st.stack[1]?.tag))&&!(closing?st.stack.some((n,i)=>matchesClose(st,i,tag)):childDefinition(st,top,tag))){addText(st,start,end+1);pos=end+1;continue;}
+   const hostIndex=top.localOwner?st.stack.findIndex((n,i)=>n.kind==='prose'&&st.stack[i+1]?.localOwner===top.localOwner):-1;
+   const hostClose=closing&&hostIndex>0&&matchesClose(st,hostIndex,tag);
+   const adjacentLocal=!closing&&localRoot(st.schema,tag)&&!!top.localOwner&&top.kind!=='field'&&top.kind!=='unknown';
+   if(localRoot(st.schema,tag)&&top.kind!=='root'&&top.kind!=='prose'&&!adjacentLocal&&(top.kind==='unknown'||!top.localOwner)&&!(closing?st.stack.some((n,i)=>matchesClose(st,i,tag)):childDefinition(st,top,tag))){addText(st,start,end+1);pos=end+1;continue;}
    // A terminal mentioned inside prose or a field is content, not a root close.
-   if((top.kind==='prose'||top.kind==='field'||top.kind==='record'&&!definition(st,top)?.fields.length)&&!matchesClose(st,st.stack.length-1,tag)&&closing){addText(st,start,end+1);pos=end+1;continue;}
+   if((top.kind==='prose'||top.kind==='field'||top.kind==='record'&&!definition(st,top)?.fields.length)&&!matchesClose(st,st.stack.length-1,tag)&&closing&&!hostClose){addText(st,start,end+1);pos=end+1;continue;}
    if(top.kind==='prose'&&!(closing&&matchesClose(st,st.stack.length-1,tag))&&!(!closing&&localRoot(st.schema,tag))){addText(st,start,end+1);pos=end+1;continue;}
    if(closing){
     let index=st.stack.length-1;while(index>0&&!matchesClose(st,index,tag))index--;
-    if(!index){addText(st,start,end+1);issue('unexpected_close','未配对的结束标签 '+tag,{rawStart:start});}
+    if(!index){addText(st,start,end+1);issue('unexpected_close','未配对的结束标签 '+tag,{rawStart:start,localOwner:top.localOwner||(localRoot(st.schema,tag)?tag:null)});}
     else{
-     while(st.stack.length-1>index){const node=st.stack.pop();node.rawEnd=start;node.innerEnd=start;issue('missing_close','缺少 </'+node.tag+'>',node);}
+     while(st.stack.length-1>index){const node=st.stack.pop();node.rawEnd=start;node.innerEnd=start;node.bounded=true;issue('missing_close','缺少 </'+node.tag+'>',node);}
      const node=st.stack.pop();node.complete=true;node.innerEnd=start;node.rawEnd=end+1;
     }
    }else{
@@ -138,10 +207,10 @@
     while(!def&&index>0){index--;def=childDefinition(st,st.stack[index],tag);}
     if(!def&&(top.kind==='field'||top.kind==='record'&&!definition(st,top)?.fields.length)){addText(st,start,end+1);pos=end+1;continue;}
     if(def){
-     while(st.stack.length-1>index){const node=st.stack.pop();node.rawEnd=start;node.innerEnd=start;issue('missing_close','缺少 </'+node.tag+'>',node);}
+     while(st.stack.length-1>index){const node=st.stack.pop();node.rawEnd=start;node.innerEnd=start;node.bounded=true;issue('missing_close','缺少 </'+node.tag+'>',node);}
     }
-    const parent=st.stack.at(-1),node={tag:def?.tag||tag,sourceTag:tag,path:def?.path||parent.path+'/?'+tag,kind:def?.kind||'unknown',rawStart:start,innerStart:end+1,children:[],complete:false,stableId:st.schema.id+':'+start};
-    parent.children.push(node);st.stack.push(node);
+    const owner=st.stack.at(-1),localOwner=owner.localOwner||(def&&localRoot(st.schema,def.tag)&&def.path==='/'+def.tag?def.tag:null),node={localOwner,tag:def?.tag||tag,sourceTag:tag,path:def?.path||owner.path+'/?'+tag,kind:def?.kind||'unknown',rawStart:start,innerStart:end+1,children:[],complete:false,stableId:st.schema.id+':'+start};
+    owner.children.push(node);st.stack.push(node);
     if(!def)issue('unknown_tag','未识别或位置不符的标签 '+tag,node);
    }
    pos=end+1;
@@ -163,10 +232,13 @@
  }
  const nodeValue=(st,node)=>decode(st.raw.slice(node.innerStart,node.innerEnd??st.raw.length));
  function report(st,{prefix=false,partial=false}={}){
-  const allRoots=st.root.children.filter(n=>n.kind!=='text');
+  const allRoots=st.root.children.filter(n=>n.kind!=='text'&&n.kind!=='html');
   const firstEnd=st.schema.local?-1:allRoots.find(n=>n.tag===st.schema.rootOrder.at(-1)&&n.complete)?.rawEnd??-1;
-  const issues=st.diagnostics.filter(x=>(firstEnd<0||x.start<firstEnd)&& (st.schema.local||!allRoots.some(n=>localRoot(st.schema,n.tag)&&x.start>=n.rawStart&&x.start<n.rawEnd))).map(x=>({...x})),roots=allRoots.filter(n=>(firstEnd<0||n.rawStart<firstEnd)&&(st.schema.local||!localRoot(st.schema,n.tag))),records=[],pages=[],containerFields=[],containers=[];
-  const add=(code,description,node,extra={})=>{if(!st.schema.local&&localRoot(st.schema,node?.path?.split('/')[1]))return;issues.push({code,description,start:node?.rawStart||0,record:node?.stableId,...extra});};
+  const issues=[],localIssues=[],roots=allRoots.filter(n=>(firstEnd<0||n.rawStart<firstEnd)&&(st.schema.local||!localRoot(st.schema,n.tag))),records=[],pages=[],containerFields=[],containers=[];
+  const issueKeys=new Set();
+  const pushIssue=row=>{const target=row.localRoot&&!st.schema.local?localIssues:issues,key=JSON.stringify([row.localRoot,row.code,row.start,row.description]);if(!issueKeys.has(key)){issueKeys.add(key);target.push(row);}};
+  for(const x of st.diagnostics)if(x.localRoot||(!st.schema.local&&(firstEnd<0||x.start<firstEnd)))pushIssue({...x});
+  const add=(code,description,node,extra={})=>pushIssue({code,description,start:node?.rawStart||0,record:node?.stableId,...(node?.localOwner?{localRoot:node.localOwner}:{}),...extra});
   const rootTags=roots.map(n=>n.tag);
   if(!st.schema.local&&rootTags.join('|')!==st.schema.rootOrder.join('|'))add('root_order','根栏目需按 '+st.schema.rootOrder.join(' → ')+' 各出现一次',roots[0]);
   function walk(node,pageTag=''){
@@ -210,29 +282,36 @@
     }
     records.push(row);let p=pages.find(p=>p.tag===page);if(!p){p={tag:page,records:[]};pages.push(p);}p.records.push(row);
    }
-   for(const child of node.children){if(child.kind==='text'&&(def.kind==='container'||def.kind==='record'&&def.fields.length)&&!structuralText(st,node,child.rawStart,child.rawEnd))add('unassigned_text','命名栏目或字段之外有未归属内容',child,{page,path:node.path});else if(child.kind!=='field')walk(child,page);}
+   for(const child of node.children){if(child.kind==='text'&&(def.kind==='container'||def.kind==='record'&&def.fields.length)&&!structuralText(st,node,child.rawStart,child.rawEnd))add('unassigned_text','命名栏目或字段之外有未归属内容',{...child,localOwner:node.localOwner},{page,path:node.path});else if(child.kind!=='field')walk(child,page);}
   }
   for(const root of st.root.children)if(roots.includes(root)||localRoot(st.schema,root.tag))walk(root);
   for(const row of containerFields){const page=pages.find(page=>page.tag===row.page);if(page){if(!page.extraFields)page.extraFields=[];page.extraFields.push(...row.fields.map(field=>({...field,path:row.path,actualCount:row.actualCount})));}}
   const finalRoot=roots.find(n=>n.tag===st.schema.rootOrder.at(-1)),end=st.schema.local?st.raw.length:finalRoot?.complete?finalRoot.rawEnd:-1;
   const tail=end<0?'':st.raw.slice(end);
   // Non-whitespace between protocol roots has no semantic owner.
-  for(const n of st.root.children)if(!st.schema.local&&n.kind==='text'&&st.raw.slice(n.rawStart,n.rawEnd).trim()&&(end<0||n.rawStart<end))add('unassigned_text','栏目之外有未归属内容',n);
+  for(const n of st.root.children)if(!st.schema.local&&(n.kind==='text'||n.kind==='html')&&st.raw.slice(n.rawStart,n.rawEnd).trim()&&(end<0||n.rawStart<end))add('unassigned_text','栏目之外有未归属内容',n);
   if(!st.schema.local&&end<0&&!partial)add('incomplete','缺少外层结束标签 '+st.schema.terminal,finalRoot);
   if(tail.trim()&&!prefix&&st.root.children.some(n=>n.rawStart>=end&&!(localRoot(st.schema,n.tag))&&st.raw.slice(n.rawStart,n.rawEnd).trim()))add('trailing_text','档案结束之后还有内容',finalRoot);
-  const narrativeParts=[],unknownParts=[];let partialProse=false;
+  const narrativeParts=[],unknownParts=[];let partialProse=false,hasHtml=false;
   for(const n of st.root.children){
    if(n.kind==='text')narrativeParts.push(st.raw.slice(n.rawStart,n.rawEnd));
-   else if(n.kind==='prose'){partialProse ||= !n.complete;let at=n.innerStart,body='';for(const child of n.children){if(child.kind==='text')continue;body+=st.raw.slice(at,child.rawStart);at=child.rawEnd;}body+=st.raw.slice(at,n.innerEnd??st.raw.length);narrativeParts.push(decode(body));}
+   else if(n.kind==='prose'){partialProse ||= !n.complete;let at=n.innerStart,body='';for(const child of n.children){if(!child.localOwner)continue;body+=st.raw.slice(at,child.rawStart);if(!confirmedLocal(child))body+=st.raw.slice(child.innerStart,child.rawEnd);at=child.rawEnd;}body+=st.raw.slice(at,n.innerEnd??st.raw.length);hasHtml ||= /<\/?[a-z][\w-]*(?=[\s/>])/i.test(body);narrativeParts.push(body);}
+   else if(n.localOwner&&!confirmedLocal(n)){const body=st.raw.slice(n.innerStart,n.rawEnd);hasHtml ||= /<\/?[a-z][\w-]*(?=[\s/>])/i.test(body);narrativeParts.push(body);}
+   else if(n.kind==='html'){if(narrativeHtml(st,n)){hasHtml=true;narrativeParts.push(st.raw.slice(n.rawStart,n.rawEnd));}else unknownParts.push(st.raw.slice(n.rawStart,n.rawEnd));}
    else if(n.kind==='unknown')unknownParts.push(st.raw.slice(n.rawStart,n.rawEnd));
   }
   // Unknown tagged material is not proven narrative in a mixed format. A
   // fully ordinary unstructured reply remains available as its own source.
-  const known=st.root.children.some(n=>n.kind!=='text'&&n.kind!=='unknown');
-  const narrative=known?narrativeParts.join('').trim():st.raw;
-  const narrativeWarning=known&&unknownParts.length?'部分未知结构未计入正文；完整原文可独立导出':partialProse?'正文标签未闭合，已保留收到的正文':undefined;
-  for(const issue of issues)issue.line=st.raw.slice(0,issue.start||0).split('\n').length;
-  const result={ok:end>=0&&issues.length===0,complete:end>=0,end,tail,issues,narrative,narrativeWarning,pages,records:records.length,recordRows:records,editableRows:[...records,...containerFields],containers,scannedChars:st.scannedChars};
+  if(st.schema.local&&st.stack.length===1&&st.cursor<st.raw.length)narrativeParts.push(st.raw.slice(st.cursor));
+  const known=st.root.children.some(n=>definition(st,n));
+  const source=known||hasHtml||unknownParts.length&&st.root.children.some(n=>n.kind==='html')?narrativeParts.join('').trim():st.raw;
+  // Use the same inert HTML-to-text projector as ordinary history. Do not
+  // decode entities before HTML parsing (escaped literal tags must stay text).
+  const projection=hasHtml&&window.MimaHistoryHtmlProjection?.project?MimaHistoryHtmlProjection.project(source,{enabled:true}):null;
+  const narrative=projection?projection.text:known?decode(source):source;
+  const narrativeWarning=(known||hasHtml)&&unknownParts.length?'部分未知结构未计入正文；完整原文可独立导出':partialProse?'正文标签未闭合，已保留收到的正文':undefined;
+  for(const issue of [...issues,...localIssues])issue.line=st.raw.slice(0,issue.start||0).split('\n').length;
+  const result={ok:end>=0&&issues.length===0,complete:end>=0,end,tail,issues,localIssues,narrative,narrativeWarning,pages,records:records.length,recordRows:records,editableRows:[...records,...containerFields],containers,scannedChars:st.scannedChars};
   Object.defineProperty(result,'ast',{value:st});return result;
  }
  function inspect(raw,schema,options={}){return report(stateFor(String(raw??''),schema,options.owner),options);}
@@ -251,6 +330,7 @@
  function renderNode(st,node){
   if(node.rawStart>=st.raw.length||node.innerStart>st.raw.length)return '';
   const complete=node.complete&&node.rawEnd<=st.raw.length;
+  if(node.localOwner&&node.path==='/'+node.localOwner&&(!confirmedLocal(node)||node.rawEnd>st.raw.length))return st.raw.slice(node.innerStart,Math.min(node.rawEnd,st.raw.length));
   if(node.kind==='text')return st.raw.slice(node.rawStart,node.rawEnd).trim()?esc(st.raw.slice(node.rawStart,node.rawEnd)):'';
   if(node.rendered!==undefined&&complete)return node.rendered;
   const def=definition(st,node),children=receivedChildren(st,node);let html='';
@@ -278,20 +358,23 @@
   }
   if(complete)node.rendered=html;return html;
  }
- function render(raw,schema,options={}){const st=stateFor(String(raw??''),schema,options.owner,true);return st.root.children.map(n=>renderNode(st,n)).join('');}
+ function ordinaryRoot(st,n){return n.kind==='text'||n.kind==='html'||st.schema.local&&n.kind==='unknown';}
+ function rootHtml(st,n){return ordinaryRoot(st,n)?st.raw.slice(n.rawStart,n.rawEnd):renderNode(st,n);}
+ function render(raw,schema,options={}){const st=stateFor(String(raw??''),schema,options.owner,true);return st.schema.local?localSource(st):st.root.children.map(n=>rootHtml(st,n)).join('');}
  // Stable units carry record identity through to the DOM. Only mutable units
  // serialize again; container closures never invalidate completed records.
- function renderLocalSource(raw,schema,options={}){
-  const st=stateFor(String(raw??''),schema,options.owner,true);let at=0,html='';
-  for(const n of st.root.children){if(n.kind==='text'||n.kind==='unknown'||!localRoot(schema,n.tag)||!n.complete)continue;html+=st.raw.slice(at,n.rawStart)+renderNode(st,n);at=n.rawEnd;}
+ function localSource(st){
+  let at=0,html='';
+  for(const n of receivedChildren(st,st.root)){if(!n.localOwner||!definition(st,n))continue;html+=st.raw.slice(at,n.rawStart)+renderNode(st,n);at=Math.min(n.rawEnd,st.raw.length);}
   return html+st.raw.slice(at);
  }
+ function renderLocalSource(raw,schema,options={}){return localSource(stateFor(String(raw??''),schema,options.owner,true));}
  function project(raw,schema,options={}){
   const st=stateFor(String(raw??''),schema,options.owner,true),units=[];
   function visit(node,parent=null){
    if(node.rawStart>=st.raw.length||node.innerStart>st.raw.length||node.kind==='field')return;
    const def=definition(st,node),id=node.stableId||schema.id+':text:'+node.rawStart;
-   if(def?.kind==='container'){
+   if(def?.kind==='container'&&!(node.localOwner&&node.path==='/'+node.localOwner&&(!confirmedLocal(node)||node.rawEnd>st.raw.length))){
     const count=def.replyCountField?receivedChildren(st,node).filter(c=>c.tag==='回帖').length:null;
     let unit=node.projected;
     if(!unit){unit={id,parent,container:true,html:(def.openHtml||'')+'<!--mima-protocol-slot-->'+(def.closeHtml||'')};node.projected=unit;}
@@ -302,8 +385,14 @@
     if(unit.html)units.push(unit);
    }
   }
-  for(const node of st.root.children)visit(node);
-  return {key:schemaKeys.get(schema),units,scannedChars:st.scannedChars};
+  let gapStart=null,gapEnd=0;
+  const flush=()=>{if(gapStart===null)return;const html=st.raw.slice(gapStart,gapEnd);if(html)units.push({id:schema.id+':ordinary:'+gapStart,parent:null,html,complete:false,ordinary:true});gapStart=null;};
+  for(const node of receivedChildren(st,st.root)){
+   if(ordinaryRoot(st,node)){if(gapStart===null)gapStart=node.rawStart;gapEnd=Math.min(node.rawEnd,st.raw.length);continue;}
+   flush();visit(node);gapEnd=Math.min(node.rawEnd,st.raw.length);
+  }
+  if(schema.local&&gapEnd<st.raw.length&&st.cursor<st.raw.length){if(gapStart===null)gapStart=gapEnd;gapEnd=st.raw.length;}
+  flush();return {key:schemaKeys.get(schema),units,scannedChars:st.scannedChars};
  }
  function category(path){
   if(/假设/.test(path))return '假设';if(/弹幕/.test(path))return '场外评论';if(/待完成|目标|购物车/.test(path))return '计划或待实施';
@@ -317,7 +406,7 @@
   const text=['【正文】\n'+result.narrative];
   for(const page of result.pages)text.push('【'+page.tag+'】\n'+page.records.map(row=>'['+category(row.path)+'] '+row.tag+'：'+row.fields.map((f,i)=>'['+category(row.path+'/'+(f.name||row.labels[i]||''))+'] '+(row.labels[i]||f.name)+'：'+f.text).join(' ｜ ')).join('\n'));
   for(const page of result.pages)for(const field of page.extraFields||[])text.push('['+category(field.path)+'] '+field.path+' / '+field.name+'：'+field.text+'（实际 '+field.actualCount+' 条回帖）');
-  if(!result.ok)text.push('【保留原文 · 格式待核实】\n'+String(raw));
+  if(!result.ok||result.localIssues.length)text.push('【保留原文 · 格式待核实】\n'+String(raw));
   return {...result,text:text.join('\n\n')};
  }
  function replaceField(raw,schema,{nodeStart,fieldName,value}){

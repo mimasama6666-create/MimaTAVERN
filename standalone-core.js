@@ -1605,6 +1605,10 @@
     // captures and anchors. Only the proven native-only path is composable.
     if(remaining.some(pack=>arr(pack.rules).some(rule=>rule.enabled!==false&&(rule.phase||'display')==='display')))return null;
     const projection=MimaStoryProtocol.project(String(source),semanticDisplaySchema(session,decoder,packs,options),{owner:options.protocolOwner||options.protocolRef});
+    // Ordinary source gaps must be independently parseable before handing them
+    // to the native unit cache. Unbalanced HTML or a frozen style marker uses
+    // the existing full-input projection and safe HTML suffix cache instead.
+    if(projection.units.some(unit=>unit.ordinary&&(/<mima-style\b/i.test(unit.html)||!MimaHtmlStructure.rawBalance(unit.html).ok)))return null;
     // Natural-language macros are local when their token cannot cross a unit
     // boundary. A partial token at a bare-text/container boundary uses the
     // original complete-input path. Static {{user}} labels in R7 stay fast.
