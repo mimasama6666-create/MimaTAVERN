@@ -1245,7 +1245,7 @@
         session.regexPackIds=[...new Set([...arr(session.regexPackIds),regex.id])];
         session.presetIds=[...new Set([...arr(session.presetIds),preset.id])];
         if(regex.protocolResource)session.renderMode='safe_html';
-        if(regex.compactContract||regex.protocolResource)session.promptSettings={...session.promptSettings,
+        if(regex.compactContract||regex.protocolResource&&!regex.protocolResource.schema.local)session.promptSettings={...session.promptSettings,
           displayContract:{version:regex.protocolResource?3:2,packId:regex.id,presetId:preset.id,canonical:'compact',numbered:!regex.protocolResource&&!!terminal,terminal}};
         session.recordRevision=(Number(session.recordRevision)||0)+1;
         session.updatedAt=nowIso();
@@ -1349,14 +1349,18 @@
   }
   function activeDisplayContract(session){
     const binding=session?.promptSettings?.displayContract;
-    if(!binding||!arr(session.regexPackIds).includes(binding.packId))return null;
-    const pack=getRegexPack(binding.packId),linked=arr(session.presetIds).includes(binding.presetId)?getPreset(binding.presetId):null;
+    const localPacks=activeRegexPacks(session).filter(p=>p.protocolResource?.schema.local);
+    const selected=binding&&arr(session.regexPackIds).includes(binding.packId)?getRegexPack(binding.packId):null;
+    const main=selected?.enabled!==false&&!selected?.protocolResource?.schema.local?selected:null;
+    const pack=main||localPacks[0];if(!pack)return null;
+    const chosen=main?binding:{version:3,packId:pack.id,presetId:'',numbered:false};
+    const linked=arr(session.presetIds).includes(chosen.presetId)?getPreset(chosen.presetId):null;
     if(!pack||pack.enabled===false)return null;
     const preset=linked?.enabled!==false&&linked?linked:null;
-    const active={...binding,pack,preset,presetId:preset?.id||'',...(!preset&&linked?.content&&binding.numbered&&!binding.numberedSample?{numberedSample:linked.content}:{})};
+    const active={...chosen,pack,preset,presetId:preset?.id||'',localPacks:localPacks.filter(p=>p.id!==pack.id),...(!preset&&linked?.content&&chosen.numbered&&!chosen.numberedSample?{numberedSample:linked.content}:{})};
     if(pack.protocolResource)return {...active,version:3,terminal:pack.protocolResource.schema.terminal,numbered:false};
     if(pack.compactContract)return {...active,version:2};
-    return binding.version===1&&MimaDisplayContract.isLegacyConverter(pack)?active:null;
+    return chosen.version===1&&MimaDisplayContract.isLegacyConverter(pack)?active:null;
   }
   function assertNewDisplayBinding(session,resources=state){
     const binding=session?.promptSettings?.displayContract;if(!binding)return;
@@ -1390,12 +1394,13 @@
         'protocol_'+await exactDigest(value)!==row.id)
         throw new ApiError('E_PROTOCOL_VERSION_INVALID','存档中的短协议版本或内容校验不一致');
       if(value.legacySemantic){if(value.version!==1||value.schema?.kind!=='semantic'||MimaRegexEngine.protocolDisplayPacks([value.pack],value.legacySemantic)[0]===value.pack||!value.schema.rootOrder.every(tag=>value.preset.content.includes('<'+tag+'>')))throw new ApiError('E_PROTOCOL_VERSION_INVALID','旧语义转换器的来源证明不一致');MimaStoryProtocol.verifyTemplates(value.schema);}
-      if(value.schema&&!value.legacySemantic&&JSON.stringify(value.version===3?MimaStoryProtocol.verify(value.pack.protocolResource.schema):numberedProtocolSchema(value))!==JSON.stringify(value.schema))
+      if(value.schema&&!value.legacySemantic&&JSON.stringify(value.version===3?MimaStoryProtocol.compose(value.pack.protocolResource.schema,arr(value.localPacks).map(p=>p.protocolResource.schema)):numberedProtocolSchema(value))!==JSON.stringify(value.schema))
         throw new ApiError('E_PROTOCOL_VERSION_INVALID','存档中的栏位定义与配套预设不一致');
       if(((value.numbered===true||value.version===3||value.terminal&&!value.markerOnly)&&!value.schema)||MimaStoryDisplay.inspectPack(value.pack).problems.length)
         throw new ApiError('E_PROTOCOL_VERSION_INVALID','存档中的短协议缺少完整栏位或固定样式');
       if(value.version===2)MimaDisplayContract.read(value.pack.compactContract);
       if(value.version===3)MimaStoryProtocol.verifyTemplates(value.schema);
+      const localIds=new Set([value.packId]);for(const local of arr(value.localPacks)){if(!local?.id||localIds.has(local.id)||!local.protocolResource?.schema.local||local.enabled===false||!Array.isArray(local.rules)||MimaStoryDisplay.inspectPack(local).problems.length)throw new ApiError('E_PROTOCOL_VERSION_INVALID','局部标签版本无效');localIds.add(local.id);MimaStoryProtocol.verifyTemplates(local.protocolResource.schema);}
       dependencies.add(row.id);
     }
     const check=meta=>{
@@ -1506,17 +1511,19 @@
     const active=activeDisplayContract(session);
     if(!active)return null;
     const {pack,preset,packId,presetId,numbered,terminal}=active;
-    const schema=pack.protocolResource?MimaStoryProtocol.verify(pack.protocolResource.schema):numbered?numberedProtocolSchema(active):null;
-    if(pack.protocolResource)MimaStoryProtocol.verifyTemplates(schema);
-    const issues=MimaStoryDisplay.inspectPack(pack).problems;
-    if(issues.length)throw new ApiError('E_COMPACT_CONTRACT_CONFIG','请先修复转换包的固定样式：'+issues[0].message);
+    const localPacks=active.localPacks||[];
     const outputContract=session.promptSettings.outputContract||null;
     const cacheKey=JSON.stringify([preset?.id,preset?.updatedAt,active.numberedSample,terminal,numbered,outputContract,session.regexPackIds,session.presetIds]);
     const known=frozenProtocolIds.get(pack);
-    if(known?.preset===preset&&known.key===cacheKey)return known.record;
-    const contract={version:active.version,packId,presetId,terminal,pack,preset,schema,outputContract,...(active.numberedSample?{numberedSample:active.numberedSample}:{}),...(!schema&&terminal?{markerOnly:true}:{}),packIndex:arr(session.regexPackIds).indexOf(packId),presetIndex:arr(session.presetIds).indexOf(presetId),packOrder:arr(session.regexPackIds).slice(),presetOrder:arr(session.presetIds).slice()};
+    if(known?.preset===preset&&known.key===cacheKey&&localPacks.length===(known.locals||[]).length&&localPacks.every((p,i)=>p===known.locals[i]))return known.record;
+    const schema=pack.protocolResource?MimaStoryProtocol.compose(pack.protocolResource.schema,localPacks.map(p=>p.protocolResource.schema)):numbered?numberedProtocolSchema(active):null;
+    for(const local of localPacks)MimaStoryProtocol.verifyTemplates(local.protocolResource.schema);
+    if(pack.protocolResource)MimaStoryProtocol.verifyTemplates(schema);
+    const issues=MimaStoryDisplay.inspectPack(pack).problems;
+    if(issues.length)throw new ApiError('E_COMPACT_CONTRACT_CONFIG','请先修复转换包的固定样式：'+issues[0].message);
+    const contract={version:active.version,packId,presetId,terminal,pack,preset,schema,outputContract,...(localPacks.length?{localPacks}:{}),...(active.numberedSample?{numberedSample:active.numberedSample}:{}),...(!schema&&terminal?{markerOnly:true}:{}),packIndex:arr(session.regexPackIds).indexOf(packId),presetIndex:arr(session.presetIds).indexOf(presetId),packOrder:arr(session.regexPackIds).slice(),presetOrder:arr(session.presetIds).slice()};
     const record=shareFrozen({id:'protocol_'+await exactDigest(contract),contract});
-    frozenProtocolIds.set(pack,{preset,key:cacheKey,record});return record;
+    frozenProtocolIds.set(pack,{preset,key:cacheKey,record,locals:localPacks});return record;
   }
   // Substitute the immutable decoder in its mounted slot before stable sorting.
   function replaceFrozenResource(mounted,frozen,current,knownIds,index,mountOrder=null){
@@ -1536,13 +1543,15 @@
     }
     return rows;
   }
+  function frozenMountedPacks(session,contract){
+    let mounted=arr(session?.regexPackIds).map(getRegexPack).filter(Boolean);
+    if(contract){const locals=arr(contract.localPacks);mounted=mounted.filter(p=>!p.protocolResource?.schema.local);for(const p of locals)mounted=replaceFrozenResource(mounted,p,p.id,new Set([p.id]),contract.packOrder?.indexOf(p.id),contract.packOrder);
+      const frozen=contract.pack;mounted=replaceFrozenResource(mounted,frozen,frozen.id,new Set([frozen.id]),contract.packIndex,contract.packOrder);}
+    return mounted.filter(pack=>pack.enabled!==false).sort((a,b)=>Number(a.priority??50)-Number(b.priority??50));
+  }
   function displayPacksForRef(session,ref){
     if(ref===undefined)return activeRegexPacks(session);
-    const version=requireReplyProtocol(session,ref),current=session?.promptSettings?.displayContract?.packId;
-    const mounted=arr(session?.regexPackIds).map(getRegexPack).filter(Boolean);
-    const frozen=version?.contract.pack;
-    return (frozen?replaceFrozenResource(mounted,frozen,frozen.id,new Set([frozen.id]),version.contract.packIndex,version.contract.packOrder):mounted).filter(pack=>pack.enabled!==false)
-      .sort((a,b)=>Number(a.priority??50)-Number(b.priority??50));
+    return frozenMountedPacks(session,requireReplyProtocol(session,ref)?.contract);
   }
   function protocolFailure(report){
     const first=report.issues[0];
@@ -1567,14 +1576,23 @@
     if(options.protocolRef!==undefined){const pack=requireReplyProtocol(session,options.protocolRef)?.contract.pack;return pack?.protocolResource?pack:null;}
     // Explicit editor/test selection may choose one structured decoder. Merely
     // mounting several resources does not select a protocol for old content.
-    if(options.explicitPacks){const choices=packs.filter(pack=>pack.enabled!==false&&pack.protocolResource);if(choices.length>1)throw new ApiError('E_PROTOCOL_SELECTION_AMBIGUOUS','请选择一份语义标签协议进行预览');return choices[0]||null;}
+    if(options.explicitPacks){const choices=packs.filter(pack=>pack.enabled!==false&&pack.protocolResource),full=choices.filter(p=>!p.protocolResource.schema.local);return full.find(p=>p.id===session?.promptSettings?.displayContract?.packId)||full[0]||choices[0]||null;}
     return null;
+  }
+  function semanticDisplaySchema(session,decoder,packs,options){
+    if(options.protocolRef){const schema=requireReplyProtocol(session,options.protocolRef)?.contract.schema;if(schema?.kind==='semantic'&&(!options.protocolPack||options.protocolPack.id===decoder.id))return schema;}
+    return MimaStoryProtocol.compose(decoder.protocolResource.schema,packs.filter(p=>p.id!==decoder.id&&p.protocolResource?.schema.local).map(p=>p.protocolResource.schema));
   }
   function projectProtocolDisplay(session,source,packs,options={}){
     const decoder=semanticDisplayPack(session,packs,options);
-    if(!decoder)return {input:String(source),packs};
-    const resource=decoder.protocolResource;
-    return {input:MimaStoryProtocol.render(String(source),resource.schema,{owner:options.protocolOwner||options.owner}),
+    if(!decoder){
+      const locals=options.allowSemantic===false?[]:options.protocolRef?arr(requireReplyProtocol(session,options.protocolRef)?.contract.localPacks):options.explicitPacks?packs.filter(p=>p.protocolResource?.schema.local):[];
+      if(!locals.length)return {input:String(source),packs};
+      const schema=MimaStoryProtocol.compose(null,locals.map(p=>p.protocolResource.schema));
+      return {input:MimaStoryProtocol.renderLocalSource(String(source),schema,{owner:options.protocolOwner||options.owner}),packs};
+    }
+    const resource=decoder.protocolResource,schema=semanticDisplaySchema(session,decoder,packs,options);
+    return {input:MimaStoryProtocol.render(String(source),schema,{owner:options.protocolOwner||options.owner}),
       packs:MimaRegexEngine.protocolDisplayPacks(packs,resource)};
   }
   function nativeDisplayProjection(sessionOrId,source,options={}){
@@ -1586,7 +1604,7 @@
     // Ordinary rules keep their complete-input semantics, including cross-record
     // captures and anchors. Only the proven native-only path is composable.
     if(remaining.some(pack=>arr(pack.rules).some(rule=>rule.enabled!==false&&(rule.phase||'display')==='display')))return null;
-    const projection=MimaStoryProtocol.project(String(source),resource.schema,{owner:options.protocolOwner||options.protocolRef});
+    const projection=MimaStoryProtocol.project(String(source),semanticDisplaySchema(session,decoder,packs,options),{owner:options.protocolOwner||options.protocolRef});
     // Natural-language macros are local when their token cannot cross a unit
     // boundary. A partial token at a bare-text/container boundary uses the
     // original complete-input path. Static {{user}} labels in R7 stay fast.
@@ -1609,7 +1627,7 @@
     if(!strict&&!meta.outputContract?.requireHtml&&!meta.outputContract?.completeHtml)return reply;
     const contract=compact.version===2?MimaDisplayContract.read(compact.pack.compactContract):null;
     const packs=meta.displayPacks||activeRegexPacks(session),key=displayKey(session,packs);
-    const decoded=projectProtocolDisplay(session,reply,packs,{owner:meta.protocolOwner||meta.protocolRef,protocolPack:compact.pack});
+    const decoded=projectProtocolDisplay(session,reply,packs,{owner:meta.protocolOwner||meta.protocolRef,protocolPack:compact.pack,protocolRef:meta.protocolRef});
     const [result]=await MimaRegexEngine.applyBatchAsync([{input:decoded.input,phase:'display'}],decoded.packs,{
       signal:meta.signal,tracePackId:compact.packId,protocol:contract?MimaDisplayContract.checks(contract):null});
     if(strict&&(result.missingFields.length||compact.version!==3&&!result.matchedPack))throw new ApiError('E_COMPACT_PROTOCOL_MISMATCH',
@@ -1680,18 +1698,41 @@
     const startsRecord=/^\s*(?:[【［\[]\/?[\p{L}\p{N}_-]+[】］\]]|[0-9０-９]{2}\s*[¦|｜ǀ∣│┃])/u.test(suffix);
     return prefix+(startsRecord&&!/\n[^\S\r\n]*$/.test(prefix)&&!/^\s*\n/.test(suffix)?(prefix.includes('\r\n')?'\r\n':'\n'):'')+suffix;
   }
+  function confirmedEndingLine(source,ending){
+    // A network chunk end is not a logical line end. Only an already
+    // received LF confirms the marker (CRLF accepted); never discard a tail.
+    const lines=String(source).split('\n');if(lines.length<2||lines.at(-1).trim())return false;
+    let i=lines.length-2;while(i>=0&&!lines[i].trim())i--;
+    if(i<0||lines[i].trim()!==ending||/^(?: {4}|\t)/.test(lines[i]))return false;
+    let fence=null;
+    for(let j=0;j<i;j++){const m=/^ {0,3}(`{3,}|~{3,})(.*)$/.exec(lines[j]);if(!m)continue;
+      if(!fence){if(m[1][0]==='`'&&m[2].includes('`'))continue;fence=m[1];}
+      else if(m[1][0]===fence[0]&&m[1].length>=fence.length&&!m[2].trim())fence=null;
+    }
+    return !fence;
+  }
   function protocolBoundary(source,schema,{target=null,mode=null,prefix=false,owner}={}){
     const raw=String(source??'');
-    const prior=mode==='complete_missing'?String(target.content):'';
-    const duplicate=prior&&raw.startsWith(prior);
+    const prior=target?String(target.content??''):'';
+    const duplicate=!!prior&&raw.startsWith(prior)&&raw.length>prior.length;
     const visible=duplicate?raw.slice(prior.length):raw;
-    const first=schema.kind==='semantic'?'<'+schema.rootOrder[0]+'>':schema.steps.find(step=>step.kind==='open')?.text;
-    const independent=!prior||!duplicate&&raw.trimStart().startsWith(first);
-    const combined=independent?visible:continuationSource(prior,visible);
-    const report=MimaShortProtocol.inspect(combined,schema,{prefix,owner});
-    const offset=independent?0:combined.length-visible.length;
-    const accepted=report.end<0?visible:visible.slice(0,Math.max(0,report.end-offset));
-    return {report,accepted,tail:report.tail,combined,kind:independent?'full_reply':'suffix',duplicate:!!duplicate};
+    const standalone=MimaShortProtocol.inspect(visible,schema,{prefix,owner:owner?owner+':new':undefined});
+    let kind='full_reply',combined=visible,report=standalone;
+    if(target&&mode!=='separate'){
+      const primaryRoots=view=>view.ast?.root.children.filter(n=>schema.rootOrder.includes(n.tag)).map(n=>n.tag)||[];
+      const starts=MimaShortProtocol.isSource(visible,schema),roots=schema.kind==='semantic'?primaryRoots(standalone):[];
+      const first=schema.kind==='semantic'?'<'+schema.rootOrder[0]+'>':schema.steps.find(step=>step.kind==='open')?.text;
+      const full=visible.trimStart().startsWith(first)||roots.includes(schema.rootOrder?.[0])||standalone.complete&&standalone.ok;
+      if(raw===prior)kind='ambiguous_overlap';
+      else if(!full){
+        const merged=continuationSource(prior,visible),mergedView=MimaShortProtocol.inspect(merged,schema,{prefix,owner});
+        const mergedRoots=schema.kind==='semantic'?primaryRoots(mergedView):[];
+        const orderSafe=schema.kind==='semantic'&&mergedRoots.every((tag,i)=>tag===schema.rootOrder[i]);
+        if(duplicate||!starts&&!roots.length||orderSafe||mergedView.ok){kind='suffix';combined=merged;report=mergedView;}
+        else kind='ambiguous_overlap';
+      }
+    }
+    return {report,accepted:visible,tail:report.tail,combined,kind,duplicate};
   }
   async function applyRegexBatchForSessionAsync(sessionOrId,inputs,phase='display',options={}){
     const originals=arr(inputs).map(input=>String(input??''));
@@ -1980,10 +2021,10 @@
     add('worldbook_back',joinWb(back,'System Back'),{sourceId:back.map(x=>x.entry.id).join(','),resourceId:back.map(x=>x.book.id).join(',')});
     const htmlContract=session.promptSettings?.outputContract;
     const compact=Object.hasOwn(options,'replyProtocol')?options.replyProtocol:activeDisplayContract(session);
-    if(compact&&session.promptSettings?.protocolStrict===true&&!compact.schema?.local){
-      const note=options.protocolContinuation==='complete_missing'?'只接上最后一条回复缺少的内容与栏位，从原文末尾补齐，保留该回复已写出的内容与原顺序。':
-        '本轮依照当前剧情的输出格式完整写出各栏、正文和动态字段。'+(options.protocolContinuation==='separate'?'从上一回合情节接着写新一轮叙事及对应档案，沿用玩家此前实际作出的行动。':'');
-      add('compact_display_contract','【状态栏输出格式】'+note);
+    if(compact&&!compact.schema?.local&&options.protocolContinuation==='complete_missing'){
+      add('compact_display_contract','【续写位置】只接上最后一条回复缺少的内容与栏位，从原文末尾补齐，保留该回复已写出的内容与原顺序。');
+    }else if(compact&&!compact.schema?.local&&options.protocolContinuation==='separate'){
+      add('compact_display_contract','【续写位置】从上一回合情节接着写新一轮叙事，沿用玩家此前实际作出的行动，不复述旧回复。');
     }
     if(compact&&session.promptSettings.protocolViewpoint)add('status_viewpoint','【本轮状态栏视角：'+resolveMacrosForSession(session,session.promptSettings.protocolViewpoint)+'】各栏记录归属此人物，正文沿用当前叙事视角。');
     if(htmlContract?.requireHtml){
@@ -2137,9 +2178,7 @@
     // never truncates a sufficiently large model's input.
     const promptCap=promptBudget(),visibleHistory=session.messages.filter(m=>m.role!=='director');
     const ordinaryHistory=visibleHistory;
-    const promptPacks=options.replyProtocol?replaceFrozenResource(arr(session.regexPackIds).map(getRegexPack).filter(Boolean),
-      options.replyProtocol.pack,options.replyProtocol.packId,new Set([options.replyProtocol.packId]),
-      options.replyProtocol.packIndex,options.replyProtocol.packOrder).filter(pack=>pack.enabled!==false).sort((a,b)=>Number(a.priority??50)-Number(b.priority??50)):activeRegexPacks(session);
+    const promptPacks=options.replyProtocol?frozenMountedPacks(session,options.replyProtocol):activeRegexPacks(session);
     const projectionPackets=await window.MimaRegexEngine.applyBatchAsync(
       ordinaryHistory.map(m=>({input:String(m.content??''),phase:'prompt'})),promptPacks,{signal:options.signal});
     const promptProjection=new Map(ordinaryHistory.map((m,i)=>[m.id,projectionPackets[i].output]));
@@ -2713,7 +2752,7 @@
       if(!onProgress?.boundary)return;
       onProgress.observe?.(reply);
       let visible=reply;
-      if(!badEvents&&!terminalConflict&&!refusalSeen&&['unknown','complete'].includes(finishKind)&&!onProgress.signal?.aborted){
+      if(!badEvents&&!terminalConflict&&!refusalSeen&&['unknown','complete'].includes(finishKind)&&!onProgress.signal?.aborted&&(final||!buffer&&!eventData.length)){
         const decision=await onProgress.boundary(reply,final||receivedDone||finishKind==='complete');
         if(decision){
           visible=decision.visible;
@@ -4435,7 +4474,7 @@
     const originalSnapshot=retryPending?.snapshot||(action==='regenerate'&&target&&options.regenerationContext!=='current'?target.metadata?.generationSnapshot:null);
     const prior=action==='continue'&&target?requireReplyProtocol(session,protocolMessageRef(target)):null;
     const priorSchema=prior?.contract.schema;
-    if(priorSchema&&!priorSchema.local)continuationMode=MimaShortProtocol.inspect(target.content,priorSchema).complete?'separate':session.promptSettings?.protocolStrict===true&&MimaShortProtocol.isSource(target.content,priorSchema)?'complete_missing':null;
+    if(priorSchema&&!priorSchema.local){const view=MimaShortProtocol.inspect(target.content,priorSchema);const owned=priorSchema.kind==='semantic'?view.ast.root.children.some(n=>priorSchema.rootOrder.includes(n.tag)):MimaShortProtocol.isSource(target.content,priorSchema);continuationMode=owned?(view.complete?'separate':'complete_missing'):null;}
     if(originalSnapshot&&Object.hasOwn(originalSnapshot,'replyProtocolRef')){
       version=requireReplyProtocol(session,originalSnapshot.replyProtocolRef);
       continuationMode=originalSnapshot.protocolContinuation||null;
@@ -4583,10 +4622,10 @@
     const boundTemplate=outputContract?.templateMessageId?session.messages.find(m=>m.id===outputContract.templateMessageId&&m.role==='assistant'):null;
     const semanticOwner='turn:'+session.id+':'+pending.id+':'+pending.attempt;
     const strict=snapshot.protocolStrict===true,ending=text(snapshot.protocolEnd);
-    const protocolOptions={target,mode:continuationMode,prefix:false,owner:semanticOwner};
+    const protocolOptions={target:action==='continue'?target:null,mode:continuationMode,prefix:false,owner:semanticOwner};
     let checkedReply=null,searchFrom=0,separatedTail='';
     const admit=async(rawInput,checkedProtocol=null)=>{
-      const structural=schema&&(strict||continuationMode==='complete_missing')?(checkedProtocol||protocolBoundary(rawInput,schema,protocolOptions)):null;
+      const structural=schema&&(!schema.local&&(strict||action==='continue')||strict)?(checkedProtocol||protocolBoundary(rawInput,schema,protocolOptions)):null;
       if(strict&&structural&&!structural.report.ok)throw protocolFailure(structural.report);
       const raw=structural?.duplicate?rawInput.slice(String(target.content).length):rawInput;
       validateStoryReply(raw,{...storyResultMeta,outputContract:null,skipHtmlIntegrity:true});
@@ -4606,8 +4645,8 @@
       // Never cut bytes already received. A configured semantic close must
       // be a genuine root boundary, not a mention inside a field or prose.
       if(final)return null;
-      const searchStart=Math.max(0,searchFrom-ending.length);
-      if(source.indexOf(ending,searchStart)<0){searchFrom=source.length;return null;}
+      const searchStart=Math.max(0,searchFrom-ending.length-2);
+      if(source.indexOf(ending,searchStart)<0&&!source.trimEnd().endsWith(ending)){searchFrom=source.length;return null;}
       searchFrom=source.length;
       if(!source.trimEnd().endsWith(ending))return null;
       let checked=null;
@@ -4617,8 +4656,7 @@
       }else{
         // Independent ending marker is a dedicated final line, not arbitrary
         // inline text. Ignore quoted/code-fenced examples.
-        const lines=source.trimEnd().split(/\r?\n/);
-        if(lines.at(-1).trim()!==ending||lines.length<2||lines.slice(0,-1).filter(line=>/^\s*```/.test(line)).length%2)return null;
+        if(!confirmedEndingLine(source,ending))return null;
         if(schema?.kind==='semantic'&&MimaStoryProtocol.inspect(source,schema,{owner:semanticOwner}).ast.stack.length>1)return null;
       }
       const result=await admit(source,checked).then(value=>({value}),error=>({error}));
@@ -4919,14 +4957,14 @@
     if((action==='continue'||pending.targetMessageId)&&!target)throw new ApiError('E_REPLY_RECOVERY_TARGET','原回复目标已不存在，未覆盖其他消息。');
     state=persisted;
     const mode=pending.snapshot?.protocolContinuation;
-    const boundary=schema?protocolBoundary(recoveredContent,schema,{target,mode,prefix:true}):null;
+    const boundary=schema?protocolBoundary(recoveredContent,schema,{target:action==='continue'&&!schema.local?target:null,mode,prefix:true}):null;
     const safelyCut=false;
     const recoveryContinuationKind=action==='continue'&&target?
-      boundary?.kind||(mode==='separate'?'full_reply':await continuationKindForSession(session,target.content,recoveredContent)):'suffix';
+      (!schema?.local&&boundary?.kind)||(mode==='separate'?'full_reply':await continuationKindForSession(session,target.content,recoveredContent)):'suffix';
     if(target&&action==='continue'&&recoveryContinuationKind!=='suffix'){
       const originalTarget=target;
-      target=makeMessage('assistant',recoveredContent,session,{source:'manual_diagnostic_recovery',continuedFromMessageId:originalTarget.id});
-      target.rawContent=raw;target.isEdited=!!htmlRepair;target.metadata={...(target.metadata||{}),continuationMode:recoveryContinuationKind==='full_reply'?'separate_complete_reply':'separate_ambiguous_status_overlap',previousMessageId:originalTarget.id};
+      target=makeMessage('assistant',boundary?.duplicate?recoveredContent.slice(String(originalTarget.content).length):recoveredContent,session,{source:'manual_diagnostic_recovery',continuedFromMessageId:originalTarget.id});
+      target.rawContent=boundary?.duplicate?raw.slice(String(originalTarget.content).length):raw;target.isEdited=!!htmlRepair;target.metadata={...(target.metadata||{}),continuationMode:recoveryContinuationKind==='full_reply'?'separate_complete_reply':'separate_ambiguous_status_overlap',previousMessageId:originalTarget.id};
       session.messages.push(target);
     }else if(target&&(action==='continue'||action==='regenerate')){
       archiveVersion(target,'manual_recovery_before_'+action);

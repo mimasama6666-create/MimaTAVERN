@@ -1,0 +1,2796 @@
+{
+  "format": "mimamao-semantic-protocol-bundle",
+  "version": 1,
+  "data": {
+    "regexPack": {
+      "id": "campus_semantic_native_r8",
+      "name": "校园群像 R8 · 原生语义协议",
+      "description": "完整六栏原生协议，独立导入；无状态栏转换正则。",
+      "priority": 50,
+      "enabled": true,
+      "rules": [],
+      "displayStyles": [],
+      "protocolResource": {
+        "format": "mima-semantic-protocol",
+        "schemaVersion": 1,
+        "schema": {
+          "kind": "semantic",
+          "version": 1,
+          "id": "campus_semantic_native_r8",
+          "rootOrder": [
+            "环境",
+            "剧情正文",
+            "档案"
+          ],
+          "terminal": "</档案>",
+          "definitions": {
+            "/环境": {
+              "tag": "环境",
+              "kind": "container",
+              "openHtml": "<div class=\"c-status-panel\"><details open><summary>⁺ ˖ ✦ 𝑪𝒖𝒓𝒓𝒆𝒏𝒕 𝑺𝒄𝒆𝒏𝒆 · 现场环境与即时状态 ✦ ˖ ⁺</summary><div class=\"c-sp-cont\">",
+              "closeHtml": "</div></details></div>",
+              "path": "/环境",
+              "children": [
+                {
+                  "path": "/环境/时空",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/环境/感官",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/环境/现场群像",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/环境/自身",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/环境/视角人物",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/环境/空间张力",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/环境/瞬时心声",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/环境/关系",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/环境/镜头特写",
+                  "min": 1,
+                  "max": 1
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/环境/时空": {
+              "tag": "时空",
+              "kind": "record",
+              "path": "/环境/时空",
+              "fields": [
+                "日期",
+                "星期",
+                "时间",
+                "阶段",
+                "天气"
+              ],
+              "fieldRules": {
+                "日期": {
+                  "required": true,
+                  "type": "text"
+                },
+                "星期": {
+                  "required": true,
+                  "type": "text"
+                },
+                "时间": {
+                  "required": true,
+                  "type": "text"
+                },
+                "阶段": {
+                  "required": true,
+                  "type": "text"
+                },
+                "天气": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "日期",
+                    "星期",
+                    "时间",
+                    "阶段",
+                    "天气"
+                  ],
+                  "html": "<div class=\"c-sp-row\"><span class=\"c-sp-lbl\">✦ 时空坐标：</span><span class=\"c-cn-tag\">$1</span><span class=\"c-cn-tag\">$2 · $3</span><span class=\"c-cn-tag\">$4</span><span class=\"c-cn-tag\">$5</span></div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/环境/感官": {
+              "tag": "感官",
+              "kind": "record",
+              "path": "/环境/感官",
+              "fields": [
+                "地点",
+                "声息"
+              ],
+              "fieldRules": {
+                "地点": {
+                  "required": true,
+                  "type": "text"
+                },
+                "声息": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "地点",
+                    "声息"
+                  ],
+                  "html": "<div class=\"c-sp-row\"><span class=\"c-sp-lbl\">✦ 场景感官：</span>$1 <span class=\"c-sp-divider\">丨</span> <span class=\"c-sp-lbl\">白噪音与气味：</span>$2</div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/环境/现场群像": {
+              "tag": "现场群像",
+              "kind": "record",
+              "path": "/环境/现场群像",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-sp-row\"><span class=\"c-sp-lbl\">✦ 群像背景：</span>$1</div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/环境/自身": {
+              "tag": "自身",
+              "kind": "record",
+              "path": "/环境/自身",
+              "fields": [
+                "衣着",
+                "动作",
+                "持有物"
+              ],
+              "fieldRules": {
+                "衣着": {
+                  "required": true,
+                  "type": "text"
+                },
+                "动作": {
+                  "required": true,
+                  "type": "text"
+                },
+                "持有物": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "衣着",
+                    "动作",
+                    "持有物"
+                  ],
+                  "html": "<div class=\"c-sp-line\"></div>\n  <div class=\"c-sp-row\"><span class=\"c-sp-lbl\">✦ {{user}}：</span><span class=\"c-cn-tag\">$1</span> $2 <span class=\"c-sp-divider\">丨</span> <span class=\"c-sp-lbl\">持有物：</span>$3</div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/环境/视角人物": {
+              "tag": "视角人物",
+              "kind": "record",
+              "path": "/环境/视角人物",
+              "fields": [
+                "姓名",
+                "衣着",
+                "动作",
+                "目光"
+              ],
+              "fieldRules": {
+                "姓名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "衣着": {
+                  "required": true,
+                  "type": "text"
+                },
+                "动作": {
+                  "required": true,
+                  "type": "text"
+                },
+                "目光": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "姓名",
+                    "衣着",
+                    "动作",
+                    "目光"
+                  ],
+                  "html": "<div class=\"c-sp-row\"><span class=\"c-sp-lbl\">✦ $1：</span><span class=\"c-cn-tag\">$2</span> $3 <span class=\"c-sp-divider\">丨</span> <span class=\"c-sp-lbl\">视线落点：</span><span class=\"c-os-red\">$4</span></div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/环境/空间张力": {
+              "tag": "空间张力",
+              "kind": "record",
+              "path": "/环境/空间张力",
+              "fields": [
+                "距离",
+                "生理状态",
+                "性器状态"
+              ],
+              "fieldRules": {
+                "距离": {
+                  "required": true,
+                  "type": "text"
+                },
+                "生理状态": {
+                  "required": true,
+                  "type": "text"
+                },
+                "性器状态": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "距离",
+                    "生理状态",
+                    "性器状态"
+                  ],
+                  "html": "<div class=\"c-sp-row\"><span class=\"c-sp-lbl\">✦ 空间张力：</span><span class=\"c-cn-tag\">距离 $1</span><span class=\"c-cn-tag\">生理状态 $2</span><span class=\"c-cn-tag\">性器状态 $3</span></div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/环境/瞬时心声": {
+              "tag": "瞬时心声",
+              "kind": "record",
+              "path": "/环境/瞬时心声",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-sp-line\"></div>\n  <div class=\"c-sp-row\"><span class=\"c-sp-lbl\">✦ 瞬时心声：</span><span class=\"c-os-red\">「$1」</span></div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/环境/关系": {
+              "tag": "关系",
+              "kind": "record",
+              "path": "/环境/关系",
+              "fields": [
+                "身份",
+                "阶段",
+                "互动"
+              ],
+              "fieldRules": {
+                "身份": {
+                  "required": true,
+                  "type": "text"
+                },
+                "阶段": {
+                  "required": true,
+                  "type": "text"
+                },
+                "互动": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "身份",
+                    "阶段",
+                    "互动"
+                  ],
+                  "html": "<div class=\"c-sp-row\"><span class=\"c-sp-lbl\">✦ 关系刻度：</span><span class=\"c-cn-tag\">$1</span><span class=\"c-cn-tag\">$2</span> $3</div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/环境/镜头特写": {
+              "tag": "镜头特写",
+              "kind": "record",
+              "path": "/环境/镜头特写",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<span class=\"c-cn-sticker\">🎐 镜头特写：$1</span>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/剧情正文": {
+              "tag": "剧情正文",
+              "kind": "prose",
+              "path": "/剧情正文"
+            },
+            "/档案": {
+              "tag": "档案",
+              "kind": "container",
+              "openHtml": "<div class=\"c-pnk-wrap\">",
+              "closeHtml": "</div>",
+              "path": "/档案",
+              "children": [
+                {
+                  "path": "/档案/心事",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/私密记录",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/社交",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/群像观察",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/弹幕",
+                  "min": 1,
+                  "max": 1
+                }
+              ],
+              "orderedChildren": true,
+              "structuralSeparators": true
+            },
+            "/档案/心事": {
+              "tag": "心事",
+              "kind": "container",
+              "openHtml": "<!-- 01 · 角色深度剖析与现场围观 -->\n  <details open><summary>𝓘 𝓶𝓲𝓼𝓼 𝔂𝓸𝓾𝓻 𝓽𝓸𝓾𝓬𝓱 <small class=\"c-sum-note\">/ 角色深度剖析 · 隐秘心事</small></summary><div class=\"c-pnk-cont\"><div class=\"c-wm\"></div>\n<style>.c-pnk-wrap .c-favor-wrap .c-favor-bar .c-favor-fill{width:var(--value)!important}</style>",
+              "closeHtml": "</div></details>",
+              "path": "/档案/心事",
+              "children": [
+                {
+                  "path": "/档案/心事/穿搭气味",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/心事/生理微反应",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/心事/表象动作",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/心事/随身物件",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/心事/多层心理",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/心事/心动好感",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/心事/暗涌克制",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/心事/私密手记",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/心事/围观",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/心事/署名吐槽",
+                  "min": 1,
+                  "max": 1
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/心事/穿搭气味": {
+              "tag": "穿搭气味",
+              "kind": "record",
+              "path": "/档案/心事/穿搭气味",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-row\"><span class=\"c-lbl\">穿搭与气味:</span>$1</div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/心事/生理微反应": {
+              "tag": "生理微反应",
+              "kind": "record",
+              "path": "/档案/心事/生理微反应",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-row\"><span class=\"c-lbl\">生理微反应:</span>$1</div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/心事/表象动作": {
+              "tag": "表象动作",
+              "kind": "record",
+              "path": "/档案/心事/表象动作",
+              "fields": [
+                "表象",
+                "小动作"
+              ],
+              "fieldRules": {
+                "表象": {
+                  "required": true,
+                  "type": "text"
+                },
+                "小动作": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "表象",
+                    "小动作"
+                  ],
+                  "html": "<div class=\"c-row\"><span class=\"c-lbl\">表象与小动作:</span>$1 <span class=\"c-os-red\">（潜意识小动作：$2）</span></div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/心事/随身物件": {
+              "tag": "随身物件",
+              "kind": "record",
+              "path": "/档案/心事/随身物件",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-row\"><span class=\"c-lbl\">口袋与桌肚:</span>$1</div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/心事/多层心理": {
+              "tag": "多层心理",
+              "kind": "record",
+              "path": "/档案/心事/多层心理",
+              "fields": [
+                "理智",
+                "颜文字",
+                "潜意识",
+                "锐评"
+              ],
+              "fieldRules": {
+                "理智": {
+                  "required": true,
+                  "type": "text"
+                },
+                "颜文字": {
+                  "required": true,
+                  "type": "text"
+                },
+                "潜意识": {
+                  "required": true,
+                  "type": "text"
+                },
+                "锐评": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "理智",
+                    "颜文字",
+                    "潜意识",
+                    "锐评"
+                  ],
+                  "html": "<div class=\"c-row\"><span class=\"c-lbl\">多层心理剖析:</span>$1 <span>$2</span> <span class=\"c-os-red\">（隐秘潜意识/占有欲：$3）</span>【对{{user}}的即时锐评：$4】</div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/心事/心动好感": {
+              "tag": "心动好感",
+              "kind": "record",
+              "path": "/档案/心事/心动好感",
+              "fields": [
+                "数值",
+                "变动",
+                "原因"
+              ],
+              "fieldRules": {
+                "数值": {
+                  "required": true,
+                  "type": "percent"
+                },
+                "变动": {
+                  "required": true,
+                  "type": "text"
+                },
+                "原因": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "数值",
+                    "变动",
+                    "原因"
+                  ],
+                  "html": "<!-- 双维度情感计量槽 -->\n    <div class=\"c-favor-wrap\"><span class=\"c-lbl\">心动与好感:</span><div class=\"c-favor-bar\"><div class=\"c-favor-fill\" style=\"width:$1%;--value:$1%;\"></div></div><span class=\"c-favor-num\">$1%</span><div class=\"c-favor-change\">$2 丨 $3</div></div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/心事/暗涌克制": {
+              "tag": "暗涌克制",
+              "kind": "record",
+              "path": "/档案/心事/暗涌克制",
+              "fields": [
+                "数值",
+                "情绪",
+                "克制"
+              ],
+              "fieldRules": {
+                "数值": {
+                  "required": true,
+                  "type": "percent"
+                },
+                "情绪": {
+                  "required": true,
+                  "type": "text"
+                },
+                "克制": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "数值",
+                    "情绪",
+                    "克制"
+                  ],
+                  "html": "<div class=\"c-favor-wrap\"><span class=\"c-lbl\">暗涌与克制:</span><div class=\"c-favor-bar\"><div class=\"c-favor-fill\" style=\"width:$1%;--value:$1%;\"></div></div><span class=\"c-favor-num\">$1%</span><div class=\"c-favor-change\">$2 丨 $3</div></div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/心事/私密手记": {
+              "tag": "私密手记",
+              "kind": "record",
+              "path": "/档案/心事/私密手记",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-diary\"><div class=\"c-tape\"></div><div class=\"c-d-title\">𝓘 𝓶𝓲𝓼𝓼 𝔂𝓸𝓾𝓻 𝓽𝓸𝓾𝓬𝓱 · 私密手记</div><div class=\"c-mem-txt\">$1</div></div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/心事/围观": {
+              "tag": "围观",
+              "kind": "container",
+              "openHtml": "<div class=\"c-cmt-box\">",
+              "closeHtml": "</div>",
+              "path": "/档案/心事/围观",
+              "children": [
+                {
+                  "path": "/档案/心事/围观/围观评",
+                  "min": 5,
+                  "max": null
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/心事/围观/围观评": {
+              "tag": "围观评",
+              "kind": "record",
+              "path": "/档案/心事/围观/围观评",
+              "fields": [
+                "署名",
+                "内容"
+              ],
+              "fieldRules": {
+                "署名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "内容": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "署名",
+                    "内容"
+                  ],
+                  "html": "<div class=\"c-cmt-item\"><div class=\"c-cmt-name\">$1</div><div class=\"c-cmt-text\">$2</div></div>"
+                }
+              ],
+              "aliases": {
+                "content": "内容"
+              },
+              "structuralSeparators": true,
+              "mergeAdjacentFields": [
+                "署名",
+                "姓名",
+                "内容"
+              ]
+            },
+            "/档案/心事/署名吐槽": {
+              "tag": "署名吐槽",
+              "kind": "record",
+              "path": "/档案/心事/署名吐槽",
+              "fields": [
+                "署名",
+                "内容"
+              ],
+              "fieldRules": {
+                "署名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "内容": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "署名",
+                    "内容"
+                  ],
+                  "html": "<div class=\"c-tucao\">$1吐槽：$2</div>"
+                }
+              ],
+              "aliases": {
+                "content": "内容"
+              },
+              "structuralSeparators": true,
+              "mergeAdjacentFields": [
+                "署名",
+                "姓名",
+                "内容"
+              ]
+            },
+            "/档案/私密记录": {
+              "tag": "私密记录",
+              "kind": "container",
+              "openHtml": "<!-- 02 · 备忘录、消费记录、搜索与IF线 -->\n  <details><summary>𝓦𝓱𝓮𝓷 𝓘'𝓶 𝓪𝔀𝓪𝔂 𝓯𝓻𝓸𝓶 𝔂𝓸𝓾 <small class=\"c-sum-note\">/ 私密备忘 · 消费小票与搜索记录</small></summary><div class=\"c-pnk-cont\"><div class=\"c-wm\"></div>",
+              "closeHtml": "</div></details>",
+              "path": "/档案/私密记录",
+              "children": [
+                {
+                  "path": "/档案/私密记录/备忘录",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/私密记录/消费记录",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/私密记录/搜索",
+                  "min": 2,
+                  "max": null
+                },
+                {
+                  "path": "/档案/私密记录/假设分支",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/私密记录/采访",
+                  "min": 3,
+                  "max": null
+                },
+                {
+                  "path": "/档案/私密记录/署名吐槽",
+                  "min": 1,
+                  "max": 1
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/私密记录/备忘录": {
+              "tag": "备忘录",
+              "kind": "container",
+              "openHtml": "<div class=\"c-memo\">",
+              "closeHtml": "</div>",
+              "path": "/档案/私密记录/备忘录",
+              "children": [
+                {
+                  "path": "/档案/私密记录/备忘录/已完成",
+                  "min": 2,
+                  "max": null
+                },
+                {
+                  "path": "/档案/私密记录/备忘录/待完成",
+                  "min": 3,
+                  "max": null
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/私密记录/备忘录/已完成": {
+              "tag": "已完成",
+              "kind": "record",
+              "path": "/档案/私密记录/备忘录/已完成",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-memo-item done\">$1</div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/私密记录/备忘录/待完成": {
+              "tag": "待完成",
+              "kind": "record",
+              "path": "/档案/私密记录/备忘录/待完成",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-memo-item\">$1</div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/私密记录/消费记录": {
+              "tag": "消费记录",
+              "kind": "container",
+              "openHtml": "<div class=\"c-buy-tit\">𝓟𝓤𝓡𝓒𝓗𝓐𝓢𝓔 𝓛𝓞𝓖</div><div class=\"c-buy-area\">",
+              "closeHtml": "</div>",
+              "path": "/档案/私密记录/消费记录",
+              "children": [
+                {
+                  "path": "/档案/私密记录/消费记录/购买",
+                  "min": 3,
+                  "max": null
+                },
+                {
+                  "path": "/档案/私密记录/消费记录/购物车",
+                  "min": 1,
+                  "max": 1
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/私密记录/消费记录/购买": {
+              "tag": "购买",
+              "kind": "record",
+              "path": "/档案/私密记录/消费记录/购买",
+              "fields": [
+                "商品",
+                "金额"
+              ],
+              "fieldRules": {
+                "商品": {
+                  "required": true,
+                  "type": "text"
+                },
+                "金额": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "商品",
+                    "金额"
+                  ],
+                  "html": "<div class=\"c-buy-item\"><span>$1</span><span class=\"c-buy-price\">$2</span></div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/私密记录/消费记录/购物车": {
+              "tag": "购物车",
+              "kind": "record",
+              "path": "/档案/私密记录/消费记录/购物车",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-buy-item\"><span>$1</span><span class=\"c-buy-price is-empty\">待结算</span></div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/私密记录/搜索": {
+              "tag": "搜索",
+              "kind": "container",
+              "openHtml": "<div class=\"c-search\">",
+              "closeHtml": "</div>",
+              "path": "/档案/私密记录/搜索",
+              "children": [
+                {
+                  "path": "/档案/私密记录/搜索/搜索信息",
+                  "min": 1,
+                  "max": null
+                },
+                {
+                  "path": "/档案/私密记录/搜索/网友回复",
+                  "min": 3,
+                  "max": null
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/私密记录/搜索/搜索信息": {
+              "tag": "搜索信息",
+              "kind": "record",
+              "path": "/档案/私密记录/搜索/搜索信息",
+              "fields": [
+                "关键词",
+                "动机"
+              ],
+              "fieldRules": {
+                "关键词": {
+                  "required": true,
+                  "type": "text"
+                },
+                "动机": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "关键词",
+                    "动机"
+                  ],
+                  "html": "<div class=\"c-s-kwd\">$1</div><div class=\"c-s-rsn\">搜索动机：$2</div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/私密记录/搜索/网友回复": {
+              "tag": "网友回复",
+              "kind": "record",
+              "path": "/档案/私密记录/搜索/网友回复",
+              "fields": [
+                "署名",
+                "内容"
+              ],
+              "fieldRules": {
+                "署名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "内容": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "署名",
+                    "内容"
+                  ],
+                  "html": "<div class=\"c-s-rep\"><b>$1：</b>$2</div>"
+                }
+              ],
+              "aliases": {
+                "content": "内容"
+              },
+              "structuralSeparators": true,
+              "mergeAdjacentFields": [
+                "署名",
+                "姓名",
+                "内容"
+              ]
+            },
+            "/档案/私密记录/假设分支": {
+              "tag": "假设分支",
+              "kind": "record",
+              "path": "/档案/私密记录/假设分支",
+              "fields": [
+                "假设",
+                "推演"
+              ],
+              "fieldRules": {
+                "假设": {
+                  "required": true,
+                  "type": "text"
+                },
+                "推演": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "假设",
+                    "推演"
+                  ],
+                  "html": "<div class=\"c-if-box\"><div class=\"c-if-tit\">—— ✦ 𝓦𝑯𝑨𝑻 𝑰𝑭 · 平行时空分支 ✦ ——</div><div class=\"c-if-txt\"><b>【假设：$1】</b><br>$2</div></div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/私密记录/采访": {
+              "tag": "采访",
+              "kind": "record",
+              "path": "/档案/私密记录/采访",
+              "fields": [
+                "提问",
+                "回答"
+              ],
+              "fieldRules": {
+                "提问": {
+                  "required": true,
+                  "type": "text"
+                },
+                "回答": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "提问",
+                    "回答"
+                  ],
+                  "html": "<div class=\"c-qa\"><div class=\"c-q\">Q: $1</div><div class=\"c-a\">A: $2</div></div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/私密记录/署名吐槽": {
+              "tag": "署名吐槽",
+              "kind": "record",
+              "path": "/档案/私密记录/署名吐槽",
+              "fields": [
+                "署名",
+                "内容"
+              ],
+              "fieldRules": {
+                "署名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "内容": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "署名",
+                    "内容"
+                  ],
+                  "html": "<div class=\"c-tucao\">$1吐槽：$2</div>"
+                }
+              ],
+              "aliases": {
+                "content": "内容"
+              },
+              "structuralSeparators": true,
+              "mergeAdjacentFields": [
+                "署名",
+                "姓名",
+                "内容"
+              ]
+            },
+            "/档案/社交": {
+              "tag": "社交",
+              "kind": "container",
+              "openHtml": "<!-- 03 · 多维群聊生态、双朋友圈与校园墙 -->\n  <details open><summary>𝓘 𝓭𝓸 𝓽𝓱𝓮 𝓼𝓪𝓶𝓮 𝓽𝓱𝓲𝓷𝓰 <small class=\"c-sum-note\">/ 班群水群 · 小分队私聊与校园墙</small></summary><div class=\"c-pnk-cont\"><div class=\"c-wm\"></div>    \n    <!-- 群聊1：班级/年级大群（展现热闹群像） -->",
+              "closeHtml": "</div></details>",
+              "path": "/档案/社交",
+              "children": [
+                {
+                  "path": "/档案/社交/聊天标签",
+                  "min": 3,
+                  "max": null
+                },
+                {
+                  "path": "/档案/社交/群聊",
+                  "min": 2,
+                  "max": null
+                },
+                {
+                  "path": "/档案/社交/私聊",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/社交/朋友圈",
+                  "min": 2,
+                  "max": null
+                },
+                {
+                  "path": "/档案/社交/校园墙",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/社交/署名吐槽",
+                  "min": 1,
+                  "max": 1
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/社交/聊天标签": {
+              "tag": "聊天标签",
+              "kind": "record",
+              "path": "/档案/社交/聊天标签",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-cn-chatlabel\">$1</div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/社交/群聊": {
+              "tag": "群聊",
+              "kind": "container",
+              "openHtml": "<div class=\"c-chat-wrap\">",
+              "closeHtml": "</div>",
+              "path": "/档案/社交/群聊",
+              "children": [
+                {
+                  "path": "/档案/社交/群聊/群名",
+                  "min": 1,
+                  "max": null
+                },
+                {
+                  "path": "/档案/社交/群聊/聊天时间",
+                  "min": 0,
+                  "max": null
+                },
+                {
+                  "path": "/档案/社交/群聊/发言",
+                  "min": 0,
+                  "max": null
+                },
+                {
+                  "path": "/档案/社交/群聊/系统",
+                  "min": 0,
+                  "max": null
+                },
+                {
+                  "path": "/档案/社交/群聊/本人发言",
+                  "min": 0,
+                  "max": null
+                },
+                {
+                  "path": "/档案/社交/群聊/群公告",
+                  "min": 0,
+                  "max": null
+                }
+              ],
+              "chatMinimum": 5,
+              "structuralSeparators": true
+            },
+            "/档案/社交/群聊/群名": {
+              "tag": "群名",
+              "kind": "record",
+              "path": "/档案/社交/群聊/群名",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-chat-tit\">— $1 —</div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/社交/群聊/聊天时间": {
+              "tag": "聊天时间",
+              "kind": "record",
+              "path": "/档案/社交/群聊/聊天时间",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-cn-chattime\">$1</div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/社交/群聊/发言": {
+              "tag": "发言",
+              "kind": "record",
+              "path": "/档案/社交/群聊/发言",
+              "fields": [
+                "姓名",
+                "内容"
+              ],
+              "fieldRules": {
+                "姓名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "内容": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "姓名",
+                    "内容"
+                  ],
+                  "html": "<div class=\"c-msg left\"><div class=\"c-m-u\">$1</div><div class=\"c-m-b\">$2</div></div>"
+                }
+              ],
+              "aliases": {
+                "content": "内容"
+              },
+              "structuralSeparators": true,
+              "mergeAdjacentFields": [
+                "署名",
+                "姓名",
+                "内容"
+              ]
+            },
+            "/档案/社交/群聊/系统": {
+              "tag": "系统",
+              "kind": "record",
+              "path": "/档案/社交/群聊/系统",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-msg system\"><div class=\"c-m-b\">$1</div></div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/社交/群聊/本人发言": {
+              "tag": "本人发言",
+              "kind": "record",
+              "path": "/档案/社交/群聊/本人发言",
+              "fields": [
+                "姓名",
+                "内容"
+              ],
+              "fieldRules": {
+                "姓名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "内容": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "姓名",
+                    "内容"
+                  ],
+                  "html": "<div class=\"c-msg right\"><div class=\"c-m-u\">$1</div><div class=\"c-m-b\">$2</div></div>"
+                }
+              ],
+              "aliases": {
+                "content": "内容"
+              },
+              "structuralSeparators": true,
+              "mergeAdjacentFields": [
+                "署名",
+                "姓名",
+                "内容"
+              ]
+            },
+            "/档案/社交/群聊/群公告": {
+              "tag": "群公告",
+              "kind": "record",
+              "path": "/档案/社交/群聊/群公告",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-cn-chatnotice\">群公告：$1</div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/社交/私聊": {
+              "tag": "私聊",
+              "kind": "container",
+              "openHtml": "<div class=\"c-chat-wrap\">",
+              "closeHtml": "</div>",
+              "path": "/档案/社交/私聊",
+              "children": [
+                {
+                  "path": "/档案/社交/私聊/私聊对象",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/社交/私聊/发言",
+                  "min": 0,
+                  "max": null
+                },
+                {
+                  "path": "/档案/社交/私聊/本人发言",
+                  "min": 0,
+                  "max": null
+                }
+              ],
+              "chatMinimum": 4,
+              "structuralSeparators": true
+            },
+            "/档案/社交/私聊/私聊对象": {
+              "tag": "私聊对象",
+              "kind": "record",
+              "path": "/档案/社交/私聊/私聊对象",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-chat-tit\">— 与 $1 的私聊 —</div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/社交/私聊/发言": {
+              "tag": "发言",
+              "kind": "record",
+              "path": "/档案/社交/私聊/发言",
+              "fields": [
+                "姓名",
+                "内容"
+              ],
+              "fieldRules": {
+                "姓名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "内容": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "姓名",
+                    "内容"
+                  ],
+                  "html": "<div class=\"c-msg left\"><div class=\"c-m-u\">$1</div><div class=\"c-m-b\">$2</div></div>"
+                }
+              ],
+              "aliases": {
+                "content": "内容"
+              },
+              "structuralSeparators": true,
+              "mergeAdjacentFields": [
+                "署名",
+                "姓名",
+                "内容"
+              ]
+            },
+            "/档案/社交/私聊/本人发言": {
+              "tag": "本人发言",
+              "kind": "record",
+              "path": "/档案/社交/私聊/本人发言",
+              "fields": [
+                "姓名",
+                "内容"
+              ],
+              "fieldRules": {
+                "姓名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "内容": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "姓名",
+                    "内容"
+                  ],
+                  "html": "<div class=\"c-msg right\"><div class=\"c-m-u\">$1</div><div class=\"c-m-b\">$2</div></div>"
+                }
+              ],
+              "aliases": {
+                "content": "内容"
+              },
+              "structuralSeparators": true,
+              "mergeAdjacentFields": [
+                "署名",
+                "姓名",
+                "内容"
+              ]
+            },
+            "/档案/社交/朋友圈": {
+              "tag": "朋友圈",
+              "kind": "container",
+              "openHtml": "<div class=\"c-moments\">",
+              "closeHtml": "</div>",
+              "path": "/档案/社交/朋友圈",
+              "children": [
+                {
+                  "path": "/档案/社交/朋友圈/动态信息",
+                  "min": 1,
+                  "max": null
+                },
+                {
+                  "path": "/档案/社交/朋友圈/动态正文",
+                  "min": 1,
+                  "max": null
+                },
+                {
+                  "path": "/档案/社交/朋友圈/点赞",
+                  "min": 1,
+                  "max": null
+                },
+                {
+                  "path": "/档案/社交/朋友圈/评论",
+                  "min": 2,
+                  "max": null
+                },
+                {
+                  "path": "/档案/社交/朋友圈/回复评论",
+                  "min": 0,
+                  "max": null
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/社交/朋友圈/动态信息": {
+              "tag": "动态信息",
+              "kind": "record",
+              "path": "/档案/社交/朋友圈/动态信息",
+              "fields": [
+                "作者",
+                "时间",
+                "可见范围"
+              ],
+              "fieldRules": {
+                "作者": {
+                  "required": false,
+                  "type": "text"
+                },
+                "时间": {
+                  "required": false,
+                  "type": "text"
+                },
+                "可见范围": {
+                  "required": false,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "作者",
+                    "时间",
+                    "可见范围"
+                  ],
+                  "html": "<div class=\"c-pyq-head\"><div class=\"c-pyq-name\">$1</div><div class=\"c-pyq-time\">$2 · $3</div></div>"
+                },
+                {
+                  "fields": [
+                    "作者",
+                    "时间"
+                  ],
+                  "html": "<div class=\"c-pyq-head\"><div class=\"c-pyq-name\">$1</div><div class=\"c-pyq-time\">$2</div></div>"
+                },
+                {
+                  "fields": [
+                    "作者"
+                  ],
+                  "html": "<div class=\"c-pyq-head\"><div class=\"c-pyq-name\">$1</div></div>"
+                },
+                {
+                  "fields": [
+                    "时间"
+                  ],
+                  "html": "<div class=\"c-pyq-head\"><div class=\"c-pyq-time\">$1</div></div>"
+                },
+                {
+                  "fields": [
+                    "可见范围"
+                  ],
+                  "html": "<div class=\"c-pyq-head\"><div class=\"c-pyq-time\">$1</div></div>"
+                },
+                {
+                  "fields": [
+                    "作者",
+                    "可见范围"
+                  ],
+                  "html": "<div class=\"c-pyq-head\"><div class=\"c-pyq-name\">$1</div><div class=\"c-pyq-time\">$2</div></div>"
+                },
+                {
+                  "fields": [
+                    "时间",
+                    "可见范围"
+                  ],
+                  "html": "<div class=\"c-pyq-head\"><div class=\"c-pyq-time\">$1 · $2</div></div>"
+                },
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-pyq-head\"></div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/社交/朋友圈/动态正文": {
+              "tag": "动态正文",
+              "kind": "record",
+              "path": "/档案/社交/朋友圈/动态正文",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-pyq-txt\">$1</div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/社交/朋友圈/点赞": {
+              "tag": "点赞",
+              "kind": "record",
+              "path": "/档案/社交/朋友圈/点赞",
+              "fields": [
+                "名单",
+                "人数"
+              ],
+              "fieldRules": {
+                "名单": {
+                  "required": true,
+                  "type": "text"
+                },
+                "人数": {
+                  "required": true,
+                  "type": "integer"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "名单",
+                    "人数"
+                  ],
+                  "html": "<div class=\"c-pyq-acts\">♥ $1 等 $2 人觉得很赞</div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/社交/朋友圈/评论": {
+              "tag": "评论",
+              "kind": "record",
+              "path": "/档案/社交/朋友圈/评论",
+              "fields": [
+                "署名",
+                "内容"
+              ],
+              "fieldRules": {
+                "署名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "内容": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "署名",
+                    "内容"
+                  ],
+                  "html": "<div class=\"c-pyq-cmt\"><span class=\"c-pyq-cname\">$1:</span> $2</div>"
+                }
+              ],
+              "aliases": {
+                "content": "内容"
+              },
+              "structuralSeparators": true,
+              "mergeAdjacentFields": [
+                "署名",
+                "姓名",
+                "内容"
+              ]
+            },
+            "/档案/社交/朋友圈/回复评论": {
+              "tag": "回复评论",
+              "kind": "record",
+              "path": "/档案/社交/朋友圈/回复评论",
+              "fields": [
+                "署名",
+                "对象",
+                "内容"
+              ],
+              "fieldRules": {
+                "署名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "对象": {
+                  "required": true,
+                  "type": "text"
+                },
+                "内容": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "署名",
+                    "对象",
+                    "内容"
+                  ],
+                  "html": "<div class=\"c-pyq-cmt\"><span class=\"c-pyq-cname\">$1 回复 $2:</span> $3</div>"
+                }
+              ],
+              "aliases": {
+                "content": "内容"
+              },
+              "structuralSeparators": true
+            },
+            "/档案/社交/校园墙": {
+              "tag": "校园墙",
+              "kind": "container",
+              "openHtml": "<div class=\"c-split\">",
+              "closeHtml": "</div>",
+              "path": "/档案/社交/校园墙",
+              "children": [
+                {
+                  "path": "/档案/社交/校园墙/热榜",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/社交/校园墙/树洞区",
+                  "min": 1,
+                  "max": 1
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/社交/校园墙/热榜": {
+              "tag": "热榜",
+              "kind": "container",
+              "openHtml": "<div class=\"c-col left-col\">",
+              "closeHtml": "</div>",
+              "path": "/档案/社交/校园墙/热榜",
+              "children": [
+                {
+                  "path": "/档案/社交/校园墙/热榜/热榜项",
+                  "min": 5,
+                  "max": null
+                },
+                {
+                  "path": "/档案/社交/校园墙/热榜/热榜评论",
+                  "min": 1,
+                  "max": 1
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/社交/校园墙/热榜/热榜项": {
+              "tag": "热榜项",
+              "kind": "record",
+              "path": "/档案/社交/校园墙/热榜/热榜项",
+              "fields": [
+                "排名",
+                "话题",
+                "热度"
+              ],
+              "fieldRules": {
+                "排名": {
+                  "required": false,
+                  "type": "integer"
+                },
+                "话题": {
+                  "required": true,
+                  "type": "text"
+                },
+                "热度": {
+                  "required": false,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "排名",
+                    "话题",
+                    "热度"
+                  ],
+                  "html": "<div class=\"c-hot-item\"><span class=\"c-hot-num\">$1</span>$2 <span class=\"c-cn-tag\">$3</span></div>"
+                },
+                {
+                  "fields": [
+                    "排名",
+                    "话题"
+                  ],
+                  "html": "<div class=\"c-hot-item\"><span class=\"c-hot-num\">$1</span>$2</div>"
+                },
+                {
+                  "fields": [
+                    "话题",
+                    "热度"
+                  ],
+                  "html": "<div class=\"c-hot-item\">$1 <span class=\"c-cn-tag\">$2</span></div>"
+                },
+                {
+                  "fields": [
+                    "话题"
+                  ],
+                  "html": "<div class=\"c-hot-item\">$1</div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/社交/校园墙/热榜/热榜评论": {
+              "tag": "热榜评论",
+              "kind": "container",
+              "openHtml": "<div class=\"c-hot-cmb\">",
+              "closeHtml": "</div>",
+              "path": "/档案/社交/校园墙/热榜/热榜评论",
+              "children": [
+                {
+                  "path": "/档案/社交/校园墙/热榜/热榜评论/热评",
+                  "min": 4,
+                  "max": null
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/社交/校园墙/热榜/热榜评论/热评": {
+              "tag": "热评",
+              "kind": "record",
+              "path": "/档案/社交/校园墙/热榜/热榜评论/热评",
+              "fields": [
+                "署名",
+                "内容"
+              ],
+              "fieldRules": {
+                "署名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "内容": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "署名",
+                    "内容"
+                  ],
+                  "html": "<div class=\"c-hot-rep\"><span class=\"c-cmt-name\">$1</span>$2</div>"
+                }
+              ],
+              "aliases": {
+                "content": "内容"
+              },
+              "structuralSeparators": true,
+              "mergeAdjacentFields": [
+                "署名",
+                "姓名",
+                "内容"
+              ]
+            },
+            "/档案/社交/校园墙/树洞区": {
+              "tag": "树洞区",
+              "kind": "container",
+              "openHtml": "<div class=\"c-col\">",
+              "closeHtml": "</div>",
+              "path": "/档案/社交/校园墙/树洞区",
+              "children": [
+                {
+                  "path": "/档案/社交/校园墙/树洞区/树洞帖",
+                  "min": 2,
+                  "max": null
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/社交/校园墙/树洞区/树洞帖": {
+              "tag": "树洞帖",
+              "kind": "container",
+              "openHtml": "<div class=\"c-news\">",
+              "closeHtml": "</div>",
+              "path": "/档案/社交/校园墙/树洞区/树洞帖",
+              "children": [
+                {
+                  "path": "/档案/社交/校园墙/树洞区/树洞帖/帖子",
+                  "min": 1,
+                  "max": null
+                },
+                {
+                  "path": "/档案/社交/校园墙/树洞区/树洞帖/展开回复",
+                  "min": 0,
+                  "max": null
+                },
+                {
+                  "path": "/档案/社交/校园墙/树洞区/树洞帖/折叠回复",
+                  "min": 0,
+                  "max": null
+                }
+              ],
+              "replyGroupMinimum": 1,
+              "structuralSeparators": true
+            },
+            "/档案/社交/校园墙/树洞区/树洞帖/帖子": {
+              "tag": "帖子",
+              "kind": "record",
+              "path": "/档案/社交/校园墙/树洞区/树洞帖/帖子",
+              "fields": [
+                "标题",
+                "主楼"
+              ],
+              "fieldRules": {
+                "标题": {
+                  "required": true,
+                  "type": "text"
+                },
+                "主楼": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "标题",
+                    "主楼"
+                  ],
+                  "html": "<div class=\"c-n-tit\">$1</div><div class=\"c-n-txt\">$2</div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/社交/校园墙/树洞区/树洞帖/展开回复": {
+              "tag": "展开回复",
+              "kind": "container",
+              "openHtml": "<details class=\"c-n-det\" open><summary>展开楼内回复</summary>",
+              "closeHtml": "</details>",
+              "path": "/档案/社交/校园墙/树洞区/树洞帖/展开回复",
+              "children": [
+                {
+                  "path": "/档案/社交/校园墙/树洞区/树洞帖/展开回复/回帖",
+                  "min": 4,
+                  "max": null
+                }
+              ],
+              "replyCountField": "回复数",
+              "structuralSeparators": true
+            },
+            "/档案/社交/校园墙/树洞区/树洞帖/展开回复/回帖": {
+              "tag": "回帖",
+              "kind": "record",
+              "path": "/档案/社交/校园墙/树洞区/树洞帖/展开回复/回帖",
+              "fields": [
+                "楼层",
+                "署名",
+                "内容"
+              ],
+              "fieldRules": {
+                "楼层": {
+                  "required": true,
+                  "type": "integer"
+                },
+                "署名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "内容": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "楼层",
+                    "署名",
+                    "内容"
+                  ],
+                  "html": "<div class=\"c-n-reply\"><b>$1L ($2)：</b>$3</div>"
+                }
+              ],
+              "aliases": {
+                "content": "内容"
+              },
+              "structuralSeparators": true
+            },
+            "/档案/社交/校园墙/树洞区/树洞帖/折叠回复": {
+              "tag": "折叠回复",
+              "kind": "container",
+              "openHtml": "<details class=\"c-n-det\"><summary>展开楼内回复</summary>",
+              "closeHtml": "</details>",
+              "path": "/档案/社交/校园墙/树洞区/树洞帖/折叠回复",
+              "children": [
+                {
+                  "path": "/档案/社交/校园墙/树洞区/树洞帖/折叠回复/回帖",
+                  "min": 3,
+                  "max": null
+                }
+              ],
+              "replyCountField": "回复数",
+              "structuralSeparators": true
+            },
+            "/档案/社交/校园墙/树洞区/树洞帖/折叠回复/回帖": {
+              "tag": "回帖",
+              "kind": "record",
+              "path": "/档案/社交/校园墙/树洞区/树洞帖/折叠回复/回帖",
+              "fields": [
+                "楼层",
+                "署名",
+                "内容"
+              ],
+              "fieldRules": {
+                "楼层": {
+                  "required": true,
+                  "type": "integer"
+                },
+                "署名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "内容": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "楼层",
+                    "署名",
+                    "内容"
+                  ],
+                  "html": "<div class=\"c-n-reply\"><b>$1L ($2)：</b>$3</div>"
+                }
+              ],
+              "aliases": {
+                "content": "内容"
+              },
+              "structuralSeparators": true
+            },
+            "/档案/社交/署名吐槽": {
+              "tag": "署名吐槽",
+              "kind": "record",
+              "path": "/档案/社交/署名吐槽",
+              "fields": [
+                "署名",
+                "内容"
+              ],
+              "fieldRules": {
+                "署名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "内容": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "署名",
+                    "内容"
+                  ],
+                  "html": "<div class=\"c-tucao\">$1吐槽：$2</div>"
+                }
+              ],
+              "aliases": {
+                "content": "内容"
+              },
+              "structuralSeparators": true,
+              "mergeAdjacentFields": [
+                "署名",
+                "姓名",
+                "内容"
+              ]
+            },
+            "/档案/群像观察": {
+              "tag": "群像观察",
+              "kind": "container",
+              "openHtml": "<!-- 04 · 走廊观察日记：6人鲜活群像网格 + 支线时间轴 -->\n  <details open><summary>𝓔𝓿𝓮𝓻𝔂𝓸𝓷𝓮'𝓼 𝓸𝔀𝓷 𝓼𝓽𝓸𝓻𝔂 <small class=\"c-sum-note\">/ 走廊观察日记 · 鲜活群像支线</small></summary><div class=\"c-pnk-cont\"><div class=\"c-wm\"></div>\n    <p class=\"c-cn-intro\">✦ <strong>叙事外全景镜头</strong>：世界不会围着主角静止。以下是同一时间切片下，周围角色各自独立推进的生活轨迹、小心思与支线交集（角色仅掌握各自视角内的信息）。</p>\n    \n    <!-- 6张卡片组成完美的 3×2 双列杂志网格 -->",
+              "closeHtml": "</div></details>",
+              "path": "/档案/群像观察",
+              "children": [
+                {
+                  "path": "/档案/群像观察/观察卡片",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/群像观察/同步时间轴",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/群像观察/走廊碎片",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/群像观察/广播站",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/群像观察/群像吐槽",
+                  "min": 1,
+                  "max": 1
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/群像观察/观察卡片": {
+              "tag": "观察卡片",
+              "kind": "container",
+              "openHtml": "<div class=\"c-cn-notes\">",
+              "closeHtml": "</div>",
+              "path": "/档案/群像观察/观察卡片",
+              "children": [
+                {
+                  "path": "/档案/群像观察/观察卡片/观察",
+                  "min": 6,
+                  "max": null
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/群像观察/观察卡片/观察": {
+              "tag": "观察",
+              "kind": "record",
+              "path": "/档案/群像观察/观察卡片/观察",
+              "fields": [
+                "姓名",
+                "身份",
+                "动向",
+                "坐标",
+                "目标"
+              ],
+              "fieldRules": {
+                "姓名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "身份": {
+                  "required": true,
+                  "type": "text"
+                },
+                "动向": {
+                  "required": true,
+                  "type": "text"
+                },
+                "坐标": {
+                  "required": true,
+                  "type": "text"
+                },
+                "目标": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "姓名",
+                    "身份",
+                    "动向",
+                    "坐标",
+                    "目标"
+                  ],
+                  "html": "<article class=\"c-cn-note\"><div class=\"c-cn-note-head\"><b>$1</b><small>$2</small></div><p>$3</p><div class=\"c-cn-note-foot\"><span class=\"c-cn-tag\">📍 $4</span><span class=\"c-cn-tag\">$5</span></div></article>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/群像观察/同步时间轴": {
+              "tag": "同步时间轴",
+              "kind": "container",
+              "openHtml": "<div class=\"c-cn-subtitle\">同步时间轴 / 校园各角落正在发生的支线切片</div><div class=\"c-cn-timeline\">",
+              "closeHtml": "</div>",
+              "path": "/档案/群像观察/同步时间轴",
+              "children": [
+                {
+                  "path": "/档案/群像观察/同步时间轴/事件",
+                  "min": 4,
+                  "max": null
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/群像观察/同步时间轴/事件": {
+              "tag": "事件",
+              "kind": "record",
+              "path": "/档案/群像观察/同步时间轴/事件",
+              "fields": [
+                "时间",
+                "地点",
+                "事件内容",
+                "情报状态"
+              ],
+              "fieldRules": {
+                "时间": {
+                  "required": true,
+                  "type": "text"
+                },
+                "地点": {
+                  "required": true,
+                  "type": "text"
+                },
+                "事件内容": {
+                  "required": true,
+                  "type": "text"
+                },
+                "情报状态": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "时间",
+                    "地点",
+                    "事件内容",
+                    "情报状态"
+                  ],
+                  "html": "<div class=\"c-cn-event\"><time>$1 · $2</time><p>$3 <small class=\"c-os-red\">（情报状态：$4）</small></p></div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/群像观察/走廊碎片": {
+              "tag": "走廊碎片",
+              "kind": "record",
+              "path": "/档案/群像观察/走廊碎片",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<span class=\"c-cn-sticker\">🍃 走廊碎片：$1</span>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/群像观察/广播站": {
+              "tag": "广播站",
+              "kind": "record",
+              "path": "/档案/群像观察/广播站",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<span class=\"c-cn-sticker\">📻 广播站/小卖部：$1</span>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/群像观察/群像吐槽": {
+              "tag": "群像吐槽",
+              "kind": "record",
+              "path": "/档案/群像观察/群像吐槽",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-tucao\">群像观察员吐槽：$1</div>"
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/弹幕": {
+              "tag": "弹幕",
+              "kind": "container",
+              "openHtml": "<!-- 05 · 场外观众弹幕 -->\n  <details><summary>𝓦𝓱𝓲𝓼𝓹𝓮𝓻𝓼 𝓲𝓷 𝓽𝓱𝓮 𝓭𝓪𝓻𝓴 <small class=\"c-sum-note\">/ 场外观众弹幕 · 角色禁止读屏</small></summary><div class=\"c-pnk-cont\"><div class=\"c-wm\"></div>\n    <div class=\"c-cn-intro\">✦ <strong>第四面墙之外</strong>：以下为虚构追更读者的实时弹幕吐槽，严禁任何剧情内角色获知或受其影响。</div>\n    <div class=\"c-cn-barrage\">",
+              "closeHtml": "</div>\n    <div class=\"c-cn-barrage-foot\">【舞台外 / Outside Narrative】 <span class=\"c-cn-seal\">观众席 · 禁止剧透</span></div>\n  </div></details>",
+              "path": "/档案/弹幕",
+              "children": [
+                {
+                  "path": "/档案/弹幕/弹幕条",
+                  "min": 8,
+                  "max": null
+                }
+              ],
+              "structuralSeparators": true
+            },
+            "/档案/弹幕/弹幕条": {
+              "tag": "弹幕条",
+              "kind": "record",
+              "path": "/档案/弹幕/弹幕条",
+              "fields": [
+                "署名",
+                "内容"
+              ],
+              "fieldRules": {
+                "署名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "内容": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "署名",
+                    "内容"
+                  ],
+                  "html": "<div class=\"c-cn-danmu\"><span class=\"c-cn-danmu-who\">$1</span><span class=\"c-cn-danmu-text\">$2</span></div>"
+                }
+              ],
+              "aliases": {
+                "content": "内容"
+              },
+              "structuralSeparators": true,
+              "mergeAdjacentFields": [
+                "署名",
+                "姓名",
+                "内容"
+              ]
+            }
+          },
+          "pageTags": [
+            "环境",
+            "心事",
+            "私密记录",
+            "社交",
+            "群像观察",
+            "弹幕"
+          ]
+        },
+        "sample": "<环境>\n<时空><日期>示例日期</日期><星期>示例星期</星期><时间>示例时间</时间><阶段>示例课间</阶段><天气>示例天气与光影质感</天气></时空>\n<感官><地点>示例当前具体地点</地点><声息>示例环境背景音</声息></感官>\n<现场群像>示例周围2~3处同班同学或路</现场群像>\n<自身><衣着>示例{{user}}穿着细节</衣着><动作>示例{{user}}已明确发</动作><持有物>示例{{user}}手头或课</持有物></自身>\n<视角人物><姓名>示例视角人物实际姓名</姓名><衣着>示例视角人物穿着细节12字内</衣着><动作>示例视角人物当前姿势与动作</动作><目光>示例视角人物目光停留的具体位</目光></视角人物>\n<空间张力><距离>示例两人当前物理距离与方位</距离><生理状态>示例视角人物当前生理状态</生理状态><性器状态>示例视角人物当前性器状态，以</性器状态></空间张力>\n<瞬时心声>示例视角人物脑海中一闪而过的</瞬时心声>\n<关系><身份>示例明面身份关系</身份><阶段>示例实际亲密阶段</阶段><互动>示例{{user}}与视角人</互动></关系>\n<镜头特写>示例一句极具画面感的环境定格</镜头特写>\n</环境>\n\n<剧情正文>\n示例承接{{user}}已经\n</剧情正文>\n\n<档案>\n<心事>\n<穿搭气味>示例视角人物衣着细节（如领口</穿搭气味>\n<生理微反应>示例视角人物呼吸频率、眼神变</生理微反应>\n<表象动作><表象>示例视角人物表面维持的动作</表象><小动作>示例手指</小动作></表象动作>\n<随身物件>示例视角人物此刻随身口袋或课</随身物件>\n<多层心理><理智>示例视角人物表层理智想法</理智><颜文字>示例颜文字</颜文字><潜意识>示例未被他人得知的深层念头</潜意识><锐评>示例内心吐槽或偏爱评价</锐评></多层心理>\n<心动好感><数值>50</数值><变动>示例↑或↓及变动数值</变动><原因>示例好感变动原因及当下对{{</原因></心动好感>\n<暗涌克制><数值>50</数值><情绪>示例当前情绪状态标签</情绪><克制>示例理智克制程度与内心蠢蠢欲</克制></暗涌克制>\n<私密手记>示例视角人物第一人称私密日记</私密手记>\n<围观>\n<围观评><署名>示例前排</署名><内容>示例近距离吃瓜吐槽1</内容></围观评>\n<围观评><署名>示例后排</署名><内容>示例旁观者视角对两人氛围的锐</内容></围观评>\n<围观评><署名>示例科任老师</署名><内容>示例站在各自人设高度的观察评</内容></围观评>\n<围观评><署名>示例视角人物手里的物品</署名><内容>示例物品惨遭蹂躏或见证暧昧的</内容></围观评>\n<围观评><署名>示例窗外麻雀</署名><内容>示例奇妙趣味视角评论5</内容></围观评>\n</围观>\n<署名吐槽><署名>示例符合设定的损友或叙事旁白</署名><内容>示例一针见血的总结性锐评1</内容></署名吐槽>\n</心事>\n<私密记录>\n<备忘录>\n<已完成>示例视角人物近期已完成的与{</已完成>\n<已完成>示例视角人物近期已完成的暗中</已完成>\n<待完成>示例视角人物正在计划但尚未实</待完成>\n<待完成>示例视角人物备忘录里反复修改</待完成>\n<待完成>示例视角人物绝对不想被人看到</待完成>\n</备忘录>\n<消费记录>\n<购买><商品>示例购买记录1：商品名称（附</商品><金额>示例金额</金额></购买>\n<购买><商品>示例购买记录2：商品名称（如</商品><金额>示例金额</金额></购买>\n<购买><商品>示例购买记录3：商品名称（体</商品><金额>示例金额</金额></购买>\n<购物车>示例购物车备选</购物车>\n</消费记录>\n<搜索>\n<搜索信息><关键词>示例视角人物近期搜索词1（贴</关键词><动机>示例为什么搜这个词</动机></搜索信息>\n<网友回复><署名>示例高赞网友1ID</署名><内容>示例真实感拉满的网友神回复1</内容></网友回复>\n<网友回复><署名>示例吃瓜网友2ID</署名><内容>示例起哄或出主意的回复2</内容></网友回复>\n<网友回复><署名>示例暴躁网友3ID</署名><内容>示例反差感吐槽回复3</内容></网友回复>\n<网友回复><署名>示例匿名楼主追问</署名><内容>示例视角人物暗中破防或嘴硬的</内容></网友回复>\n</搜索>\n<搜索>\n<搜索信息><关键词>示例视角人物近期搜索词2（生</关键词><动机>示例为什么搜这个词</动机></搜索信息>\n<网友回复><署名>示例百科</署名><内容>示例一本正经的回答1</内容></网友回复>\n<网友回复><署名>示例歪楼网友ID</署名><内容>示例歪楼搞笑回复2</内容></网友回复>\n<网友回复><署名>示例过来人ID</署名><内容>示例扎心经验谈3</内容></网友回复>\n</搜索>\n<假设分支><假设>示例如果刚才某句话</假设><推演>示例推演一段极具张力的100</推演></假设分支>\n<采访><提问>示例直击灵魂的采访提问1（关</提问><回答>示例视角人物结合神态动作的真</回答></采访>\n<采访><提问>示例直击灵魂的采访提问2（关</提问><回答>示例视角人物结合神态动作的真</回答></采访>\n<采访><提问>示例直击灵魂的采访提问3（关</提问><回答>示例视角人物结合神态动作的真</回答></采访>\n<署名吐槽><署名>示例主持人或旁白</署名><内容>示例针对采访表现的锐评2</内容></署名吐槽>\n</私密记录>\n<社交>\n<聊天标签>示例大群状态标签，如：99+</聊天标签>\n<群聊>\n<群名>示例班级大群名称（含人数）</群名>\n<聊天时间>示例聊天时间</聊天时间>\n<发言><姓名>示例活跃NPC1姓名及群头衔</姓名><内容>示例群1消息1：聊校园日常</内容></发言>\n<发言><姓名>示例活跃NPC2姓名及群头衔</姓名><内容>示例群1消息2：接梗或顺带提</内容></发言>\n<系统>示例系统提示：如“xxx 拍</系统>\n<本人发言><姓名>示例发言人3</姓名><内容>示例群1消息3</内容></本人发言>\n<发言><姓名>示例活跃NPC4姓名及群头衔</姓名><内容>示例群1消息4</内容></发言>\n<发言><姓名>示例活跃NPC5姓名及群头衔</姓名><内容>示例群1消息5</内容></发言>\n</群聊>\n<聊天标签>示例小群状态标签，如：死党私</聊天标签>\n<群聊>\n<群名>示例小分队</群名>\n<群公告>示例一句符合死党群风格的搞笑</群公告>\n<发言><姓名>示例死党NPC1</姓名><内容>示例群2消息1：私下吐槽或盘</内容></发言>\n<本人发言><姓名>示例发言人2</姓名><内容>示例群2消息2</内容></本人发言>\n<发言><姓名>示例死党NPC2</姓名><内容>示例群2消息3：出馊主意或一</内容></发言>\n<系统>示例系统提示：如“视角人物 </系统>\n<发言><姓名>示例死党NPC3</姓名><内容>示例群2消息4：抓包撤回内容</内容></发言>\n</群聊>\n<聊天标签>示例私聊状态标签，如：置顶私</聊天标签>\n<私聊>\n<私聊对象>示例私聊对象姓名及关系</私聊对象>\n<发言><姓名>示例私聊对象</姓名><内容>示例私聊消息1</内容></发言>\n<本人发言><姓名>示例视角人物名字</姓名><内容>示例视角人物回复消息2</内容></本人发言>\n<发言><姓名>示例私聊对象</姓名><内容>示例私聊消息3</内容></发言>\n<本人发言><姓名>示例视角人物名字</姓名><内容>示例视角人物回复消息4</内容></本人发言>\n</私聊>\n<朋友圈>\n<动态信息><作者>示例视角人物或核心角色姓名</作者><时间>示例发布时间</时间><可见范围>示例仅谁可见或定位</可见范围></动态信息>\n<动态正文>示例朋友圈1正文（可配文字描</动态正文>\n<点赞><名单>示例点赞具体人名列表</名单><人数>3</人数></点赞>\n<评论><署名>示例评论好友1</署名><内容>示例评论1内容</内容></评论>\n<回复评论><署名>示例评论好友2</署名><对象>示例评论好友1</对象><内容>示例互动回复2内容</内容></回复评论>\n<评论><署名>示例评论好友3</署名><内容>示例评论3内容</内容></评论>\n</朋友圈>\n<朋友圈>\n<动态信息><作者>示例群像活跃NPC姓名</作者><时间>示例发布时间</时间></动态信息>\n<动态正文>示例朋友圈2正文（展现校园另</动态正文>\n<点赞><名单>示例点赞具体人名列表</名单><人数>3</人数></点赞>\n<评论><署名>示例评论同学A</署名><内容>示例盲生发现华点的评论1</内容></评论>\n<评论><署名>示例评论同学B</署名><内容>示例评论2内容</内容></评论>\n</朋友圈>\n<校园墙>\n<热榜>\n<热榜项><排名>1</排名><话题>示例校园热榜1：与主线或风云</话题><热度>爆</热度></热榜项>\n<热榜项><排名>2</排名><话题>示例校园热榜2：近期全校热议</话题><热度>热</热度></热榜项>\n<热榜项><排名>3</排名><话题>示例校园热榜3：社团</话题><热度>新</热度></热榜项>\n<热榜项><排名>4</排名><话题>示例校园热榜4：某NPC相关</话题></热榜项>\n<热榜项><排名>5</排名><话题>示例校园热榜5：校园生活日常</话题></热榜项>\n<热榜评论>\n<热评><署名>示例热评学生1</署名><内容>示例针对热榜的犀利或搞笑评论</内容></热评>\n<热评><署名>示例热评学生2</署名><内容>示例针对热榜的知情人士爆料2</内容></热评>\n<热评><署名>示例热评学生3</署名><内容>示例针对热榜的吃瓜跟帖3</内容></热评>\n<热评><署名>示例热评学生4</署名><内容>示例针对热榜的玩梗评论4</内容></热评>\n</热榜评论>\n</热榜>\n<树洞区>\n<树洞帖>\n<帖子><标题>示例匿名树洞帖1标题（关于{</标题><主楼>示例树洞帖1主楼详细内容</主楼></帖子>\n<展开回复>\n<回复数>4</回复数>\n<回帖><楼层>1</楼层><署名>示例代号</署名><内容>示例抢沙发或认出当事人的回复</内容></回帖>\n<回帖><楼层>2</楼层><署名>示例代号</署名><内容>示例补充目击细节的回复</内容></回帖>\n<回帖><楼层>3</楼层><署名>示例代号</署名><内容>示例嗑CP或起哄的回复</内容></回帖>\n<回帖><楼层>4</楼层><署名>示例疑似熟人马甲</署名><内容>示例意味深长的回复</内容></回帖>\n</展开回复>\n</树洞帖>\n<树洞帖>\n<帖子><标题>示例匿名树洞帖2标题（关于其</标题><主楼>示例树洞帖2主楼详细内容</主楼></帖子>\n<折叠回复>\n<回复数>3</回复数>\n<回帖><楼层>1</楼层><署名>示例代号</署名><内容>示例帖2回帖1</内容></回帖>\n<回帖><楼层>2</楼层><署名>示例代号</署名><内容>示例帖2回帖2</内容></回帖>\n<回帖><楼层>3</楼层><署名>示例代号</署名><内容>示例帖2回帖3</内容></回帖>\n</折叠回复>\n</树洞帖>\n</树洞区>\n</校园墙>\n<署名吐槽><署名>示例校园墙皮下君或旁白</署名><内容>示例针对今日校园舆论的锐评3</内容></署名吐槽>\n</社交>\n<群像观察>\n<观察卡片>\n<观察><姓名>示例NPC1姓名</姓名><身份>示例身份</身份><动向>示例NPC1此刻所在位置、具</动向><坐标>示例NPC1当前坐标</坐标><目标>示例NPC1当前目标</目标></观察>\n<观察><姓名>示例NPC2姓名</姓名><身份>示例身份</身份><动向>示例NPC2此刻所在位置、具</动向><坐标>示例NPC2当前坐标</坐标><目标>示例NPC2当前目标</目标></观察>\n<观察><姓名>示例NPC3姓名</姓名><身份>示例身份</身份><动向>示例NPC3此刻的独立行动与</动向><坐标>示例NPC3当前坐标</坐标><目标>示例NPC3当前目标</目标></观察>\n<观察><姓名>示例NPC4姓名</姓名><身份>示例身份</身份><动向>示例NPC4此刻的独立行动、</动向><坐标>示例NPC4当前坐标</坐标><目标>示例NPC4当前目标</目标></观察>\n<观察><姓名>示例NPC5姓名</姓名><身份>示例身份</身份><动向>示例NPC5此刻的鲜活日常切</动向><坐标>示例NPC5当前坐标</坐标><目标>示例NPC5当前目标</目标></观察>\n<观察><姓名>示例NPC6姓名</姓名><身份>示例身份</身份><动向>示例NPC6此刻的动向及对班</动向><坐标>示例NPC6当前坐标</坐标><目标>示例NPC6当前目标</目标></观察>\n</观察卡片>\n<同步时间轴>\n<事件><时间>示例具体时间</时间><地点>示例校园地点1</地点><事件内容>示例场外支线事件1的具体画面</事件内容><情报状态>示例谁知情</情报状态></事件>\n<事件><时间>示例具体时间</时间><地点>示例校园地点2</地点><事件内容>示例场外支线事件2的具体画面</事件内容><情报状态>示例谁知情</情报状态></事件>\n<事件><时间>示例具体时间</时间><地点>示例校园地点3</地点><事件内容>示例场外支线事件3的具体画面</事件内容><情报状态>示例谁知情</情报状态></事件>\n<事件><时间>示例具体时间</时间><地点>示例校园地点4</地点><事件内容>示例场外支线事件4（可埋下后</事件内容><情报状态>示例伏笔发酵中</情报状态></事件>\n</同步时间轴>\n<走廊碎片>示例校园随机小事1</走廊碎片>\n<广播站>示例校园随机小事2</广播站>\n<群像吐槽>示例针对这群人各自心怀鬼胎或</群像吐槽>\n</群像观察>\n<弹幕>\n<弹幕条><署名>示例考据党弹幕ID</署名><内容>示例抠细节分析视角人物微表情</内容></弹幕条>\n<弹幕条><署名>示例嗑学家弹幕ID</署名><内容>示例激动尖叫嗑糖的弹幕2</内容></弹幕条>\n<弹幕条><署名>示例群像粉弹幕ID</署名><内容>示例讨论某个配角NPC支线走</内容></弹幕条>\n<弹幕条><署名>示例神预言弹幕ID</署名><内容>示例盲猜接下来剧情修罗场或反</内容></弹幕条>\n<弹幕条><署名>示例吐槽役弹幕ID</署名><内容>示例幽默玩梗吐槽视角人物嘴硬</内容></弹幕条>\n<弹幕条><署名>示例列文虎克ID</署名><内容>示例发现环境栏</内容></弹幕条>\n<弹幕条><署名>示例事业</署名><内容>示例关注校园主线或人际博弈的</内容></弹幕条>\n<弹幕条><署名>示例前排打卡ID</署名><内容>示例结合当前名场面的高能刷屏</内容></弹幕条>\n</弹幕>\n</档案>",
+        "compatibilityPackIds": [
+          "campus_semantic_r7_20261125",
+          "campus_semantic_r71",
+          "campus-semantic-r72"
+        ],
+        "presetId": "campus_semantic_native_r8_format",
+        "compatibilityDecoders": [
+          {
+            "identity": "campus_semantic_r7_20261125",
+            "ruleDigests": [
+              "8d662b15788aa0204f92ea0986c2840b42e832cd9b1c7a6098033c2cd6b6fff3",
+              "e5cffb1d4122283c77e73229c43b3e481068340110ba31aae7341ea5e2dafe53",
+              "431532b72d4b57d893ef41a30bc86d469fa34c0538564afdbba6339ad290fb1f",
+              "c3bb85444e82b8467c859fc65a7d0e32c0c1f90a4ffa0bf3ceb99b5a12960596",
+              "b50c1945e1f219216a9e97dc85da3148b25446d2ee3beeaf4a3ea084610bf137",
+              "ccfd0c18064be6104ad84b414e439bdc4af3fd2210092dd2f79b0b3f79a9d471",
+              "89ef1c803dae5f7ddb5002f49a4bba04cffa48b31dcb8a1f78eeaa579784e8c5",
+              "c9a6231a968c451006ea47a16d510da8b21dfee74a28d6c2c13effb028586a40",
+              "699554cdf412b9111b9bcf217342e63baa28c90bc966135424c1fdca491bfee3",
+              "e7ad94e6f1afed3db2d6f1516d7c228790bdd9fe0f7901d716d66df401302d0b",
+              "1f17e0a00ed55ef16f006b850c47caf4046c7f45569fd01306f77853520844c2",
+              "6c9dac25de1c0b29869984a7ef95195dbf1825711233f789a6c87cef44070bee",
+              "a94a3a60960ff26583185729a57b473af43cf7265b0ac039b2e6ba1ab9d7deba",
+              "cad47419e51838cda759565a0d98e89b48f8690db1e2db7861707ee8337741a8",
+              "ac0f9fc9e162f38d3863fd32f7df35a0f8774e28922b638806fd88b777428f5b",
+              "31e583357f1d0546f8caed98f92b7c2f5d1f3179ec339ff0e1adde18d588da1b",
+              "84fd58d1945d6bb4c53427a2a85981c272d4bc9b2ac3fc373c7dfc54f28967c6",
+              "b68d5a0ebea6138a45c564d300078a2b02aa24ed3567adf378e4e372fc65d483",
+              "c7b0c9c5b7427877a66adf8686ae39b4e1da6648dd65c63caa8750c312f83261",
+              "6506a76b806a868cb2099588147220632655aa915fcaf66def58403bebcfbd43",
+              "8e7605ce74dccce716784c9c3723dcebc4cbf62adb3e48c67ce76c07b84564ba",
+              "5cc5b43d35ceb13021be29c44fb1ed31833dafdba7c256bc8ae9610bf074f8f3",
+              "e3c255398bf6bc62bab9ba78491f89a432fb192fe469af722b49d1cd7a905d51",
+              "6316dc5db911c77e9283e33b0b701289ec1456d3493b565de08fb55913c84364",
+              "a5e4b1213fa367405a65118336fb08e488d512c0dd7b51a0c0e884fe96ea95d2",
+              "cd9e403e67e9c57cfb0a0e54ef41ac38987e7f0e541a8e1fba51e51268285bc9",
+              "744665c7d4382a3fe8aaa66fff0a16e349eb7be6b7bc4cc27f148b610a0706d7",
+              "8c5358f2fa1a89b5532e86d3f838cf88a369db8878360dfa153c636dce9e98a9",
+              "9a0669be8d15aa8f65dd8c3c9af8963f9a420ee0a503b4d80e996915cb051901",
+              "d039d8e1783e32a39ad1ac181749b4b4cbf447d6ac20f38f1180a6a08ed14de8",
+              "7703b05b57f536ce83f256b32170fe7e41240020408a93f959662e350fdf2244",
+              "1921a06f293e2f05969f3518634a9585e4ec1d467bd7f9e4f1d72c6bafbab437",
+              "ca17a5c3623785098d7fa2f7f217de7a5a805a07314241497641af25c8101820",
+              "ee3c0287be8cf2ab6f9d1d86ff4511ea60179480272fc41a87c686e812c76d17",
+              "3050e27c3b1df93593898371d5d30ea9967b1b45a4815819c731e1e6b89984c0",
+              "469e6932c0f1425be866f0f3a199c3352e7cb981939850830ca601455faceb5d",
+              "942d3ab67fea3e57ede183d66f8271febd0ea5156a19bac27c37f165a7da05d1",
+              "390091b97aa02d9f9b7a80fe3913f16916f66192810a108d01f3bd4c76a14dc5",
+              "4eeb0899fd53c385050d2a3601bdbbe223f925dae10f18c6041eced5b3c78380",
+              "2c8046911e538b3c1b0af116549d9453769cd81bf4d81f15947760ad20d45cb1",
+              "a31a130cd520964150ba3fc646b897e59d582fdd5af112d9bdcb468b6819e2b5",
+              "0736ed459db234da9b8d5286e6f625eb3fad0f4e0245b2926800b3e521fd1679",
+              "1f65d7e25d22180e2d6b48f454b1a457f285da6c3e823929918f07eacbc0015a",
+              "f1437d2f14fc5fedc0cd6f0f86d244749580e7ba92c5af56e6465495746f66b0",
+              "7205bd63618359159150e9ce2b67d346ddc2ea4ed9d495a0ea6eb07d926f1aef",
+              "29d948b6d4f40f26b3b802263731f6b0ebcc488a6c466281671c845db4137660",
+              "e29b1176e596d615f1ffc4467920f78337a725d5646478621092cc81de82b3cc",
+              "e258db8fdd597aae230ee367b5a5cad2cfd8e3e60ef1b6000cee039fa85bb355",
+              "81ada555234acb77751d3636b3a56533626727fef226ac04f73603b32daff148",
+              "f076a63c65c0fc3d860945ec09f8dab5eee4e3a99d057190b04d097d0708ff28",
+              "f51a3952d8e75c2bfed1c95d0f8d3bf9eccf6df0a736f5c9f3f4e3da7e95d65f",
+              "1526e44e37cbbe8687e32b7478376602a3271d7449989025728a55752f147c44",
+              "224c01b8c6ee165ddf47d9bd7225cb9dc11c758c3fbd23c7a27feb8ccd11afad",
+              "e885667c78356ec61bba6bf11c51212d81f8f0a6b109169d058b886245706569",
+              "988af76ff020809e0b4bd767d09c770fb775501f4c3c12f342c83ed5a0da716e",
+              "c4bd111944f39d9d51abe6d1231d6e590ed8690d4f8d2744ac702d2cb47eb490",
+              "00fd2dc23bd436d833f7d397ffe6c49c05d82cb17640de3db6a18ab3eddf3e93",
+              "5606b4622750ffc4f32c420c2dc37e62eed4d20965dec2de52c98a4e411401b1",
+              "5598bac243082972d26e0c7d810f503b2c72d4aa58fb0f3e8a6fda4eb2df035a",
+              "59c73acaa20ddd799a9cf84a041b1520ab65ab808b5de1e15f686e036e7b5f01",
+              "7dd095f6ff120b1481fe245c36ef495fdb973f34ee2aaeef9ff06bde3dfa61f4",
+              "535aff5d5af9442b79a0e0d24ebf86c6e4dd2e5744234f30fdf4b90ea12603ab",
+              "78216b10014735019266e09bac7b48db3bc258f96816e72639d4e04ca0a090e9",
+              "6797da2aa4851d80016372e7531bae768b76d9233da9d7a0228c94e0a32feb13",
+              "a3338f3b14e7aa13d6d5d711be7fcb7a6e7b12d0aeddd92098dcc601dce738c1",
+              "91d4144aebb7d186f65a8d07ba32fc00dcaeb1ef33b60ba681d1af4223783644",
+              "009ff6fae8ebfbc56f9c476bdf34234200e8840a307767934171fbfe26cd402e",
+              "93fe68a8bbc611dcbfefcf7e156cc5a011c6ea10fa81f501fdc364fe9eab6de6",
+              "8ddac7169d6c047c83bd7bca36f7e13347a098b690ea310967e46954239ecbc0",
+              "67b4e6fef56ddf8dd75f4c89d8e4ade15221415089ee787291898066dca63293",
+              "c2478d0ec8b0e677bd1ed579c594d81ad6f22539206f9b3d767070abca7dc9f7",
+              "c47ad6de019b9fe095bd8b9f6239c8578702b3ae8574fd5b407749c288653370",
+              "c85051101433538c76e1ba3f8a524daa86c8dd6d00ad492a092b9d29050ad75a",
+              "eac9b5f682c75cc2dceced2fcc17c63d37ffcbb739fc9155fd05ff236e045ba9",
+              "6bdf991d7a164da1aa6a8030d01648a0eab6408d40336df4ea11e31f73ec40c0",
+              "c35d8315f0227c46d8b6087e88cf297eb7273aa1a26abce86addac75dfad7aa2",
+              "7edb7a8d7eb00175eafb66e61b884e84311db587107bbc22ef968ecb3d197c9e",
+              "5ea7ddd519bfcd5632a1646afaa381df1f4f3c7d98d5ba3a3ab1d63852f05566",
+              "1bc4394440c04f53e99d57a0990420cbe4d17644d300b960366255d4e51bebd2",
+              "7b8105c3d4984b8e6f9bc5fe70262e561113471860ac6d2ab098f51bcee05623",
+              "532fe7ef3622bf83d4fa5e81e99f3b4f5be3745c5e98e476bcec22ff9d11e651",
+              "93f8263ccaa79cdefa96264cc06a3e376ac6ecdd361cce549540077ea5ebd615",
+              "a1715c728baaaa7bf23b1d2b48ede52a27fb2cfb7047ca948a588b76d18dfa98",
+              "8925b44f5c73f260555fb3aea3a7476ac2252b60385412c60babb2e39ddf786b",
+              "5e7c9a07bea4481071b1f01da0eeb1769b86d6297326e1162e667b178f3dbe5a",
+              "6d7b30e3fc9c7e8d29544e5d57833c93cd7a34b82b1123e00a32ff0a792355b7",
+              "2e60572fa14f188628007f1f4137a380a9dc95ac32b31f15d735aaec366450df",
+              "4f91c55821cca5becf69c275e0e2f0049a99ef39c2ebea50196d9b682576d6ba",
+              "6b64009d9d605d7e1fb2568865c58120b78017ac0a74798c1a9af5c172b4ef07",
+              "ce888e9d07f4a0bc822a3239aa39170f01cc88c6facb76995689765d7c3c8719",
+              "f80d9043d28fdde68853ae1fc8139855cc5ce70af3d4ea2d7e7286f0fc6496cd",
+              "342da4150e6b9a6741900216b0b1b7ab462daea8d6691c9caca853f3245db528",
+              "781d42f1eb6327b560387db8ea1b3e63c4e6f54defe18170dcc55a13ac8135d9",
+              "c9baa663a16bc40fca9e640f6e417af920dc6d772ec310286a0208e59791c2a6",
+              "6c89a484a75385e7c547331df73b7835bad4683d83bdf175363032835933ce6d",
+              "88725233f470ac424886481645ae347388edada69adb9792f48fbe990336131c",
+              "14def892c10f050f936e5852c67f381069919441978fdec1e2e60f3d1b021588",
+              "3d2a0f685591e5871fa2473508d71b4f6d7da3521ddccc795ef5d279f62092d4",
+              "1d96635df5717baacc88fa57c0c31027e1acbde91ccc7c44ea930d2e97d9599a",
+              "b4de54bf8a83667197b5e6939b0def8d7312794434e2bf40a3a89467d4669421",
+              "2032ac8db68c1bb2c4a03db433b4a6605414ad0788aaabe5f474f0b913c702a0",
+              "016a7de34cb7eb485aa7d7799ee02c65ba90d9e41ee8b89f1e6389d03c08240c",
+              "4a7730271fda5c4b0e879bffcae5b3d5bfaf1033cef3866ccdd5382bac468ef7",
+              "52088083952e9450c1b53c2ac823ae2f3aa3cbfd51d63f22e79dd1118abf700b",
+              "80e2ba6a2c5d661ec459ea8deeab18a6a1c5b9b8a2d0cd9353acd79673f19e00",
+              "952cd85da64a26ddcf29a58e5508958d08144fbcff9a56e7d11e430ac76e3f35",
+              "145d505d3493c35fbc86b644fe927c42c15264968fa6d94eea12774b5a6b79f9",
+              "182da1bfa4b66524ed6ac272d61d8f447f59abf4905310034fd783998fc03e67",
+              "f5cbc91dffc3a84dd650a0e6d2d7b076680ed9c1ba32bb9a612f1f8ec1524d40",
+              "b3e92c69c5f64a712822e6bfcfdf9ba03fadb98b7e09e79fb924db79f80e58db",
+              "d27cd2bbbd326710d0539f50e90645670fc98b5760af224dec6d71ff47ad2487",
+              "dd13f6f348300aef28b23f4d0fb4feb0ccb1822d162bd0b7b1676a9bce2a3cce",
+              "738264a022d031fdefd6b3f5d9876434fbaecdd58479788428442a10163b3794",
+              "8e0003d15f405ee4176bdc5a175be81bc437191bdc616e6d61b138a3670d3889",
+              "65007adf66ecbee4bf51d7ed9f4055bcac058dd427d452d41c07f6e57a11da80",
+              "5bb67cce2838a2e4e64de95dd93e9d2a60b3ea57a5bc062e5b25a49cfe609a4e",
+              "ea91ff3d9c45807d5015877b26d4cc147085d812ae156e3cbfe70ea5685e2189",
+              "dc3cfa5673aadd15d1ff3eb551900e87e5fb83c8d64e5645654822c32f1e8d06",
+              "14717b70f416ec3211b88828a6b6063221c2dd621bf4d4f6a96c0feb5ffc01ce",
+              "547bcf71235a6966d09316297954f9b5987bdc6438de1f92a4849dd467ed1ad1",
+              "05a4494ba6307e7d42a8f373043ed35c816bdd453477984744a22efb927489c3",
+              "26b5115f5f0bd925bf2cca5c3fd0d056e7b24768e5c2b48a04bcc7e1d490d9cb",
+              "2bc3f4e4b06a13ee822b08e2a7e8e30c4ca9412e5e199512d64f86d18092c2b8",
+              "cfde321506267175792ad22557a36750ae88510fa5808016b49d0a6bdabceef5",
+              "e8eb35906836e1ce782c649836d260317aa8c408a10181fd9d99d2cc31a197c4",
+              "1d27b08e518514c1019c975a50414854cc9af39a5259cc31ec82ecbcbd3a8909",
+              "fc4b50a5915e6963a360f9831731b0c8eb16426278a3f43a2005e542d3846141",
+              "0b52d1ef5635c80298687b5ad0732d451210d0c295b08b62c3b5e6f8d4b32b9d",
+              "dfc834d49303b8c40679c29c04c776df7cdb0d4443820cc0fa84b87f6802d1e0",
+              "a02756b1cbadbcd878b5521893cf2710ff1b5bbee6f85610fbb697b1440e6041",
+              "0465656acf5551e2f6bbbee6ff6e18d5d8317496f6cd199ec6a106ef493cc7f5",
+              "9063155d4b8b098c27d1020d7f584ec9ef31ae65dacc419989da83e031d8e2fd",
+              "c74bebcfe770dd763477a22a52ff068de2b50d78e0331c95236e721261fb06df",
+              "966cb82a404365c8edea9aad56bfe56663f8f8089cda2c2111a71f0c71d748e7",
+              "4e077861991fd17cca9f19b78a3e3dff59596628e371f1e6a6196fe09e9e9626",
+              "75f87881f1f1166400a4448db68230368d67ef90d96ae471385616e5cf44a1fc",
+              "630a62a17d710358e6ec3d7bc2cb674aa23abfa0c7d251a91df7a61049c77b46",
+              "e8f097e1ff88f526306c7af441e39b30f985726a7f960621c2ec88c13e3a1be7",
+              "259a664392dd706a68f0e77a3a007d291f2ffb01d253aeab657eadcd1c6749b6",
+              "fa5418d6312afd94c02ac352886cfa96d21cdd65a9b06569166f6fa92b9a3b24",
+              "971555ca097efb14a56f4fa1501c8aac6391a503895624dceb0b458d3b57434f",
+              "84aac4580a72ecbed7601158ca48c47cb23c21e99e8a59932e6bee7e3002e1c9",
+              "1ff9753a10ce80699f6ffc089cbab4a7c7f96d69e893b8715d9640a3730b7405",
+              "4958b027fcb9be87639bf5aef5c8bc744e3d6365d3d7bcae2913ec986d03c0ee",
+              "cacc3648f7163e4bcd648ac0628041f4eaadb1b7c7565ab124ff4bfbde14206a",
+              "649c18ccd46449cfe5ccfe582cbfe6978c293104799afdbef32c70ee3a59a1ef",
+              "0a324e4cf37f2f132c3a83b19842923c0fc4bb880011498f88b85c7dc4a1e800",
+              "b157e9a9f7b119d6f29bbb7f0575965b43b8b3c7057e15e40a7ecfdccd0bc79f",
+              "4723b0c9e4131cac88078c4602b2838f02403661958679ec484235f91c8ed7e0",
+              "f1e3696b7369466a20e3f1de5059ca50a853bdf667ba0d4610c671b0197c1ea3",
+              "9f98f61b446ac1450a13192a85b39185644fa59093cf6616925c3641b37f061f",
+              "4c65f5244c8bbd9656c1f31ab5710a6c93b37ee0e5e0e351770d153934502df1",
+              "804186687be208089957d09f7ddd7c90ca97eb47f8afb168ec5560b07bded3a3",
+              "0d06da6ef0f93e9cdaab669f90d0cdd7ffbea24559ad1bc6c264a6c4d213c6bd",
+              "f3e9d965a8ba15abfea1d712ccb831bfffd8673e7305b8360e455b0f71d5a431",
+              "4597a412434ce5c3512fd84605fe6c5291e5748276819899d4c12621c1319335",
+              "dd40b909dde09cac785f51fc23bba3b28143b02b67390c136b217d1b70446f90",
+              "a6d3c10cfacfb996146ca0d3d328bb6c14b3be7f13191177ac30de2cb98b988e",
+              "24d2074ca8c2627496beff86be96b304822f0c391926863613ef25482afccdbe",
+              "c8f926395446cd3bd44ff33ca860a2b7692caef8da5cf92c7b1b8430811b3b75",
+              "f92bfa0ed5eefea19c8ac6064dc1902c4cd92a138de0126e8ae030d6c6776474",
+              "651b659186c4bf2d1d39e83397f396b9de55bbf18d62b2ddfe391dcd9d07be6f",
+              "f823f02dcb8510b9b91fa44ab962f0aea2d95e63a4bde4aabdd4dbbe51d6181f"
+            ]
+          },
+          {
+            "identity": "campus_semantic_r71",
+            "ruleDigests": [
+              "8d662b15788aa0204f92ea0986c2840b42e832cd9b1c7a6098033c2cd6b6fff3",
+              "e5cffb1d4122283c77e73229c43b3e481068340110ba31aae7341ea5e2dafe53",
+              "431532b72d4b57d893ef41a30bc86d469fa34c0538564afdbba6339ad290fb1f",
+              "c3bb85444e82b8467c859fc65a7d0e32c0c1f90a4ffa0bf3ceb99b5a12960596",
+              "b50c1945e1f219216a9e97dc85da3148b25446d2ee3beeaf4a3ea084610bf137",
+              "ccfd0c18064be6104ad84b414e439bdc4af3fd2210092dd2f79b0b3f79a9d471",
+              "89ef1c803dae5f7ddb5002f49a4bba04cffa48b31dcb8a1f78eeaa579784e8c5",
+              "c9a6231a968c451006ea47a16d510da8b21dfee74a28d6c2c13effb028586a40",
+              "699554cdf412b9111b9bcf217342e63baa28c90bc966135424c1fdca491bfee3",
+              "e7ad94e6f1afed3db2d6f1516d7c228790bdd9fe0f7901d716d66df401302d0b",
+              "1f17e0a00ed55ef16f006b850c47caf4046c7f45569fd01306f77853520844c2",
+              "6c9dac25de1c0b29869984a7ef95195dbf1825711233f789a6c87cef44070bee",
+              "a94a3a60960ff26583185729a57b473af43cf7265b0ac039b2e6ba1ab9d7deba",
+              "cad47419e51838cda759565a0d98e89b48f8690db1e2db7861707ee8337741a8",
+              "ac0f9fc9e162f38d3863fd32f7df35a0f8774e28922b638806fd88b777428f5b",
+              "31e583357f1d0546f8caed98f92b7c2f5d1f3179ec339ff0e1adde18d588da1b",
+              "84fd58d1945d6bb4c53427a2a85981c272d4bc9b2ac3fc373c7dfc54f28967c6",
+              "8cbc9f47c88692bceb850f7bd54714f0fb40a568a0cb111597cdfd8682aef6d0",
+              "c7b0c9c5b7427877a66adf8686ae39b4e1da6648dd65c63caa8750c312f83261",
+              "4ff81b15c919df1fc02d4be8f961fdeb88533a544ec20bd74eb7195f3709638e",
+              "8e7605ce74dccce716784c9c3723dcebc4cbf62adb3e48c67ce76c07b84564ba",
+              "5cc5b43d35ceb13021be29c44fb1ed31833dafdba7c256bc8ae9610bf074f8f3",
+              "e3c255398bf6bc62bab9ba78491f89a432fb192fe469af722b49d1cd7a905d51",
+              "6316dc5db911c77e9283e33b0b701289ec1456d3493b565de08fb55913c84364",
+              "a5e4b1213fa367405a65118336fb08e488d512c0dd7b51a0c0e884fe96ea95d2",
+              "f3fac9dd63e8609b62f50289d82ed00ca9575f8689bedb98a680b75914109743",
+              "1c5c5d8a96a5c523e69abda6075a4c1b67a805bd5fe707efe94955abd503fcac",
+              "a560278310809402693e31cc5d44439ecab678861b8337454371cbd1dcc8031c",
+              "96c9f6e12e200e889611e781c89b97dc038e46ac71be5967b7cb78f12609c2ac",
+              "d1ea410eb84f7b5d6ec3d68a339f7c4e022236e7e85d67fb2808cbe27d8d3da8",
+              "9e3942898683355b958b63a6042b27eddb42af755103717e5df3d0bf24ed4382",
+              "38025bed7c838eb377f0308c038ca02cd4d3f4ed995966e7561bde162e8a8394",
+              "1eca967653be0ca3c047b085900e8c238138038634e48043a1c2182bd7952fbd",
+              "1e11af398ccf7f65c1971522be815dc175b9245f9198221e27fefb78e3329a2b",
+              "186a7088ce6c672f96b27e4ce08345ba37c547f6098c243380f2df64d5036c1f",
+              "29c566cc546d0adb21e2fb1fcec2a2db5052cf156bc94ef524a03a933b9020da",
+              "ecdc780d4a6cec9775667a970ff30f50f9b1ff59d6221bfb771164810ea7de36",
+              "cf49b781962a87df4b47d70e2684e76e79a0fee1ec69ff4e6f152aba4209e5dd",
+              "b7b8c3ecb1d69e333fc63ba8dfe0bdb3bc8398955b1acad979f2fe98ab7b8eee",
+              "d59d4914e9c2744bf1f7fa886e8c52a240fea5343442f2fc2e077ee7ca552e3a",
+              "695ee39f1b3f48bd31fbd976f1bdf7ed092912ee4ae164818b1ca101e262ec71",
+              "d7e45bf093ec255049f81d6a42b3ad9c6003550296d9b5e243d1a349b91a18af",
+              "ddbe462015d36e6bd0218c495838e027aff471dfc7a79cbd5d6fea46e4a6049c",
+              "d8a82bae78bf67a6817b8102f68c7ce8a190b9a39492bb245384d3c3822f0e1e",
+              "d0f9b0ac631035813aa1052fe36916b53496244831ee026901efa939d3829b8d",
+              "085bd9f0cc79ba542f2d3cee6bf395777f0e2fb6bedffd6dc40f064a809e822a",
+              "97becf897a81cdb9fe74edc43db1f8934f32dfb2dfa7f9a06cdb76617d7cd2be",
+              "c6b522f9583a5bf3045d86df96ccdcdc7106de00a33d9089d15e0bcf10ea959c",
+              "279b18ada37fb3a2e06fbb8de7528fb95839f2cb797510ef9833b3a17dc46a46",
+              "150dc67369cc9c64dcb1b762049b6af12e35ee8a702d7d9e8ef4367681e1d91b",
+              "b7cc07bbac046ed4cfd2964191463ebd9e31d6922bd93ffd4e704747eb6c83d4",
+              "9380dc690d9b83541a8b07c64ae6fa9d1aaf873f337b54133609ac8072a494bc",
+              "0dc2a833e43b875d403ccb8d6eb7d87bcc5688fcd1fc597749ca75037574e0e1",
+              "b6e65aa294ee439b19e7a5fce460a6d6cd1867c859f7b3553dde8e85318ecf77",
+              "5e2faf18726879e13783b7580ea9b09c7086c5dc1818deda411fff8ebd8df21c",
+              "b2d1e8ac1e3cddc31080aed52c180c560157f8466d0cb5c49830261399b69797",
+              "fa293dba5d4384efd5cb497e2deda7e5b388dcf2113330f02944cb8db0a44468",
+              "c5c495b2682e929f7f9fcab8165b6ce5dcb476490a1c240e9824b8b57cb5ff10",
+              "d33e1f9d1eef961d2d44e4b7b99842e8e33dfd2ce54d4c0aaf21f443db66fbf1",
+              "5e41bed993cc4533a32227b97c25539f535bd4321438f4d741ce7f77b5a5a898",
+              "71fcbcac6bd409974af3710f5e2c246144f5645767e0e6557944a324b0d35ede",
+              "5bcf60602ab77faf016af5c35b7727fa729c421f9e12fec1a6290b3e487453d4",
+              "c4ee48c0fcc428d9a42a6d0c8c5aa806221cf1591d15377d835956ddba8e0eae",
+              "741ad3e097ed5a2ec273522c026ea8321185dbaed8fe2f3bc6f30d3912019d2e",
+              "bb3147be1ae338f269b14f9b76e68a15db4b374f4c0b2d493950281be12f3546",
+              "7c56b1fb79bfb20427eee06e6385b688cd7362594558b0703d1b95dfbc31e4ca",
+              "ad3e9ce402ca1a13ef6dee1027eb80f76c80bc82e9b7304e2c5d8a16c128d18d",
+              "dcd0bebd93721d2d4e2e0bdfa42baa5dd786da8728d97a7ab40fc55855bbe8e3",
+              "749a46f728f8fde5df4e79184711517e58d5be70750f4043e77a43bac87f0ff5",
+              "e4c47c8810c69256739a4f6a734bf13778fb9fcd6f7ef0e5132f30551b2dc195",
+              "7cec4390fbbe96e614ce504d17230c6b918e64650df3b505d46655e46dab8975",
+              "8195bdf5d84e2e8dbfab5dea250ee26e117572d8656cf516c35bad21d05f26ab",
+              "0a2ec60c2ee4790181a6af7e288573c0154c255d7ecf96484c7e73a4b70ec136",
+              "ff5a4a3bd50b105ba41e2056b3a583e2cad6ed7b3d000c337c87f692a715360c",
+              "ce20af6b8005a57934f90d07c54f9def408c946b2c71e6bc4503fa1684d94ff2",
+              "fb2ba972833ffef2ffc876bff8a7f33dd5b93fc0afa5705505ff7becc5608e7d",
+              "cb041405863d2c6cc453e8ac3c67ef130ecb3772723d3c399fb79ca878d0c414",
+              "5ea7ddd519bfcd5632a1646afaa381df1f4f3c7d98d5ba3a3ab1d63852f05566",
+              "1bc4394440c04f53e99d57a0990420cbe4d17644d300b960366255d4e51bebd2",
+              "7b8105c3d4984b8e6f9bc5fe70262e561113471860ac6d2ab098f51bcee05623",
+              "532fe7ef3622bf83d4fa5e81e99f3b4f5be3745c5e98e476bcec22ff9d11e651",
+              "93f8263ccaa79cdefa96264cc06a3e376ac6ecdd361cce549540077ea5ebd615",
+              "a1715c728baaaa7bf23b1d2b48ede52a27fb2cfb7047ca948a588b76d18dfa98",
+              "8925b44f5c73f260555fb3aea3a7476ac2252b60385412c60babb2e39ddf786b",
+              "5e7c9a07bea4481071b1f01da0eeb1769b86d6297326e1162e667b178f3dbe5a",
+              "6d7b30e3fc9c7e8d29544e5d57833c93cd7a34b82b1123e00a32ff0a792355b7",
+              "2e60572fa14f188628007f1f4137a380a9dc95ac32b31f15d735aaec366450df",
+              "4f91c55821cca5becf69c275e0e2f0049a99ef39c2ebea50196d9b682576d6ba",
+              "6b64009d9d605d7e1fb2568865c58120b78017ac0a74798c1a9af5c172b4ef07",
+              "ce888e9d07f4a0bc822a3239aa39170f01cc88c6facb76995689765d7c3c8719",
+              "f80d9043d28fdde68853ae1fc8139855cc5ce70af3d4ea2d7e7286f0fc6496cd",
+              "342da4150e6b9a6741900216b0b1b7ab462daea8d6691c9caca853f3245db528",
+              "781d42f1eb6327b560387db8ea1b3e63c4e6f54defe18170dcc55a13ac8135d9",
+              "c9baa663a16bc40fca9e640f6e417af920dc6d772ec310286a0208e59791c2a6",
+              "6c89a484a75385e7c547331df73b7835bad4683d83bdf175363032835933ce6d",
+              "88725233f470ac424886481645ae347388edada69adb9792f48fbe990336131c",
+              "14def892c10f050f936e5852c67f381069919441978fdec1e2e60f3d1b021588",
+              "3d2a0f685591e5871fa2473508d71b4f6d7da3521ddccc795ef5d279f62092d4",
+              "1d96635df5717baacc88fa57c0c31027e1acbde91ccc7c44ea930d2e97d9599a",
+              "b4de54bf8a83667197b5e6939b0def8d7312794434e2bf40a3a89467d4669421",
+              "2032ac8db68c1bb2c4a03db433b4a6605414ad0788aaabe5f474f0b913c702a0",
+              "016a7de34cb7eb485aa7d7799ee02c65ba90d9e41ee8b89f1e6389d03c08240c",
+              "4a7730271fda5c4b0e879bffcae5b3d5bfaf1033cef3866ccdd5382bac468ef7",
+              "52088083952e9450c1b53c2ac823ae2f3aa3cbfd51d63f22e79dd1118abf700b",
+              "80e2ba6a2c5d661ec459ea8deeab18a6a1c5b9b8a2d0cd9353acd79673f19e00",
+              "952cd85da64a26ddcf29a58e5508958d08144fbcff9a56e7d11e430ac76e3f35",
+              "145d505d3493c35fbc86b644fe927c42c15264968fa6d94eea12774b5a6b79f9",
+              "7337277ba5e45c8535d70c6e810bee51f8cb65b36cf4cc972de5cbae4e9c4abb",
+              "6917976244f69a50f896fd8dc0abec23eca9915f7b1012daa509b8444656f61c",
+              "edb9bad358eb34a0fd9b9f5073e5d0ce32403572f3da4df7547ff3102be58380",
+              "a8f1edd3503808adba8069329d9de4a9dfcd242057df84db0d84c1c1e0c49da8",
+              "1ca36d62340a9f6d6bb10adef85eb25734b19d35e975e418da045be5b694eaba",
+              "1ab86e7213f5062dc9ccb65dd7c65e76b78dbd0071c9bb4a32ec61dbfb188281",
+              "a880dca63ef6f653a5c8e30407469ddefb7dec9b02d8f358aea798f512ef1ca3",
+              "37fcb1512d8ca86013bdfae352b94ded0ee71f6aea414b04d65fb2f9a2b4abe6",
+              "be5e11d02f61383b0ab0cbb8a4fdfde58a7f7065856115ca0e474b03d689d978",
+              "5b9c3152ec9a03a5c8b4fd79c658667d8347a33be5eff0bcdc59510620bd1b70",
+              "aa39551af68eb925b22f9376601c577347a03d6a2c990ee03399f65a83727a3c",
+              "ef20334b4bbe00c9978b69c5604b5dd20b3846a7a3a84fa3cadbaaf36494dfc4",
+              "1353f5e3340b80a69302b9ec721039e98bd70275b7c06412b9a18b6f569911ab",
+              "936ecaaa83ce05e26bd1ed3dd89aedbdf4bc52ce564d50e06d22667f09d5ea09",
+              "f8acce1561f91702d2099229d5b76a43beaef86f7874d31bbb975cd999efe376",
+              "ef2d99d19eab86c581abdb284c8b228a993775a5d240b51ece89a78e67f620dc",
+              "f71948d6bf1952ada93284b5ee3b5523aad18f7ab6cfad6bc9b6d7a36af18bb5",
+              "867da5c0b871a399c33d9b789365cdfec7f16e43e2d365cae629d3e2531b04b7",
+              "adf2595ae4d4b02018b10d01616844eb32256a5b0740094e67fd380b0be8f0a1",
+              "ada0d3f64519a3bfe3493ae4c025658ea7baef20dd5a2c6d85fe563335c4c60c",
+              "0e2c92b2cb2342aaac518095ad0d35592149da10596bda4a67666dccff4fab97",
+              "0cae3b51c12abdac576a5b0b0dc882c76f12681c1bb308f00013dec14e3dc7a4",
+              "3ce79bed1ebf0048d34cc5a99e9b682568c190fb1c8f32db7dbf474760e92e58",
+              "4b00c7f981ca5e67b54cd6608c36b73f1912897e48f3189fce54e4d88190c9f7",
+              "98d389515008eabd053c17c01b1b4538853d1ab191c6747058f0340a7e01dfef",
+              "f43a28273d4aa7b8d16bfb09dcdf10bc785fed64cab2b9cfd251976e3a1a00a7",
+              "9833b631a2b6b399e1ae6862607ea91666302c9ada2c9c5a46234fdca7060ab3",
+              "d7859db48beeb8d8d9a4065c9efbf8fb55ed231018a0f74d1d388b40d5c62609",
+              "8b89f3c2503f35870f0d0c31dcb18199789fbde514cd25c43919729d555e00fc",
+              "93ac4574d3eeccb858c9ef85c3f9e6fd61a30a2be730d3fd4cb57ae964cb790c",
+              "8bf13077f4724e2b9080571bb425fae1105e1a943653d6b96a3651b0f8b182ad",
+              "bb7ca35d77f654fb5337c247bca176d3455adf0a2662890bfdcc4c2913000adf",
+              "97359502ae5f507d238b6c8f8933dc1dbe69ef087508553547258ffe73f22a6b",
+              "9ac7db991b95315ea5e481d9d09ee09cf83b480b7dd2ca612f4bbfda97dc273f",
+              "e02fa816850c358faf6ab981180ad08a310964beeb58c9a0be95d937dd14a823",
+              "980d8b398f4c8498f8ec5a914e9caa48adf5cb34dae092ecad5a2bbd0f6ef184",
+              "3291592c5106f370bf0e5a31f9a48540297dc39c14259d22322597ac32043d45",
+              "425277616019aa74c183836567c7602c5aac55874095098d0f428aef85821d90",
+              "890679e3a15c4c68bd479526c712f3e29c3d5d9ebb7cb0075d0a08a282016426",
+              "34a2a75a7704feefd4fa8a8f29491f41921bb1505433d0830c18846b51fdcc0d",
+              "cf647b82c99f651b9d04500d927989f213d99daa43bae3eac58f0f75866338fc",
+              "fdcbb83228e73f7371ea8375eca792edb4e3b20651bda29fe93048c189035bda",
+              "16a59c6f64d322fb8a8baa151a73d2d1b692b085775ce9595f2810d47537ad0e",
+              "a7741d36beef62b4dcd7e8949db8c7189e1a17be8b7c0829b7417f8f6c106529",
+              "78dc7966755c54f57e62e4cb64e80bf63c99c8cfbb10945d59936a29a0eb9940",
+              "260061ff13dcc16777ad0e5b043e720d98f9d3377ecbb6e6a4ebb3c9e7001d11",
+              "e69c83000ff82df3f9d57772e4e4c52fbdf7def1eacadb236d41eaa12e103c2e",
+              "07dcbeda04da4a9bbfcc20de7dc06f0bab374f7a5aea8bf9b08065cb5e7d60ac",
+              "e21159e3cecf9e60fb8f1941f411ab70b3c53248b9e2e4a9048dfb5058d07a01",
+              "78c4fb7c72ad0866458a1ebb0d6b2b5554b7521100e9e02c501d0d410a612d8f",
+              "9a5fa1dc9c760453b5ed6a365b4827a189df98957964b291b85939f4cdbb6255",
+              "786021f8cfc3bc7e67c4652c3e632b4e395aa28ef1b6ee32b1350be59af050c5",
+              "b8b5bc811ab37de991d37a3ddc5b0a90671ceb5da1a48360b59279130857759a",
+              "2fe3644c0c3ba33906ca66b60f8dd63886b8691a3863fd14a3b5cd73564d3cdf",
+              "651b659186c4bf2d1d39e83397f396b9de55bbf18d62b2ddfe391dcd9d07be6f",
+              "f823f02dcb8510b9b91fa44ab962f0aea2d95e63a4bde4aabdd4dbbe51d6181f",
+              "d98e50a2f28e009411f148e52f68f7d291ebd7aa29902f91bf10275a8620609c",
+              "260d7f9565d05f38c11191e24fb659e82415db019f9344205816fbff2b03b85a",
+              "0ed215ccdad00ab3c1f7f8795dacbee82a2d6ca73c33e8f01d72e393df46bd44",
+              "5c0ba49400cfbdd68ec719314763eb0e65f17b0eeae306da834ce428d292c034",
+              "e6184fbefe84ce2e97b7eaab170e63d511ad0cf79d959264a95112dce74ea989",
+              "cc3f910058173617124e28be81aab940f0d24b26ea35eeb1004be730711565ba",
+              "dbb17d200de8bc3328a23956eade3740417a331765f59ed765834d0c769e5ecf",
+              "99376d6695e8b6202c418a4278ae6d6a8f637b16293ea26ba8bd9b2e3e8c6588",
+              "a42af86b4ad29d439237d54969b8bea88e3445b590adfff9ed0496e0fd97dfea"
+            ]
+          },
+          {
+            "identity": "campus-semantic-r72",
+            "ruleDigests": [
+              "8d662b15788aa0204f92ea0986c2840b42e832cd9b1c7a6098033c2cd6b6fff3",
+              "e5cffb1d4122283c77e73229c43b3e481068340110ba31aae7341ea5e2dafe53",
+              "e1402a07675cdb5a34037ee1817626f3287ce78e4d2666fceac2b0e5e14406dd",
+              "431532b72d4b57d893ef41a30bc86d469fa34c0538564afdbba6339ad290fb1f",
+              "c3bb85444e82b8467c859fc65a7d0e32c0c1f90a4ffa0bf3ceb99b5a12960596",
+              "b50c1945e1f219216a9e97dc85da3148b25446d2ee3beeaf4a3ea084610bf137",
+              "ccfd0c18064be6104ad84b414e439bdc4af3fd2210092dd2f79b0b3f79a9d471",
+              "89ef1c803dae5f7ddb5002f49a4bba04cffa48b31dcb8a1f78eeaa579784e8c5",
+              "c9a6231a968c451006ea47a16d510da8b21dfee74a28d6c2c13effb028586a40",
+              "699554cdf412b9111b9bcf217342e63baa28c90bc966135424c1fdca491bfee3",
+              "e7ad94e6f1afed3db2d6f1516d7c228790bdd9fe0f7901d716d66df401302d0b",
+              "1f17e0a00ed55ef16f006b850c47caf4046c7f45569fd01306f77853520844c2",
+              "6c9dac25de1c0b29869984a7ef95195dbf1825711233f789a6c87cef44070bee",
+              "a94a3a60960ff26583185729a57b473af43cf7265b0ac039b2e6ba1ab9d7deba",
+              "cad47419e51838cda759565a0d98e89b48f8690db1e2db7861707ee8337741a8",
+              "ac0f9fc9e162f38d3863fd32f7df35a0f8774e28922b638806fd88b777428f5b",
+              "31e583357f1d0546f8caed98f92b7c2f5d1f3179ec339ff0e1adde18d588da1b",
+              "84fd58d1945d6bb4c53427a2a85981c272d4bc9b2ac3fc373c7dfc54f28967c6",
+              "8cbc9f47c88692bceb850f7bd54714f0fb40a568a0cb111597cdfd8682aef6d0",
+              "c7b0c9c5b7427877a66adf8686ae39b4e1da6648dd65c63caa8750c312f83261",
+              "4ff81b15c919df1fc02d4be8f961fdeb88533a544ec20bd74eb7195f3709638e",
+              "8e7605ce74dccce716784c9c3723dcebc4cbf62adb3e48c67ce76c07b84564ba",
+              "5cc5b43d35ceb13021be29c44fb1ed31833dafdba7c256bc8ae9610bf074f8f3",
+              "e3c255398bf6bc62bab9ba78491f89a432fb192fe469af722b49d1cd7a905d51",
+              "6316dc5db911c77e9283e33b0b701289ec1456d3493b565de08fb55913c84364",
+              "a5e4b1213fa367405a65118336fb08e488d512c0dd7b51a0c0e884fe96ea95d2",
+              "f3fac9dd63e8609b62f50289d82ed00ca9575f8689bedb98a680b75914109743",
+              "1c5c5d8a96a5c523e69abda6075a4c1b67a805bd5fe707efe94955abd503fcac",
+              "a560278310809402693e31cc5d44439ecab678861b8337454371cbd1dcc8031c",
+              "96c9f6e12e200e889611e781c89b97dc038e46ac71be5967b7cb78f12609c2ac",
+              "d1ea410eb84f7b5d6ec3d68a339f7c4e022236e7e85d67fb2808cbe27d8d3da8",
+              "9e3942898683355b958b63a6042b27eddb42af755103717e5df3d0bf24ed4382",
+              "38025bed7c838eb377f0308c038ca02cd4d3f4ed995966e7561bde162e8a8394",
+              "1eca967653be0ca3c047b085900e8c238138038634e48043a1c2182bd7952fbd",
+              "1e11af398ccf7f65c1971522be815dc175b9245f9198221e27fefb78e3329a2b",
+              "186a7088ce6c672f96b27e4ce08345ba37c547f6098c243380f2df64d5036c1f",
+              "29c566cc546d0adb21e2fb1fcec2a2db5052cf156bc94ef524a03a933b9020da",
+              "ecdc780d4a6cec9775667a970ff30f50f9b1ff59d6221bfb771164810ea7de36",
+              "cf49b781962a87df4b47d70e2684e76e79a0fee1ec69ff4e6f152aba4209e5dd",
+              "b7b8c3ecb1d69e333fc63ba8dfe0bdb3bc8398955b1acad979f2fe98ab7b8eee",
+              "d59d4914e9c2744bf1f7fa886e8c52a240fea5343442f2fc2e077ee7ca552e3a",
+              "695ee39f1b3f48bd31fbd976f1bdf7ed092912ee4ae164818b1ca101e262ec71",
+              "d7e45bf093ec255049f81d6a42b3ad9c6003550296d9b5e243d1a349b91a18af",
+              "ddbe462015d36e6bd0218c495838e027aff471dfc7a79cbd5d6fea46e4a6049c",
+              "d8a82bae78bf67a6817b8102f68c7ce8a190b9a39492bb245384d3c3822f0e1e",
+              "d0f9b0ac631035813aa1052fe36916b53496244831ee026901efa939d3829b8d",
+              "085bd9f0cc79ba542f2d3cee6bf395777f0e2fb6bedffd6dc40f064a809e822a",
+              "97becf897a81cdb9fe74edc43db1f8934f32dfb2dfa7f9a06cdb76617d7cd2be",
+              "c6b522f9583a5bf3045d86df96ccdcdc7106de00a33d9089d15e0bcf10ea959c",
+              "279b18ada37fb3a2e06fbb8de7528fb95839f2cb797510ef9833b3a17dc46a46",
+              "150dc67369cc9c64dcb1b762049b6af12e35ee8a702d7d9e8ef4367681e1d91b",
+              "b7cc07bbac046ed4cfd2964191463ebd9e31d6922bd93ffd4e704747eb6c83d4",
+              "9380dc690d9b83541a8b07c64ae6fa9d1aaf873f337b54133609ac8072a494bc",
+              "0dc2a833e43b875d403ccb8d6eb7d87bcc5688fcd1fc597749ca75037574e0e1",
+              "b6e65aa294ee439b19e7a5fce460a6d6cd1867c859f7b3553dde8e85318ecf77",
+              "5e2faf18726879e13783b7580ea9b09c7086c5dc1818deda411fff8ebd8df21c",
+              "b2d1e8ac1e3cddc31080aed52c180c560157f8466d0cb5c49830261399b69797",
+              "fa293dba5d4384efd5cb497e2deda7e5b388dcf2113330f02944cb8db0a44468",
+              "c5c495b2682e929f7f9fcab8165b6ce5dcb476490a1c240e9824b8b57cb5ff10",
+              "d33e1f9d1eef961d2d44e4b7b99842e8e33dfd2ce54d4c0aaf21f443db66fbf1",
+              "5e41bed993cc4533a32227b97c25539f535bd4321438f4d741ce7f77b5a5a898",
+              "71fcbcac6bd409974af3710f5e2c246144f5645767e0e6557944a324b0d35ede",
+              "5bcf60602ab77faf016af5c35b7727fa729c421f9e12fec1a6290b3e487453d4",
+              "c4ee48c0fcc428d9a42a6d0c8c5aa806221cf1591d15377d835956ddba8e0eae",
+              "741ad3e097ed5a2ec273522c026ea8321185dbaed8fe2f3bc6f30d3912019d2e",
+              "bb3147be1ae338f269b14f9b76e68a15db4b374f4c0b2d493950281be12f3546",
+              "7c56b1fb79bfb20427eee06e6385b688cd7362594558b0703d1b95dfbc31e4ca",
+              "ad3e9ce402ca1a13ef6dee1027eb80f76c80bc82e9b7304e2c5d8a16c128d18d",
+              "dcd0bebd93721d2d4e2e0bdfa42baa5dd786da8728d97a7ab40fc55855bbe8e3",
+              "749a46f728f8fde5df4e79184711517e58d5be70750f4043e77a43bac87f0ff5",
+              "e4c47c8810c69256739a4f6a734bf13778fb9fcd6f7ef0e5132f30551b2dc195",
+              "7cec4390fbbe96e614ce504d17230c6b918e64650df3b505d46655e46dab8975",
+              "8195bdf5d84e2e8dbfab5dea250ee26e117572d8656cf516c35bad21d05f26ab",
+              "0a2ec60c2ee4790181a6af7e288573c0154c255d7ecf96484c7e73a4b70ec136",
+              "ff5a4a3bd50b105ba41e2056b3a583e2cad6ed7b3d000c337c87f692a715360c",
+              "ce20af6b8005a57934f90d07c54f9def408c946b2c71e6bc4503fa1684d94ff2",
+              "fb2ba972833ffef2ffc876bff8a7f33dd5b93fc0afa5705505ff7becc5608e7d",
+              "cb041405863d2c6cc453e8ac3c67ef130ecb3772723d3c399fb79ca878d0c414",
+              "5ea7ddd519bfcd5632a1646afaa381df1f4f3c7d98d5ba3a3ab1d63852f05566",
+              "1bc4394440c04f53e99d57a0990420cbe4d17644d300b960366255d4e51bebd2",
+              "7b8105c3d4984b8e6f9bc5fe70262e561113471860ac6d2ab098f51bcee05623",
+              "532fe7ef3622bf83d4fa5e81e99f3b4f5be3745c5e98e476bcec22ff9d11e651",
+              "93f8263ccaa79cdefa96264cc06a3e376ac6ecdd361cce549540077ea5ebd615",
+              "a1715c728baaaa7bf23b1d2b48ede52a27fb2cfb7047ca948a588b76d18dfa98",
+              "8925b44f5c73f260555fb3aea3a7476ac2252b60385412c60babb2e39ddf786b",
+              "5e7c9a07bea4481071b1f01da0eeb1769b86d6297326e1162e667b178f3dbe5a",
+              "6d7b30e3fc9c7e8d29544e5d57833c93cd7a34b82b1123e00a32ff0a792355b7",
+              "2e60572fa14f188628007f1f4137a380a9dc95ac32b31f15d735aaec366450df",
+              "4f91c55821cca5becf69c275e0e2f0049a99ef39c2ebea50196d9b682576d6ba",
+              "6b64009d9d605d7e1fb2568865c58120b78017ac0a74798c1a9af5c172b4ef07",
+              "ce888e9d07f4a0bc822a3239aa39170f01cc88c6facb76995689765d7c3c8719",
+              "f80d9043d28fdde68853ae1fc8139855cc5ce70af3d4ea2d7e7286f0fc6496cd",
+              "342da4150e6b9a6741900216b0b1b7ab462daea8d6691c9caca853f3245db528",
+              "781d42f1eb6327b560387db8ea1b3e63c4e6f54defe18170dcc55a13ac8135d9",
+              "c9baa663a16bc40fca9e640f6e417af920dc6d772ec310286a0208e59791c2a6",
+              "6c89a484a75385e7c547331df73b7835bad4683d83bdf175363032835933ce6d",
+              "88725233f470ac424886481645ae347388edada69adb9792f48fbe990336131c",
+              "14def892c10f050f936e5852c67f381069919441978fdec1e2e60f3d1b021588",
+              "3d2a0f685591e5871fa2473508d71b4f6d7da3521ddccc795ef5d279f62092d4",
+              "1d96635df5717baacc88fa57c0c31027e1acbde91ccc7c44ea930d2e97d9599a",
+              "b4de54bf8a83667197b5e6939b0def8d7312794434e2bf40a3a89467d4669421",
+              "2032ac8db68c1bb2c4a03db433b4a6605414ad0788aaabe5f474f0b913c702a0",
+              "016a7de34cb7eb485aa7d7799ee02c65ba90d9e41ee8b89f1e6389d03c08240c",
+              "4a7730271fda5c4b0e879bffcae5b3d5bfaf1033cef3866ccdd5382bac468ef7",
+              "52088083952e9450c1b53c2ac823ae2f3aa3cbfd51d63f22e79dd1118abf700b",
+              "80e2ba6a2c5d661ec459ea8deeab18a6a1c5b9b8a2d0cd9353acd79673f19e00",
+              "952cd85da64a26ddcf29a58e5508958d08144fbcff9a56e7d11e430ac76e3f35",
+              "145d505d3493c35fbc86b644fe927c42c15264968fa6d94eea12774b5a6b79f9",
+              "7337277ba5e45c8535d70c6e810bee51f8cb65b36cf4cc972de5cbae4e9c4abb",
+              "6917976244f69a50f896fd8dc0abec23eca9915f7b1012daa509b8444656f61c",
+              "edb9bad358eb34a0fd9b9f5073e5d0ce32403572f3da4df7547ff3102be58380",
+              "a8f1edd3503808adba8069329d9de4a9dfcd242057df84db0d84c1c1e0c49da8",
+              "1ca36d62340a9f6d6bb10adef85eb25734b19d35e975e418da045be5b694eaba",
+              "1ab86e7213f5062dc9ccb65dd7c65e76b78dbd0071c9bb4a32ec61dbfb188281",
+              "a880dca63ef6f653a5c8e30407469ddefb7dec9b02d8f358aea798f512ef1ca3",
+              "37fcb1512d8ca86013bdfae352b94ded0ee71f6aea414b04d65fb2f9a2b4abe6",
+              "be5e11d02f61383b0ab0cbb8a4fdfde58a7f7065856115ca0e474b03d689d978",
+              "5b9c3152ec9a03a5c8b4fd79c658667d8347a33be5eff0bcdc59510620bd1b70",
+              "aa39551af68eb925b22f9376601c577347a03d6a2c990ee03399f65a83727a3c",
+              "ef20334b4bbe00c9978b69c5604b5dd20b3846a7a3a84fa3cadbaaf36494dfc4",
+              "1353f5e3340b80a69302b9ec721039e98bd70275b7c06412b9a18b6f569911ab",
+              "936ecaaa83ce05e26bd1ed3dd89aedbdf4bc52ce564d50e06d22667f09d5ea09",
+              "f8acce1561f91702d2099229d5b76a43beaef86f7874d31bbb975cd999efe376",
+              "ef2d99d19eab86c581abdb284c8b228a993775a5d240b51ece89a78e67f620dc",
+              "f71948d6bf1952ada93284b5ee3b5523aad18f7ab6cfad6bc9b6d7a36af18bb5",
+              "867da5c0b871a399c33d9b789365cdfec7f16e43e2d365cae629d3e2531b04b7",
+              "adf2595ae4d4b02018b10d01616844eb32256a5b0740094e67fd380b0be8f0a1",
+              "ada0d3f64519a3bfe3493ae4c025658ea7baef20dd5a2c6d85fe563335c4c60c",
+              "0e2c92b2cb2342aaac518095ad0d35592149da10596bda4a67666dccff4fab97",
+              "0cae3b51c12abdac576a5b0b0dc882c76f12681c1bb308f00013dec14e3dc7a4",
+              "3ce79bed1ebf0048d34cc5a99e9b682568c190fb1c8f32db7dbf474760e92e58",
+              "4b00c7f981ca5e67b54cd6608c36b73f1912897e48f3189fce54e4d88190c9f7",
+              "98d389515008eabd053c17c01b1b4538853d1ab191c6747058f0340a7e01dfef",
+              "f43a28273d4aa7b8d16bfb09dcdf10bc785fed64cab2b9cfd251976e3a1a00a7",
+              "9833b631a2b6b399e1ae6862607ea91666302c9ada2c9c5a46234fdca7060ab3",
+              "d7859db48beeb8d8d9a4065c9efbf8fb55ed231018a0f74d1d388b40d5c62609",
+              "8b89f3c2503f35870f0d0c31dcb18199789fbde514cd25c43919729d555e00fc",
+              "93ac4574d3eeccb858c9ef85c3f9e6fd61a30a2be730d3fd4cb57ae964cb790c",
+              "8bf13077f4724e2b9080571bb425fae1105e1a943653d6b96a3651b0f8b182ad",
+              "bb7ca35d77f654fb5337c247bca176d3455adf0a2662890bfdcc4c2913000adf",
+              "97359502ae5f507d238b6c8f8933dc1dbe69ef087508553547258ffe73f22a6b",
+              "9ac7db991b95315ea5e481d9d09ee09cf83b480b7dd2ca612f4bbfda97dc273f",
+              "e02fa816850c358faf6ab981180ad08a310964beeb58c9a0be95d937dd14a823",
+              "980d8b398f4c8498f8ec5a914e9caa48adf5cb34dae092ecad5a2bbd0f6ef184",
+              "3291592c5106f370bf0e5a31f9a48540297dc39c14259d22322597ac32043d45",
+              "425277616019aa74c183836567c7602c5aac55874095098d0f428aef85821d90",
+              "890679e3a15c4c68bd479526c712f3e29c3d5d9ebb7cb0075d0a08a282016426",
+              "34a2a75a7704feefd4fa8a8f29491f41921bb1505433d0830c18846b51fdcc0d",
+              "cf647b82c99f651b9d04500d927989f213d99daa43bae3eac58f0f75866338fc",
+              "fdcbb83228e73f7371ea8375eca792edb4e3b20651bda29fe93048c189035bda",
+              "16a59c6f64d322fb8a8baa151a73d2d1b692b085775ce9595f2810d47537ad0e",
+              "a7741d36beef62b4dcd7e8949db8c7189e1a17be8b7c0829b7417f8f6c106529",
+              "78dc7966755c54f57e62e4cb64e80bf63c99c8cfbb10945d59936a29a0eb9940",
+              "260061ff13dcc16777ad0e5b043e720d98f9d3377ecbb6e6a4ebb3c9e7001d11",
+              "e69c83000ff82df3f9d57772e4e4c52fbdf7def1eacadb236d41eaa12e103c2e",
+              "07dcbeda04da4a9bbfcc20de7dc06f0bab374f7a5aea8bf9b08065cb5e7d60ac",
+              "e21159e3cecf9e60fb8f1941f411ab70b3c53248b9e2e4a9048dfb5058d07a01",
+              "78c4fb7c72ad0866458a1ebb0d6b2b5554b7521100e9e02c501d0d410a612d8f",
+              "9a5fa1dc9c760453b5ed6a365b4827a189df98957964b291b85939f4cdbb6255",
+              "786021f8cfc3bc7e67c4652c3e632b4e395aa28ef1b6ee32b1350be59af050c5",
+              "b8b5bc811ab37de991d37a3ddc5b0a90671ceb5da1a48360b59279130857759a",
+              "2fe3644c0c3ba33906ca66b60f8dd63886b8691a3863fd14a3b5cd73564d3cdf",
+              "651b659186c4bf2d1d39e83397f396b9de55bbf18d62b2ddfe391dcd9d07be6f",
+              "f823f02dcb8510b9b91fa44ab962f0aea2d95e63a4bde4aabdd4dbbe51d6181f",
+              "d98e50a2f28e009411f148e52f68f7d291ebd7aa29902f91bf10275a8620609c",
+              "260d7f9565d05f38c11191e24fb659e82415db019f9344205816fbff2b03b85a",
+              "0ed215ccdad00ab3c1f7f8795dacbee82a2d6ca73c33e8f01d72e393df46bd44",
+              "5c0ba49400cfbdd68ec719314763eb0e65f17b0eeae306da834ce428d292c034",
+              "e6184fbefe84ce2e97b7eaab170e63d511ad0cf79d959264a95112dce74ea989",
+              "cc3f910058173617124e28be81aab940f0d24b26ea35eeb1004be730711565ba",
+              "dbb17d200de8bc3328a23956eade3740417a331765f59ed765834d0c769e5ecf",
+              "99376d6695e8b6202c418a4278ae6d6a8f637b16293ea26ba8bd9b2e3e8c6588",
+              "a42af86b4ad29d439237d54969b8bea88e3445b590adfff9ed0496e0fd97dfea"
+            ]
+          }
+        ]
+      }
+    },
+    "preset": {
+      "id": "campus_semantic_native_r8_format",
+      "name": "校园群像 R8 · 配套输出格式",
+      "type": "format",
+      "priority": 50,
+      "enabled": true,
+      "content": "【状态栏输出铁律】\n1. 全文为一套固定的三段式结构：第一部分·环境状态栏 → 第二部分·角色正文 → 第三部分·五页折叠档案。环境栏、正文、档案各一次，五页各一次。档案开始即代表主线正文结束；第五页闭合后仅闭合档案外层，全文至此结束。\n2. {{user}}的言语、主动动作、选择和内心由{{user}}本人决定。环境栏如实呈现{{user}}已经明确的状态；正文描写{{char}}、NPC及环境的反应与变化，将{{user}}尚未作出的行动留白。群像NPC拥有固定姓名、鲜明性格与延续性支线。\n3. 环境栏记录当前场景；五页档案是正文结束时的同一叙事时间切片，包含已有记录、即时状态及各自视角中的独立生活轨迹。备忘录、消费、搜索、采访、群聊、朋友圈、校园墙、群像观察与弹幕均归入各自栏目。IF为独立的假设分支，场外弹幕与角色视角隔离。档案中的计划、预测及假设不转化为主线中已经发生的事件。\n【状态栏视角】\n视角人物为本轮状态栏所记录的伴侣或角色，默认{{char}}；剧情已指定其他视角时，以指定人物为准。<视角人物>中的<姓名>填写视角人物的实际姓名，衣着、动作、目光、生理状态、心声、关系、私密手记、备忘、消费、搜索、采访及聊天方向统一归属同一视角人物。角色正文沿用原有叙事视角。\n【语义标签格式】\n下列〈…〉为动态内容说明，填写具体内容；每个标签用同名闭合标签收束，标签名称始终沿用模板中的中文原名（例如<内容>对应</内容>）。六栏、五页顺序及模板所示内容与数量完整保留。群聊、朋友圈、搜索、采访、观察、热评、回帖与弹幕各自成组，每条记录使用独立标签；同种记录重复使用同名标签。记录的内容类型由标签名称决定。字段内的字面 &、<、> 写作 &amp;、&lt;、&gt;。角色正文自然书写在<剧情正文>与</剧情正文>之间。\n聊天：视角人物的发言使用<本人发言>，其余人物使用<发言>，两者都含<姓名>与<内容>；系统提示使用<系统>。下列发言标签可随实际发言身份选择，发言身份不由所在顺序决定。每个群聊或私聊独立闭合。群公告、搜索动机、坐标图标、情报状态、百分号及楼层的L由呈现结构提供，字段填写内容本身。两项情感<数值>填0–100整数，同时表示条宽和显示百分比。热榜排名、热度和回帖楼层填写各自字段；热度仅有对应标记时填写。第一个树洞四条回复默认展开，第二个树洞三条回复默认折叠；回复数填写本帖实际回复条数。\n全文由<环境>开始，依次闭合环境、剧情正文、心事、私密记录、社交、群像观察、弹幕和档案；</档案>为全文终点。\n\n<环境>\n<时空><日期>〈日期/YYYY/MM/DD〉</日期><星期>〈星期〉</星期><时间>〈时间/HH:MM〉</时间><阶段>〈课间/课堂/放学状态〉</阶段><天气>〈天气与光影质感〉</天气></时空>\n<感官><地点>〈当前具体地点〉</地点><声息>〈环境背景音/空气中的气味细节〉</声息></感官>\n<现场群像>〈周围2~3处同班同学或路人此刻正在发生的具体小动静，营造鲜活现场感〉</现场群像>\n<自身><衣着>〈{{user}}穿着细节12字内〉</衣着><动作>〈{{user}}已明确发生的当前姿势与动作〉</动作><持有物>〈{{user}}手头或课桌上的物品〉</持有物></自身>\n<视角人物><姓名>〈视角人物实际姓名〉</姓名><衣着>〈视角人物穿着细节12字内〉</衣着><动作>〈视角人物当前姿势与动作〉</动作><目光>〈视角人物目光停留的具体位置〉</目光></视角人物>\n<空间张力><距离>〈两人当前物理距离与方位〉</距离><生理状态>〈视角人物当前生理状态〉</生理状态><性器状态>〈视角人物当前性器状态，以已知事实为准〉</性器状态></空间张力>\n<瞬时心声>〈视角人物脑海中一闪而过的真实念头，30字内〉</瞬时心声>\n<关系><身份>〈明面身份关系〉</身份><阶段>〈实际亲密阶段〉</阶段><互动>〈{{user}}与视角人物当下关系张力及已发生的肢体接触记录〉</互动></关系>\n<镜头特写>〈一句极具画面感的环境定格或擦肩而过的背景对话〉</镜头特写>\n</环境>\n\n<剧情正文>\n〈承接{{user}}已经作出的行动或发言，描写{{char}}与NPC在当前情境中的反应、对话与行动。此处为唯一的主线正文位置，止于自然情节节点。〉\n</剧情正文>\n\n<档案>\n<心事>\n<穿搭气味>〈视角人物衣着细节（如领口/袖口状态）与身上散发的气味〉</穿搭气味>\n<生理微反应>〈视角人物呼吸频率、眼神变化、耳根/喉结/指尖等细微生理反应〉</生理微反应>\n<表象动作><表象>〈视角人物表面维持的动作〉</表象><小动作>〈手指/脚尖/视线不自觉的习惯性动作〉</小动作></表象动作>\n<随身物件>〈视角人物此刻随身口袋或课桌深处藏着的与剧情/{{user}}相关的小物件〉</随身物件>\n<多层心理><理智>〈视角人物表层理智想法〉</理智><颜文字>〈颜文字〉</颜文字><潜意识>〈未被他人得知的深层念头〉</潜意识><锐评>〈内心吐槽或偏爱评价〉</锐评></多层心理>\n<心动好感><数值>〈好感度0-100整数（同时作为条宽和显示百分比）〉</数值><变动>〈↑或↓及变动数值〉</变动><原因>〈好感变动原因及当下对{{user}}的真实态度〉</原因></心动好感>\n<暗涌克制><数值>〈情绪暗涌度/占有欲0-100整数（同时作为条宽和显示百分比）〉</数值><情绪>〈当前情绪状态标签〉</情绪><克制>〈理智克制程度与内心蠢蠢欲动的冲动〉</克制></暗涌克制>\n<私密手记>〈视角人物第一人称私密日记或深夜独白，不少于80字，展现细腻情感与未说出口的话〉</私密手记>\n<围观>\n<围观评><署名>〈前排/同桌死党视角〉</署名><内容>〈近距离吃瓜吐槽1〉</内容></围观评>\n<围观评><署名>〈后排/路过同学视角〉</署名><内容>〈旁观者视角对两人氛围的锐评2〉</内容></围观评>\n<围观评><署名>〈科任老师/班干部视角〉</署名><内容>〈站在各自人设高度的观察评论3〉</内容></围观评>\n<围观评><署名>〈视角人物手里的物品/课桌拟人视角〉</署名><内容>〈物品惨遭蹂躏或见证暧昧的幽默吐槽4〉</内容></围观评>\n<围观评><署名>〈窗外麻雀/走廊监控/环境拟人视角〉</署名><内容>〈奇妙趣味视角评论5〉</内容></围观评>\n</围观>\n<署名吐槽><署名>〈符合设定的损友或叙事旁白〉</署名><内容>〈一针见血的总结性锐评1〉</内容></署名吐槽>\n</心事>\n<私密记录>\n<备忘录>\n<已完成>〈视角人物近期已完成的与{{user}}或日常相关的事项1〉</已完成>\n<已完成>〈视角人物近期已完成的暗中准备事项2〉</已完成>\n<待完成>〈视角人物正在计划但尚未实施的小心思3〉</待完成>\n<待完成>〈视角人物备忘录里反复修改的待办事项4〉</待完成>\n<待完成>〈视角人物绝对不想被人看到的私密目标5〉</待完成>\n</备忘录>\n<消费记录>\n<购买><商品>〈购买记录1：商品名称（附带隐藏购买动机）〉</商品><金额>〈金额〉</金额></购买>\n<购买><商品>〈购买记录2：商品名称（如顺手给{{user}}带的零食/日用品）〉</商品><金额>〈金额〉</金额></购买>\n<购买><商品>〈购买记录3：商品名称（体现视角人物个人癖好或生活细节）〉</商品><金额>〈金额〉</金额></购买>\n<购物车>〈购物车备选/未结算项：犹豫是否购买的物品及原因〉</购物车>\n</消费记录>\n<搜索>\n<搜索信息><关键词>〈视角人物近期搜索词1（贴合当前剧情困惑或小心思）〉</关键词><动机>〈为什么搜这个词〉</动机></搜索信息>\n<网友回复><署名>〈高赞网友1ID〉</署名><内容>〈真实感拉满的网友神回复1〉</内容></网友回复>\n<网友回复><署名>〈吃瓜网友2ID〉</署名><内容>〈起哄或出主意的回复2〉</内容></网友回复>\n<网友回复><署名>〈暴躁网友3ID〉</署名><内容>〈反差感吐槽回复3〉</内容></网友回复>\n<网友回复><署名>〈匿名楼主追问〉</署名><内容>〈视角人物暗中破防或嘴硬的匿名追问〉</内容></网友回复>\n</搜索>\n<搜索>\n<搜索信息><关键词>〈视角人物近期搜索词2（生活/学业/人际相关）〉</关键词><动机>〈为什么搜这个词〉</动机></搜索信息>\n<网友回复><署名>〈百科/正经答主ID〉</署名><内容>〈一本正经的回答1〉</内容></网友回复>\n<网友回复><署名>〈歪楼网友ID〉</署名><内容>〈歪楼搞笑回复2〉</内容></网友回复>\n<网友回复><署名>〈过来人ID〉</署名><内容>〈扎心经验谈3〉</内容></网友回复>\n</搜索>\n<假设分支><假设>〈如果刚才某句话/某个动作换一种选择〉</假设><推演>〈推演一段极具张力的100字左右平行分支小剧场〉</推演></假设分支>\n<采访><提问>〈直击灵魂的采访提问1（关于刚才的心动或嘴硬细节）〉</提问><回答>〈视角人物结合神态动作的真实回答1〉</回答></采访>\n<采访><提问>〈直击灵魂的采访提问2（关于对{{user}}的某个隐秘看法）〉</提问><回答>〈视角人物结合神态动作的真实回答2〉</回答></采访>\n<采访><提问>〈直击灵魂的采访提问3（关于未来的某个企图）〉</提问><回答>〈视角人物结合神态动作的真实回答3〉</回答></采访>\n<署名吐槽><署名>〈主持人或旁白〉</署名><内容>〈针对采访表现的锐评2〉</内容></署名吐槽>\n</私密记录>\n<社交>\n<聊天标签>〈大群状态标签，如：99+条未读 · 课间水群高峰〉</聊天标签>\n<群聊>\n<群名>〈班级大群名称（含人数）〉</群名>\n<聊天时间>〈聊天时间〉</聊天时间>\n<发言><姓名>〈活跃NPC1姓名及群头衔〉</姓名><内容>〈群1消息1：聊校园日常/八卦/老师动向〉</内容></发言>\n<发言><姓名>〈活跃NPC2姓名及群头衔〉</姓名><内容>〈群1消息2：接梗或顺带提到{{user}}/视角人物〉</内容></发言>\n<系统>〈系统提示：如“xxx 拍了拍 xxx 的脑袋”或“xxx 撤回了一条消息”〉</系统>\n<本人发言><姓名>〈发言人3〉</姓名><内容>〈群1消息3〉</内容></本人发言>\n<发言><姓名>〈活跃NPC4姓名及群头衔〉</姓名><内容>〈群1消息4〉</内容></发言>\n<发言><姓名>〈活跃NPC5姓名及群头衔〉</姓名><内容>〈群1消息5〉</内容></发言>\n</群聊>\n<聊天标签>〈小群状态标签，如：死党私密小群 · 严禁外传〉</聊天标签>\n<群聊>\n<群名>〈小分队/宿舍群名称（含人数）〉</群名>\n<群公告>〈一句符合死党群风格的搞笑群公告〉</群公告>\n<发言><姓名>〈死党NPC1〉</姓名><内容>〈群2消息1：私下吐槽或盘问刚才的剧情细节〉</内容></发言>\n<本人发言><姓名>〈发言人2〉</姓名><内容>〈群2消息2〉</内容></本人发言>\n<发言><姓名>〈死党NPC2〉</姓名><内容>〈群2消息3：出馊主意或一针见血拆穿〉</内容></发言>\n<系统>〈系统提示：如“视角人物 撤回了一条消息”〉</系统>\n<发言><姓名>〈死党NPC3〉</姓名><内容>〈群2消息4：抓包撤回内容并起哄〉</内容></发言>\n</群聊>\n<聊天标签>〈私聊状态标签，如：置顶私聊 / 刚刚活跃〉</聊天标签>\n<私聊>\n<私聊对象>〈私聊对象姓名及关系〉</私聊对象>\n<发言><姓名>〈私聊对象〉</姓名><内容>〈私聊消息1〉</内容></发言>\n<本人发言><姓名>〈视角人物名字〉</姓名><内容>〈视角人物回复消息2〉</内容></本人发言>\n<发言><姓名>〈私聊对象〉</姓名><内容>〈私聊消息3〉</内容></发言>\n<本人发言><姓名>〈视角人物名字〉</姓名><内容>〈视角人物回复消息4〉</内容></本人发言>\n</私聊>\n<朋友圈>\n<动态信息><作者>〈视角人物或核心角色姓名〉</作者><时间>〈发布时间〉</时间><可见范围>〈仅谁可见或定位〉</可见范围></动态信息>\n<动态正文>〈朋友圈1正文（可配文字描述的图片内容，含暗戳戳的小心思）〉</动态正文>\n<点赞><名单>〈点赞具体人名列表〉</名单><人数>〈点赞人数〉</人数></点赞>\n<评论><署名>〈评论好友1〉</署名><内容>〈评论1内容〉</内容></评论>\n<回复评论><署名>〈评论好友2〉</署名><对象>〈评论好友1〉</对象><内容>〈互动回复2内容〉</内容></回复评论>\n<评论><署名>〈评论好友3〉</署名><内容>〈评论3内容〉</内容></评论>\n</朋友圈>\n<朋友圈>\n<动态信息><作者>〈群像活跃NPC姓名〉</作者><时间>〈发布时间〉</时间></动态信息>\n<动态正文>〈朋友圈2正文（展现校园另一角的鲜活趣事，或无意间拍到主角同框背景）〉</动态正文>\n<点赞><名单>〈点赞具体人名列表〉</名单><人数>〈点赞人数〉</人数></点赞>\n<评论><署名>〈评论同学A〉</署名><内容>〈盲生发现华点的评论1〉</内容></评论>\n<评论><署名>〈评论同学B〉</署名><内容>〈评论2内容〉</内容></评论>\n</朋友圈>\n<校园墙>\n<热榜>\n<热榜项><排名>1</排名><话题>〈校园热榜1：与主线或风云人物相关的爆点话题〉</话题><热度>爆</热度></热榜项>\n<热榜项><排名>2</排名><话题>〈校园热榜2：近期全校热议事件/八卦〉</话题><热度>热</热度></热榜项>\n<热榜项><排名>3</排名><话题>〈校园热榜3：社团/食堂/考试/奇葩趣闻〉</话题><热度>新</热度></热榜项>\n<热榜项><排名>4</排名><话题>〈校园热榜4：某NPC相关的支线悬念话题〉</话题></热榜项>\n<热榜项><排名>5</排名><话题>〈校园热榜5：校园生活日常槽点〉</话题></热榜项>\n<热榜评论>\n<热评><署名>〈热评学生1〉</署名><内容>〈针对热榜的犀利或搞笑评论1〉</内容></热评>\n<热评><署名>〈热评学生2〉</署名><内容>〈针对热榜的知情人士爆料2〉</内容></热评>\n<热评><署名>〈热评学生3〉</署名><内容>〈针对热榜的吃瓜跟帖3〉</内容></热评>\n<热评><署名>〈热评学生4〉</署名><内容>〈针对热榜的玩梗评论4〉</内容></热评>\n</热榜评论>\n</热榜>\n<树洞区>\n<树洞帖>\n<帖子><标题>〈匿名树洞帖1标题（关于{{user}}与视角人物的目击帖或情感树洞）〉</标题><主楼>〈树洞帖1主楼详细内容〉</主楼></帖子>\n<展开回复>\n<回复数>4</回复数>\n<回帖><楼层>1</楼层><署名>〈代号〉</署名><内容>〈抢沙发或认出当事人的回复〉</内容></回帖>\n<回帖><楼层>2</楼层><署名>〈代号〉</署名><内容>〈补充目击细节的回复〉</内容></回帖>\n<回帖><楼层>3</楼层><署名>〈代号〉</署名><内容>〈嗑CP或起哄的回复〉</内容></回帖>\n<回帖><楼层>4</楼层><署名>〈疑似熟人马甲〉</署名><内容>〈意味深长的回复〉</内容></回帖>\n</展开回复>\n</树洞帖>\n<树洞帖>\n<帖子><标题>〈匿名树洞帖2标题（关于其他群像NPC的支线八卦或校园怪谈）〉</标题><主楼>〈树洞帖2主楼详细内容〉</主楼></帖子>\n<折叠回复>\n<回复数>3</回复数>\n<回帖><楼层>1</楼层><署名>〈代号〉</署名><内容>〈帖2回帖1〉</内容></回帖>\n<回帖><楼层>2</楼层><署名>〈代号〉</署名><内容>〈帖2回帖2〉</内容></回帖>\n<回帖><楼层>3</楼层><署名>〈代号〉</署名><内容>〈帖2回帖3〉</内容></回帖>\n</折叠回复>\n</树洞帖>\n</树洞区>\n</校园墙>\n<署名吐槽><署名>〈校园墙皮下君或旁白〉</署名><内容>〈针对今日校园舆论的锐评3〉</内容></署名吐槽>\n</社交>\n<群像观察>\n<观察卡片>\n<观察><姓名>〈NPC1姓名〉</姓名><身份>〈身份/与主角关系〉</身份><动向>〈NPC1此刻所在位置、具体行动、内心盘算及与主线的潜在交集〉</动向><坐标>〈NPC1当前坐标〉</坐标><目标>〈NPC1当前目标/状态〉</目标></观察>\n<观察><姓名>〈NPC2姓名〉</姓名><身份>〈身份/与主角关系〉</身份><动向>〈NPC2此刻所在位置、具体行动、个人支线烦恼或吃瓜动向〉</动向><坐标>〈NPC2当前坐标〉</坐标><目标>〈NPC2当前目标/状态〉</目标></观察>\n<观察><姓名>〈NPC3姓名〉</姓名><身份>〈身份/班级职务〉</身份><动向>〈NPC3此刻的独立行动与人际互动（可与其他NPC产生联动）〉</动向><坐标>〈NPC3当前坐标〉</坐标><目标>〈NPC3当前目标/状态〉</目标></观察>\n<观察><姓名>〈NPC4姓名〉</姓名><身份>〈身份/社团或外班风云人物〉</身份><动向>〈NPC4此刻的独立行动、秘密计划或即将引发的支线伏笔〉</动向><坐标>〈NPC4当前坐标〉</坐标><目标>〈NPC4当前目标/状态〉</目标></观察>\n<观察><姓名>〈NPC5姓名〉</姓名><身份>〈身份/欢喜冤家或对照组〉</身份><动向>〈NPC5此刻的鲜活日常切片与性格展现〉</动向><坐标>〈NPC5当前坐标〉</坐标><目标>〈NPC5当前目标/状态〉</目标></观察>\n<观察><姓名>〈NPC6姓名〉</姓名><身份>〈身份/师长或特殊角色〉</身份><动向>〈NPC6此刻的动向及对班级/主角团的潜在影响〉</动向><坐标>〈NPC6当前坐标〉</坐标><目标>〈NPC6当前目标/状态〉</目标></观察>\n</观察卡片>\n<同步时间轴>\n<事件><时间>〈具体时间〉</时间><地点>〈校园地点1〉</地点><事件内容>〈场外支线事件1的具体画面〉</事件内容><情报状态>〈谁知情/谁尚未知晓〉</情报状态></事件>\n<事件><时间>〈具体时间〉</时间><地点>〈校园地点2〉</地点><事件内容>〈场外支线事件2的具体画面〉</事件内容><情报状态>〈谁知情/谁尚未知晓〉</情报状态></事件>\n<事件><时间>〈具体时间〉</时间><地点>〈校园地点3〉</地点><事件内容>〈场外支线事件3的具体画面〉</事件内容><情报状态>〈谁知情/谁尚未知晓〉</情报状态></事件>\n<事件><时间>〈具体时间〉</时间><地点>〈校园地点4〉</地点><事件内容>〈场外支线事件4（可埋下后续剧情小伏笔）〉</事件内容><情报状态>〈伏笔发酵中〉</情报状态></事件>\n</同步时间轴>\n<走廊碎片>〈校园随机小事1〉</走廊碎片>\n<广播站>〈校园随机小事2〉</广播站>\n<群像吐槽>〈针对这群人各自心怀鬼胎或热闹日常的总结吐槽〉</群像吐槽>\n</群像观察>\n<弹幕>\n<弹幕条><署名>〈考据党弹幕ID〉</署名><内容>〈抠细节分析视角人物微表情或动作的弹幕1〉</内容></弹幕条>\n<弹幕条><署名>〈嗑学家弹幕ID〉</署名><内容>〈激动尖叫嗑糖的弹幕2〉</内容></弹幕条>\n<弹幕条><署名>〈群像粉弹幕ID〉</署名><内容>〈讨论某个配角NPC支线走向的弹幕3〉</内容></弹幕条>\n<弹幕条><署名>〈神预言弹幕ID〉</署名><内容>〈盲猜接下来剧情修罗场或反转的弹幕4〉</内容></弹幕条>\n<弹幕条><署名>〈吐槽役弹幕ID〉</署名><内容>〈幽默玩梗吐槽视角人物嘴硬或死党助攻的弹幕5〉</内容></弹幕条>\n<弹幕条><署名>〈列文虎克ID〉</署名><内容>〈发现环境栏/消费记录里隐藏彩蛋的弹幕6〉</内容></弹幕条>\n<弹幕条><署名>〈事业/剧情粉ID〉</署名><内容>〈关注校园主线或人际博弈的弹幕7〉</内容></弹幕条>\n<弹幕条><署名>〈前排打卡ID〉</署名><内容>〈结合当前名场面的高能刷屏弹幕8〉</内容></弹幕条>\n</弹幕>\n</档案>\n"
+    }
+  }
+}

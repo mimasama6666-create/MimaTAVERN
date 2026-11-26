@@ -146,6 +146,7 @@
   "plugin-worker.js",
   "png-card-import.js",
   "png-resource-inspector.js",
+  "protocols/campus-r8.json",
   "protocols/example-local.json",
   "regex-editor.js",
   "regex-engine.js",
