@@ -1,36 +1,50 @@
-/* Native regex: isolated execution only; no main-thread regex for user patterns. */
+/* Compiled native RegExp plans are local to this killable worker. */
 'use strict';
-const FLAG_ORDER=['d','g','i','m','s','u','v','y'];
-const str=value=>String(value??'');
-const sorted=rows=>[...(Array.isArray(rows)?rows:[])].sort((a,b)=>Number(a?.priority??50)-Number(b?.priority??50));
-const flags=value=>FLAG_ORDER.filter(ch=>new Set(String(value||'g').toLowerCase().split('')).has(ch)).join('')||'g';
+const plans=new Map();
+const text=value=>String(value??'');
+const limit=8;
+
+function compile(packs){
+ return packs.flatMap(pack=>pack.rules.map(rule=>{
+  try{
+   if(!rule.pattern)throw Error('匹配式为空');
+   return {pack,rule,regex:new RegExp(rule.pattern,rule.flags||'g')};
+  }catch(error){return {pack,rule,error:error.message};}
+ }));
+}
+function putPlan(key,packs){
+ plans.set(key,compile(packs));
+ while(plans.size>limit)plans.delete(plans.keys().next().value);
+}
+function protocolMissing(source,checks){
+ const missing=[];
+ for(const check of checks||[]){
+  const match=new RegExp(check.pattern,check.flags||'').exec(source);
+  if(!match||(check.fields||[]).some(field=>!text(typeof field==='string'?match.groups?.[field]:match[field]).trim()))missing.push(check.name);
+ }
+ return missing;
+}
 self.onmessage=event=>{
+ const packet=event.data||{},id=packet.id;
  try{
-  const {entries=[],packs=[]}=event.data||{};const output=[],compiled=new Map();
-  // Compile and sort once per phase/job, then reset state for each message.
-  // Invalid rules still report diagnostics for every affected entry.
-  const rulesFor=phase=>{
-   if(compiled.has(phase))return compiled.get(phase);
-   const rules=[];
-   for(const pack of sorted(packs).filter(p=>p&&p.enabled!==false)){
-    for(const rule of sorted(pack.rules).filter(r=>r&&r.enabled!==false&&(r.phase||'display')===phase)){
-     let regex,error;
-     try{if(!str(rule.pattern))throw new Error('pattern 为空');regex=new RegExp(str(rule.pattern),flags(rule.flags));}
-     catch(e){error=String(e?.message||e);}
-     rules.push({pack,rule,regex,error});
-    }
-   }
-   compiled.set(phase,rules);return rules;
-  };
-  for(const item of entries){
-   const phase=item.phase||'display';let current=str(item.input),diagnostics=[];
-   for(const {pack,rule,regex,error} of rulesFor(phase)){
-     if(error){diagnostics.push({packId:pack.id,packName:pack.name,ruleId:rule.id,ruleName:rule.name,error});continue;}
-     try{regex.lastIndex=0;current=current.replace(regex,str(rule.replacement));}
-     catch(e){diagnostics.push({packId:pack.id,packName:pack.name,ruleId:rule.id,ruleName:rule.name,error:String(e?.message||e)});}
-   }
-   output.push({output:current,diagnostics});
+  if(packet.type==='configure'){
+   putPlan(packet.key,packet.packs);
+   self.postMessage({id,ok:true,keys:[...plans.keys()]});
+   return;
   }
-  self.postMessage({ok:true,results:output});
- }catch(e){self.postMessage({ok:false,error:String(e?.message||e)});}
+  const steps=plans.get(packet.key);
+  if(!steps)throw Error('正则执行计划尚未准备');
+  let output=text(packet.input),matchedPack=false;
+  const diagnostics=[],missingFields=protocolMissing(output,packet.protocol);
+  if(!missingFields.length)for(const {pack,rule,regex,error} of steps){
+   try{
+    if(error)throw Error(error);
+    regex.lastIndex=0;
+    const next=output.replace(regex,rule.replacement);
+    if(pack.id===packet.tracePackId&&next!==output)matchedPack=true;
+    output=next;
+   }catch(error){diagnostics.push({packId:pack.id,packName:pack.name,ruleId:rule.id,ruleName:rule.name,error:error.message});}
+  }
+  self.postMessage({id,ok:true,output,diagnostics,matchedPack,missingFields});
+ }catch(error){self.postMessage({id,ok:false,error:error.message||String(error)});}
 };

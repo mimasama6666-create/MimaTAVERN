@@ -3,7 +3,7 @@
  const FORMAT='MIMA_TAVERN_MIGRATION',VERSION=2,CHUNK=192*1024;
  const NAMES=['native','compat','phone','atelier','wallpapers','fonts','sounds','prefs','playtools'];
  const LABELS={native:'原生剧情、记忆与角色面具',compat:'外部角色卡剧情库与来源',phone:'小手机全部表与原始媒体',atelier:'工坊项目与素材',wallpapers:'已保存壁纸',fonts:'本地字体原件',sounds:'个人点击音效原件',prefs:'接口与界面偏好',playtools:'工具草稿与清理记录'};
- const PREFS=['mimamao_tavern_url_fonts_v1','MIMATAVERN_UI_DENSITY_V1','MIMAMAO_TAVERN_TEMP','storyFontUrl','storyFontFamily','MIMAMAO_TAVERN_STORY_TYPO_V1','mimamao_tavern_ui_font','mimamao_tavern_story_font','mimamao_tavern_font_weight_v1','mimamao_tavern_font_subsets_v1','MIMAMAO_TAVERN_ASSISTANT_STUDIO_V1','mima-r19-ui-feedback-prefs-v1','mima-r19-last-session-v1'];
+ const PREFS=['mimamao_tavern_url_fonts_v1','MIMATAVERN_UI_DENSITY_V1','MIMATAVERN_DISPLAY_DENSITY_V2','MIMAMAO_TAVERN_TEMP','storyFontUrl','storyFontFamily','MIMAMAO_TAVERN_STORY_TYPO_V1','mimamao_tavern_ui_font','mimamao_tavern_story_font','mimamao_tavern_font_weight_v1','mimamao_tavern_font_subsets_v1','MIMAMAO_TAVERN_ASSISTANT_STUDIO_V1','mima-r19-ui-feedback-prefs-v1','mima-r19-last-session-v1'];
  const SESSION_PREFS=['mima-r19-unsent-v1:','mima-r19-reader-v1:'];
  const prefKeys=library=>[...PREFS,...(library.sessions||[]).flatMap(session=>SESSION_PREFS.map(prefix=>prefix+session.id))];
  const sha=async value=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',typeof value==='string'?new TextEncoder().encode(value):value))].map(n=>n.toString(16).padStart(2,'0')).join('');
@@ -78,7 +78,8 @@
  async function saveReceipt(receipt){const saved=await restoreJournal(receipt.id,'prepare',{receipt});Object.assign(receipt,saved);activeId=receipt.id;paintReceipt(receipt);return receipt}
  async function saveOwnedReceipt(receipt,token,release=false){const saved=await restoreJournal(receipt.id,release?'release':'update',{receipt,token});Object.assign(receipt,saved);activeId=receipt.id;paintReceipt(receipt);if(release){const b=document.getElementById('tavern-migration-takeover');if(b)b.hidden=true;}return receipt}
 
- async function readPrefs(includeApiKey){const values={};for(const key of prefKeys(await MimaStandalone.exportLibrary())){const v=localStorage.getItem(key);if(v!==null)values[key]=v}const api={...MimaStandalone.getApiConfig()};if(!includeApiKey){api.apiKey='';api.extraHeaders=''}return {values,api,credentialsIncluded:includeApiKey}}
+ const assistantKey='MIMAMAO_TAVERN_ASSISTANT_STUDIO_V1';
+ async function readPrefs(includeApiKey){const values={};for(const key of prefKeys(await MimaStandalone.exportLibrary())){let v;if(key===assistantKey){try{v=await MimaAssistantStudio.exportPortableState();}catch(error){throw Error('整馆备份未完成：'+error.message);}}else v=localStorage.getItem(key);if(v!==null)values[key]=v}const api={...MimaStandalone.getApiConfig()};if(!includeApiKey){api.apiKey='';api.extraHeaders=''}return {values,api,credentialsIncluded:includeApiKey}}
  async function collect(name,includeApiKey){switch(name){
   case 'native':await MimaLocalStore.exportAll();return MimaStandalone.exportLibrary();
   case 'compat':return MimaCompatStore.snapshot();
@@ -165,7 +166,7 @@
  }
  async function portableFonts(records){if(!Array.isArray(records))throw Error('字体迁移结构无效');return records.map(r=>{if(!(r.buffer instanceof ArrayBuffer))throw Error('字体原件缺失');return {...r,buffer:undefined,bufferBase64:b64(new Uint8Array(r.buffer))}})}
  async function portableSounds(records){if(!Array.isArray(records))throw Error('个人音效迁移格式无效');const raw=[];for(const r of records){if(!(r?.blob instanceof Blob))throw Error('个人音效缺少原始媒体');raw.push({kind:r.kind,name:r.name,data:'data:'+r.blob.type+';base64,'+b64(new Uint8Array(await r.blob.arrayBuffer()))})}return MimaInteraction.validateSounds(raw)}
- function prefsPlan(src,library){
+ async function prefsPlan(src,library){
   if(!src||!src.values||typeof src.values!=='object'||Array.isArray(src.values)||!src.api||typeof src.api!=='object'||Array.isArray(src.api))throw Error('偏好备份结构无效');
   const additions=[],preserved=[];for(const[k,v]of Object.entries(src.values)){
    if(!prefKeys(library).includes(k)||typeof v!=='string')throw Error('偏好键或值无效');
@@ -176,6 +177,7 @@
       :cfg?.version===1&&['ui','story'].every(t=>cfg[t]===null||(cfg[t]&&typeof cfg[t].family==='string'&&Array.isArray(cfg[t].ids)&&cfg[t].ids.length<=32&&cfg[t].ids.every(id=>typeof id==='string'&&id.length<150)&&new Set(cfg[t].ids).size===cfg[t].ids.length));
     if(!valid)throw Error('字体外观偏好归档无效：'+k);
    }
+   if(k===assistantKey){const plan=await MimaAssistantStudio.previewPortableRestore(v,{onlyIfEmpty:true});if(plan.status==='READY')additions.push([k,v]);else preserved.push(k);continue;}
    const old=localStorage.getItem(k);if(old===null)additions.push([k,v]);else if(old!==v)preserved.push(k)
   }
   return {additions,preserved};
@@ -184,7 +186,7 @@
   await MimaLocalStore.exportAll();const plans={};plans.native=await MimaStandalone.previewLibraryImport(data.native,{mergeMode:'merge-new-only',templatePolicy:'merge'});
   plans.compat=await MimaCompatStore.restoreVerified({...data.compat,integrityVerified:true},{dryRun:true,mode:'merge-new-only'});if(plans.compat.conflicts.length)throw Error('兼容库记录冲突 '+plans.compat.conflicts.length+' 项，未开始恢复');
   plans.phone=await MimaPhoneBackup.previewArchive(data.phone,{credentialsOmitted:data.phoneCredentialsOmitted===true});plans.atelier=await MimaAtelierCore.previewRecordImport(data.atelier);plans.wallpapers=await MimaChatWallpaper.previewRecordImport(data.wallpapers);
-  const fonts=await portableFonts(data.fonts);plans.fonts={toAdd:(await MimaFontManager.planPortableImport(fonts)).records.length};plans.sounds=await MimaInteraction.previewSoundMerge(await portableSounds(data.sounds||[]));const prefPlan=prefsPlan(data.prefs,data.native);plans.prefs={toAdd:prefPlan.additions.map(([key])=>key),preserved:prefPlan.preserved};plans.playtools=await MimaLocalStore.importPlayToolRecords(data.playtools,{dryRun:true});return plans;
+  const fonts=await portableFonts(data.fonts);plans.fonts={toAdd:(await MimaFontManager.planPortableImport(fonts)).records.length};plans.sounds=await MimaInteraction.previewSoundMerge(await portableSounds(data.sounds||[]));const prefPlan=await prefsPlan(data.prefs,data.native);plans.prefs={toAdd:prefPlan.additions.map(([key])=>key),preserved:prefPlan.preserved};plans.playtools=await MimaLocalStore.importPlayToolRecords(data.playtools,{dryRun:true});return plans;
  }
  async function prepare(file){const archive=await inspect(file),plans=await preflight(archive.data),old=await journal('receipt:'+archive.id);
   // Persist the verified original file BEFORE any store mutation. If quota is
@@ -200,7 +202,7 @@
   case 'fonts':return MimaFontManager.commitPortablePlan(await MimaFontManager.planPortableImport(await portableFonts(data.fonts)));
   case 'sounds':return MimaInteraction.mergeSounds(await portableSounds(data.sounds||[]));
   case 'playtools':return MimaLocalStore.importPlayToolRecords(data.playtools);
-  case 'prefs':{const plan=prefsPlan(data.prefs,data.native),added=[];for(const[k,v]of plan.additions){if(localStorage.getItem(k)===null){localStorage.setItem(k,v);added.push(k)}}const apiKey='MIMAMAO_TAVERN_STANDALONE_API_V1';let apiPreserved=true;if(localStorage.getItem(apiKey)===null){MimaStandalone.saveApiConfig({...data.prefs.api,apiKey:typeof data.prefs.api.apiKey==='string'?data.prefs.api.apiKey:'',extraHeaders:typeof data.prefs.api.extraHeaders==='string'?data.prefs.api.extraHeaders:''});apiPreserved=false}MimaInteraction.reloadPreferences();return {added,preserved:plan.preserved,apiPreserved};}
+  case 'prefs':{const plan=await prefsPlan(data.prefs,data.native),added=[];for(const[k,v]of plan.additions){if(k===assistantKey){const receipt=await MimaAssistantStudio.restorePortableState(v,{onlyIfEmpty:true});if(receipt.status==='SAVED')added.push(k);else plan.preserved.push(k);}else if(localStorage.getItem(k)===null){localStorage.setItem(k,v);added.push(k)}}const apiKey='MIMAMAO_TAVERN_STANDALONE_API_V1';let apiPreserved=true;if(localStorage.getItem(apiKey)===null){MimaStandalone.saveApiConfig({...data.prefs.api,apiKey:typeof data.prefs.api.apiKey==='string'?data.prefs.api.apiKey:'',extraHeaders:typeof data.prefs.api.extraHeaders==='string'?data.prefs.api.extraHeaders:''});apiPreserved=false}MimaInteraction.reloadPreferences();window.MimaTavernBridge?.reloadDisplayPreferences?.();return {added,preserved:plan.preserved,apiPreserved};}
  }}
  async function resumeArchive(id,archive,validateData,commitStage,{expectedOwner=null}={}){
   const token='restore-'+[...crypto.getRandomValues(new Uint8Array(24))].map(x=>x.toString(16).padStart(2,'0')).join('');
@@ -265,7 +267,7 @@
     }
     case 'sounds':plans.sounds=await MimaInteraction.previewSoundMerge(await portableSounds(value||[]));break;
     case 'prefs':{
-     const native=await source.readSection('native'),plan=prefsPlan(value,native);
+     const native=await source.readSection('native'),plan=await prefsPlan(value,native);
      plans.prefs={toAdd:plan.additions.map(([key])=>key),preserved:plan.preserved};break;
     }
     case 'playtools':plans.playtools=await MimaLocalStore.importPlayToolRecords(value,{dryRun:true});break;

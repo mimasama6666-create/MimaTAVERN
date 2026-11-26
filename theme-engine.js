@@ -55,6 +55,7 @@
         if(meta.getAttribute('content')!==nextColor)meta.setAttribute('content',nextColor);
       }
     }
+    root.MimaThemeCanvas?.sync?.();
     return settings;
   }
   function getBuiltins(){return BUILTINS.map(x=>({...x}));}

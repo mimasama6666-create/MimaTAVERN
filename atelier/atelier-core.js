@@ -356,7 +356,7 @@ function makeAssetURL(src){const comma=src.indexOf(',');if(comma<0||!/^data:(?:i
  const raw=atob(src.slice(comma+1)),chunks=[];for(let i=0;i<raw.length;i+=65536){const slice=raw.slice(i,i+65536),bytes=new Uint8Array(slice.length);for(let j=0;j<slice.length;j++)bytes[j]=slice.charCodeAt(j);chunks.push(bytes)}
  return URL.createObjectURL(new Blob(chunks,{type:(/^data:([^;,]+)/.exec(src)||[])[1]||'application/octet-stream'}));}
 function prepareAssets(project,owner){const used=new Set();return {used,url(src){if(!src||!/^data:/.test(src))return src;let entry=assetPool.get(src);if(!entry){entry=makeAssetURL(src);assetPool.set(src,entry);}used.add(src);return entry;},owner};}
-function commitAssetOwner(owner,used){assetOwners.set(owner,used);for(const [src,url] of assetPool){if(![...assetOwners.values()].some(set=>set.has(src))){URL.revokeObjectURL(url);assetPool.delete(src);}}}
+function commitAssetOwner(owner,used){window.MimaThemeCanvas?.sync();assetOwners.set(owner,used);for(const [src,url] of assetPool){if(![...assetOwners.values()].some(set=>set.has(src))){URL.revokeObjectURL(url);assetPool.delete(src);}}}
 function releaseAssets(owner){commitAssetOwner(owner,new Set());}
 // A separate preview lease covers <img> stickers, which aren't part of CSS.
 // Keeping their Blob URLs out of DOM markup avoids repeated base64 attribute

@@ -2,19 +2,19 @@
 (function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;root.MimaCompatSafeHtml=api;})(typeof window!=='undefined'?window:globalThis,function(){
 'use strict';
 const HTML_FRAGMENT=/<\s*(?:div|section|article|table|thead|tbody|tr|th|td|details|summary|style|header|footer|main|aside|p|span|h[1-6]|ul|ol|li|dl|dt|dd|progress|meter|system|status|statusbar|status-bar|br|hr|pre|blockquote)\b[^>]*>/i;
-const maxBytes=150000;
+const maxBytes=Number.MAX_SAFE_INTEGER;
 function classify(content,role,status){const text=String(content??'');return{showHtml:role==='assistant'&&status==='committed'&&text.length<=maxBytes&&!/^\s*```/.test(text)&&HTML_FRAGMENT.test(text),oversize:text.length>maxBytes};}
 // Strip fetch-capable CSS declarations, not entire legitimate stylesheets.
 // Detached CSSOM parsing ensures escaped URLs and image-set() are normalized
 // before rejection. This also applies to <style> emitted by the model.
 function safeCssText(value){
- const raw=String(value??'');if(!raw.trim())return '';if(raw.length>100000||/<\s*\/\s*style\b/i.test(raw))throw new Error('E_DISPLAY_CSS_INVALID');
+ const raw=String(value??'');if(!raw.trim())return '';if(/<\s*\/\s*style\b/i.test(raw))throw new Error('E_DISPLAY_CSS_INVALID');
  if(typeof CSSStyleSheet!=='function')throw new Error('E_DISPLAY_CSS_PARSER_UNAVAILABLE');
  const sheet=new CSSStyleSheet();sheet.replaceSync(raw);
  const reject=/(?:url\s*\(|image-set\s*\(|-webkit-image-set\s*\(|expression\s*\(|behavior\s*:|@import)/i;
  const scrub=rules=>Array.from(rules).map(rule=>{
   if(rule.type===3||rule.type===10)return ''; // @import / @namespace
-  if(rule.style){for(const name of Array.from(rule.style)){if(reject.test(rule.style.getPropertyValue(name)))rule.style.removeProperty(name);}
+  if(rule.style){for(const name of Array.from(rule.style)){const value=rule.style.getPropertyValue(name),withoutLocal=value.replace(/url\(\s*([\"']?)(data:(?:image\/[a-z0-9+.-]+|font\/[a-z0-9+.-]+)[^)]*)\1\s*\)/gi,'local-image');if(reject.test(withoutLocal))rule.style.removeProperty(name);}
     return rule.cssText;
   }
   if(rule.cssRules){const outer=rule.cssText;const brace=outer.indexOf('{');if(brace<0)return '';

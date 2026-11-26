@@ -447,10 +447,10 @@
       const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE);
       const a=kv.get(PRESETS_KEY),b=kv.get(BASE_REVISION_KEY),c=kv.get(APPEARANCE_META_KEY),
         t=kv.get(TEMPLATE_META_KEY),h=kv.get(SESSION_HEAD_KEY),
-        i=kv.get(PRESET_BASE_INDEX_KEY),r=kv.get(PRESET_RECORD_PREFIX+id);
+        i=kv.get(PRESET_BASE_INDEX_KEY),r=kv.get(PRESET_RECORD_PREFIX+id),selection=kv.get(CSS_SELECTION_KEY);
       let issue,result,ready=0;
       const fail=e=>{issue=e;try{tx.abort();}catch{}};
-      const settle=()=>{if(++ready!==7)return;try{
+      const settle=()=>{if(++ready!==8)return;try{
         const head=assertPresetsOverlay(a.result),base=b.result,appearance=assertAppearanceMeta(c.result);
         if(!base||!Number.isInteger(base.revision)||base.revision!==head.baseRevision||appearance.baseRevision!==base.revision)
           throw Error('E_PRESETS_BASE_CONFLICT: 资料库基线已经改变，本次未覆盖');
@@ -470,9 +470,9 @@
           storeRevision:head.storeRevision+1,savedAt:new Date().toISOString()};
         assertPresetsOverlay(next);
         kv.put(record,PRESET_RECORD_PREFIX+id);kv.put(next,PRESETS_KEY);
-        result={value:record,storeRevision:globalRevision+1};
+        result={value:record,storeRevision:globalRevision+1,resourceSignature:resourceSignature(base.revision,appearance.storeRevision,next.storeRevision,templateHead.storeRevision,verifiedCssSelection(selection.result).selectionRevision)};
       }catch(e){fail(e)}};
-      for(const req of [a,b,c,t,h,i,r]){req.onsuccess=settle;req.onerror=()=>fail(req.error);}
+      for(const req of [a,b,c,t,h,i,r,selection]){req.onsuccess=settle;req.onerror=()=>fail(req.error);}
       tx.oncomplete=()=>{db.close();resolve(result)};
       tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_PRESET_COMMIT_ABORTED'))};
     });
@@ -1055,7 +1055,8 @@
   // Resource changes touch independent overlays and *only* Session records whose
   // compact directory rows actually reference a removed ID. No History scan and
   // no sequence of non-atomic single DELETE requests.
-  async function commitBulkDelete(kind,ids,expectedRevision){
+  async function commitBulkDelete(kind,ids,expectedRevision,{legacySessions=[]}={}){
+    const migrated=new Map(legacySessions.map(row=>[row.id,row]));
     if(!['css','presets','worldbook','sessions'].includes(kind)||!Array.isArray(ids)||!ids.length||
        ids.some(id=>typeof id!=='string'||!id)||new Set(ids).size!==ids.length||
        !Number.isSafeInteger(expectedRevision)||expectedRevision<0)
@@ -1150,7 +1151,7 @@
             if(sessionGenerationUnsettled(row))
               throw Error('E_BULK_DELETE_GENERATING: 有剧情正在使用选中资源生成，整批取消');
             if(kind==='css')next={...row,customCssId:null,customCssEnabled:false};
-            else if(kind==='presets')next={...row,presetIds:unlinkIds(row.presetIds)};
+            else if(kind==='presets'){const frozen=migrated.get(row.id);if(frozen&&frozen.recordRevision!==row.recordRevision)throw Error('E_LEGACY_DELETE_CONFLICT');next={...(frozen||row),presetIds:unlinkIds(row.presetIds)};}
             else next={...row,worldbookIds:unlinkIds(row.worldbookIds)};
             next.recordRevision=meta.recordRevision+1;next.updatedAt=stamp;
             kv.put(next,SESSION_PREFIX+meta.id);changedSessions++;
@@ -1255,7 +1256,7 @@
           (projected.customCssId||null)!==(expected?.customCssId||null)||
           (projected.customCssEnabled!==false)!==(expected?.customCssEnabled!==false))throw Error('E_CSS_SELECTION_STALE');
         const selected=validCssCatalog(c.result).entries.find(x=>x.id===candidate?.customCssId);
-        if(!selected||selected.scope==='app'||typeof validateIdentity!=='function'||!validateIdentity(selected,cssIdentity))
+        if(!selected||!['story','global','chat'].includes(selected.scope)||['novel','assistant'].includes(selected.surface)||typeof validateIdentity!=='function'||!validateIdentity(selected,cssIdentity))
           throw Error('E_CSS_CANDIDATE_CHANGED');
         const globalRev=globalRevisionLight(b.result.revision,appearanceMeta(app),p.result,t.result,head),stamp=new Date().toISOString();
         const value={...projected,customCssId:candidate.customCssId,customCssEnabled:!!candidate.customCssEnabled,

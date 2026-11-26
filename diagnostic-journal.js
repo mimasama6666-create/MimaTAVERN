@@ -155,7 +155,7 @@
    return id;
  }
  function event(id,data={}){
-   if(!id||!data||!['generation_prepared','dispatch_attempt','request','fetch_invoked','transport_response','provider_result','settlement','manual_recovery','timing','preflight_failure','transformation_provenance'].includes(data.type))return Promise.resolve();
+   if(!id||!data||!['generation_prepared','dispatch_attempt','request','fetch_invoked','transport_response','provider_result','settlement','manual_recovery','timing','preflight_failure','transformation_provenance','protocol_boundary'].includes(data.type))return Promise.resolve();
    return transact(async()=>{
      const db=await open();const tx=db.transaction([STORE,META],'readwrite'),st=tx.objectStore(STORE),ms=tx.objectStore(META),row=await waitRequest(st.get(id));
      // Deleting a record is final, even if a request still runs.
@@ -167,6 +167,7 @@
          row.generationAttempt=Number(data.generationAttempt)||null;
          row.model=pickString(data.model||row.model,160);
          row.ownerTraceId=pickString(data.ownerTraceId,120);
+         if(data.protocolRef)row.protocolRef=pickString(data.protocolRef,96);
        }else if(data.type==='dispatch_attempt'){
          row.generationId=pickString(data.generationId||row.generationId,120);
          row.generationAttempt=Number(data.generationAttempt)||row.generationAttempt||null;
@@ -237,6 +238,9 @@
            providerRequestId:pickString(data.providerRequestId,200),cfRay:pickString(data.cfRay,200)};
        }else if(data.type==='provider_result'){
          row.finishKind=pickString(data.finishKind,50);row.finishReason=pickString(data.finishReason,120);row.responseChars=Number(data.responseChars)||0;row.status='provider_returned';
+       }else if(data.type==='protocol_boundary'){
+         row.protocolBoundary={protocolRef:pickString(data.protocolRef,96),acceptedChars:Number(data.acceptedChars)||0,
+           tailChars:Number(data.tailChars)||0,localCompletion:data.localCompletion===true};
        }else if(data.type==='manual_recovery'){
          // Keep the original rejection, finish flag and retained evidence intact.
          row.manualRecovery={restoredAt:new Date().toISOString(),messageId:pickString(data.messageId,120),action:pickString(data.action,40)};

@@ -1,0 +1,2086 @@
+{
+  "format": "mimamao-semantic-protocol-bundle",
+  "version": 1,
+  "data": {
+    "regexPack": {
+      "id": "campus_semantic_native_r7",
+      "name": "校园群像 · R7 语义标签（原生）",
+      "description": "原生语义解析；原始六栏与全部组件；绑定配套预设后启用。",
+      "priority": 50,
+      "enabled": true,
+      "rules": [],
+      "displayStyles": [],
+      "protocolResource": {
+        "format": "mima-semantic-protocol",
+        "schemaVersion": 1,
+        "schema": {
+          "kind": "semantic",
+          "version": 1,
+          "id": "campus-semantic-r7",
+          "rootOrder": [
+            "环境",
+            "剧情正文",
+            "档案"
+          ],
+          "terminal": "</档案>",
+          "definitions": {
+            "/环境": {
+              "tag": "环境",
+              "kind": "container",
+              "openHtml": "<div class=\"c-status-panel\"><details open><summary>⁺ ˖ ✦ 𝑪𝒖𝒓𝒓𝒆𝒏𝒕 𝑺𝒄𝒆𝒏𝒆 · 现场环境与即时状态 ✦ ˖ ⁺</summary><div class=\"c-sp-cont\">",
+              "closeHtml": "</div></details></div>",
+              "path": "/环境",
+              "children": [
+                {
+                  "path": "/环境/时空",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/环境/感官",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/环境/现场群像",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/环境/自身",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/环境/视角人物",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/环境/空间张力",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/环境/瞬时心声",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/环境/关系",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/环境/镜头特写",
+                  "min": 1,
+                  "max": 1
+                }
+              ]
+            },
+            "/环境/时空": {
+              "tag": "时空",
+              "kind": "record",
+              "path": "/环境/时空",
+              "fields": [
+                "日期",
+                "星期",
+                "时间",
+                "阶段",
+                "天气"
+              ],
+              "fieldRules": {
+                "日期": {
+                  "required": true,
+                  "type": "text"
+                },
+                "星期": {
+                  "required": true,
+                  "type": "text"
+                },
+                "时间": {
+                  "required": true,
+                  "type": "text"
+                },
+                "阶段": {
+                  "required": true,
+                  "type": "text"
+                },
+                "天气": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "日期",
+                    "星期",
+                    "时间",
+                    "阶段",
+                    "天气"
+                  ],
+                  "html": "<div class=\"c-sp-row\"><span class=\"c-sp-lbl\">✦ 时空坐标：</span><span class=\"c-cn-tag\">$1</span><span class=\"c-cn-tag\">$2 · $3</span><span class=\"c-cn-tag\">$4</span><span class=\"c-cn-tag\">$5</span></div>"
+                }
+              ]
+            },
+            "/环境/感官": {
+              "tag": "感官",
+              "kind": "record",
+              "path": "/环境/感官",
+              "fields": [
+                "地点",
+                "声息"
+              ],
+              "fieldRules": {
+                "地点": {
+                  "required": true,
+                  "type": "text"
+                },
+                "声息": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "地点",
+                    "声息"
+                  ],
+                  "html": "<div class=\"c-sp-row\"><span class=\"c-sp-lbl\">✦ 场景感官：</span>$1 <span class=\"c-sp-divider\">丨</span> <span class=\"c-sp-lbl\">白噪音与气味：</span>$2</div>"
+                }
+              ]
+            },
+            "/环境/现场群像": {
+              "tag": "现场群像",
+              "kind": "record",
+              "path": "/环境/现场群像",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-sp-row\"><span class=\"c-sp-lbl\">✦ 群像背景：</span>$1</div>"
+                }
+              ]
+            },
+            "/环境/自身": {
+              "tag": "自身",
+              "kind": "record",
+              "path": "/环境/自身",
+              "fields": [
+                "衣着",
+                "动作",
+                "持有物"
+              ],
+              "fieldRules": {
+                "衣着": {
+                  "required": true,
+                  "type": "text"
+                },
+                "动作": {
+                  "required": true,
+                  "type": "text"
+                },
+                "持有物": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "衣着",
+                    "动作",
+                    "持有物"
+                  ],
+                  "html": "<div class=\"c-sp-line\"></div>\n  <div class=\"c-sp-row\"><span class=\"c-sp-lbl\">✦ {{user}}：</span><span class=\"c-cn-tag\">$1</span> $2 <span class=\"c-sp-divider\">丨</span> <span class=\"c-sp-lbl\">持有物：</span>$3</div>"
+                }
+              ]
+            },
+            "/环境/视角人物": {
+              "tag": "视角人物",
+              "kind": "record",
+              "path": "/环境/视角人物",
+              "fields": [
+                "姓名",
+                "衣着",
+                "动作",
+                "目光"
+              ],
+              "fieldRules": {
+                "姓名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "衣着": {
+                  "required": true,
+                  "type": "text"
+                },
+                "动作": {
+                  "required": true,
+                  "type": "text"
+                },
+                "目光": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "姓名",
+                    "衣着",
+                    "动作",
+                    "目光"
+                  ],
+                  "html": "<div class=\"c-sp-row\"><span class=\"c-sp-lbl\">✦ $1：</span><span class=\"c-cn-tag\">$2</span> $3 <span class=\"c-sp-divider\">丨</span> <span class=\"c-sp-lbl\">视线落点：</span><span class=\"c-os-red\">$4</span></div>"
+                }
+              ]
+            },
+            "/环境/空间张力": {
+              "tag": "空间张力",
+              "kind": "record",
+              "path": "/环境/空间张力",
+              "fields": [
+                "距离",
+                "生理状态",
+                "性器状态"
+              ],
+              "fieldRules": {
+                "距离": {
+                  "required": true,
+                  "type": "text"
+                },
+                "生理状态": {
+                  "required": true,
+                  "type": "text"
+                },
+                "性器状态": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "距离",
+                    "生理状态",
+                    "性器状态"
+                  ],
+                  "html": "<div class=\"c-sp-row\"><span class=\"c-sp-lbl\">✦ 空间张力：</span><span class=\"c-cn-tag\">距离 $1</span><span class=\"c-cn-tag\">生理状态 $2</span><span class=\"c-cn-tag\">性器状态 $3</span></div>"
+                }
+              ]
+            },
+            "/环境/瞬时心声": {
+              "tag": "瞬时心声",
+              "kind": "record",
+              "path": "/环境/瞬时心声",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-sp-line\"></div>\n  <div class=\"c-sp-row\"><span class=\"c-sp-lbl\">✦ 瞬时心声：</span><span class=\"c-os-red\">「$1」</span></div>"
+                }
+              ]
+            },
+            "/环境/关系": {
+              "tag": "关系",
+              "kind": "record",
+              "path": "/环境/关系",
+              "fields": [
+                "身份",
+                "阶段",
+                "互动"
+              ],
+              "fieldRules": {
+                "身份": {
+                  "required": true,
+                  "type": "text"
+                },
+                "阶段": {
+                  "required": true,
+                  "type": "text"
+                },
+                "互动": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "身份",
+                    "阶段",
+                    "互动"
+                  ],
+                  "html": "<div class=\"c-sp-row\"><span class=\"c-sp-lbl\">✦ 关系刻度：</span><span class=\"c-cn-tag\">$1</span><span class=\"c-cn-tag\">$2</span> $3</div>"
+                }
+              ]
+            },
+            "/环境/镜头特写": {
+              "tag": "镜头特写",
+              "kind": "record",
+              "path": "/环境/镜头特写",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<span class=\"c-cn-sticker\">🎐 镜头特写：$1</span>"
+                }
+              ]
+            },
+            "/剧情正文": {
+              "tag": "剧情正文",
+              "kind": "prose",
+              "path": "/剧情正文"
+            },
+            "/档案": {
+              "tag": "档案",
+              "kind": "container",
+              "openHtml": "<div class=\"c-pnk-wrap\">",
+              "closeHtml": "</div>",
+              "path": "/档案",
+              "children": [
+                {
+                  "path": "/档案/心事",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/私密记录",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/社交",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/群像观察",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/弹幕",
+                  "min": 1,
+                  "max": 1
+                }
+              ],
+              "orderedChildren": true
+            },
+            "/档案/心事": {
+              "tag": "心事",
+              "kind": "container",
+              "openHtml": "<!-- 01 · 角色深度剖析与现场围观 -->\n  <details open><summary>𝓘 𝓶𝓲𝓼𝓼 𝔂𝓸𝓾𝓻 𝓽𝓸𝓾𝓬𝓱 <small class=\"c-sum-note\">/ 角色深度剖析 · 隐秘心事</small></summary><div class=\"c-pnk-cont\"><div class=\"c-wm\"></div>\n<style>.c-pnk-wrap .c-favor-wrap .c-favor-bar .c-favor-fill{width:var(--value)!important}</style>",
+              "closeHtml": "</div></details>",
+              "path": "/档案/心事",
+              "children": [
+                {
+                  "path": "/档案/心事/穿搭气味",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/心事/生理微反应",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/心事/表象动作",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/心事/随身物件",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/心事/多层心理",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/心事/心动好感",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/心事/暗涌克制",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/心事/私密手记",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/心事/围观",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/心事/署名吐槽",
+                  "min": 1,
+                  "max": 1
+                }
+              ]
+            },
+            "/档案/心事/穿搭气味": {
+              "tag": "穿搭气味",
+              "kind": "record",
+              "path": "/档案/心事/穿搭气味",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-row\"><span class=\"c-lbl\">穿搭与气味:</span>$1</div>"
+                }
+              ]
+            },
+            "/档案/心事/生理微反应": {
+              "tag": "生理微反应",
+              "kind": "record",
+              "path": "/档案/心事/生理微反应",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-row\"><span class=\"c-lbl\">生理微反应:</span>$1</div>"
+                }
+              ]
+            },
+            "/档案/心事/表象动作": {
+              "tag": "表象动作",
+              "kind": "record",
+              "path": "/档案/心事/表象动作",
+              "fields": [
+                "表象",
+                "小动作"
+              ],
+              "fieldRules": {
+                "表象": {
+                  "required": true,
+                  "type": "text"
+                },
+                "小动作": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "表象",
+                    "小动作"
+                  ],
+                  "html": "<div class=\"c-row\"><span class=\"c-lbl\">表象与小动作:</span>$1 <span class=\"c-os-red\">（潜意识小动作：$2）</span></div>"
+                }
+              ]
+            },
+            "/档案/心事/随身物件": {
+              "tag": "随身物件",
+              "kind": "record",
+              "path": "/档案/心事/随身物件",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-row\"><span class=\"c-lbl\">口袋与桌肚:</span>$1</div>"
+                }
+              ]
+            },
+            "/档案/心事/多层心理": {
+              "tag": "多层心理",
+              "kind": "record",
+              "path": "/档案/心事/多层心理",
+              "fields": [
+                "理智",
+                "颜文字",
+                "潜意识",
+                "锐评"
+              ],
+              "fieldRules": {
+                "理智": {
+                  "required": true,
+                  "type": "text"
+                },
+                "颜文字": {
+                  "required": true,
+                  "type": "text"
+                },
+                "潜意识": {
+                  "required": true,
+                  "type": "text"
+                },
+                "锐评": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "理智",
+                    "颜文字",
+                    "潜意识",
+                    "锐评"
+                  ],
+                  "html": "<div class=\"c-row\"><span class=\"c-lbl\">多层心理剖析:</span>$1 <span>$2</span> <span class=\"c-os-red\">（隐秘潜意识/占有欲：$3）</span>【对{{user}}的即时锐评：$4】</div>"
+                }
+              ]
+            },
+            "/档案/心事/心动好感": {
+              "tag": "心动好感",
+              "kind": "record",
+              "path": "/档案/心事/心动好感",
+              "fields": [
+                "数值",
+                "变动",
+                "原因"
+              ],
+              "fieldRules": {
+                "数值": {
+                  "required": true,
+                  "type": "percent"
+                },
+                "变动": {
+                  "required": true,
+                  "type": "text"
+                },
+                "原因": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "数值",
+                    "变动",
+                    "原因"
+                  ],
+                  "html": "<!-- 双维度情感计量槽 -->\n    <div class=\"c-favor-wrap\"><span class=\"c-lbl\">心动与好感:</span><div class=\"c-favor-bar\"><div class=\"c-favor-fill\" style=\"width:$1%;--value:$1%;\"></div></div><span class=\"c-favor-num\">$1%</span><div class=\"c-favor-change\">$2 丨 $3</div></div>"
+                }
+              ]
+            },
+            "/档案/心事/暗涌克制": {
+              "tag": "暗涌克制",
+              "kind": "record",
+              "path": "/档案/心事/暗涌克制",
+              "fields": [
+                "数值",
+                "情绪",
+                "克制"
+              ],
+              "fieldRules": {
+                "数值": {
+                  "required": true,
+                  "type": "percent"
+                },
+                "情绪": {
+                  "required": true,
+                  "type": "text"
+                },
+                "克制": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "数值",
+                    "情绪",
+                    "克制"
+                  ],
+                  "html": "<div class=\"c-favor-wrap\"><span class=\"c-lbl\">暗涌与克制:</span><div class=\"c-favor-bar\"><div class=\"c-favor-fill\" style=\"width:$1%;--value:$1%;\"></div></div><span class=\"c-favor-num\">$1%</span><div class=\"c-favor-change\">$2 丨 $3</div></div>"
+                }
+              ]
+            },
+            "/档案/心事/私密手记": {
+              "tag": "私密手记",
+              "kind": "record",
+              "path": "/档案/心事/私密手记",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-diary\"><div class=\"c-tape\"></div><div class=\"c-d-title\">𝓘 𝓶𝓲𝓼𝓼 𝔂𝓸𝓾𝓻 𝓽𝓸𝓾𝓬𝓱 · 私密手记</div><div class=\"c-mem-txt\">$1</div></div>"
+                }
+              ]
+            },
+            "/档案/心事/围观": {
+              "tag": "围观",
+              "kind": "container",
+              "openHtml": "<div class=\"c-cmt-box\">",
+              "closeHtml": "</div>",
+              "path": "/档案/心事/围观",
+              "children": [
+                {
+                  "path": "/档案/心事/围观/围观评",
+                  "min": 5,
+                  "max": null
+                }
+              ]
+            },
+            "/档案/心事/围观/围观评": {
+              "tag": "围观评",
+              "kind": "record",
+              "path": "/档案/心事/围观/围观评",
+              "fields": [
+                "署名",
+                "内容"
+              ],
+              "fieldRules": {
+                "署名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "内容": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "署名",
+                    "内容"
+                  ],
+                  "html": "<div class=\"c-cmt-item\"><div class=\"c-cmt-name\">$1</div><div class=\"c-cmt-text\">$2</div></div>"
+                }
+              ]
+            },
+            "/档案/心事/署名吐槽": {
+              "tag": "署名吐槽",
+              "kind": "record",
+              "path": "/档案/心事/署名吐槽",
+              "fields": [
+                "署名",
+                "内容"
+              ],
+              "fieldRules": {
+                "署名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "内容": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "署名",
+                    "内容"
+                  ],
+                  "html": "<div class=\"c-tucao\">$1吐槽：$2</div>"
+                }
+              ]
+            },
+            "/档案/私密记录": {
+              "tag": "私密记录",
+              "kind": "container",
+              "openHtml": "<!-- 02 · 备忘录、消费记录、搜索与IF线 -->\n  <details><summary>𝓦𝓱𝓮𝓷 𝓘'𝓶 𝓪𝔀𝓪𝔂 𝓯𝓻𝓸𝓶 𝔂𝓸𝓾 <small class=\"c-sum-note\">/ 私密备忘 · 消费小票与搜索记录</small></summary><div class=\"c-pnk-cont\"><div class=\"c-wm\"></div>",
+              "closeHtml": "</div></details>",
+              "path": "/档案/私密记录",
+              "children": [
+                {
+                  "path": "/档案/私密记录/备忘录",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/私密记录/消费记录",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/私密记录/搜索",
+                  "min": 2,
+                  "max": null
+                },
+                {
+                  "path": "/档案/私密记录/假设分支",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/私密记录/采访",
+                  "min": 3,
+                  "max": null
+                },
+                {
+                  "path": "/档案/私密记录/署名吐槽",
+                  "min": 1,
+                  "max": 1
+                }
+              ]
+            },
+            "/档案/私密记录/备忘录": {
+              "tag": "备忘录",
+              "kind": "container",
+              "openHtml": "<div class=\"c-memo\">",
+              "closeHtml": "</div>",
+              "path": "/档案/私密记录/备忘录",
+              "children": [
+                {
+                  "path": "/档案/私密记录/备忘录/已完成",
+                  "min": 2,
+                  "max": null
+                },
+                {
+                  "path": "/档案/私密记录/备忘录/待完成",
+                  "min": 3,
+                  "max": null
+                }
+              ]
+            },
+            "/档案/私密记录/备忘录/已完成": {
+              "tag": "已完成",
+              "kind": "record",
+              "path": "/档案/私密记录/备忘录/已完成",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-memo-item done\">$1</div>"
+                }
+              ]
+            },
+            "/档案/私密记录/备忘录/待完成": {
+              "tag": "待完成",
+              "kind": "record",
+              "path": "/档案/私密记录/备忘录/待完成",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-memo-item\">$1</div>"
+                }
+              ]
+            },
+            "/档案/私密记录/消费记录": {
+              "tag": "消费记录",
+              "kind": "container",
+              "openHtml": "<div class=\"c-buy-tit\">𝓟𝓤𝓡𝓒𝓗𝓐𝓢𝓔 𝓛𝓞𝓖</div><div class=\"c-buy-area\">",
+              "closeHtml": "</div>",
+              "path": "/档案/私密记录/消费记录",
+              "children": [
+                {
+                  "path": "/档案/私密记录/消费记录/购买",
+                  "min": 3,
+                  "max": null
+                },
+                {
+                  "path": "/档案/私密记录/消费记录/购物车",
+                  "min": 1,
+                  "max": 1
+                }
+              ]
+            },
+            "/档案/私密记录/消费记录/购买": {
+              "tag": "购买",
+              "kind": "record",
+              "path": "/档案/私密记录/消费记录/购买",
+              "fields": [
+                "商品",
+                "金额"
+              ],
+              "fieldRules": {
+                "商品": {
+                  "required": true,
+                  "type": "text"
+                },
+                "金额": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "商品",
+                    "金额"
+                  ],
+                  "html": "<div class=\"c-buy-item\"><span>$1</span><span class=\"c-buy-price\">$2</span></div>"
+                }
+              ]
+            },
+            "/档案/私密记录/消费记录/购物车": {
+              "tag": "购物车",
+              "kind": "record",
+              "path": "/档案/私密记录/消费记录/购物车",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-buy-item\"><span>$1</span><span class=\"c-buy-price is-empty\">待结算</span></div>"
+                }
+              ]
+            },
+            "/档案/私密记录/搜索": {
+              "tag": "搜索",
+              "kind": "container",
+              "openHtml": "<div class=\"c-search\">",
+              "closeHtml": "</div>",
+              "path": "/档案/私密记录/搜索",
+              "children": [
+                {
+                  "path": "/档案/私密记录/搜索/搜索信息",
+                  "min": 1,
+                  "max": null
+                },
+                {
+                  "path": "/档案/私密记录/搜索/网友回复",
+                  "min": 3,
+                  "max": null
+                }
+              ]
+            },
+            "/档案/私密记录/搜索/搜索信息": {
+              "tag": "搜索信息",
+              "kind": "record",
+              "path": "/档案/私密记录/搜索/搜索信息",
+              "fields": [
+                "关键词",
+                "动机"
+              ],
+              "fieldRules": {
+                "关键词": {
+                  "required": true,
+                  "type": "text"
+                },
+                "动机": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "关键词",
+                    "动机"
+                  ],
+                  "html": "<div class=\"c-s-kwd\">$1</div><div class=\"c-s-rsn\">搜索动机：$2</div>"
+                }
+              ]
+            },
+            "/档案/私密记录/搜索/网友回复": {
+              "tag": "网友回复",
+              "kind": "record",
+              "path": "/档案/私密记录/搜索/网友回复",
+              "fields": [
+                "署名",
+                "内容"
+              ],
+              "fieldRules": {
+                "署名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "内容": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "署名",
+                    "内容"
+                  ],
+                  "html": "<div class=\"c-s-rep\"><b>$1：</b>$2</div>"
+                }
+              ]
+            },
+            "/档案/私密记录/假设分支": {
+              "tag": "假设分支",
+              "kind": "record",
+              "path": "/档案/私密记录/假设分支",
+              "fields": [
+                "假设",
+                "推演"
+              ],
+              "fieldRules": {
+                "假设": {
+                  "required": true,
+                  "type": "text"
+                },
+                "推演": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "假设",
+                    "推演"
+                  ],
+                  "html": "<div class=\"c-if-box\"><div class=\"c-if-tit\">—— ✦ 𝓦𝑯𝑨𝑻 𝑰𝑭 · 平行时空分支 ✦ ——</div><div class=\"c-if-txt\"><b>【假设：$1】</b><br>$2</div></div>"
+                }
+              ]
+            },
+            "/档案/私密记录/采访": {
+              "tag": "采访",
+              "kind": "record",
+              "path": "/档案/私密记录/采访",
+              "fields": [
+                "提问",
+                "回答"
+              ],
+              "fieldRules": {
+                "提问": {
+                  "required": true,
+                  "type": "text"
+                },
+                "回答": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "提问",
+                    "回答"
+                  ],
+                  "html": "<div class=\"c-qa\"><div class=\"c-q\">Q: $1</div><div class=\"c-a\">A: $2</div></div>"
+                }
+              ]
+            },
+            "/档案/私密记录/署名吐槽": {
+              "tag": "署名吐槽",
+              "kind": "record",
+              "path": "/档案/私密记录/署名吐槽",
+              "fields": [
+                "署名",
+                "内容"
+              ],
+              "fieldRules": {
+                "署名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "内容": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "署名",
+                    "内容"
+                  ],
+                  "html": "<div class=\"c-tucao\">$1吐槽：$2</div>"
+                }
+              ]
+            },
+            "/档案/社交": {
+              "tag": "社交",
+              "kind": "container",
+              "openHtml": "<!-- 03 · 多维群聊生态、双朋友圈与校园墙 -->\n  <details open><summary>𝓘 𝓭𝓸 𝓽𝓱𝓮 𝓼𝓪𝓶𝓮 𝓽𝓱𝓲𝓷𝓰 <small class=\"c-sum-note\">/ 班群水群 · 小分队私聊与校园墙</small></summary><div class=\"c-pnk-cont\"><div class=\"c-wm\"></div>    \n    <!-- 群聊1：班级/年级大群（展现热闹群像） -->",
+              "closeHtml": "</div></details>",
+              "path": "/档案/社交",
+              "children": [
+                {
+                  "path": "/档案/社交/聊天标签",
+                  "min": 3,
+                  "max": null
+                },
+                {
+                  "path": "/档案/社交/群聊",
+                  "min": 2,
+                  "max": null
+                },
+                {
+                  "path": "/档案/社交/私聊",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/社交/朋友圈",
+                  "min": 2,
+                  "max": null
+                },
+                {
+                  "path": "/档案/社交/校园墙",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/社交/署名吐槽",
+                  "min": 1,
+                  "max": 1
+                }
+              ]
+            },
+            "/档案/社交/聊天标签": {
+              "tag": "聊天标签",
+              "kind": "record",
+              "path": "/档案/社交/聊天标签",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-cn-chatlabel\">$1</div>"
+                }
+              ]
+            },
+            "/档案/社交/群聊": {
+              "tag": "群聊",
+              "kind": "container",
+              "openHtml": "<div class=\"c-chat-wrap\">",
+              "closeHtml": "</div>",
+              "path": "/档案/社交/群聊",
+              "children": [
+                {
+                  "path": "/档案/社交/群聊/群名",
+                  "min": 1,
+                  "max": null
+                },
+                {
+                  "path": "/档案/社交/群聊/聊天时间",
+                  "min": 0,
+                  "max": null
+                },
+                {
+                  "path": "/档案/社交/群聊/发言",
+                  "min": 0,
+                  "max": null
+                },
+                {
+                  "path": "/档案/社交/群聊/系统",
+                  "min": 0,
+                  "max": null
+                },
+                {
+                  "path": "/档案/社交/群聊/本人发言",
+                  "min": 0,
+                  "max": null
+                },
+                {
+                  "path": "/档案/社交/群聊/群公告",
+                  "min": 0,
+                  "max": null
+                }
+              ],
+              "chatMinimum": 5
+            },
+            "/档案/社交/群聊/群名": {
+              "tag": "群名",
+              "kind": "record",
+              "path": "/档案/社交/群聊/群名",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-chat-tit\">— $1 —</div>"
+                }
+              ]
+            },
+            "/档案/社交/群聊/聊天时间": {
+              "tag": "聊天时间",
+              "kind": "record",
+              "path": "/档案/社交/群聊/聊天时间",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-cn-chattime\">$1</div>"
+                }
+              ]
+            },
+            "/档案/社交/群聊/发言": {
+              "tag": "发言",
+              "kind": "record",
+              "path": "/档案/社交/群聊/发言",
+              "fields": [
+                "姓名",
+                "内容"
+              ],
+              "fieldRules": {
+                "姓名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "内容": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "姓名",
+                    "内容"
+                  ],
+                  "html": "<div class=\"c-msg left\"><div class=\"c-m-u\">$1</div><div class=\"c-m-b\">$2</div></div>"
+                }
+              ]
+            },
+            "/档案/社交/群聊/系统": {
+              "tag": "系统",
+              "kind": "record",
+              "path": "/档案/社交/群聊/系统",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-msg system\"><div class=\"c-m-b\">$1</div></div>"
+                }
+              ]
+            },
+            "/档案/社交/群聊/本人发言": {
+              "tag": "本人发言",
+              "kind": "record",
+              "path": "/档案/社交/群聊/本人发言",
+              "fields": [
+                "姓名",
+                "内容"
+              ],
+              "fieldRules": {
+                "姓名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "内容": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "姓名",
+                    "内容"
+                  ],
+                  "html": "<div class=\"c-msg right\"><div class=\"c-m-u\">$1</div><div class=\"c-m-b\">$2</div></div>"
+                }
+              ]
+            },
+            "/档案/社交/群聊/群公告": {
+              "tag": "群公告",
+              "kind": "record",
+              "path": "/档案/社交/群聊/群公告",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-cn-chatnotice\">群公告：$1</div>"
+                }
+              ]
+            },
+            "/档案/社交/私聊": {
+              "tag": "私聊",
+              "kind": "container",
+              "openHtml": "<div class=\"c-chat-wrap\">",
+              "closeHtml": "</div>",
+              "path": "/档案/社交/私聊",
+              "children": [
+                {
+                  "path": "/档案/社交/私聊/私聊对象",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/社交/私聊/发言",
+                  "min": 0,
+                  "max": null
+                },
+                {
+                  "path": "/档案/社交/私聊/本人发言",
+                  "min": 0,
+                  "max": null
+                }
+              ],
+              "chatMinimum": 4
+            },
+            "/档案/社交/私聊/私聊对象": {
+              "tag": "私聊对象",
+              "kind": "record",
+              "path": "/档案/社交/私聊/私聊对象",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-chat-tit\">— 与 $1 的私聊 —</div>"
+                }
+              ]
+            },
+            "/档案/社交/私聊/发言": {
+              "tag": "发言",
+              "kind": "record",
+              "path": "/档案/社交/私聊/发言",
+              "fields": [
+                "姓名",
+                "内容"
+              ],
+              "fieldRules": {
+                "姓名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "内容": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "姓名",
+                    "内容"
+                  ],
+                  "html": "<div class=\"c-msg left\"><div class=\"c-m-u\">$1</div><div class=\"c-m-b\">$2</div></div>"
+                }
+              ]
+            },
+            "/档案/社交/私聊/本人发言": {
+              "tag": "本人发言",
+              "kind": "record",
+              "path": "/档案/社交/私聊/本人发言",
+              "fields": [
+                "姓名",
+                "内容"
+              ],
+              "fieldRules": {
+                "姓名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "内容": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "姓名",
+                    "内容"
+                  ],
+                  "html": "<div class=\"c-msg right\"><div class=\"c-m-u\">$1</div><div class=\"c-m-b\">$2</div></div>"
+                }
+              ]
+            },
+            "/档案/社交/朋友圈": {
+              "tag": "朋友圈",
+              "kind": "container",
+              "openHtml": "<div class=\"c-moments\">",
+              "closeHtml": "</div>",
+              "path": "/档案/社交/朋友圈",
+              "children": [
+                {
+                  "path": "/档案/社交/朋友圈/动态信息",
+                  "min": 1,
+                  "max": null
+                },
+                {
+                  "path": "/档案/社交/朋友圈/动态正文",
+                  "min": 1,
+                  "max": null
+                },
+                {
+                  "path": "/档案/社交/朋友圈/点赞",
+                  "min": 1,
+                  "max": null
+                },
+                {
+                  "path": "/档案/社交/朋友圈/评论",
+                  "min": 2,
+                  "max": null
+                },
+                {
+                  "path": "/档案/社交/朋友圈/回复评论",
+                  "min": 0,
+                  "max": null
+                }
+              ]
+            },
+            "/档案/社交/朋友圈/动态信息": {
+              "tag": "动态信息",
+              "kind": "record",
+              "path": "/档案/社交/朋友圈/动态信息",
+              "fields": [
+                "作者",
+                "时间",
+                "可见范围"
+              ],
+              "fieldRules": {
+                "作者": {
+                  "required": false,
+                  "type": "text"
+                },
+                "时间": {
+                  "required": false,
+                  "type": "text"
+                },
+                "可见范围": {
+                  "required": false,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "作者",
+                    "时间",
+                    "可见范围"
+                  ],
+                  "html": "<div class=\"c-pyq-head\"><div class=\"c-pyq-name\">$1</div><div class=\"c-pyq-time\">$2 · $3</div></div>"
+                },
+                {
+                  "fields": [
+                    "作者",
+                    "时间"
+                  ],
+                  "html": "<div class=\"c-pyq-head\"><div class=\"c-pyq-name\">$1</div><div class=\"c-pyq-time\">$2</div></div>"
+                },
+                {
+                  "fields": [
+                    "作者"
+                  ],
+                  "html": "<div class=\"c-pyq-head\"><div class=\"c-pyq-name\">$1</div></div>"
+                },
+                {
+                  "fields": [
+                    "时间"
+                  ],
+                  "html": "<div class=\"c-pyq-head\"><div class=\"c-pyq-time\">$1</div></div>"
+                },
+                {
+                  "fields": [
+                    "可见范围"
+                  ],
+                  "html": "<div class=\"c-pyq-head\"><div class=\"c-pyq-time\">$1</div></div>"
+                },
+                {
+                  "fields": [
+                    "作者",
+                    "可见范围"
+                  ],
+                  "html": "<div class=\"c-pyq-head\"><div class=\"c-pyq-name\">$1</div><div class=\"c-pyq-time\">$2</div></div>"
+                },
+                {
+                  "fields": [
+                    "时间",
+                    "可见范围"
+                  ],
+                  "html": "<div class=\"c-pyq-head\"><div class=\"c-pyq-time\">$1 · $2</div></div>"
+                },
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-pyq-head\"></div>"
+                }
+              ]
+            },
+            "/档案/社交/朋友圈/动态正文": {
+              "tag": "动态正文",
+              "kind": "record",
+              "path": "/档案/社交/朋友圈/动态正文",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-pyq-txt\">$1</div>"
+                }
+              ]
+            },
+            "/档案/社交/朋友圈/点赞": {
+              "tag": "点赞",
+              "kind": "record",
+              "path": "/档案/社交/朋友圈/点赞",
+              "fields": [
+                "名单",
+                "人数"
+              ],
+              "fieldRules": {
+                "名单": {
+                  "required": true,
+                  "type": "text"
+                },
+                "人数": {
+                  "required": true,
+                  "type": "integer"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "名单",
+                    "人数"
+                  ],
+                  "html": "<div class=\"c-pyq-acts\">♥ $1 等 $2 人觉得很赞</div>"
+                }
+              ]
+            },
+            "/档案/社交/朋友圈/评论": {
+              "tag": "评论",
+              "kind": "record",
+              "path": "/档案/社交/朋友圈/评论",
+              "fields": [
+                "署名",
+                "内容"
+              ],
+              "fieldRules": {
+                "署名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "内容": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "署名",
+                    "内容"
+                  ],
+                  "html": "<div class=\"c-pyq-cmt\"><span class=\"c-pyq-cname\">$1:</span> $2</div>"
+                }
+              ]
+            },
+            "/档案/社交/朋友圈/回复评论": {
+              "tag": "回复评论",
+              "kind": "record",
+              "path": "/档案/社交/朋友圈/回复评论",
+              "fields": [
+                "署名",
+                "对象",
+                "内容"
+              ],
+              "fieldRules": {
+                "署名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "对象": {
+                  "required": true,
+                  "type": "text"
+                },
+                "内容": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "署名",
+                    "对象",
+                    "内容"
+                  ],
+                  "html": "<div class=\"c-pyq-cmt\"><span class=\"c-pyq-cname\">$1 回复 $2:</span> $3</div>"
+                }
+              ]
+            },
+            "/档案/社交/校园墙": {
+              "tag": "校园墙",
+              "kind": "container",
+              "openHtml": "<div class=\"c-split\">",
+              "closeHtml": "</div>",
+              "path": "/档案/社交/校园墙",
+              "children": [
+                {
+                  "path": "/档案/社交/校园墙/热榜",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/社交/校园墙/树洞区",
+                  "min": 1,
+                  "max": 1
+                }
+              ]
+            },
+            "/档案/社交/校园墙/热榜": {
+              "tag": "热榜",
+              "kind": "container",
+              "openHtml": "<div class=\"c-col left-col\">",
+              "closeHtml": "</div>",
+              "path": "/档案/社交/校园墙/热榜",
+              "children": [
+                {
+                  "path": "/档案/社交/校园墙/热榜/热榜项",
+                  "min": 5,
+                  "max": null
+                },
+                {
+                  "path": "/档案/社交/校园墙/热榜/热榜评论",
+                  "min": 1,
+                  "max": 1
+                }
+              ]
+            },
+            "/档案/社交/校园墙/热榜/热榜项": {
+              "tag": "热榜项",
+              "kind": "record",
+              "path": "/档案/社交/校园墙/热榜/热榜项",
+              "fields": [
+                "排名",
+                "话题",
+                "热度"
+              ],
+              "fieldRules": {
+                "排名": {
+                  "required": false,
+                  "type": "integer"
+                },
+                "话题": {
+                  "required": true,
+                  "type": "text"
+                },
+                "热度": {
+                  "required": false,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "排名",
+                    "话题",
+                    "热度"
+                  ],
+                  "html": "<div class=\"c-hot-item\"><span class=\"c-hot-num\">$1</span>$2 <span class=\"c-cn-tag\">$3</span></div>"
+                },
+                {
+                  "fields": [
+                    "排名",
+                    "话题"
+                  ],
+                  "html": "<div class=\"c-hot-item\"><span class=\"c-hot-num\">$1</span>$2</div>"
+                },
+                {
+                  "fields": [
+                    "话题",
+                    "热度"
+                  ],
+                  "html": "<div class=\"c-hot-item\">$1 <span class=\"c-cn-tag\">$2</span></div>"
+                },
+                {
+                  "fields": [
+                    "话题"
+                  ],
+                  "html": "<div class=\"c-hot-item\">$1</div>"
+                }
+              ]
+            },
+            "/档案/社交/校园墙/热榜/热榜评论": {
+              "tag": "热榜评论",
+              "kind": "container",
+              "openHtml": "<div class=\"c-hot-cmb\">",
+              "closeHtml": "</div>",
+              "path": "/档案/社交/校园墙/热榜/热榜评论",
+              "children": [
+                {
+                  "path": "/档案/社交/校园墙/热榜/热榜评论/热评",
+                  "min": 4,
+                  "max": null
+                }
+              ]
+            },
+            "/档案/社交/校园墙/热榜/热榜评论/热评": {
+              "tag": "热评",
+              "kind": "record",
+              "path": "/档案/社交/校园墙/热榜/热榜评论/热评",
+              "fields": [
+                "署名",
+                "内容"
+              ],
+              "fieldRules": {
+                "署名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "内容": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "署名",
+                    "内容"
+                  ],
+                  "html": "<div class=\"c-hot-rep\"><span class=\"c-cmt-name\">$1</span>$2</div>"
+                }
+              ]
+            },
+            "/档案/社交/校园墙/树洞区": {
+              "tag": "树洞区",
+              "kind": "container",
+              "openHtml": "<div class=\"c-col\">",
+              "closeHtml": "</div>",
+              "path": "/档案/社交/校园墙/树洞区",
+              "children": [
+                {
+                  "path": "/档案/社交/校园墙/树洞区/树洞帖",
+                  "min": 2,
+                  "max": null
+                }
+              ]
+            },
+            "/档案/社交/校园墙/树洞区/树洞帖": {
+              "tag": "树洞帖",
+              "kind": "container",
+              "openHtml": "<div class=\"c-news\">",
+              "closeHtml": "</div>",
+              "path": "/档案/社交/校园墙/树洞区/树洞帖",
+              "children": [
+                {
+                  "path": "/档案/社交/校园墙/树洞区/树洞帖/帖子",
+                  "min": 1,
+                  "max": null
+                },
+                {
+                  "path": "/档案/社交/校园墙/树洞区/树洞帖/展开回复",
+                  "min": 0,
+                  "max": null
+                },
+                {
+                  "path": "/档案/社交/校园墙/树洞区/树洞帖/折叠回复",
+                  "min": 0,
+                  "max": null
+                }
+              ],
+              "replyGroupMinimum": 1
+            },
+            "/档案/社交/校园墙/树洞区/树洞帖/帖子": {
+              "tag": "帖子",
+              "kind": "record",
+              "path": "/档案/社交/校园墙/树洞区/树洞帖/帖子",
+              "fields": [
+                "标题",
+                "主楼"
+              ],
+              "fieldRules": {
+                "标题": {
+                  "required": true,
+                  "type": "text"
+                },
+                "主楼": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "标题",
+                    "主楼"
+                  ],
+                  "html": "<div class=\"c-n-tit\">$1</div><div class=\"c-n-txt\">$2</div>"
+                }
+              ]
+            },
+            "/档案/社交/校园墙/树洞区/树洞帖/展开回复": {
+              "tag": "展开回复",
+              "kind": "container",
+              "openHtml": "<details class=\"c-n-det\" open><summary>展开楼内回复</summary>",
+              "closeHtml": "</details>",
+              "path": "/档案/社交/校园墙/树洞区/树洞帖/展开回复",
+              "children": [
+                {
+                  "path": "/档案/社交/校园墙/树洞区/树洞帖/展开回复/回帖",
+                  "min": 4,
+                  "max": null
+                }
+              ],
+              "replyCountField": "回复数"
+            },
+            "/档案/社交/校园墙/树洞区/树洞帖/展开回复/回帖": {
+              "tag": "回帖",
+              "kind": "record",
+              "path": "/档案/社交/校园墙/树洞区/树洞帖/展开回复/回帖",
+              "fields": [
+                "楼层",
+                "署名",
+                "内容"
+              ],
+              "fieldRules": {
+                "楼层": {
+                  "required": true,
+                  "type": "integer"
+                },
+                "署名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "内容": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "楼层",
+                    "署名",
+                    "内容"
+                  ],
+                  "html": "<div class=\"c-n-reply\"><b>$1L ($2)：</b>$3</div>"
+                }
+              ]
+            },
+            "/档案/社交/校园墙/树洞区/树洞帖/折叠回复": {
+              "tag": "折叠回复",
+              "kind": "container",
+              "openHtml": "<details class=\"c-n-det\"><summary>展开楼内回复</summary>",
+              "closeHtml": "</details>",
+              "path": "/档案/社交/校园墙/树洞区/树洞帖/折叠回复",
+              "children": [
+                {
+                  "path": "/档案/社交/校园墙/树洞区/树洞帖/折叠回复/回帖",
+                  "min": 3,
+                  "max": null
+                }
+              ],
+              "replyCountField": "回复数"
+            },
+            "/档案/社交/校园墙/树洞区/树洞帖/折叠回复/回帖": {
+              "tag": "回帖",
+              "kind": "record",
+              "path": "/档案/社交/校园墙/树洞区/树洞帖/折叠回复/回帖",
+              "fields": [
+                "楼层",
+                "署名",
+                "内容"
+              ],
+              "fieldRules": {
+                "楼层": {
+                  "required": true,
+                  "type": "integer"
+                },
+                "署名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "内容": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "楼层",
+                    "署名",
+                    "内容"
+                  ],
+                  "html": "<div class=\"c-n-reply\"><b>$1L ($2)：</b>$3</div>"
+                }
+              ]
+            },
+            "/档案/社交/署名吐槽": {
+              "tag": "署名吐槽",
+              "kind": "record",
+              "path": "/档案/社交/署名吐槽",
+              "fields": [
+                "署名",
+                "内容"
+              ],
+              "fieldRules": {
+                "署名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "内容": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "署名",
+                    "内容"
+                  ],
+                  "html": "<div class=\"c-tucao\">$1吐槽：$2</div>"
+                }
+              ]
+            },
+            "/档案/群像观察": {
+              "tag": "群像观察",
+              "kind": "container",
+              "openHtml": "<!-- 04 · 走廊观察日记：6人鲜活群像网格 + 支线时间轴 -->\n  <details open><summary>𝓔𝓿𝓮𝓻𝔂𝓸𝓷𝓮'𝓼 𝓸𝔀𝓷 𝓼𝓽𝓸𝓻𝔂 <small class=\"c-sum-note\">/ 走廊观察日记 · 鲜活群像支线</small></summary><div class=\"c-pnk-cont\"><div class=\"c-wm\"></div>\n    <p class=\"c-cn-intro\">✦ <strong>叙事外全景镜头</strong>：世界不会围着主角静止。以下是同一时间切片下，周围角色各自独立推进的生活轨迹、小心思与支线交集（角色仅掌握各自视角内的信息）。</p>\n    \n    <!-- 6张卡片组成完美的 3×2 双列杂志网格 -->",
+              "closeHtml": "</div></details>",
+              "path": "/档案/群像观察",
+              "children": [
+                {
+                  "path": "/档案/群像观察/观察卡片",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/群像观察/同步时间轴",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/群像观察/走廊碎片",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/群像观察/广播站",
+                  "min": 1,
+                  "max": 1
+                },
+                {
+                  "path": "/档案/群像观察/群像吐槽",
+                  "min": 1,
+                  "max": 1
+                }
+              ]
+            },
+            "/档案/群像观察/观察卡片": {
+              "tag": "观察卡片",
+              "kind": "container",
+              "openHtml": "<div class=\"c-cn-notes\">",
+              "closeHtml": "</div>",
+              "path": "/档案/群像观察/观察卡片",
+              "children": [
+                {
+                  "path": "/档案/群像观察/观察卡片/观察",
+                  "min": 6,
+                  "max": null
+                }
+              ]
+            },
+            "/档案/群像观察/观察卡片/观察": {
+              "tag": "观察",
+              "kind": "record",
+              "path": "/档案/群像观察/观察卡片/观察",
+              "fields": [
+                "姓名",
+                "身份",
+                "动向",
+                "坐标",
+                "目标"
+              ],
+              "fieldRules": {
+                "姓名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "身份": {
+                  "required": true,
+                  "type": "text"
+                },
+                "动向": {
+                  "required": true,
+                  "type": "text"
+                },
+                "坐标": {
+                  "required": true,
+                  "type": "text"
+                },
+                "目标": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "姓名",
+                    "身份",
+                    "动向",
+                    "坐标",
+                    "目标"
+                  ],
+                  "html": "<article class=\"c-cn-note\"><div class=\"c-cn-note-head\"><b>$1</b><small>$2</small></div><p>$3</p><div class=\"c-cn-note-foot\"><span class=\"c-cn-tag\">📍 $4</span><span class=\"c-cn-tag\">$5</span></div></article>"
+                }
+              ]
+            },
+            "/档案/群像观察/同步时间轴": {
+              "tag": "同步时间轴",
+              "kind": "container",
+              "openHtml": "<div class=\"c-cn-subtitle\">同步时间轴 / 校园各角落正在发生的支线切片</div><div class=\"c-cn-timeline\">",
+              "closeHtml": "</div>",
+              "path": "/档案/群像观察/同步时间轴",
+              "children": [
+                {
+                  "path": "/档案/群像观察/同步时间轴/事件",
+                  "min": 4,
+                  "max": null
+                }
+              ]
+            },
+            "/档案/群像观察/同步时间轴/事件": {
+              "tag": "事件",
+              "kind": "record",
+              "path": "/档案/群像观察/同步时间轴/事件",
+              "fields": [
+                "时间",
+                "地点",
+                "事件内容",
+                "情报状态"
+              ],
+              "fieldRules": {
+                "时间": {
+                  "required": true,
+                  "type": "text"
+                },
+                "地点": {
+                  "required": true,
+                  "type": "text"
+                },
+                "事件内容": {
+                  "required": true,
+                  "type": "text"
+                },
+                "情报状态": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "时间",
+                    "地点",
+                    "事件内容",
+                    "情报状态"
+                  ],
+                  "html": "<div class=\"c-cn-event\"><time>$1 · $2</time><p>$3 <small class=\"c-os-red\">（情报状态：$4）</small></p></div>"
+                }
+              ]
+            },
+            "/档案/群像观察/走廊碎片": {
+              "tag": "走廊碎片",
+              "kind": "record",
+              "path": "/档案/群像观察/走廊碎片",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<span class=\"c-cn-sticker\">🍃 走廊碎片：$1</span>"
+                }
+              ]
+            },
+            "/档案/群像观察/广播站": {
+              "tag": "广播站",
+              "kind": "record",
+              "path": "/档案/群像观察/广播站",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<span class=\"c-cn-sticker\">📻 广播站/小卖部：$1</span>"
+                }
+              ]
+            },
+            "/档案/群像观察/群像吐槽": {
+              "tag": "群像吐槽",
+              "kind": "record",
+              "path": "/档案/群像观察/群像吐槽",
+              "fields": [],
+              "fieldRules": {},
+              "templates": [
+                {
+                  "fields": [],
+                  "html": "<div class=\"c-tucao\">群像观察员吐槽：$1</div>"
+                }
+              ]
+            },
+            "/档案/弹幕": {
+              "tag": "弹幕",
+              "kind": "container",
+              "openHtml": "<!-- 05 · 场外观众弹幕 -->\n  <details><summary>𝓦𝓱𝓲𝓼𝓹𝓮𝓻𝓼 𝓲𝓷 𝓽𝓱𝓮 𝓭𝓪𝓻𝓴 <small class=\"c-sum-note\">/ 场外观众弹幕 · 角色禁止读屏</small></summary><div class=\"c-pnk-cont\"><div class=\"c-wm\"></div>\n    <div class=\"c-cn-intro\">✦ <strong>第四面墙之外</strong>：以下为虚构追更读者的实时弹幕吐槽，严禁任何剧情内角色获知或受其影响。</div>\n    <div class=\"c-cn-barrage\">",
+              "closeHtml": "</div>\n    <div class=\"c-cn-barrage-foot\">【舞台外 / Outside Narrative】 <span class=\"c-cn-seal\">观众席 · 禁止剧透</span></div>\n  </div></details>",
+              "path": "/档案/弹幕",
+              "children": [
+                {
+                  "path": "/档案/弹幕/弹幕条",
+                  "min": 8,
+                  "max": null
+                }
+              ]
+            },
+            "/档案/弹幕/弹幕条": {
+              "tag": "弹幕条",
+              "kind": "record",
+              "path": "/档案/弹幕/弹幕条",
+              "fields": [
+                "署名",
+                "内容"
+              ],
+              "fieldRules": {
+                "署名": {
+                  "required": true,
+                  "type": "text"
+                },
+                "内容": {
+                  "required": true,
+                  "type": "text"
+                }
+              },
+              "templates": [
+                {
+                  "fields": [
+                    "署名",
+                    "内容"
+                  ],
+                  "html": "<div class=\"c-cn-danmu\"><span class=\"c-cn-danmu-who\">$1</span><span class=\"c-cn-danmu-text\">$2</span></div>"
+                }
+              ]
+            }
+          },
+          "pageTags": [
+            "环境",
+            "心事",
+            "私密记录",
+            "社交",
+            "群像观察",
+            "弹幕"
+          ]
+        },
+        "sample": "<环境>\n<时空><日期>示例日期</日期><星期>示例星期</星期><时间>示例时间</时间><阶段>示例课间</阶段><天气>示例天气与光影质感</天气></时空>\n<感官><地点>示例当前具体地点</地点><声息>示例环境背景音</声息></感官>\n<现场群像>示例周围2~3处同班同学或路</现场群像>\n<自身><衣着>示例{{user}}穿着细节</衣着><动作>示例{{user}}已明确发</动作><持有物>示例{{user}}手头或课</持有物></自身>\n<视角人物><姓名>示例视角人物实际姓名</姓名><衣着>示例视角人物穿着细节12字内</衣着><动作>示例视角人物当前姿势与动作</动作><目光>示例视角人物目光停留的具体位</目光></视角人物>\n<空间张力><距离>示例两人当前物理距离与方位</距离><生理状态>示例视角人物当前生理状态</生理状态><性器状态>示例视角人物当前性器状态，以</性器状态></空间张力>\n<瞬时心声>示例视角人物脑海中一闪而过的</瞬时心声>\n<关系><身份>示例明面身份关系</身份><阶段>示例实际亲密阶段</阶段><互动>示例{{user}}与视角人</互动></关系>\n<镜头特写>示例一句极具画面感的环境定格</镜头特写>\n</环境>\n\n<剧情正文>\n示例承接{{user}}已经\n</剧情正文>\n\n<档案>\n<心事>\n<穿搭气味>示例视角人物衣着细节（如领口</穿搭气味>\n<生理微反应>示例视角人物呼吸频率、眼神变</生理微反应>\n<表象动作><表象>示例视角人物表面维持的动作</表象><小动作>示例手指</小动作></表象动作>\n<随身物件>示例视角人物此刻随身口袋或课</随身物件>\n<多层心理><理智>示例视角人物表层理智想法</理智><颜文字>示例颜文字</颜文字><潜意识>示例未被他人得知的深层念头</潜意识><锐评>示例内心吐槽或偏爱评价</锐评></多层心理>\n<心动好感><数值>50</数值><变动>示例↑或↓及变动数值</变动><原因>示例好感变动原因及当下对{{</原因></心动好感>\n<暗涌克制><数值>50</数值><情绪>示例当前情绪状态标签</情绪><克制>示例理智克制程度与内心蠢蠢欲</克制></暗涌克制>\n<私密手记>示例视角人物第一人称私密日记</私密手记>\n<围观>\n<围观评><署名>示例前排</署名><内容>示例近距离吃瓜吐槽1</内容></围观评>\n<围观评><署名>示例后排</署名><内容>示例旁观者视角对两人氛围的锐</内容></围观评>\n<围观评><署名>示例科任老师</署名><内容>示例站在各自人设高度的观察评</内容></围观评>\n<围观评><署名>示例视角人物手里的物品</署名><内容>示例物品惨遭蹂躏或见证暧昧的</内容></围观评>\n<围观评><署名>示例窗外麻雀</署名><内容>示例奇妙趣味视角评论5</内容></围观评>\n</围观>\n<署名吐槽><署名>示例符合设定的损友或叙事旁白</署名><内容>示例一针见血的总结性锐评1</内容></署名吐槽>\n</心事>\n<私密记录>\n<备忘录>\n<已完成>示例视角人物近期已完成的与{</已完成>\n<已完成>示例视角人物近期已完成的暗中</已完成>\n<待完成>示例视角人物正在计划但尚未实</待完成>\n<待完成>示例视角人物备忘录里反复修改</待完成>\n<待完成>示例视角人物绝对不想被人看到</待完成>\n</备忘录>\n<消费记录>\n<购买><商品>示例购买记录1：商品名称（附</商品><金额>示例金额</金额></购买>\n<购买><商品>示例购买记录2：商品名称（如</商品><金额>示例金额</金额></购买>\n<购买><商品>示例购买记录3：商品名称（体</商品><金额>示例金额</金额></购买>\n<购物车>示例购物车备选</购物车>\n</消费记录>\n<搜索>\n<搜索信息><关键词>示例视角人物近期搜索词1（贴</关键词><动机>示例为什么搜这个词</动机></搜索信息>\n<网友回复><署名>示例高赞网友1ID</署名><内容>示例真实感拉满的网友神回复1</内容></网友回复>\n<网友回复><署名>示例吃瓜网友2ID</署名><内容>示例起哄或出主意的回复2</内容></网友回复>\n<网友回复><署名>示例暴躁网友3ID</署名><内容>示例反差感吐槽回复3</内容></网友回复>\n<网友回复><署名>示例匿名楼主追问</署名><内容>示例视角人物暗中破防或嘴硬的</内容></网友回复>\n</搜索>\n<搜索>\n<搜索信息><关键词>示例视角人物近期搜索词2（生</关键词><动机>示例为什么搜这个词</动机></搜索信息>\n<网友回复><署名>示例百科</署名><内容>示例一本正经的回答1</内容></网友回复>\n<网友回复><署名>示例歪楼网友ID</署名><内容>示例歪楼搞笑回复2</内容></网友回复>\n<网友回复><署名>示例过来人ID</署名><内容>示例扎心经验谈3</内容></网友回复>\n</搜索>\n<假设分支><假设>示例如果刚才某句话</假设><推演>示例推演一段极具张力的100</推演></假设分支>\n<采访><提问>示例直击灵魂的采访提问1（关</提问><回答>示例视角人物结合神态动作的真</回答></采访>\n<采访><提问>示例直击灵魂的采访提问2（关</提问><回答>示例视角人物结合神态动作的真</回答></采访>\n<采访><提问>示例直击灵魂的采访提问3（关</提问><回答>示例视角人物结合神态动作的真</回答></采访>\n<署名吐槽><署名>示例主持人或旁白</署名><内容>示例针对采访表现的锐评2</内容></署名吐槽>\n</私密记录>\n<社交>\n<聊天标签>示例大群状态标签，如：99+</聊天标签>\n<群聊>\n<群名>示例班级大群名称（含人数）</群名>\n<聊天时间>示例聊天时间</聊天时间>\n<发言><姓名>示例活跃NPC1姓名及群头衔</姓名><内容>示例群1消息1：聊校园日常</内容></发言>\n<发言><姓名>示例活跃NPC2姓名及群头衔</姓名><内容>示例群1消息2：接梗或顺带提</内容></发言>\n<系统>示例系统提示：如“xxx 拍</系统>\n<本人发言><姓名>示例发言人3</姓名><内容>示例群1消息3</内容></本人发言>\n<发言><姓名>示例活跃NPC4姓名及群头衔</姓名><内容>示例群1消息4</内容></发言>\n<发言><姓名>示例活跃NPC5姓名及群头衔</姓名><内容>示例群1消息5</内容></发言>\n</群聊>\n<聊天标签>示例小群状态标签，如：死党私</聊天标签>\n<群聊>\n<群名>示例小分队</群名>\n<群公告>示例一句符合死党群风格的搞笑</群公告>\n<发言><姓名>示例死党NPC1</姓名><内容>示例群2消息1：私下吐槽或盘</内容></发言>\n<本人发言><姓名>示例发言人2</姓名><内容>示例群2消息2</内容></本人发言>\n<发言><姓名>示例死党NPC2</姓名><内容>示例群2消息3：出馊主意或一</内容></发言>\n<系统>示例系统提示：如“视角人物 </系统>\n<发言><姓名>示例死党NPC3</姓名><内容>示例群2消息4：抓包撤回内容</内容></发言>\n</群聊>\n<聊天标签>示例私聊状态标签，如：置顶私</聊天标签>\n<私聊>\n<私聊对象>示例私聊对象姓名及关系</私聊对象>\n<发言><姓名>示例私聊对象</姓名><内容>示例私聊消息1</内容></发言>\n<本人发言><姓名>示例视角人物名字</姓名><内容>示例视角人物回复消息2</内容></本人发言>\n<发言><姓名>示例私聊对象</姓名><内容>示例私聊消息3</内容></发言>\n<本人发言><姓名>示例视角人物名字</姓名><内容>示例视角人物回复消息4</内容></本人发言>\n</私聊>\n<朋友圈>\n<动态信息><作者>示例视角人物或核心角色姓名</作者><时间>示例发布时间</时间><可见范围>示例仅谁可见或定位</可见范围></动态信息>\n<动态正文>示例朋友圈1正文（可配文字描</动态正文>\n<点赞><名单>示例点赞具体人名列表</名单><人数>3</人数></点赞>\n<评论><署名>示例评论好友1</署名><内容>示例评论1内容</内容></评论>\n<回复评论><署名>示例评论好友2</署名><对象>示例评论好友1</对象><内容>示例互动回复2内容</内容></回复评论>\n<评论><署名>示例评论好友3</署名><内容>示例评论3内容</内容></评论>\n</朋友圈>\n<朋友圈>\n<动态信息><作者>示例群像活跃NPC姓名</作者><时间>示例发布时间</时间></动态信息>\n<动态正文>示例朋友圈2正文（展现校园另</动态正文>\n<点赞><名单>示例点赞具体人名列表</名单><人数>3</人数></点赞>\n<评论><署名>示例评论同学A</署名><内容>示例盲生发现华点的评论1</内容></评论>\n<评论><署名>示例评论同学B</署名><内容>示例评论2内容</内容></评论>\n</朋友圈>\n<校园墙>\n<热榜>\n<热榜项><排名>1</排名><话题>示例校园热榜1：与主线或风云</话题><热度>爆</热度></热榜项>\n<热榜项><排名>2</排名><话题>示例校园热榜2：近期全校热议</话题><热度>热</热度></热榜项>\n<热榜项><排名>3</排名><话题>示例校园热榜3：社团</话题><热度>新</热度></热榜项>\n<热榜项><排名>4</排名><话题>示例校园热榜4：某NPC相关</话题></热榜项>\n<热榜项><排名>5</排名><话题>示例校园热榜5：校园生活日常</话题></热榜项>\n<热榜评论>\n<热评><署名>示例热评学生1</署名><内容>示例针对热榜的犀利或搞笑评论</内容></热评>\n<热评><署名>示例热评学生2</署名><内容>示例针对热榜的知情人士爆料2</内容></热评>\n<热评><署名>示例热评学生3</署名><内容>示例针对热榜的吃瓜跟帖3</内容></热评>\n<热评><署名>示例热评学生4</署名><内容>示例针对热榜的玩梗评论4</内容></热评>\n</热榜评论>\n</热榜>\n<树洞区>\n<树洞帖>\n<帖子><标题>示例匿名树洞帖1标题（关于{</标题><主楼>示例树洞帖1主楼详细内容</主楼></帖子>\n<展开回复>\n<回复数>4</回复数>\n<回帖><楼层>1</楼层><署名>示例代号</署名><内容>示例抢沙发或认出当事人的回复</内容></回帖>\n<回帖><楼层>2</楼层><署名>示例代号</署名><内容>示例补充目击细节的回复</内容></回帖>\n<回帖><楼层>3</楼层><署名>示例代号</署名><内容>示例嗑CP或起哄的回复</内容></回帖>\n<回帖><楼层>4</楼层><署名>示例疑似熟人马甲</署名><内容>示例意味深长的回复</内容></回帖>\n</展开回复>\n</树洞帖>\n<树洞帖>\n<帖子><标题>示例匿名树洞帖2标题（关于其</标题><主楼>示例树洞帖2主楼详细内容</主楼></帖子>\n<折叠回复>\n<回复数>3</回复数>\n<回帖><楼层>1</楼层><署名>示例代号</署名><内容>示例帖2回帖1</内容></回帖>\n<回帖><楼层>2</楼层><署名>示例代号</署名><内容>示例帖2回帖2</内容></回帖>\n<回帖><楼层>3</楼层><署名>示例代号</署名><内容>示例帖2回帖3</内容></回帖>\n</折叠回复>\n</树洞帖>\n</树洞区>\n</校园墙>\n<署名吐槽><署名>示例校园墙皮下君或旁白</署名><内容>示例针对今日校园舆论的锐评3</内容></署名吐槽>\n</社交>\n<群像观察>\n<观察卡片>\n<观察><姓名>示例NPC1姓名</姓名><身份>示例身份</身份><动向>示例NPC1此刻所在位置、具</动向><坐标>示例NPC1当前坐标</坐标><目标>示例NPC1当前目标</目标></观察>\n<观察><姓名>示例NPC2姓名</姓名><身份>示例身份</身份><动向>示例NPC2此刻所在位置、具</动向><坐标>示例NPC2当前坐标</坐标><目标>示例NPC2当前目标</目标></观察>\n<观察><姓名>示例NPC3姓名</姓名><身份>示例身份</身份><动向>示例NPC3此刻的独立行动与</动向><坐标>示例NPC3当前坐标</坐标><目标>示例NPC3当前目标</目标></观察>\n<观察><姓名>示例NPC4姓名</姓名><身份>示例身份</身份><动向>示例NPC4此刻的独立行动、</动向><坐标>示例NPC4当前坐标</坐标><目标>示例NPC4当前目标</目标></观察>\n<观察><姓名>示例NPC5姓名</姓名><身份>示例身份</身份><动向>示例NPC5此刻的鲜活日常切</动向><坐标>示例NPC5当前坐标</坐标><目标>示例NPC5当前目标</目标></观察>\n<观察><姓名>示例NPC6姓名</姓名><身份>示例身份</身份><动向>示例NPC6此刻的动向及对班</动向><坐标>示例NPC6当前坐标</坐标><目标>示例NPC6当前目标</目标></观察>\n</观察卡片>\n<同步时间轴>\n<事件><时间>示例具体时间</时间><地点>示例校园地点1</地点><事件内容>示例场外支线事件1的具体画面</事件内容><情报状态>示例谁知情</情报状态></事件>\n<事件><时间>示例具体时间</时间><地点>示例校园地点2</地点><事件内容>示例场外支线事件2的具体画面</事件内容><情报状态>示例谁知情</情报状态></事件>\n<事件><时间>示例具体时间</时间><地点>示例校园地点3</地点><事件内容>示例场外支线事件3的具体画面</事件内容><情报状态>示例谁知情</情报状态></事件>\n<事件><时间>示例具体时间</时间><地点>示例校园地点4</地点><事件内容>示例场外支线事件4（可埋下后</事件内容><情报状态>示例伏笔发酵中</情报状态></事件>\n</同步时间轴>\n<走廊碎片>示例校园随机小事1</走廊碎片>\n<广播站>示例校园随机小事2</广播站>\n<群像吐槽>示例针对这群人各自心怀鬼胎或</群像吐槽>\n</群像观察>\n<弹幕>\n<弹幕条><署名>示例考据党弹幕ID</署名><内容>示例抠细节分析视角人物微表情</内容></弹幕条>\n<弹幕条><署名>示例嗑学家弹幕ID</署名><内容>示例激动尖叫嗑糖的弹幕2</内容></弹幕条>\n<弹幕条><署名>示例群像粉弹幕ID</署名><内容>示例讨论某个配角NPC支线走</内容></弹幕条>\n<弹幕条><署名>示例神预言弹幕ID</署名><内容>示例盲猜接下来剧情修罗场或反</内容></弹幕条>\n<弹幕条><署名>示例吐槽役弹幕ID</署名><内容>示例幽默玩梗吐槽视角人物嘴硬</内容></弹幕条>\n<弹幕条><署名>示例列文虎克ID</署名><内容>示例发现环境栏</内容></弹幕条>\n<弹幕条><署名>示例事业</署名><内容>示例关注校园主线或人际博弈的</内容></弹幕条>\n<弹幕条><署名>示例前排打卡ID</署名><内容>示例结合当前名场面的高能刷屏</内容></弹幕条>\n</弹幕>\n</档案>",
+        "compatibilityPackIds": [
+          "campus_semantic_r7_20261125"
+        ],
+        "presetId": "campus_semantic_native_r7_format"
+      }
+    },
+    "preset": {
+      "id": "campus_semantic_native_r7_format",
+      "name": "校园群像 · R7 语义标签输出格式",
+      "type": "format",
+      "priority": 50,
+      "enabled": true,
+      "content": "【状态栏输出铁律】\n1. 全文为一套固定的三段式结构：第一部分·环境状态栏 → 第二部分·角色正文 → 第三部分·五页折叠档案。环境栏、正文、档案各一次，五页各一次。档案开始即代表主线正文结束；第五页闭合后仅闭合档案外层，全文至此结束。\n2. {{user}}的言语、主动动作、选择和内心由{{user}}本人决定。环境栏如实呈现{{user}}已经明确的状态；正文描写{{char}}、NPC及环境的反应与变化，将{{user}}尚未作出的行动留白。群像NPC拥有固定姓名、鲜明性格与延续性支线。\n3. 环境栏记录当前场景；五页档案是正文结束时的同一叙事时间切片，包含已有记录、即时状态及各自视角中的独立生活轨迹。备忘录、消费、搜索、采访、群聊、朋友圈、校园墙、群像观察与弹幕均归入各自栏目。IF为独立的假设分支，场外弹幕与角色视角隔离。档案中的计划、预测及假设不转化为主线中已经发生的事件。\n【状态栏视角】\n视角人物为本轮状态栏所记录的伴侣或角色，默认{{char}}；剧情已指定其他视角时，以指定人物为准。<视角人物>中的<姓名>填写视角人物的实际姓名，衣着、动作、目光、生理状态、心声、关系、私密手记、备忘、消费、搜索、采访及聊天方向统一归属同一视角人物。角色正文沿用原有叙事视角。\n【语义标签格式】\n下列〈…〉为动态内容说明，填写具体内容；每个标签用同名闭合标签收束。六栏、五页顺序及模板所示内容与数量完整保留。群聊、朋友圈、搜索、采访、观察、热评、回帖与弹幕各自成组，每条记录使用独立标签；同种记录重复使用同名标签。记录的内容类型由标签名称决定。字段内的字面 &、<、> 写作 &amp;、&lt;、&gt;。角色正文自然书写在<剧情正文>与</剧情正文>之间。\n聊天：视角人物的发言使用<本人发言>，其余人物使用<发言>，两者都含<姓名>与<内容>；系统提示使用<系统>。下列发言标签可随实际发言身份选择，发言身份不由所在顺序决定。每个群聊或私聊独立闭合。群公告、搜索动机、坐标图标、情报状态、百分号及楼层的L由呈现结构提供，字段填写内容本身。两项情感<数值>填0–100整数，同时表示条宽和显示百分比。热榜排名、热度和回帖楼层填写各自字段；热度仅有对应标记时填写。第一个树洞四条回复默认展开，第二个树洞三条回复默认折叠；回复数填写本帖实际回复条数。\n全文由<环境>开始，依次闭合环境、剧情正文、心事、私密记录、社交、群像观察、弹幕和档案；</档案>为全文终点。\n\n<环境>\n<时空><日期>〈日期/YYYY/MM/DD〉</日期><星期>〈星期〉</星期><时间>〈时间/HH:MM〉</时间><阶段>〈课间/课堂/放学状态〉</阶段><天气>〈天气与光影质感〉</天气></时空>\n<感官><地点>〈当前具体地点〉</地点><声息>〈环境背景音/空气中的气味细节〉</声息></感官>\n<现场群像>〈周围2~3处同班同学或路人此刻正在发生的具体小动静，营造鲜活现场感〉</现场群像>\n<自身><衣着>〈{{user}}穿着细节12字内〉</衣着><动作>〈{{user}}已明确发生的当前姿势与动作〉</动作><持有物>〈{{user}}手头或课桌上的物品〉</持有物></自身>\n<视角人物><姓名>〈视角人物实际姓名〉</姓名><衣着>〈视角人物穿着细节12字内〉</衣着><动作>〈视角人物当前姿势与动作〉</动作><目光>〈视角人物目光停留的具体位置〉</目光></视角人物>\n<空间张力><距离>〈两人当前物理距离与方位〉</距离><生理状态>〈视角人物当前生理状态〉</生理状态><性器状态>〈视角人物当前性器状态，以已知事实为准〉</性器状态></空间张力>\n<瞬时心声>〈视角人物脑海中一闪而过的真实念头，30字内〉</瞬时心声>\n<关系><身份>〈明面身份关系〉</身份><阶段>〈实际亲密阶段〉</阶段><互动>〈{{user}}与视角人物当下关系张力及已发生的肢体接触记录〉</互动></关系>\n<镜头特写>〈一句极具画面感的环境定格或擦肩而过的背景对话〉</镜头特写>\n</环境>\n\n<剧情正文>\n〈承接{{user}}已经作出的行动或发言，描写{{char}}与NPC在当前情境中的反应、对话与行动。此处为唯一的主线正文位置，止于自然情节节点。〉\n</剧情正文>\n\n<档案>\n<心事>\n<穿搭气味>〈视角人物衣着细节（如领口/袖口状态）与身上散发的气味〉</穿搭气味>\n<生理微反应>〈视角人物呼吸频率、眼神变化、耳根/喉结/指尖等细微生理反应〉</生理微反应>\n<表象动作><表象>〈视角人物表面维持的动作〉</表象><小动作>〈手指/脚尖/视线不自觉的习惯性动作〉</小动作></表象动作>\n<随身物件>〈视角人物此刻随身口袋或课桌深处藏着的与剧情/{{user}}相关的小物件〉</随身物件>\n<多层心理><理智>〈视角人物表层理智想法〉</理智><颜文字>〈颜文字〉</颜文字><潜意识>〈未被他人得知的深层念头〉</潜意识><锐评>〈内心吐槽或偏爱评价〉</锐评></多层心理>\n<心动好感><数值>〈好感度0-100整数（同时作为条宽和显示百分比）〉</数值><变动>〈↑或↓及变动数值〉</变动><原因>〈好感变动原因及当下对{{user}}的真实态度〉</原因></心动好感>\n<暗涌克制><数值>〈情绪暗涌度/占有欲0-100整数（同时作为条宽和显示百分比）〉</数值><情绪>〈当前情绪状态标签〉</情绪><克制>〈理智克制程度与内心蠢蠢欲动的冲动〉</克制></暗涌克制>\n<私密手记>〈视角人物第一人称私密日记或深夜独白，不少于80字，展现细腻情感与未说出口的话〉</私密手记>\n<围观>\n<围观评><署名>〈前排/同桌死党视角〉</署名><内容>〈近距离吃瓜吐槽1〉</内容></围观评>\n<围观评><署名>〈后排/路过同学视角〉</署名><内容>〈旁观者视角对两人氛围的锐评2〉</内容></围观评>\n<围观评><署名>〈科任老师/班干部视角〉</署名><内容>〈站在各自人设高度的观察评论3〉</内容></围观评>\n<围观评><署名>〈视角人物手里的物品/课桌拟人视角〉</署名><内容>〈物品惨遭蹂躏或见证暧昧的幽默吐槽4〉</内容></围观评>\n<围观评><署名>〈窗外麻雀/走廊监控/环境拟人视角〉</署名><内容>〈奇妙趣味视角评论5〉</内容></围观评>\n</围观>\n<署名吐槽><署名>〈符合设定的损友或叙事旁白〉</署名><内容>〈一针见血的总结性锐评1〉</内容></署名吐槽>\n</心事>\n<私密记录>\n<备忘录>\n<已完成>〈视角人物近期已完成的与{{user}}或日常相关的事项1〉</已完成>\n<已完成>〈视角人物近期已完成的暗中准备事项2〉</已完成>\n<待完成>〈视角人物正在计划但尚未实施的小心思3〉</待完成>\n<待完成>〈视角人物备忘录里反复修改的待办事项4〉</待完成>\n<待完成>〈视角人物绝对不想被人看到的私密目标5〉</待完成>\n</备忘录>\n<消费记录>\n<购买><商品>〈购买记录1：商品名称（附带隐藏购买动机）〉</商品><金额>〈金额〉</金额></购买>\n<购买><商品>〈购买记录2：商品名称（如顺手给{{user}}带的零食/日用品）〉</商品><金额>〈金额〉</金额></购买>\n<购买><商品>〈购买记录3：商品名称（体现视角人物个人癖好或生活细节）〉</商品><金额>〈金额〉</金额></购买>\n<购物车>〈购物车备选/未结算项：犹豫是否购买的物品及原因〉</购物车>\n</消费记录>\n<搜索>\n<搜索信息><关键词>〈视角人物近期搜索词1（贴合当前剧情困惑或小心思）〉</关键词><动机>〈为什么搜这个词〉</动机></搜索信息>\n<网友回复><署名>〈高赞网友1ID〉</署名><内容>〈真实感拉满的网友神回复1〉</内容></网友回复>\n<网友回复><署名>〈吃瓜网友2ID〉</署名><内容>〈起哄或出主意的回复2〉</内容></网友回复>\n<网友回复><署名>〈暴躁网友3ID〉</署名><内容>〈反差感吐槽回复3〉</内容></网友回复>\n<网友回复><署名>〈匿名楼主追问〉</署名><内容>〈视角人物暗中破防或嘴硬的匿名追问〉</内容></网友回复>\n</搜索>\n<搜索>\n<搜索信息><关键词>〈视角人物近期搜索词2（生活/学业/人际相关）〉</关键词><动机>〈为什么搜这个词〉</动机></搜索信息>\n<网友回复><署名>〈百科/正经答主ID〉</署名><内容>〈一本正经的回答1〉</内容></网友回复>\n<网友回复><署名>〈歪楼网友ID〉</署名><内容>〈歪楼搞笑回复2〉</内容></网友回复>\n<网友回复><署名>〈过来人ID〉</署名><内容>〈扎心经验谈3〉</内容></网友回复>\n</搜索>\n<假设分支><假设>〈如果刚才某句话/某个动作换一种选择〉</假设><推演>〈推演一段极具张力的100字左右平行分支小剧场〉</推演></假设分支>\n<采访><提问>〈直击灵魂的采访提问1（关于刚才的心动或嘴硬细节）〉</提问><回答>〈视角人物结合神态动作的真实回答1〉</回答></采访>\n<采访><提问>〈直击灵魂的采访提问2（关于对{{user}}的某个隐秘看法）〉</提问><回答>〈视角人物结合神态动作的真实回答2〉</回答></采访>\n<采访><提问>〈直击灵魂的采访提问3（关于未来的某个企图）〉</提问><回答>〈视角人物结合神态动作的真实回答3〉</回答></采访>\n<署名吐槽><署名>〈主持人或旁白〉</署名><内容>〈针对采访表现的锐评2〉</内容></署名吐槽>\n</私密记录>\n<社交>\n<聊天标签>〈大群状态标签，如：99+条未读 · 课间水群高峰〉</聊天标签>\n<群聊>\n<群名>〈班级大群名称（含人数）〉</群名>\n<聊天时间>〈聊天时间〉</聊天时间>\n<发言><姓名>〈活跃NPC1姓名及群头衔〉</姓名><内容>〈群1消息1：聊校园日常/八卦/老师动向〉</内容></发言>\n<发言><姓名>〈活跃NPC2姓名及群头衔〉</姓名><内容>〈群1消息2：接梗或顺带提到{{user}}/视角人物〉</内容></发言>\n<系统>〈系统提示：如“xxx 拍了拍 xxx 的脑袋”或“xxx 撤回了一条消息”〉</系统>\n<本人发言><姓名>〈发言人3〉</姓名><内容>〈群1消息3〉</内容></本人发言>\n<发言><姓名>〈活跃NPC4姓名及群头衔〉</姓名><内容>〈群1消息4〉</内容></发言>\n<发言><姓名>〈活跃NPC5姓名及群头衔〉</姓名><内容>〈群1消息5〉</内容></发言>\n</群聊>\n<聊天标签>〈小群状态标签，如：死党私密小群 · 严禁外传〉</聊天标签>\n<群聊>\n<群名>〈小分队/宿舍群名称（含人数）〉</群名>\n<群公告>〈一句符合死党群风格的搞笑群公告〉</群公告>\n<发言><姓名>〈死党NPC1〉</姓名><内容>〈群2消息1：私下吐槽或盘问刚才的剧情细节〉</内容></发言>\n<本人发言><姓名>〈发言人2〉</姓名><内容>〈群2消息2〉</内容></本人发言>\n<发言><姓名>〈死党NPC2〉</姓名><内容>〈群2消息3：出馊主意或一针见血拆穿〉</内容></发言>\n<系统>〈系统提示：如“视角人物 撤回了一条消息”〉</系统>\n<发言><姓名>〈死党NPC3〉</姓名><内容>〈群2消息4：抓包撤回内容并起哄〉</内容></发言>\n</群聊>\n<聊天标签>〈私聊状态标签，如：置顶私聊 / 刚刚活跃〉</聊天标签>\n<私聊>\n<私聊对象>〈私聊对象姓名及关系〉</私聊对象>\n<发言><姓名>〈私聊对象〉</姓名><内容>〈私聊消息1〉</内容></发言>\n<本人发言><姓名>〈视角人物名字〉</姓名><内容>〈视角人物回复消息2〉</内容></本人发言>\n<发言><姓名>〈私聊对象〉</姓名><内容>〈私聊消息3〉</内容></发言>\n<本人发言><姓名>〈视角人物名字〉</姓名><内容>〈视角人物回复消息4〉</内容></本人发言>\n</私聊>\n<朋友圈>\n<动态信息><作者>〈视角人物或核心角色姓名〉</作者><时间>〈发布时间〉</时间><可见范围>〈仅谁可见或定位〉</可见范围></动态信息>\n<动态正文>〈朋友圈1正文（可配文字描述的图片内容，含暗戳戳的小心思）〉</动态正文>\n<点赞><名单>〈点赞具体人名列表〉</名单><人数>〈点赞人数〉</人数></点赞>\n<评论><署名>〈评论好友1〉</署名><内容>〈评论1内容〉</内容></评论>\n<回复评论><署名>〈评论好友2〉</署名><对象>〈评论好友1〉</对象><内容>〈互动回复2内容〉</内容></回复评论>\n<评论><署名>〈评论好友3〉</署名><内容>〈评论3内容〉</内容></评论>\n</朋友圈>\n<朋友圈>\n<动态信息><作者>〈群像活跃NPC姓名〉</作者><时间>〈发布时间〉</时间></动态信息>\n<动态正文>〈朋友圈2正文（展现校园另一角的鲜活趣事，或无意间拍到主角同框背景）〉</动态正文>\n<点赞><名单>〈点赞具体人名列表〉</名单><人数>〈点赞人数〉</人数></点赞>\n<评论><署名>〈评论同学A〉</署名><内容>〈盲生发现华点的评论1〉</内容></评论>\n<评论><署名>〈评论同学B〉</署名><内容>〈评论2内容〉</内容></评论>\n</朋友圈>\n<校园墙>\n<热榜>\n<热榜项><排名>1</排名><话题>〈校园热榜1：与主线或风云人物相关的爆点话题〉</话题><热度>爆</热度></热榜项>\n<热榜项><排名>2</排名><话题>〈校园热榜2：近期全校热议事件/八卦〉</话题><热度>热</热度></热榜项>\n<热榜项><排名>3</排名><话题>〈校园热榜3：社团/食堂/考试/奇葩趣闻〉</话题><热度>新</热度></热榜项>\n<热榜项><排名>4</排名><话题>〈校园热榜4：某NPC相关的支线悬念话题〉</话题></热榜项>\n<热榜项><排名>5</排名><话题>〈校园热榜5：校园生活日常槽点〉</话题></热榜项>\n<热榜评论>\n<热评><署名>〈热评学生1〉</署名><内容>〈针对热榜的犀利或搞笑评论1〉</内容></热评>\n<热评><署名>〈热评学生2〉</署名><内容>〈针对热榜的知情人士爆料2〉</内容></热评>\n<热评><署名>〈热评学生3〉</署名><内容>〈针对热榜的吃瓜跟帖3〉</内容></热评>\n<热评><署名>〈热评学生4〉</署名><内容>〈针对热榜的玩梗评论4〉</内容></热评>\n</热榜评论>\n</热榜>\n<树洞区>\n<树洞帖>\n<帖子><标题>〈匿名树洞帖1标题（关于{{user}}与视角人物的目击帖或情感树洞）〉</标题><主楼>〈树洞帖1主楼详细内容〉</主楼></帖子>\n<展开回复>\n<回复数>4</回复数>\n<回帖><楼层>1</楼层><署名>〈代号〉</署名><内容>〈抢沙发或认出当事人的回复〉</内容></回帖>\n<回帖><楼层>2</楼层><署名>〈代号〉</署名><内容>〈补充目击细节的回复〉</内容></回帖>\n<回帖><楼层>3</楼层><署名>〈代号〉</署名><内容>〈嗑CP或起哄的回复〉</内容></回帖>\n<回帖><楼层>4</楼层><署名>〈疑似熟人马甲〉</署名><内容>〈意味深长的回复〉</内容></回帖>\n</展开回复>\n</树洞帖>\n<树洞帖>\n<帖子><标题>〈匿名树洞帖2标题（关于其他群像NPC的支线八卦或校园怪谈）〉</标题><主楼>〈树洞帖2主楼详细内容〉</主楼></帖子>\n<折叠回复>\n<回复数>3</回复数>\n<回帖><楼层>1</楼层><署名>〈代号〉</署名><内容>〈帖2回帖1〉</内容></回帖>\n<回帖><楼层>2</楼层><署名>〈代号〉</署名><内容>〈帖2回帖2〉</内容></回帖>\n<回帖><楼层>3</楼层><署名>〈代号〉</署名><内容>〈帖2回帖3〉</内容></回帖>\n</折叠回复>\n</树洞帖>\n</树洞区>\n</校园墙>\n<署名吐槽><署名>〈校园墙皮下君或旁白〉</署名><内容>〈针对今日校园舆论的锐评3〉</内容></署名吐槽>\n</社交>\n<群像观察>\n<观察卡片>\n<观察><姓名>〈NPC1姓名〉</姓名><身份>〈身份/与主角关系〉</身份><动向>〈NPC1此刻所在位置、具体行动、内心盘算及与主线的潜在交集〉</动向><坐标>〈NPC1当前坐标〉</坐标><目标>〈NPC1当前目标/状态〉</目标></观察>\n<观察><姓名>〈NPC2姓名〉</姓名><身份>〈身份/与主角关系〉</身份><动向>〈NPC2此刻所在位置、具体行动、个人支线烦恼或吃瓜动向〉</动向><坐标>〈NPC2当前坐标〉</坐标><目标>〈NPC2当前目标/状态〉</目标></观察>\n<观察><姓名>〈NPC3姓名〉</姓名><身份>〈身份/班级职务〉</身份><动向>〈NPC3此刻的独立行动与人际互动（可与其他NPC产生联动）〉</动向><坐标>〈NPC3当前坐标〉</坐标><目标>〈NPC3当前目标/状态〉</目标></观察>\n<观察><姓名>〈NPC4姓名〉</姓名><身份>〈身份/社团或外班风云人物〉</身份><动向>〈NPC4此刻的独立行动、秘密计划或即将引发的支线伏笔〉</动向><坐标>〈NPC4当前坐标〉</坐标><目标>〈NPC4当前目标/状态〉</目标></观察>\n<观察><姓名>〈NPC5姓名〉</姓名><身份>〈身份/欢喜冤家或对照组〉</身份><动向>〈NPC5此刻的鲜活日常切片与性格展现〉</动向><坐标>〈NPC5当前坐标〉</坐标><目标>〈NPC5当前目标/状态〉</目标></观察>\n<观察><姓名>〈NPC6姓名〉</姓名><身份>〈身份/师长或特殊角色〉</身份><动向>〈NPC6此刻的动向及对班级/主角团的潜在影响〉</动向><坐标>〈NPC6当前坐标〉</坐标><目标>〈NPC6当前目标/状态〉</目标></观察>\n</观察卡片>\n<同步时间轴>\n<事件><时间>〈具体时间〉</时间><地点>〈校园地点1〉</地点><事件内容>〈场外支线事件1的具体画面〉</事件内容><情报状态>〈谁知情/谁尚未知晓〉</情报状态></事件>\n<事件><时间>〈具体时间〉</时间><地点>〈校园地点2〉</地点><事件内容>〈场外支线事件2的具体画面〉</事件内容><情报状态>〈谁知情/谁尚未知晓〉</情报状态></事件>\n<事件><时间>〈具体时间〉</时间><地点>〈校园地点3〉</地点><事件内容>〈场外支线事件3的具体画面〉</事件内容><情报状态>〈谁知情/谁尚未知晓〉</情报状态></事件>\n<事件><时间>〈具体时间〉</时间><地点>〈校园地点4〉</地点><事件内容>〈场外支线事件4（可埋下后续剧情小伏笔）〉</事件内容><情报状态>〈伏笔发酵中〉</情报状态></事件>\n</同步时间轴>\n<走廊碎片>〈校园随机小事1〉</走廊碎片>\n<广播站>〈校园随机小事2〉</广播站>\n<群像吐槽>〈针对这群人各自心怀鬼胎或热闹日常的总结吐槽〉</群像吐槽>\n</群像观察>\n<弹幕>\n<弹幕条><署名>〈考据党弹幕ID〉</署名><内容>〈抠细节分析视角人物微表情或动作的弹幕1〉</内容></弹幕条>\n<弹幕条><署名>〈嗑学家弹幕ID〉</署名><内容>〈激动尖叫嗑糖的弹幕2〉</内容></弹幕条>\n<弹幕条><署名>〈群像粉弹幕ID〉</署名><内容>〈讨论某个配角NPC支线走向的弹幕3〉</内容></弹幕条>\n<弹幕条><署名>〈神预言弹幕ID〉</署名><内容>〈盲猜接下来剧情修罗场或反转的弹幕4〉</内容></弹幕条>\n<弹幕条><署名>〈吐槽役弹幕ID〉</署名><内容>〈幽默玩梗吐槽视角人物嘴硬或死党助攻的弹幕5〉</内容></弹幕条>\n<弹幕条><署名>〈列文虎克ID〉</署名><内容>〈发现环境栏/消费记录里隐藏彩蛋的弹幕6〉</内容></弹幕条>\n<弹幕条><署名>〈事业/剧情粉ID〉</署名><内容>〈关注校园主线或人际博弈的弹幕7〉</内容></弹幕条>\n<弹幕条><署名>〈前排打卡ID〉</署名><内容>〈结合当前名场面的高能刷屏弹幕8〉</内容></弹幕条>\n</弹幕>\n</档案>\n"
+    }
+  }
+}

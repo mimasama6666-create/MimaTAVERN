@@ -393,7 +393,7 @@ function updateFrameWindow(){
  const bounds=box?.getBoundingClientRect();
  const candidates=[];
  for(const record of fluidFrames.values()){
-  if(!record.iframe.isConnected||record.failed||!live){suspendFrame(record,!record.iframe.isConnected||record.failed);continue;}
+  if(!record.iframe.isConnected||record.failed||!live||record.owner!==activeId||record.generation!==sessionGeneration){suspendFrame(record,!record.iframe.isConnected||record.failed);continue;}
   const rect=record.iframe.getBoundingClientRect();
   const distance=rect.bottom<bounds.top?bounds.top-rect.bottom:rect.top>bounds.bottom?rect.top-bounds.bottom:0;
   if(distance<=1000)candidates.push({record,distance,center:Math.abs((rect.top+rect.bottom-bounds.top-bounds.bottom)/2)});
@@ -405,8 +405,10 @@ function updateFrameWindow(){
  for(const record of keep){
   record.wanted=true;cancelFrameSuspension(record);
   if(record.active||activeCount>=MAX_ACTIVE_HTML_FRAMES)continue;
+  if(record.source===null){record.source=record.prepare();record.prepare=null;if(typeof record.source!=='string'){record.failed=true;record.iframe.remove();continue;}}
   record.active=true;record.activation++;record.restoring=true;activeCount++;
   record.iframe.style.minHeight=(record.last||80)+'px';record.iframe.srcdoc=record.source;
+  if([...keep].some(item=>!item.active&&!item.failed)){scheduleFrameWindow();break;}
  }
  if(!keep.size)localFrameFontCache=null;
 }
@@ -435,7 +437,6 @@ root.addEventListener?.('message',event=>{
  }
  if(data.mimaSafeFontResult){if(data.status==='error'&&!record.fontFailed){record.fontFailed=true;el('small',{className:'compat-render-warning',text:'本地正文字体未能在隔离页面加载：'+String(data.message||'未知错误')},record.iframe.parentElement);}return;}
  const height=Number(data.height);if(!Number.isFinite(height)||height<1)return;
- if(height>200000){record.iframe.hidden=true;suspendFrame(record,true);if(!record.failed){record.failed=true;el('p',{className:'compat-render-warning',text:'这条 HTML 的显示高度超出预算，请展开下方原文阅读；完整剧情仍已保存。'},record.iframe.parentElement);}return;}
  const box=$('compat-messages'),nearBottom=box&&box.scrollHeight-box.clientHeight-box.scrollTop<96;
  const px=Math.ceil(height);if(Math.abs(px-record.last)<2)return;record.last=px;
  record.iframe.style.height=px+'px';record.iframe.style.minHeight='';scheduleFrameWindow();if(nearBottom&&followLatest)requestAnimationFrame(()=>{if(followLatest)box.scrollTop=box.scrollHeight;});
@@ -444,6 +445,7 @@ function makeFluidHtml(parent,html,title,css,theme,owner,ticket){
  let source;
  const token=Array.from(root.crypto.getRandomValues(new Uint8Array(16)),x=>x.toString(16).padStart(2,'0')).join('');
  const nonce=Array.from(root.crypto.getRandomValues(new Uint8Array(16)),x=>x.toString(16).padStart(2,'0')).join('');
+ const prepare=()=>{
  try{
   const rendered=root.MimaCompatMarkdown?.html(html)||html;
   if(rendered.length>root.MimaCompatSafeHtml.maxBytes)throw Object.assign(new Error('Markdown 展开后的 HTML 超过单条隔离显示预算'),{code:'E_DISPLAY_MARKDOWN_EXPANSION'});
@@ -455,9 +457,11 @@ function makeFluidHtml(parent,html,title,css,theme,owner,ticket){
   const diag=$('compat-display-errors');if(diag)el('p',{className:'compat-render-diagnostic',text:title+' · '+reason+' · session '+owner},diag);
   return null;
  }
+ return source;
+ };
  const iframe=el('iframe',{sandbox:'allow-scripts',referrerpolicy:'no-referrer',title,className:'compat-message-html'},parent);
  iframe.style.height='1px';
- const record={iframe,token,owner,generation:sessionGeneration,ticket,last:0,source,active:false,activation:0,state:null,suspension:null,restoring:false,wanted:false};
+ const record={iframe,token,owner,generation:sessionGeneration,ticket,last:0,source:null,prepare,active:false,activation:0,state:null,suspension:null,restoring:false,wanted:false};
  fluidFrames.set(token,record);iframe.style.minHeight='80px';
  iframe.addEventListener('load',()=>{
   if(!record.active||!record.iframe.isConnected||!iframe.hasAttribute('srcdoc'))return;

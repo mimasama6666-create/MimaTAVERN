@@ -1929,5 +1929,15 @@ window.MimaFontManager = (() => {
             binaryReadPending:pendingFonts.size,activePreviewOwners:usages.size,
             activeCssLinks:activeCssLinks.size};
     }
-    return { runtimeMetrics, scopedFamily, getDecodeFailure, stageOf, inspectFont, bundleFor, setBundle, init, all, listMetadata, listBackupInventory, assertBackupInventory, openBackupSource, auditStoredFonts, recoverLegacyIndex, readOrphanBinary, getByFamily, ensureFamily, ensureFont, cancelPreview, useFamily, useFont, releaseUsage, importFile, importFiles, cacheUrlFont, deleteFont, deleteFonts, getSelected, getLoadStatus, setSelected, applySelected, reloadSelected, urlFonts, refreshUrlFontUsage:urlFontStyle, fontReferencedByAppearance, exportRawUrlFontLibrary, setUrlFontCompatibility, addUrlFont, addUrlFontsBatch, deleteUrlFont, exportPortable, importPortable, planPortableImport, commitPortablePlan, rollbackPortablePlan, backupBinaryById, planBinaryFontRestore, refreshAfterBinaryRestore };
+    async function frameFontSources(){
+        // Reuse only the selected faces and their exact subset/weight descriptors.
+        // Register preview faces from source URLs without sharing live objects.
+        await Promise.all(['ui','story'].map(kind=>verifyAppliedLocalFamily(kind,getSelected(kind),selectionEpoch[kind])));
+        const families=new Set(['ui','story'].map(kind=>scopedFamily(kind,getSelected(kind))).filter(Boolean));
+        return [...loaded.values()].filter(entry=>families.has(entry.renderFamily)&&entry.url&&!entry.retired).map(entry=>{
+            const descriptors={};for(const name of ['style','weight','stretch','unicodeRange','featureSettings','variationSettings','display'])if(typeof entry.face[name]==='string')descriptors[name]=entry.face[name];
+            return {family:entry.renderFamily,source:`url("${entry.url}")`,descriptors};
+        });
+    }
+    return { runtimeMetrics, frameFontSources, scopedFamily, getDecodeFailure, stageOf, inspectFont, bundleFor, setBundle, init, all, listMetadata, listBackupInventory, assertBackupInventory, openBackupSource, auditStoredFonts, recoverLegacyIndex, readOrphanBinary, getByFamily, ensureFamily, ensureFont, cancelPreview, useFamily, useFont, releaseUsage, importFile, importFiles, cacheUrlFont, deleteFont, deleteFonts, getSelected, getLoadStatus, setSelected, applySelected, reloadSelected, urlFonts, refreshUrlFontUsage:urlFontStyle, fontReferencedByAppearance, exportRawUrlFontLibrary, setUrlFontCompatibility, addUrlFont, addUrlFontsBatch, deleteUrlFont, exportPortable, importPortable, planPortableImport, commitPortablePlan, rollbackPortablePlan, backupBinaryById, planBinaryFontRestore, refreshAfterBinaryRestore };
 })();
