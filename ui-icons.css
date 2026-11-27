@@ -1,0 +1,14 @@
+@layer mima-builtins {
+ .mima-ui-icon{display:inline-block;object-fit:contain;vertical-align:middle;flex:0 0 auto;width:calc(21px * var(--mima-component-unit,1));height:calc(21px * var(--mima-component-unit,1));margin:0 calc(4px * var(--mima-component-unit,1)) 0 0;pointer-events:none;}
+ .mima-ui-action-icon{width:calc(15px * var(--mima-component-unit,1));height:calc(15px * var(--mima-component-unit,1));}
+ .tool-mini>.mima-ui-icon{width:1em;height:1em;margin-right:.28em;}
+ .mima-settings-groups>button{display:inline-flex;align-items:center;justify-content:center;gap:calc(3px * var(--mima-component-unit,1));padding-inline:calc(6px * var(--mima-component-unit,1));}
+ .mima-settings-groups>button>.mima-ui-icon{margin:0;width:calc(22px * var(--mima-component-unit,1));height:calc(22px * var(--mima-component-unit,1));}
+ .mima-settings-results>button{display:flex;align-items:center;}
+ .writing-mode-tabs>button{display:flex;align-items:center;justify-content:center;gap:calc(3px * var(--mima-component-unit,1));}
+ .writing-mode-tabs>button>.mima-ui-icon{margin:0;}
+ .workspace-empty{padding:calc(16px * var(--mima-component-unit,1));overflow:auto;}
+ .workspace-empty>p{color:var(--muted);}
+ .assistant-type-art{width:calc(23px * var(--mima-component-unit,1));height:calc(23px * var(--mima-component-unit,1));object-fit:contain;flex:none;}
+ @media(max-width:480px){.writing-mode-tabs{gap:0;}.writing-mode-tabs>button{padding-inline:calc(3px * var(--mima-component-unit,1));}.writing-mode-tabs>button>.mima-ui-icon{width:calc(18px * var(--mima-component-unit,1));height:calc(18px * var(--mima-component-unit,1));}}
+}

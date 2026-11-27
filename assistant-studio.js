@@ -783,7 +783,7 @@
     }
     const composer=document.getElementById('assistant-input');
     if(renderedType!==activeType||renderedSession!==sid){const draft=MimaUiDrafts.get(composerKey())||state.sessionDrafts[sid];composer.value=draft?.text||'';if(draft){composer.setSelectionRange(draft.start||0,draft.end||0);composer.scrollTop=draft.scroll||0;}chatRenderKey='';}
-    renderedType=activeType;renderedSession=sid;composer.placeholder=meta.placeholder;
+    renderedType=activeType;renderedSession=sid;composer.placeholder=meta.placeholder;const typeArt=document.getElementById('assistant-type-art');if(typeArt)typeArt.src='./assets/mima-gothic-'+(activeType==='css'?'appearance':activeType)+'.png';
     // The chat and input DOM survive settings changes and model-list arrivals.
     const key=JSON.stringify([activeType,sid,thread(),editingIndex,generating,generationMode,regeneratingIndex]);
     if(key!==chatRenderKey){const sc=document.getElementById('assistant-chat-scroll'),top=sc.scrollTop;sc.innerHTML=messagesHtml();chatRenderKey=key;if(assistantFollowTail)sc.scrollTop=sc.scrollHeight;else sc.scrollTop=top;}

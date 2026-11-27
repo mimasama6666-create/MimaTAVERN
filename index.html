@@ -32,6 +32,7 @@
 <link rel="stylesheet" href="./story-play-tools.css?playtools=20261027-3&factmemo=20261027-1&rework-r10=20261126-consolidated&protocol-r14=20261126">
 <link rel="stylesheet" href="./ui-upgrade.css?v=20261125-upgrade1&upgrade=20261125-v23&build=20261125-v23-r4&rework=20261126-v23-r8&r8=20261126-closure&core-r9=20261126-final&rework-r10=20261126-consolidated&protocol-r14=20261126&message-r15=20261126&editor-r16=20261126&rework-r17=20261126&studio-r24=20261127">
 <link rel="stylesheet" href="./workspace-ui.css?v=20261127-r24">
+<link rel="stylesheet" href="./ui-icons.css?v=20261127-r27">
 </head>
 <body>
 <div id="drawer-scrim" class="scrim hidden" onclick="closeDrawer()"></div>
@@ -282,8 +283,8 @@ window.addEventListener('message',function(ev){
             <button data-tab="templates" onclick="switchSettingsTab('templates')"><img src="./assets/mima-gothic-template.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> 设置模板</button>
             <button data-tab="context" onclick="switchSettingsTab('context')"><span class="mima-oss-icon mima-oss-icon--brain" aria-hidden="true"></span> Context（上下文）</button>
             <button data-tab="memory" onclick="switchSettingsTab('memory')"><img src="./assets/mima-gothic-memory.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> 记忆</button>
-            <button data-tab="appearance" onclick="switchSettingsTab('appearance')"><span class="mima-oss-icon mima-oss-icon--palette" aria-hidden="true"></span> 外观</button>
-            <button data-tab="api" onclick="switchSettingsTab('api')"><span class="mima-oss-icon mima-oss-icon--plug" aria-hidden="true"></span> API（接口）</button>
+            <button data-tab="appearance" onclick="switchSettingsTab('appearance')"><img src="./assets/mima-gothic-appearance.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> 外观</button>
+            <button data-tab="api" onclick="switchSettingsTab('api')"><img src="./assets/mima-gothic-connection.png" class="mima-gothic-ui-icon" alt="" aria-hidden="true" draggable="false"> API（接口）</button>
             <button data-tab="prompt" onclick="switchSettingsTab('prompt')"><span class="mima-oss-icon mima-oss-icon--flask" aria-hidden="true"></span> Prompt（提示词）</button>
             <button data-tab="diagnostics" onclick="switchSettingsTab('diagnostics')"><span class="mima-oss-icon mima-oss-icon--receipt" aria-hidden="true"></span> 诊断日志</button>
             <button data-tab="performance" onclick="switchSettingsTab('performance')"><span class="mima-oss-icon mima-oss-icon--bolt" aria-hidden="true"></span> 性能检查</button>
@@ -334,7 +335,7 @@ window.addEventListener('message',function(ev){
         <div class="modal-head sticky-head assistant-studio-head">
           <button class="icon-btn" aria-label="返回" onclick="MimaAssistantStudio.close()">‹</button>
           <span id="assistant-studio-title" class="sr-only">正则助手</span>
-          <select id="assistant-type-choice" class="assistant-type-choice" aria-label="助手类型" onchange="MimaAssistantStudio.switchType(this.value)"><option value="regex">正则助手</option><option value="preset">预设助手</option><option value="css">CSS 美化助手</option></select>
+          <img id="assistant-type-art" class="assistant-type-art" src="./assets/mima-gothic-regex.png" alt="" aria-hidden="true"><select id="assistant-type-choice" class="assistant-type-choice" aria-label="助手类型" onchange="MimaAssistantStudio.switchType(this.value)"><option value="regex">正则助手</option><option value="preset">预设助手</option><option value="css">CSS 美化助手</option></select>
           <button class="ghost-btn" onclick="MimaAssistantStudio.showDrawer('sessions')">会话</button>
           <button class="ghost-btn" onclick="MimaAssistantStudio.showDrawer('settings')">设置</button>
         </div>
@@ -445,7 +446,8 @@ window.addEventListener('message',function(ev){
 <script src="./vendor/html-parser-7.3.0.js?htmlrepair=20261030-v511"></script>
 <script src="./html-structure-contract.js?htmlrepair=20261030-v511&v=20261021-r412&template-ux=20261022-r16-capacity-recovery&r19p6=20261022-final&r19rework=20261023-p0p1-2&r19manualturn=20261023-r5"></script>
 <script src="./regex-editor.js?v=20261125-v23-editor2&build=20261125-v23-r4"></script>
-<script src="./ui-upgrade.js?v=20261125-upgrade1&upgrade=20261125-v23&protocol-r14=20261126"></script>
+<script src="./ui-icons.js?v=20261127-r27"></script>
+<script src="./ui-upgrade.js?v=20261125-upgrade1&upgrade=20261125-v23&protocol-r14=20261126&rework-r27=20261127"></script>
 <script src="./ui-drafts.js?v=20261125-upgrade1&upgrade=20261125-v23"></script>
 <script src="./story-display.js?v=20261125-upgrade1&upgrade=20261125-v23&build=20261125-v23-r4&rework=20261126-v23-r8&r8=20261126-closure&core-r9=20261126-final&rework-r10=20261126-consolidated"></script>
 <script src="./story-protocol.js?build=20261125-v23-r7&r8=20261126-closure&protocol-r14=20261126&rework-r17=20261126&rework-r18=20261126&rework-r19=20261126&rework-r21=20261126"></script>
@@ -490,9 +492,9 @@ window.addEventListener('message',function(ev){
 <script src="./compat-markdown.js?v=r14-20261015-1&storymd=20261103_v545&libraryui=20261019_r4_wallpaper"></script>
 <script src="./compat-regex-ui.js?v=r14-20261015-1&manualrecovery=20261015-r14-2&brandcopy=20261122-r1"></script>
 <script src="./compat-ui.js?settingsairp=20261114-v2&batch5=restore-novel-20261025&batch4=dualbackup-20261025&p0request=20261014-r12.3.2&v=20261014-visual-unification-1&r13=20261015-1&r14=20261015-1&manualrecovery=20261015-r14-2&authorhost=20261015-r15-1&advanced=20261015-r16-1&r7=20261021-contract&r9=20261021-reader-default-postcommit&r13gen=20261022-r15&auditfix=20261025-p1-7&audit2=20261025-r2&batch8rootfix=20261026-1&playtools=20261027-3&factmemo=20261027-1&atelierux=20261027-r19&interaction=20261027-r19-prefs-1&auditJoint=20261027-3&draftfix=20261027r2&cssrepair=20261028-b8-complete-3&perfdiag=20261029-r2&netfontverify=20261029-v53&previewidle=20261029-v53&styleidempotent=20261029-v56&brandcopy=20261122-r1&rework-r10=20261126-consolidated"></script>
-<script src="./writing-workspace.js?v=20261127-r24&rework-r25=20261127&rework-r26=20261127"></script>
-<script src="./assistant-studio.js?batch3=20261025&v=1.1.2&hotfix=1.1.3&release=1.3.1&auditfix=1.3.2&artifactpriority0=r11.2&oct25rework=novel-assist-3&reworkfix=20261025-p1-4&navguard=20261025-r19-p1-6&auditfix=20261025-p1-7&v542=20261103-restore-guard&fontprefs=20261103-v550&v558=css-settlement-20261105&wgicons=20261108-a&brandcopy=20261122-r1&upgrade=20261125-v23&build=20261125-v23-r4&rework=20261126-v23-r8&r8=20261126-closure&core-r9=20261126-final&studio-r24=20261127&rework-r25=20261127&rework-r26=20261127"></script>
-<script src="./novel-studio.js?v=1.3.1&auditfix=1.3.2&release=1.3.1&auditfix=1.3.2&rework=1.3.3&reworkfix=1.3.4&themefix=1.4.0&memoryfix=1.3.9&pnginspect=1.4.0&oct25rework=novel-assist-3&reworkfix=20261025-p1-4&navguard=20261025-r19-p1-6&audit2=20261025-r2&batch8rework2=20261026&batch8rework4=20261026&cssrepair=20261028-b8-complete-3&csscatalog=20261119-p1&upgrade=20261125-v23&build=20261125-v23-r4&rework-r10=20261126-consolidated&studio-r24=20261127"></script>
+<script src="./writing-workspace.js?v=20261127-r24&rework-r25=20261127&rework-r26=20261127&rework-r27=20261127"></script>
+<script src="./assistant-studio.js?batch3=20261025&v=1.1.2&hotfix=1.1.3&release=1.3.1&auditfix=1.3.2&artifactpriority0=r11.2&oct25rework=novel-assist-3&reworkfix=20261025-p1-4&navguard=20261025-r19-p1-6&auditfix=20261025-p1-7&v542=20261103-restore-guard&fontprefs=20261103-v550&v558=css-settlement-20261105&wgicons=20261108-a&brandcopy=20261122-r1&upgrade=20261125-v23&build=20261125-v23-r4&rework=20261126-v23-r8&r8=20261126-closure&core-r9=20261126-final&studio-r24=20261127&rework-r25=20261127&rework-r26=20261127&rework-r27=20261127"></script>
+<script src="./novel-studio.js?v=1.3.1&auditfix=1.3.2&release=1.3.1&auditfix=1.3.2&rework=1.3.3&reworkfix=1.3.4&themefix=1.4.0&memoryfix=1.3.9&pnginspect=1.4.0&oct25rework=novel-assist-3&reworkfix=20261025-p1-4&navguard=20261025-r19-p1-6&audit2=20261025-r2&batch8rework2=20261026&batch8rework4=20261026&cssrepair=20261028-b8-complete-3&csscatalog=20261119-p1&upgrade=20261125-v23&build=20261125-v23-r4&rework-r10=20261126-consolidated&studio-r24=20261127&rework-r27=20261127"></script>
 <script src="./ux-r6.js?v=r6-20261012"></script>
 <script src="./ux-r7.js?v=r7-20261012&brandcopy=20261122-r1"></script>
 <script src="./theme-canvas.js?v=20261126-r10&rework-r10=20261126-consolidated&rework-r11=20261126-rootfix&dynamic-r12=20261126&precise-r13=20261126"></script>

@@ -173,13 +173,14 @@
     updateStatus(keepLocal?'本页草稿已存入原文历史，当前原文保留已保存版本':'冲突已处理，采用已保存原文');
   }
   function updateStatus(text){uiStatus=text;const node=$('writing-status');if(node)node.textContent=text;}
+  function finishOperation(){operation=false;if(mode!=='novel'&&!viewBusy&&!viewLoadError&&!current())render();}
   async function create(kind=mode){
     if(operation||!['article','chat'].includes(kind))return;capture();const old=editorOwner;operation=true;const ticket=beginView(kind,null);
     try{
       await settleOwner(old);const id=uid(),stamp=now();
       const row=kind==='article'?{id,title:'未命名文章',source:'',requirement:'',presets:[],versions:[],sourceVersions:[],settings:defaults(),archived:false,createdAt:stamp,updatedAt:stamp,origin:null}:{id,title:'新对话',system:'',composer:'',messages:[],settings:defaults(),archived:false,createdAt:stamp,updatedAt:stamp};
       await transaction(d=>collection(d,kind).push(row),{kind,id,create:true});if(viewIsCurrent(ticket)){ticket.id=id;await loadSelection(ticket);}return id;
-    }catch(e){failView(ticket,e);notify(e.message);}finally{operation=false;}
+    }catch(e){failView(ticket,e);notify(e.message);}finally{finishOperation();}
   }
   async function showMode(next){
     if(!Object.hasOwn(labels,next))return;
@@ -191,7 +192,7 @@
     editorOwner=null;$('writing-workspace-root').textContent='正在读取记录…';
     try{await settleOwner(old);await transaction(null,{catalog:true});if(!viewIsCurrent(ticket))return;
       const rows=collection(data,next);ticket.id=rows.some(x=>x.id===selected[next])?selected[next]:(rows.find(x=>!x.archived)||rows[0])?.id||null;
-      if(!ticket.id){viewBusy=null;await create(next);}else await loadSelection(ticket);
+      if(!ticket.id){viewBusy=null;selected[next]=null;if(operation)render();else await create(next);}else await loadSelection(ticket);
     }catch(e){failView(ticket,e);}
   }
   function capture(){
@@ -271,7 +272,7 @@
         await loadSelection(ticket);
       }else if(mode===kind&&!viewBusy)render();
     }catch(e){if(ticket){ticket.deleted=deleted;failView(ticket,e);}notify((deleted?'记录已删除，但下一条读取失败：':'操作未完成：')+e.message);}
-    finally{operation=false;if(ticket&&viewIsCurrent(ticket)){viewBusy=null;render();}}
+    finally{finishOperation();if(ticket&&viewIsCurrent(ticket)){viewBusy=null;render();}}
   }
   async function setSetting(key,value){
     const o=writableOwner();if(!o)return;const {kind,id}=o;
@@ -435,7 +436,7 @@
     const host=$('writing-workspace-root');if(!host||mode==='novel')return;const focus=host.contains(document.activeElement)?document.activeElement:null,focusState=focus?.id?{id:focus.id,start:focus.selectionStart,end:focus.selectionEnd,scroll:focus.scrollTop}:null;const oldScroll=$('plain-chat-scroll'),reading=oldScroll?{top:oldScroll.scrollTop,follow:oldScroll.dataset.follow}:null;const r=current();
     if(viewBusy){stampControls(host);return;}
     if(viewLoadError){editorOwner=null;host.innerHTML=`<section class="workspace-rescue" role="alert"><strong>${viewLoadError.deleted?'记录已删除，下一条读取失败':'记录读取失败'}</strong><p>${esc(viewLoadError.error)}</p><button class="ghost-btn" data-w-action="retry-record" data-id="${esc(viewLoadError.id||'')}">重新读取</button><button class="ghost-btn" data-w-action="sessions">会话与历史</button></section><aside id="writing-drawer" class="workspace-drawer" hidden></aside>`;stampControls(host);renderDrawer();return;}
-    if(!r){editorOwner=null;host.innerHTML=rescueHtml()+'<button class="primary-btn" data-w-action="create">新建</button><button class="ghost-btn" data-w-action="sessions">会话与历史</button><aside id="writing-drawer" class="workspace-drawer" hidden></aside>';stampControls(host);renderDrawer();return;}
+    if(!r){editorOwner=null;host.innerHTML=rescueHtml()+`<section class="workspace-empty"><p>${mode==='article'?'还没有文章，新建后即可粘贴原文或导入 TXT。':'还没有对话，新建后即可直接发送消息。'}</p><button class="primary-btn" data-w-action="create" ${operation?'disabled':''}>新建${mode==='article'?'文章':'对话'}</button><button class="ghost-btn" data-w-action="sessions">会话与历史</button><p class="row-sub" role="status">${operation?'上一项操作正在保存，完成后即可新建。':''}</p></section><aside id="writing-drawer" class="workspace-drawer" hidden></aside>`;stampControls(host);renderDrawer();return;}
     if(!fullRecord(mode,r)){editorOwner=null;const ticket=beginView(mode,r.id);host.textContent='正在读取记录…';void loadSelection(ticket).catch(e=>failView(ticket,e));return;}
     editorOwner={kind:mode,id:r.id,token:uid(),...(mode==='article'?{baseSource:r.source,baseOrigin:clone(r.origin??null)}:{})};
     const active=runs.has(editKey(mode,r.id)),stale=r.run&&!active;
