@@ -93,7 +93,7 @@ window.MimaSettingsJsonImport = (() => {
     const seen=new Set();
     for(let i=0;i<ranges.length;i++){
      const row=await read(i);
-     const id=String(row.id||'legacy_import_'+crypto.randomUUID().replace(/-/g,''));
+     const id=String(row.id||'legacy_import_'+window.MimaRandomId.uuid().replace(/-/g,''));
      if(seen.has(id))fail('重复字体 ID：'+id);
      seen.add(id);ids[i]=id;row.id=id;
      await MimaFontManager.planPortableImport([row]);

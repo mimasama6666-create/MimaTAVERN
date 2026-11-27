@@ -636,9 +636,7 @@ async function appearanceDiagnostics(){
   const element=layer.id?document.getElementById(layer.id):null;
   const css=element?.textContent||'';
   if(!element){layer.sha256=null;layer.shaNote='anonymous inline style skipped';continue;}
-  try{if(!crypto?.subtle)throw Error('Web Crypto unavailable');
-   const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(css));
-   layer.sha256=[...new Uint8Array(digest)].map(x=>x.toString(16).padStart(2,'0')).join('');
+  try{layer.sha256=(await MimaRequestHash.digestText(css)).sha256;
   }catch(e){layer.sha256=null;layer.shaNote='SHA unavailable on this origin';}
  }
  const selectors={safeHtmlHost:'.app-shell .msg-content.safe-html-content',prose:'.app-shell .msg-content:not(.safe-html-content)',topbar:'.app-shell > header.topbar',composer:'.app-shell > footer.composer-shell',wallpaper:'#story-chat-box'};
@@ -1105,7 +1103,7 @@ async function migrateLegacyTheme(){
   const project=normalized(raw);
   // The immutable snapshot is staged first. The canonical pointer is written
   // only by /atelier/publish, which handles idempotency and CAS.
-  const payload=JSON.stringify(project),digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(payload)))).map(b=>b.toString(16).padStart(2,'0')).join('');
+  const payload=JSON.stringify(project),digest=(await MimaRequestHash.digestText(payload)).sha256;
   const releaseKey='css-release:'+project.id+':'+digest,stableId='css-atl-'+digest;
   const existing=await get(releaseKey);
   if(existing&&JSON.stringify(existing)!==payload)throw Error('旧主题迁移遇到不可变快照冲突：'+releaseKey);

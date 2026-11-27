@@ -13,7 +13,7 @@ window.MimaSettingsJsonStream = (() => {
   return btoa(binary);
  }
  function safeName(n){return String(n).replace(/[^a-zA-Z0-9._-]/g,'_').slice(0,140)||'mima-settings.json';}
- async function directory(){const storage=navigator.storage;if(typeof storage?.getDirectory!=='function'){const e=Error('此浏览器没有低内存文件写出接口');e.code='E_NO_JSON_STREAM_SINK';throw e;}return (await storage.getDirectory()).getDirectoryHandle(DIRECTORY,{create:true});}
+ async function directory(){const storage=navigator.storage;if(typeof storage?.getDirectory!=='function'){const e=Error('当前网页无法使用低内存文件写出接口；请使用 HTTPS 安全网页或支持此接口的浏览器');e.code='E_NO_JSON_STREAM_SINK';throw e;}return (await storage.getDirectory()).getDirectoryHandle(DIRECTORY,{create:true});}
  function checkInventory(inventory){
   const d=inventory.defects||{};const bad=Object.entries(d).filter(([,list])=>Array.isArray(list)&&list.length);
   if(bad.length)throw Error('字体库存有未索引、缺失或冲突的原件（'+bad.map(([k,v])=>k+':'+v.length).join('，')+'）。为避免生成不完整 JSON，请先在字体管理查看只读检查结果');
@@ -25,7 +25,7 @@ window.MimaSettingsJsonStream = (() => {
    catch(e){if(e?.name==='AbortError')throw Error('已取消选择保存位置，未写入文件');throw e;}
    const writable=await handle.createWritable();return {writable,kind:'external',async finish(){await writable.close();return {mode:'external',name};},async abort(){try{await writable.abort()}catch(_){}}};
   }
-  const dir=await directory(),tmp='settings-'+Date.now()+'-'+crypto.randomUUID()+'--'+name;
+  const dir=await directory(),tmp='settings-'+Date.now()+'-'+window.MimaRandomId.uuid()+'--'+name;
   const file=await dir.getFileHandle(tmp,{create:true});const writable=await file.createWritable();
   return {writable,kind:'opfs',async finish(){await writable.close();return {mode:'opfs',name,dir,file,tmp};},async abort(){try{await writable.abort()}catch(_){}try{await dir.removeEntry(tmp)}catch(_){}}};
  }

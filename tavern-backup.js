@@ -6,7 +6,7 @@
  const PREFS=['mimamao_tavern_url_fonts_v1','MIMATAVERN_UI_DENSITY_V1','MIMATAVERN_DISPLAY_DENSITY_V2','MIMAMAO_TAVERN_TEMP','storyFontUrl','storyFontFamily','MIMAMAO_TAVERN_STORY_TYPO_V1','mimamao_tavern_ui_font','mimamao_tavern_story_font','mimamao_tavern_font_weight_v1','mimamao_tavern_font_subsets_v1','MIMAMAO_TAVERN_ASSISTANT_STUDIO_V1','mima-r19-ui-feedback-prefs-v1','mima-r19-last-session-v1'];
  const SESSION_PREFS=['mima-r19-unsent-v1:','mima-r19-reader-v1:'];
  const prefKeys=library=>[...PREFS,...(library.sessions||[]).flatMap(session=>SESSION_PREFS.map(prefix=>prefix+session.id))];
- const sha=async value=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',typeof value==='string'?new TextEncoder().encode(value):value))].map(n=>n.toString(16).padStart(2,'0')).join('');
+ const sha=async value=>(await (typeof value==='string'?MimaRequestHash.digestText(value):MimaRequestHash.digestBytes(value))).sha256;
  const b64=bytes=>{let s='';for(let i=0;i<bytes.length;i+=0x4000)s+=String.fromCharCode(...bytes.subarray(i,i+0x4000));return btoa(s)};
  const unb64=s=>{if(typeof s!=='string'||!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(s))throw Error('归档二进制编码无效');return Uint8Array.from(atob(s),x=>x.charCodeAt(0))};
  let busy=false,activeId=null;

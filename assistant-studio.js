@@ -5,6 +5,7 @@
  */
 (() => {
   'use strict';
+  function secureId(){try{return window.MimaRandomId.uuid();}catch(error){window.toast?.(error.message);throw error;}}
 
   const STORAGE_KEY='MIMAMAO_TAVERN_ASSISTANT_STUDIO_V1';
   const SAVE_GUARD_DB='mimamao_tavern_assistant_write_guard_v1';
@@ -721,7 +722,7 @@
   }
   function taskPanelHtml(){const task=state.tasks[activeType],cfg=assistantConfig();return `<details class="mima-settings-fold assistant-task-panel"><summary>任务资料与请求预览 · ${task.versions.length} 个版本</summary><div class="mima-settings-fold-body"><p class="row-sub">模板、字段表、方案和发布版本独立保存。开始新工作段会保留全部历史与这些资料；普通发送仍使用完整历史。</p><label class="form-label">资料类型</label><select id="assistant-task-kind" class="field">${Object.entries(taskKinds).map(([id,name])=>`<option value="${id}">${name}</option>`).join('')}</select><label class="form-label">从历史取用，或在下方粘贴原文</label><select class="field" onchange="MimaAssistantStudio.takeTaskSource(this.value)"><option value="">选择历史消息</option>${thread().map((m,i)=>`<option value="${i}">${i+1} · ${m.role==='user'?'我':'助手'} · ${esc(m.content.slice(0,35))}</option>`).join('')}</select><textarea id="assistant-task-source" class="field textarea" placeholder="完整任务资料"></textarea><button class="ghost-btn" onclick="MimaAssistantStudio.saveTaskResource()">保存为新资料版本</button><label class="form-label">已保存版本</label><select id="assistant-task-version" class="field">${task.versions.map(v=>`<option value="${esc(v.id)}">${taskKinds[v.kind]} · ${esc(v.time)}${task.current[v.kind]===v.id?' · 当前':''}</option>`).join('')}</select><button class="ghost-btn" onclick="MimaAssistantStudio.useTaskVersion()">使用此版本</button><div class="toolbar"><button class="ghost-btn" onclick="MimaAssistantStudio.previewRequest()">预览实际请求</button><button class="ghost-btn" onclick="MimaAssistantStudio.startWorkSegment()">保留资料，开始新工作段</button></div><div id="assistant-request-preview" role="status"></div></div></details>`;}
   function takeTaskSource(index){if(!writableSession())return;const row=thread()[Number(index)];if(row)document.getElementById('assistant-task-source').value=row.content;}
-  async function saveTaskResource(){if(generating||!writableSession())return;const o=sessionOwner();const content=document.getElementById('assistant-task-source')?.value||'',kind=document.getElementById('assistant-task-kind')?.value;if(!content.trim()||!taskKinds[kind])return notify('请填写完整资料');const task=state.tasks[activeType],version={id:'task-'+crypto.randomUUID(),kind,content,time:new Date().toISOString()};task.versions.push(version);task.current[kind]=version.id;task.revision=(task.revision||0)+1;try{await saveOwner(o,['thread','task']);}catch(_){return;}if(ownerVisible(o))render();notify('任务资料已保存为独立版本');}
+  async function saveTaskResource(){if(generating||!writableSession())return;const o=sessionOwner();const content=document.getElementById('assistant-task-source')?.value||'',kind=document.getElementById('assistant-task-kind')?.value;if(!content.trim()||!taskKinds[kind])return notify('请填写完整资料');const task=state.tasks[activeType],version={id:'task-'+secureId(),kind,content,time:new Date().toISOString()};task.versions.push(version);task.current[kind]=version.id;task.revision=(task.revision||0)+1;try{await saveOwner(o,['thread','task']);}catch(_){return;}if(ownerVisible(o))render();notify('任务资料已保存为独立版本');}
   async function useTaskVersion(){if(generating||!writableSession())return;const o=sessionOwner();const task=state.tasks[activeType],version=task.versions.find(v=>v.id===document.getElementById('assistant-task-version')?.value);if(!version)return;task.current[version.kind]=version.id;task.revision=(task.revision||0)+1;try{await saveOwner(o,['thread','task']);}catch(_){return;}if(ownerVisible(o))render();}
   async function startWorkSegment(){if(generating||!writableSession())return;const o=sessionOwner();if(!Object.keys(state.tasks[activeType].current).length)return notify('请先保存本任务需要保留的模板、字段表或方案，再开始新工作段');const task=state.tasks[activeType];for(const m of thread())if(!Number.isSafeInteger(m.taskSequence))m.taskSequence=nextTaskSequence();task.segmentBoundary=Number(thread().at(-1)?.taskSequence)||nextTaskSequence();task.segmentStart=thread().length;task.revision=(task.revision||0)+1;try{await saveOwner(o,['thread','task']);}catch(_){return;}if(ownerVisible(o))render();notify('新工作段已开始；全部历史和资料版本仍保留');}
   function previewRequest(plan=null){
@@ -732,14 +733,14 @@
   function profileFormHtml(){
     const p=profile(),cfg=assistantConfig(),story=window.MimaStandalone.getApiConfig();
     const tabs=[['connection','连接与模型'],['parameters','生成参数'],['instructions','助手指令'],['appearance','外观']];
-    const row=(title,html)=>`<label class="form-label">${title}</label>${html}`;
-    const field=(key,label,type='text')=>row(label,`<input class="field" type="${type}" value="${esc(p[key]??'')}" onchange="MimaAssistantStudio.setProfileField('${key}',this.value)">`);
+    const row=(title,html)=>`<div class="assistant-setting-field"><label class="form-label">${title}</label>${html}</div>`;
+    const field=(key,label,type='text')=>row(label,`<input class="field" aria-label="${label}" type="${type}" ${type==='number'?'step="any"':''} value="${esc(p[key]??'')}" onchange="MimaAssistantStudio.setProfileField('${key}',this.value)">`);
     let body='';
-    if(settingsCategory==='connection')body=`<p class="row-sub">沿用主 API 连接；模型选择仅影响本会话。</p>${row('模型',`<select id="assistant-model-select" class="field" onchange="MimaAssistantStudio.selectModel(this.value)"><option value="" ${!p.model?'selected':''}>继承主 API：${esc(story.model||'未设置')}</option>${[...new Set([...(p.model?[p.model]:[]),...(cachedModelFingerprint===modelsFingerprint(story)?cachedModels:[])])].map(m=>`<option value="${esc(m)}" ${m===p.model?'selected':''}>${esc(m)}</option>`).join('')}</select>`)}<button class="ghost-btn" onclick="MimaAssistantStudio.loadModels()">刷新模型列表</button>${field('model','手动模型名称（留空继承）')}<button class="ghost-btn" onclick="MimaAssistantStudio.selectModel('')">恢复继承模型</button>${row('当前连接及模型容量（0 = 继承）',`<input class="field" type="number" min="0" step="1024" value="${cfg.assistantCapacityOverride}" onchange="MimaAssistantStudio.setProfileField('contextWindowTokens',this.value)">`)}<p class="row-sub" id="assistant-capacity-status">有效窗口：${cfg.contextWindowTokens||'未声明'} Tokens</p>`;
-    if(settingsCategory==='parameters')body=`${field('temperature','温度（0.1–2）','number')}<label class="check-row"><input type="checkbox" ${p.sendTemperature!==false?'checked':''} onchange="MimaAssistantStudio.setProfileField('sendTemperature',this.checked)">发送温度</label><label class="check-row"><input type="checkbox" ${p.stream?'checked':''} onchange="MimaAssistantStudio.setProfileField('stream',this.checked)">流式输出</label>${row('输出上限',`<select class="field" onchange="MimaAssistantStudio.setProfileField('outputMode',this.value)">${[['custom','自定义（原有 0 不发送限制）'],['none','不发送限制'],['inherit','继承主 API']].map(([v,t])=>`<option value="${v}" ${(p.outputMode||'custom')===v?'selected':''}>${t}</option>`).join('')}</select>`)}${field('maxTokens','最大输出 Tokens','number')}${row('Top P 策略',`<select class="field" onchange="MimaAssistantStudio.setProfileField('sendTopP',this.value==='inherit'?null:this.value==='yes')"><option value="inherit" ${p.sendTopP==null?'selected':''}>继承主 API</option><option value="yes" ${p.sendTopP===true?'selected':''}>发送</option><option value="no" ${p.sendTopP===false?'selected':''}>不发送</option></select>`)}${field('topP','Top P（留空继承）','number')}<p class="row-sub">当前实际参数</p><pre>${esc(JSON.stringify(window.MimaStandalone.makeApiBody([],cfg,cfg.temperature),null,2))}</pre>`;
-    if(settingsCategory==='instructions')body=`<label class="check-row"><input type="checkbox" ${p.builtinInstructions!==false?'checked':''} onchange="MimaAssistantStudio.setProfileField('builtinInstructions',this.checked)">启用内置职责与工件说明</label><details><summary>查看内置指令原文</summary><pre>${esc(baseSystem(activeType)+'\n\n'+artifactV2Protocol()+'\n\n'+artifactJsonProtocol())}</pre></details><label class="form-label">助手身份指令</label><textarea class="field textarea" onchange="MimaAssistantStudio.setProfileField('persona',this.value)">${esc(p.persona||'')}</textarea><label class="form-label">自定义风格</label><textarea class="field textarea" onchange="MimaAssistantStudio.setProfileField('style',this.value)">${esc(p.style||'')}</textarea><details><summary>快捷任务指令（仅主动选择时发送）</summary><pre>${esc(quickInstruction(activeType))}</pre></details><p class="row-sub">关闭内置说明后不会注入职责及工件协议，本地工件解析与救援仍可使用。</p>`;
+    if(settingsCategory==='connection')body=`<p class="row-sub assistant-setting-note">沿用主 API 连接；模型选择仅影响本会话。</p>${row('模型',`<div class="assistant-setting-row"><select id="assistant-model-select" aria-label="模型" class="field" onchange="MimaAssistantStudio.selectModel(this.value)"><option value="" ${!p.model?'selected':''}>继承主 API：${esc(story.model||'未设置')}</option>${[...new Set([...(p.model?[p.model]:[]),...(cachedModelFingerprint===modelsFingerprint(story)?cachedModels:[])])].map(m=>`<option value="${esc(m)}" ${m===p.model?'selected':''}>${esc(m)}</option>`).join('')}</select><button class="ghost-btn" aria-label="刷新模型列表" title="刷新模型列表" onclick="MimaAssistantStudio.loadModels()">刷新列表</button></div>`)}${row('手动模型名称',`<div class="assistant-setting-row"><input id="assistant-model-manual" class="field" aria-label="手动模型名称" placeholder="留空继承主 API" value="${esc(p.model||'')}" onchange="MimaAssistantStudio.setProfileField('model',this.value)"><button class="ghost-btn" aria-label="恢复继承模型" title="恢复继承模型" onclick="MimaAssistantStudio.selectModel('')">继承模型</button></div>`)}${row('模型容量',`<div class="assistant-setting-row assistant-capacity-row"><input id="assistant-capacity-input" class="field" aria-label="当前连接及模型容量" type="number" min="0" step="1024" value="${cfg.assistantCapacityOverride}" onchange="MimaAssistantStudio.setProfileField('contextWindowTokens',this.value)"><span class="row-sub">0 为继承</span></div>`)}<p class="row-sub assistant-setting-note" id="assistant-capacity-status">有效窗口：${cfg.contextWindowTokens||'未声明'} Tokens</p>`;
+    if(settingsCategory==='parameters')body=`<div class="assistant-parameter-grid">${field('temperature','温度（0.1–2）','number')}${field('maxTokens','最大输出 Tokens','number')}${row('输出上限',`<select class="field" aria-label="输出上限" onchange="MimaAssistantStudio.setProfileField('outputMode',this.value)">${[['custom','自定义'],['none','不发送限制'],['inherit','继承主 API']].map(([v,t])=>`<option value="${v}" ${(p.outputMode||'custom')===v?'selected':''}>${t}</option>`).join('')}</select>`)}${row('Top P 策略',`<select class="field" aria-label="Top P 策略" onchange="MimaAssistantStudio.setProfileField('sendTopP',this.value==='inherit'?null:this.value==='yes')"><option value="inherit" ${p.sendTopP==null?'selected':''}>继承主 API</option><option value="yes" ${p.sendTopP===true?'selected':''}>发送</option><option value="no" ${p.sendTopP===false?'selected':''}>不发送</option></select>`)}${field('topP','Top P（留空继承）','number')}<div class="assistant-parameter-checks"><label class="check-row"><input type="checkbox" ${p.sendTemperature!==false?'checked':''} onchange="MimaAssistantStudio.setProfileField('sendTemperature',this.checked)">发送温度</label><label class="check-row"><input type="checkbox" ${p.stream?'checked':''} onchange="MimaAssistantStudio.setProfileField('stream',this.checked)">流式输出</label></div></div><p class="row-sub assistant-setting-note">自定义输出为 0 时不发送限制。</p><details class="assistant-parameter-preview"><summary>查看实际请求参数</summary><pre id="assistant-parameter-preview">${esc(JSON.stringify(window.MimaStandalone.makeApiBody([],cfg,cfg.temperature),null,2))}</pre></details>`;
+    if(settingsCategory==='instructions')body=`<label class="check-row"><input type="checkbox" ${p.builtinInstructions!==false?'checked':''} onchange="MimaAssistantStudio.setProfileField('builtinInstructions',this.checked)">启用内置职责与工件说明</label><details><summary>查看内置指令原文</summary><pre>${esc(baseSystem(activeType)+'\n\n'+artifactV2Protocol()+'\n\n'+artifactJsonProtocol())}</pre></details>${row('助手身份指令',`<textarea class="field textarea" aria-label="助手身份指令" onchange="MimaAssistantStudio.setProfileField('persona',this.value)">${esc(p.persona||'')}</textarea>`)}${row('自定义风格',`<textarea class="field textarea" aria-label="自定义风格" onchange="MimaAssistantStudio.setProfileField('style',this.value)">${esc(p.style||'')}</textarea>`)}<details><summary>快捷任务指令（仅主动选择时发送）</summary><pre>${esc(quickInstruction(activeType))}</pre></details><p class="row-sub assistant-setting-note">关闭内置说明后不会注入职责及工件协议，本地工件解析与救援仍可使用。</p>`;
     if(settingsCategory==='appearance')body=cssPickerHtml();
-    return `<nav class="workspace-settings-tabs">${tabs.map(([k,t])=>`<button class="ghost-btn" aria-pressed="${settingsCategory===k}" onclick="MimaAssistantStudio.settingsTab('${k}')">${t}</button>`).join('')}</nav><div class="assistant-config-body">${body}</div>`;
+    return `<nav class="workspace-settings-tabs" aria-label="助手设置分类">${tabs.map(([k,t])=>`<button class="ghost-btn" aria-pressed="${settingsCategory===k}" onclick="MimaAssistantStudio.settingsTab('${k}')">${t}</button>`).join('')}</nav><div class="assistant-config-body" data-settings-page="${settingsCategory}">${body}</div>`;
   }
 
   function artifactButtons(detail,index,msg){
@@ -804,7 +805,7 @@
   function renderDrawer(){
     const drawer=document.getElementById('assistant-drawer');if(!drawer)return;
     captureTaskEditor();
-    drawer.hidden=!drawerPage;if(!drawerPage)return;
+    drawer.hidden=!drawerPage;drawer.dataset.page=drawerPage;if(!drawerPage)return;
     const titles={settings:'设置',sessions:'会话',task:'任务资料',tools:'工具',preview:'请求预览'};
     let body='';
     if(drawerPage==='settings')body=profileFormHtml();
@@ -853,7 +854,7 @@
     }));
   }
   function newSession(){
-    if(generating||stateOperationBusy)return Promise.resolve({status:'BUSY'});const type=activeType,id='assistant-'+crypto.randomUUID(),intent=++selectionIntents[type];
+    if(generating||stateOperationBusy)return Promise.resolve({status:'BUSY'});const type=activeType,id='assistant-'+secureId(),intent=++selectionIntents[type];
     return enqueueSessionOperation(type,()=>commitSessionChange(type,()=>{
       const group=state.sessions[type],item={id,title:'新会话',archived:false,profile:normalizeState({}).profiles[type],thread:[],task:emptyTask()};
       return {group:{...group,items:[...group.items,item],active:intent===selectionIntents[type]?id:group.active},created:id};
@@ -890,7 +891,16 @@
     // Parameters and UI never snapshot or write a chat thread.
     if(key==='temperature'){const receipt=await scheduleProfileSave();if(receipt?.status==='FAILED')return;}
     else{await flushProfileSave();try{await saveState('');}catch(_){return;}}
-    if(key==='model'&&activeType===type&&sessionId(type)===ownerId){const input=document.getElementById('assistant-model-manual');if(input)input.value=p.model;const select=document.getElementById('assistant-model-select');if(select){if(p.model&&![...select.options].some(o=>o.value===p.model))select.add(new Option(p.model,p.model));select.value=p.model;}}notify('助手设置已保存');
+    if(activeType===type&&sessionId(type)===ownerId){
+      if(key==='model'){const input=document.getElementById('assistant-model-manual');if(input&&document.activeElement!==input)input.value=p.model;const select=document.getElementById('assistant-model-select');if(select){if(p.model&&![...select.options].some(o=>o.value===p.model))select.add(new Option(p.model,p.model));select.value=p.model;}}
+      const current=assistantConfig();
+      if(key==='model'||key==='contextWindowTokens'){
+        const capacity=document.getElementById('assistant-capacity-input'),status=document.getElementById('assistant-capacity-status');
+        if(capacity&&document.activeElement!==capacity)capacity.value=current.assistantCapacityOverride;
+        if(status)status.textContent='有效窗口：'+(current.contextWindowTokens||'未声明')+' Tokens';
+      }
+      const preview=document.getElementById('assistant-parameter-preview');if(preview)preview.textContent=JSON.stringify(window.MimaStandalone.makeApiBody([],current,current.temperature),null,2);
+    }notify('助手设置已保存');
   }
   async function selectModel(value){await setProfileField('model',value);}
   function modelsFingerprint(cfg){return JSON.stringify([cfg.apiBase,cfg.modelsEndpoint,cfg.apiKey,cfg.extraHeaders]);}
@@ -914,7 +924,7 @@
   function stop(){retainInterruptedDraft();generationEpoch++;if(controller)controller.abort();controller=null;generating=false;draftAssistantText='';generationMode='send';regeneratingIndex=-1;render();}
 
   async function send(){
-    if(generating||!writableSession())return;const turnOwner=sessionOwner();turnOwner.turnId=crypto.randomUUID();
+    if(generating||!writableSession())return;const turnOwner=sessionOwner();turnOwner.turnId=secureId();
     const input=document.getElementById('assistant-input');const raw=input?.value||'';if(!raw.trim())return;
     const p=profile(),storyCfg=window.MimaStandalone.getApiConfig();const model=(p.model||storyCfg.model||'').trim();if(!storyCfg.apiBase||!model){notify('先去 🔌 API 设置配置连接，并给助手选择一个模型猫。');return;}
     const quickMode=nextQuickMode===activeType;const userContent=(quickMode?`${quickInstruction(activeType)}\n\n【用户素材】\n${raw}`:raw);
@@ -945,7 +955,7 @@
   }
 
   async function regenerate(index){
-    if(generating||!writableSession())return;const turnOwner=sessionOwner();turnOwner.turnId=crypto.randomUUID();
+    if(generating||!writableSession())return;const turnOwner=sessionOwner();turnOwner.turnId=secureId();
     const items=thread();index=Number(index);if(!Number.isInteger(index)||index<0)index=lastAssistantIndex();const target=items[index];if(!target||target.role!=='assistant')return notify('还没有可以重说的助手回复。');
     const before=items.slice(0,index);if(!before.some(m=>m.role==='user'))return notify('这条回复前没有用户消息，无法安全重说。');
     const p=profile(),storyCfg=window.MimaStandalone.getApiConfig();const model=(p.model||storyCfg.model||'').trim();if(!storyCfg.apiBase||!model){notify('先去 🔌 API 设置配置连接，并给助手选择一个模型猫。');return;}
@@ -960,7 +970,7 @@
   }
 
   async function repairArtifact(index){
-    if(generating||!writableSession())return;const turnOwner=sessionOwner();turnOwner.turnId=crypto.randomUUID();
+    if(generating||!writableSession())return;const turnOwner=sessionOwner();turnOwner.turnId=secureId();
     const items=thread();index=Number(index);const target=items[index];if(!target||target.role!=='assistant')return notify('没有找到要修复的助手工件。');
     const detailBefore=parseArtifactDetailed(target.content);if(!detailBefore.found)return notify('这条回复没有 MIMA 工件标记。');
     if(detailBefore.artifact)return notify('这条工件已经能被本地解析，不需要再调用 AI 修复。');

@@ -8,7 +8,7 @@ window.MimaBackupVolumes=(()=>{'use strict';
  const encoder=new TextEncoder(),decoder=new TextDecoder();
  const bytes=s=>encoder.encode(s);
  const hex=a=>[...new Uint8Array(a)].map(b=>b.toString(16).padStart(2,'0')).join('');
- async function sha(value){return hex(await crypto.subtle.digest('SHA-256',value instanceof Blob?await value.arrayBuffer():typeof value==='string'?bytes(value):value));}
+ async function sha(value){return (await (value instanceof Blob?MimaRequestHash.digestBlob(value):typeof value==='string'?MimaRequestHash.digestText(value):MimaRequestHash.digestBytes(value))).sha256;}
  function assertName(name){if(!/^[a-z0-9_-]{2,128}$/i.test(name))throw Error('备份成员标识不合法');return name;}
  function checkSafe(value){if(!Number.isSafeInteger(value)||value<0)throw Error('备份长度或序号不合法');return value;}
  async function create({archiveId,createdAt,includeApiKey,getSection,getFonts,onVolume,onProgress=()=>{}}){

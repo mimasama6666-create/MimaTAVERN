@@ -3,10 +3,11 @@
   'use strict';
   const W=window, $=id=>document.getElementById(id), clone=v=>structuredClone(v);
   const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const uid=()=>crypto.randomUUID(), now=()=>new Date().toISOString();
+  const uid=()=>{try{return W.MimaRandomId.uuid();}catch(error){notify(error.message);throw error;}}, now=()=>new Date().toISOString();
   const notify=v=>W.toast?W.toast(v):console.info(v);
   const labels={novel:'小说续写',article:'文章优化',chat:'模型聊天'};
-  const owner=uid(),runs=new Map(),edits=new Map(),editTails=new Map(),sourceEpochs=new Map(),sourceOperations=new Map(),fileTargets=new WeakMap();
+  let owner=null;
+  const runs=new Map(),edits=new Map(),editTails=new Map(),sourceEpochs=new Map(),sourceOperations=new Map(),fileTargets=new WeakMap();
   let partitionReady=null,drawerEpoch=0,sourceDirectorySequence=0,editSequence=0;
   let articleTab='source',editorOwner=null,viewBusy=null,viewLoadError=null;
   const editFailures=new Map();
@@ -304,6 +305,7 @@
   function assertRun(row,run){if(row.run?.id!==run.id||row.run.owner!==owner)throw Error('生成归属已改变，迟到内容未写入');}
   async function generate(regenerateId=null){
     const o=writableOwner();if(!o)return;const {kind,id}=o,key=editKey(kind,id);if(runs.has(key))return;
+    owner??=uid();
     let finish;const run={id:uid(),kind,target:id,controller:new AbortController(),text:'',done:new Promise(resolve=>finish=resolve),checkpoint:Promise.resolve(),error:null,versionId:uid(),lastSaved:''};runs.set(key,run);
     try{
       capture();const savedEdit=await flushEdit(key);if(kind==='article'&&savedEdit?.conflictId)throw Error('原文存在版本冲突，请先处理已保存的冲突稿');const row=await readRecord(kind,id);

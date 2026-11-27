@@ -743,9 +743,7 @@ window.MimaFontManager = (() => {
         });
     }
     async function fingerprintOf(buffer){
-        if(!globalThis.crypto?.subtle?.digest)throw new Error('当前浏览器不支持安全内容指纹，未导入字体');
-        const digest=await crypto.subtle.digest('SHA-256',buffer);
-        return Array.from(new Uint8Array(digest),n=>n.toString(16).padStart(2,'0')).join('');
+        return (await window.MimaRequestHash.digestBytes(buffer)).sha256;
     }
     async function identicalFile(fingerprint,buffer){
         // A cryptographic hash is an index, not a substitute for verifying the

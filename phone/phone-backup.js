@@ -3,7 +3,7 @@
  const store=()=>MimaPhoneStore;
  const toBase64=blob=>new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]||'');reader.onerror=()=>reject(reader.error);reader.readAsDataURL(blob);});
  function fromBase64(source,type){const bin=atob(source),arr=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);return new Blob([arr],{type});}
- const sha=async text=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text)))].map(x=>x.toString(16).padStart(2,'0')).join('');
+ const sha=async text=>(await MimaRequestHash.digestText(text)).sha256;
  async function build(){const names=store().stores;
    const frozen=await store().transaction(names,'readonly',async tx=>Object.fromEntries(await Promise.all(names.map(async name=>[name,await tx.all(name)]))));
    const tables={};for(const name of names){const rows=frozen[name];tables[name]=[];for(const row of rows){if(name==='media'&&row.blob){tables[name].push({...row,blobBase64:await toBase64(row.blob),blob:undefined});}else tables[name].push(row);}}
@@ -34,7 +34,7 @@
  }
  async function importFile(file){if(!(file instanceof File))throw Error('请先选择完整备份文件');const raw=JSON.parse(await file.text());if(raw?.format!=='MIMA_PHONE_FULL_BACKUP'||raw?.data?.schema!=='mima_phone_archive_v1')throw Error('不是本版本完整小手机归档');const digest=await sha(JSON.stringify(raw.data));if(digest!==raw.sha256)throw Error('备份完整性校验失败，未修改数据库');
    const tables=raw.data.tables;for(const name of store().stores)if(!Array.isArray(tables?.[name]))throw Error('归档缺少数据表：'+name);validateRecords(tables);
-   const media=[];for(const a of tables.media){if(typeof a.blobBase64!=='string')throw Error('媒体缺少原始二进制：'+a.id);const blob=fromBase64(a.blobBase64,a.mime);if(blob.size!==a.size)throw Error('媒体大小与归档不符：'+a.id);const digest=[...new Uint8Array(await crypto.subtle.digest('SHA-256',await blob.arrayBuffer()))].map(x=>x.toString(16).padStart(2,'0')).join('');if(digest!==a.hash)throw Error('媒体原件哈希与归档不符：'+a.id);const {blobBase64,...rest}=a;media.push({...rest,blob});}
+   const media=[];for(const a of tables.media){if(typeof a.blobBase64!=='string')throw Error('媒体缺少原始二进制：'+a.id);const blob=fromBase64(a.blobBase64,a.mime);if(blob.size!==a.size)throw Error('媒体大小与归档不符：'+a.id);const digest=(await MimaRequestHash.digestBlob(blob)).sha256;if(digest!==a.hash)throw Error('媒体原件哈希与归档不符：'+a.id);const {blobBase64,...rest}=a;media.push({...rest,blob});}
    const hydrated={...tables,media};
    // Atomic isolation: no replacement of an existing canonical database.
    await store().transaction(store().stores,'readwrite',async t=>{for(const name of store().stores){const existing=await t.all(name);if(existing.length)throw Error('本机手机已有真实数据。为防覆盖已拒绝导入：请在空白浏览器/新站点恢复');}
@@ -57,7 +57,7 @@
  }
  async function verifyMedia(tables){
    for(const a of tables.media||[]){if(!(a.blob instanceof Blob)||a.blob.size!==a.size||(a.blob.type||'application/octet-stream')!==a.mime)throw Error('手机媒体原件结构异常：'+a.id);
-     const digest=[...new Uint8Array(await crypto.subtle.digest('SHA-256',await a.blob.arrayBuffer()))].map(x=>x.toString(16).padStart(2,'0')).join('');
+     const digest=(await MimaRequestHash.digestBlob(a.blob)).sha256;
      if(digest!==a.hash)throw Error('手机媒体原件哈希不符：'+a.id);}
  }
  async function previewArchive(tables,options={}){for(const n of store().stores)if(!Array.isArray(tables?.[n]))throw Error('手机迁移缺少表：'+n);const current=await snapshot();await verifyMedia(tables);await verifyMedia(current);return {willAdd:inspectMerge(current,tables,options).counts,credentialsPreserved:options.credentialsOmitted===true};}

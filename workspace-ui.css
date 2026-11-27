@@ -84,3 +84,56 @@
 .workspace-rescue{flex:0 0 auto;max-height:45%;overflow:auto;padding:1em;border:1px solid var(--danger);background:var(--panel-solid);color:var(--text);}.workspace-rescue pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;}
 
 }
+
+
+/* Assistant geometry is scoped outside the visual skin layer: generic modal
+ * and sidebar rules must not reintroduce the retired full-page settings layout.
+ * Fonts, colors, borders, artwork and the shared density service stay inherited.
+ */
+#assistant-modal .assistant-studio-head{
+ display:grid;grid-template-columns:auto auto minmax(0,1fr) auto auto;align-items:center;
+ gap:calc(7px * var(--mima-component-unit,1));min-height:0;
+ padding:max(calc(7px * var(--mima-component-unit,1)),env(safe-area-inset-top)) calc(10px * var(--mima-component-unit,1)) calc(7px * var(--mima-component-unit,1));
+}
+#assistant-modal .assistant-type-art{flex:none;align-self:center;}
+#assistant-modal .assistant-type-choice{flex:1;min-width:0;width:100%;max-width:none;box-sizing:border-box;height:calc(36px * var(--mima-component-unit,1));padding:0 2px;font:inherit;font-weight:600;line-height:1.3;}
+#assistant-modal .assistant-studio-head>.icon-btn{width:calc(36px * var(--mima-component-unit,1));height:calc(36px * var(--mima-component-unit,1));min-width:0;min-height:0;padding:0;}
+#assistant-modal .assistant-studio-head>.ghost-btn{min-width:0;min-height:0;height:calc(36px * var(--mima-component-unit,1));padding:0 calc(7px * var(--mima-component-unit,1));font-size:.92em;line-height:1.3;white-space:nowrap;}
+#assistant-modal #assistant-drawer.workspace-drawer{
+ display:flex;flex-direction:column;gap:0;padding:0;min-height:0;overflow:hidden;
+ top:calc(6px * var(--mima-component-unit,1));right:calc(6px * var(--mima-component-unit,1));bottom:auto;
+ width:min(calc(100% - 12px * var(--mima-component-unit,1)),calc(480px * var(--mima-component-unit,1)));
+ max-height:calc(100% - 12px * var(--mima-component-unit,1));border-radius:calc(12px * var(--mima-component-unit,1));
+}
+#assistant-modal #assistant-drawer[hidden]{display:none;}
+#assistant-modal .workspace-drawer-head{position:relative;flex:0 0 auto;min-height:0;gap:calc(6px * var(--mima-component-unit,1));padding:calc(6px * var(--mima-component-unit,1)) calc(10px * var(--mima-component-unit,1));}
+#assistant-modal .workspace-drawer-head>strong{margin-right:auto;font-size:1em;}
+#assistant-modal .workspace-drawer-head>button{min-height:0;height:calc(32px * var(--mima-component-unit,1));padding:0 calc(8px * var(--mima-component-unit,1));font-size:.9em;line-height:1.3;white-space:nowrap;}
+#assistant-modal .workspace-drawer-body{flex:0 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;padding:calc(10px * var(--mima-component-unit,1));padding-bottom:max(calc(10px * var(--mima-component-unit,1)),env(safe-area-inset-bottom));}
+#assistant-modal .workspace-settings-tabs{display:flex;flex-wrap:nowrap;gap:calc(4px * var(--mima-component-unit,1));overflow-x:auto;margin:0 0 calc(9px * var(--mima-component-unit,1));padding:0 0 calc(4px * var(--mima-component-unit,1));}
+#assistant-modal .workspace-settings-tabs>button{flex:1 0 auto;min-width:0;min-height:0;height:calc(34px * var(--mima-component-unit,1));padding:0 calc(6px * var(--mima-component-unit,1));font-size:.9em;line-height:1.3;white-space:nowrap;}
+#assistant-modal .workspace-settings-tabs .mima-ui-icon{width:1.25em;height:1.25em;}
+#assistant-modal .assistant-config-body{display:grid;gap:calc(9px * var(--mima-component-unit,1));min-width:0;}
+#assistant-modal .assistant-setting-field{display:grid;gap:calc(4px * var(--mima-component-unit,1));min-width:0;}
+#assistant-modal .assistant-setting-field>.form-label{margin:0;font-size:.9em;line-height:1.35;}
+#assistant-modal .assistant-setting-row{display:flex;align-items:center;gap:calc(6px * var(--mima-component-unit,1));min-width:0;}
+#assistant-modal .assistant-setting-row>.field{flex:1;min-width:0;width:0;}
+#assistant-modal .workspace-drawer-body .field{box-sizing:border-box;min-width:0;min-height:0;width:100%;height:calc(38px * var(--mima-component-unit,1));margin:0;padding:calc(5px * var(--mima-component-unit,1)) calc(8px * var(--mima-component-unit,1));font-size:1em;line-height:1.25;}
+#assistant-modal .workspace-drawer-body textarea.field{height:auto;min-height:6em;resize:vertical;line-height:1.5;}
+#assistant-modal .assistant-setting-row>button{flex:none;min-height:0;height:calc(38px * var(--mima-component-unit,1));padding:0 calc(8px * var(--mima-component-unit,1));font-size:.92em;line-height:1.3;white-space:nowrap;}
+#assistant-modal .assistant-capacity-row>.field{flex:0 1 45%;width:45%;}
+#assistant-modal .assistant-capacity-row>.row-sub{margin:0;white-space:nowrap;}
+#assistant-modal .assistant-setting-note{margin:0;line-height:1.5;font-size:.88em;}
+#assistant-modal .assistant-parameter-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:calc(9px * var(--mima-component-unit,1));align-items:start;}
+#assistant-modal .assistant-parameter-checks{display:grid;gap:calc(6px * var(--mima-component-unit,1));align-content:start;padding-top:.4em;}
+#assistant-modal .assistant-config-body .check-row{display:flex;align-items:center;gap:.45em;margin:0;font-size:.95em;line-height:1.4;}
+#assistant-modal .assistant-config-body .check-row>input{flex:none;width:auto;height:auto;margin:0;}
+#assistant-modal .assistant-config-body pre{max-height:min(35dvh,calc(280px * var(--mima-component-unit,1)));overflow:auto;margin:0;}
+#assistant-modal #assistant-request-preview{min-width:0;}
+#assistant-modal #assistant-request-preview pre{max-width:100%;white-space:pre-wrap;overflow-wrap:anywhere;overflow:auto;font:inherit;line-height:1.5;}
+#assistant-modal .assistant-config-body details>summary{min-height:0;padding:calc(6px * var(--mima-component-unit,1)) 0;font-size:.93em;line-height:1.4;}
+#assistant-modal .workspace-drawer-body .workspace-session{padding:calc(8px * var(--mima-component-unit,1)) 0;}
+#assistant-modal .workspace-drawer-body>.ghost-btn,#assistant-modal .workspace-drawer-body>.primary-btn,#assistant-modal .workspace-drawer-body>.danger-btn{min-height:0;padding:calc(6px * var(--mima-component-unit,1)) calc(9px * var(--mima-component-unit,1));font-size:.95em;line-height:1.35;}
+@media(min-width:901px){
+ #assistant-modal .assistant-drawer-pinned>#assistant-drawer.workspace-drawer{position:relative;inset:auto;width:auto;max-height:100%;height:100%;border-radius:0;}
+}
