@@ -3882,14 +3882,14 @@ async function buildFullSettingsBackup({includeApiKey=false,includeFonts=true}={
     const atelier=await MimaAtelierCore.exportRecords();
     const wallpapers=await MimaChatWallpaper.exportRecords();
     const personalSounds=await MimaInteraction.exportSounds();
-    const localPrefs=collectPortableLocalPrefs(),assistant=await MimaAssistantStudio.exportPortableState();
+    const localPrefs=collectPortableLocalPrefs(),assistant=await MimaAssistantStudio.exportPortableState(),writingWorkspace=await MimaWritingWorkspace.exportRecords();
     if(assistant!==null)localPrefs[ASSISTANT_BACKUP_KEY]=assistant;
     return {
         format:FULL_SETTINGS_FORMAT,
         version:FULL_SETTINGS_VERSION,
         exportedAt:new Date().toISOString(),
         warning:includeApiKey?'此文件包含 API Key（接口密钥），请勿公开分享。':'此文件未包含 API Key（接口密钥）。',
-        data:{library,atelier,wallpapers,personalSounds,api,localPrefs,fonts,selectedFonts:{ui:MimaFontManager.getSelected('ui'),story:MimaFontManager.getSelected('story')}}
+        data:{library,atelier,wallpapers,personalSounds,writingWorkspace,api,localPrefs,fonts,selectedFonts:{ui:MimaFontManager.getSelected('ui'),story:MimaFontManager.getSelected('story')}}
     };
 }
 function assertSettingsFontInventory(inventory){
@@ -3982,6 +3982,7 @@ async function applyFullSettingsBackup(raw,{fromSnapshot=false,templatePolicy='r
     if(assistantBackup!==undefined)MimaAssistantStudio.validatePortableState(assistantBackup);
     if(src.fonts!==undefined&&!Array.isArray(src.fonts))throw new Error('fonts 结构无效');
     if(src.personalSounds!==undefined)MimaInteraction.validateSounds(src.personalSounds);
+    if(src.writingWorkspace!==undefined)MimaWritingWorkspace.validateRecords(src.writingWorkspace);
     // Verify the incoming API snapshot before importing any external assets.
     if(src.api!==undefined)MimaStandalone.validateApiConfigSnapshot(src.api);
     const atelierPlan=src.atelier?await MimaAtelierCore.previewRecordImport(src.atelier):null;
@@ -4053,6 +4054,7 @@ async function applyFullSettingsBackup(raw,{fromSnapshot=false,templatePolicy='r
             try{await MimaAssistantStudio.restorePortableState(assistantBackup);}
             catch(error){restoreWarnings.push('助手历史恢复未提交：'+error.message);}
         }
+        if(src.writingWorkspace!==undefined){try{await MimaWritingWorkspace.importRecords(src.writingWorkspace);}catch(error){restoreWarnings.push('文章与聊天恢复未提交：'+error.message);}}
         // Canonical commit is authoritative; personal sounds are a separate, atomic IDB sidecar.
         if(src.personalSounds!==undefined){try{await MimaInteraction.importSounds(src.personalSounds);}catch(soundError){restoreWarnings.push('个人点击音效未恢复（现有音效保持）：'+soundError.message);}}
     }catch(e){
