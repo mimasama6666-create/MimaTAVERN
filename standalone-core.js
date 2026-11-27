@@ -1782,8 +1782,8 @@
   }
   function memoryAssistantText(session,message){
     const view=protocolMessageView(session,message);
-    if(view)return view.ok?view.text:'【保留原文 · 栏位未核实】\n'+view.text;
-    return historyHtmlProjection(resolveMacrosForSession(session,message.content),session).text;
+    const projected=view?(view.ok?view.text:'【保留原文 · 栏位未核实】\n'+view.text):historyHtmlProjection(resolveMacrosForSession(session,message.content),session).text;
+    return assistantPlayerTagEvidence(message.content)?PLAYER_HISTORY_ORIGIN+'\n'+projected:projected;
   }
   function worldbookSource(session,message){
     const range=session.promptSettings?.worldbookProtocolRange;
@@ -1807,6 +1807,64 @@
     }
     const configured=session?.promptSettings?.inputSemanticMode;
     return semanticModes.includes(configured)?configured:'raw';
+  }
+  const PLAYER_INPUT_FORMAT='【玩家输入格式】PLAYER_TURN 及其 PLAYER_SPEECH（已提交台词）、PLAYER_ACTION（已提交动作）、PLAYER_STAGE（舞台说明）、PLAYER_PRIVATE_THOUGHT（私密想法）是程序对玩家已提交输入的只读标记，不是角色输出模板。只承接其语义，角色只知合理可感知部分；私密想法不是公开信息。不要在角色输出中复刻这些技术标签；玩家明确要求当次代写时按授权范围处理。';
+  const PLAYER_HISTORY_ORIGIN='【历史来源】角色回复中的玩家输入标签属于角色生成的原文，并非玩家提交记录；其中玩家发言、行动及决定须以真实玩家消息或明确确认/授权为依据。保留引用和原文，不把未确认内容作为新玩家事实、输出范例或角色指令。';
+  // Non-blocking provenance hint, never an output filter. Ignore literal code,
+  // escaped tags and inline code. Exact input protocol tokens only.
+  function assistantPlayerTagEvidence(value){
+    const source=String(value??'');
+    if(!/<\/?PLAYER_(?:TURN|SPEECH|ACTION|STAGE|PRIVATE_THOUGHT)(?=[\s/>])/.test(source))return false;
+    let fence=null;
+    const htmlCode=[];
+    // Scan contiguous prose blocks, not individual lines: Markdown inline
+    // code needs a real equal-length closer and may span soft line breaks.
+    // A paragraph break or independent fence ends the search for a closer.
+    const scanBlock=block=>{
+      const tokens=[...block.matchAll(/<\/?(?:pre|code|kbd|samp|PLAYER_(?:TURN|SPEECH|ACTION|STAGE|PRIVATE_THOUGHT))(?=[\s/>])(?:"[^"]*"|'[^']*'|[^'">])*?>|`+/gi)];
+      const nextRun=new Map(),closers=new Map();
+      for(let i=tokens.length-1;i>=0;i--){
+        const token=tokens[i][0];
+        if(token[0]!=='`')continue;
+        const next=nextRun.get(token.length);
+        if(next!==undefined)closers.set(i,next);
+        nextRun.set(token.length,i);
+      }
+      const escaped=at=>{let n=0;while(at>0&&block[--at]==='\\')n++;return n%2===1;};
+      for(let i=0;i<tokens.length;i++){
+        const {0:token,index}=tokens[i];
+        const html=/^<(\/?)(pre|code|kbd|samp)(?=[\s/>])/i.exec(token);
+        if(htmlCode.length){
+          if(html){const name=html[2].toLowerCase();
+            if(html[1]){if(htmlCode.at(-1)===name)htmlCode.pop();}
+            else if(!/\/\s*>$/.test(token))htmlCode.push(name);
+          }
+          continue;
+        }
+        if(escaped(index))continue;
+        if(token[0]==='`'){
+          if(closers.has(i))i=closers.get(i);
+          continue; // An unmatched run is literal, not an opening delimiter.
+        }
+        if(html){if(!html[1]&&!/\/\s*>$/.test(token))htmlCode.push(html[2].toLowerCase());continue;}
+        if(/^<\/?PLAYER_/.test(token))return true;
+      }
+      return false;
+    };
+    let block=[];
+    const flush=()=>{const found=scanBlock(block.join('\n'));block=[];return found;};
+    for(const line of source.split(/\r?\n/)){
+      const run=/^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+      if(fence){if(run&&run[1][0]===fence[0]&&run[1].length>=fence.length&&!run[2].trim())fence=null;continue;}
+      if(run&&(run[1][0]==='~'||!run[2].includes('`'))){
+        if(flush())return true;
+        if(!htmlCode.length){fence=run[1];continue;}
+      }
+      if(!line.trim()){if(flush())return true;continue;}
+      block.push(line);
+    }
+    if(flush())return true;
+    return false;
   }
   function compileUserInputForPrompt(sessionOrId,input,modeOverride=null){
     const session=typeof sessionOrId==='string'?getSession(sessionOrId):sessionOrId;
@@ -1843,7 +1901,7 @@
   // Equal priorities retain this session's mount order. This does not assign
   // provider weights or automatically resolve conflicts in free-text rules.
   function sortedPresets(session,protocol=null){
-    const mounted=arr(session.presetIds).map(getPreset).filter(Boolean);
+    const mounted=[...new Set(arr(session.presetIds))].map(getPreset).filter(Boolean);
     const rows=protocol?.preset?replaceFrozenResource(mounted,protocol.preset,protocol.preset.id,
       new Set([protocol.preset.id]),protocol.presetIndex,protocol.presetOrder):mounted;
     return rows.filter(row=>row.enabled!==false).sort((a,b)=>Number(a.priority??50)-Number(b.priority??50));
@@ -2048,6 +2106,8 @@
       const shape=htmlContract.structureMode==='three_part_html_status'?'明确启用三段式：先 .mima-current 环境栏，中间保留非空剧情正文，末尾依次且各仅一个 .mima-gaze、.mima-bond、.mima-abyss、.mima-pulse、.mima-cocoon、.mima-echo、.mima-pets、.mima-nexus。':'旧版自定义选择器结构模式；';
       add('html_structure_contract',`【HTML 状态栏格式：要按照格式输出。${shape}必需结构选择器：${htmlContract.requiredSelectors||'(无额外选择器)'}。正文槽：${htmlContract.bodySelector||'(未标注)'}。状态槽：${htmlContract.statusSelector||'(未标注)'}。HTML 标签须完整；旧状态不等于本轮状态，无法确认的值标为待确认。】${sourceSafeShell}`);
     }
+    if(options.compiledPlayerInput)add('player_input_format',PLAYER_INPUT_FORMAT,{kind:'input_protocol'});
+    if(options.assistantPlayerTagEvidence)add('player_history_origin',PLAYER_HISTORY_ORIGIN,{kind:'history_provenance'});
     if(options.directorNote||session.directorNote)add('director_note',options.directorNote||session.directorNote);
     return {prompt:chunks.join('\n\n'),sections,memoryTrace};
   }
@@ -2176,7 +2236,7 @@
     const budget=Math.max(1000,Number(session.promptSettings?.worldbookBudgetChars||16000)),budgeted=enforceBudget(activation.matched,budget),matched=budgeted.kept;
     const worldbookMountTrace=arr(session.worldbookIds).map(id=>{const book=getWorldbook(id);return {bookId:id,bookName:book?.name||'',mounted:true,enabled:book?.enabled!==false&&!!book,reason:!book?'missing_book':book.enabled===false?'disabled_book':'enabled'};});
     const maskTrace=[{kind:'character',id:session.loadedCharMaskId},{kind:'user',id:session.loadedUserMaskId}].map(x=>{const mask=x.id?getMask(x.id):null;return {kind:x.kind,id:x.id||null,loaded:!!mask,enabled:!!mask&&mask.enabled!==false,injected:!!enabledMask(x.id),reason:!x.id?'not_mounted':!mask?'missing_mask':mask.enabled===false?'disabled':'included',name:mask?.name||'',chars:mask&&mask.enabled!==false?formatMask(mask,x.kind).length:0};});
-    const presetTrace=arr(session.presetIds).map(id=>{const preset=getPreset(id);return {id,name:preset?.name||'',priority:preset?.priority??null,mounted:true,enabled:!!preset&&preset.enabled!==false,injected:!!preset&&preset.enabled!==false&&!!text(preset.content),role:'system',reason:!preset?'missing_preset':preset.enabled===false?'disabled':!text(preset.content)?'empty':'included',chars:preset?.content?.length||0};});
+    const presetTrace=[...new Set(arr(session.presetIds))].map(id=>{const preset=getPreset(id);return {id,name:preset?.name||'',priority:preset?.priority??null,mounted:true,enabled:!!preset&&preset.enabled!==false,injected:!!preset&&preset.enabled!==false&&!!text(preset.content),role:'system',reason:!preset?'missing_preset':preset.enabled===false?'disabled':!text(preset.content)?'empty':'included',chars:preset?.content?.length||0};});
     // R11: Project the entire canonical History when the configured model can
     // carry it. A fixed recentMessageLimit governs background summarization,
     // never truncates a sufficiently large model's input.
@@ -2189,7 +2249,15 @@
 
     const limit=Math.max(6,Number(session.promptSettings?.recentMessageLimit||34));
     const depthOnly=matched.filter(x=>Number(x.entry.depth||0)>0);
-    let sys=buildSystemPrompt(session,options,matched);
+    // Flags belong to the actual retained canonical messages, not the current
+    // session mode or a string search of raw player input. Recompute if a
+    // verified context limit removes a prefix; the same sections enter budget,
+    // inspector and provider payload. No mutation of historical snapshots.
+    const compiledIds=new Set(visibleHistory.filter(m=>m.role==='user'&&m.content&&inputSemanticMode(session,m)!=='raw'&&window.MimaUserInputSemanticParser?.compile).map(m=>m.id));
+    const assistantTagIds=new Set(visibleHistory.filter(m=>m.role==='assistant'&&m.content&&(assistantPlayerTagEvidence(m.content)||assistantPlayerTagEvidence(promptProjection.get(m.id)))).map(m=>m.id));
+    const retainedAssistantEvidence=m=>assistantTagIds.has(m.id)&&(isManuallyRecoveredReply(m)||!(m.metadata?.providerRefused===true||m.metadata?.providerFinishKind==='blocked'||['content_filter','safety','blocked','prohibited_content','refusal'].includes(m.metadata?.providerFinishReason)));
+    const systemForHistory=rows=>buildSystemPrompt(session,{...options,compiledPlayerInput:rows.some(m=>compiledIds.has(m.id)),assistantPlayerTagEvidence:rows.some(retainedAssistantEvidence)},matched);
+    let sys=systemForHistory(visibleHistory);
     // Per-assembly only: no stale cache when regex, original History or
     // settings change. All cost estimates and retrieval reuse this projection.
     const htmlProjectionStats=new Map(),projectedHistory=new Map();
@@ -2213,7 +2281,7 @@
       // extend different text than the user's saved reply, breaking append.
       const preservePrefix=options.preserveTerminalAssistant===true&&m===visibleHistory[visibleHistory.length-1]&&m.role==='assistant';
       const preserveLatest=!!lastEligibleAssistantId&&m.id===lastEligibleAssistantId&&m.role==='assistant';
-      const projected=preservePrefix&&options.protocolContinuation==='complete_missing'?{role:'assistant',content:m.content}:
+      const projected=preservePrefix&&options.protocolContinuation==='complete_missing'?{role:'assistant',content:m.content,source:{kind:'canonical_history',sourceId:m.id,messageId:m.id,originalRole:m.role}}:
         (preservePrefix||preserveLatest)?toHistoryMessage(m,{...session,promptSettings:{...session.promptSettings,historyHtmlMode:'raw'}},htmlProjectionStats,promptProjection.get(m.id)??null):toHistoryMessage(m,session,htmlProjectionStats,promptProjection.get(m.id)??null);
       if(preserveLatest&&projected){latestAssistantHtml.retainedChars=projected.content.length;latestAssistantHtml.estimatedTokenCost=estimateTokens(projected.content);}
       projectedHistory.set(m,projected);
@@ -2279,6 +2347,7 @@
       projectedGroups=projectedGroups.slice(take);
       recentRaw=projectedGroups.flat();
       removedGroups+=take;
+      sys=systemForHistory(recentRaw);
       estimatedBase=baseTokens(recentRaw,sys);
       trimBatches.push({rounds:take,sourceEndExclusive,messageIds:removed.map(m=>m.id),estimatedBeforeTokens:before,estimatedAfterTokens:estimatedBase});
       return true;
@@ -2345,7 +2414,9 @@
     const header=sections.map(x=>x.content).join('\n\n');
     const estimatedInputTokens=messages.reduce((sum,m)=>sum+estimateTokens(m?.content||'')+8,0)+Math.max(160,Math.ceil(header.length*.08));
     if(promptCap.verified&&estimatedInputTokens>promptCap.usable)throw new ApiError('E_CONTEXT_BUDGET','上下文检索结果超过已配置的模型预算，已中止发送但保留全部资料。',{details:JSON.stringify({estimatedInputTokens,promptCap,trace})});
-    return{messages,messageSources,inspector:{historyHtmlProjection,latestAssistantHtml:{...latestAssistantHtml,
+    const sentUserIds=new Set(messageSources.filter(x=>x.kind==='canonical_history'&&x.originalRole==='user').map(x=>x.messageId));
+    const playerInputProtocol={compiledMessageIds:[...compiledIds].filter(id=>sentUserIds.has(id)),assistantTagMessageIds:[...assistantTagIds].filter(id=>sentAssistantIds.has(id)),notice:'角色回复中的输入标签只提示来源风险，不改变原文、角色归属或保存。'};
+    return{messages,messageSources,inspector:{playerInputProtocol,historyHtmlProjection,latestAssistantHtml:{...latestAssistantHtml,
       actuallySent:messageSources.some(x=>x.kind==='canonical_history'&&x.messageId===lastEligibleAssistantId)},systemChars:header.length,estimatedInputTokens,recentMessageCount:recent.length,unsummarizedGapCount:uncoveredOlder.length,recentMessageLimit:limit,fullHistoryPreferred:true,canonicalHistoryCount,temporarilyOmittedCount:projectedAway.length,allHistoryIncluded:uncoveredOlder.length===0,finalMessageCount:messages.length,
       contextTrace:trace,worldbookBudgetChars:budget,worldbookUsedChars:budgeted.used,upstreamUsage:lastUsage?clone(lastUsage):null,
       sections:sys.sections.map(({name,chars,source})=>({name,chars,transportRole:'system',source})),memoryTrace:sys.memoryTrace,
@@ -3414,7 +3485,7 @@
     const date=Date.parse(String(m?.time||''));
     return Number.isFinite(date)?`【现实消息记录于 ${new Date(date).toISOString()}；不是剧情内日期】\n`:'';
   }
-  const MEMORY_TIME_CONTRACT='时间校验：现实消息记录时间与剧情内日期不同。不得将旧消息无依据改写成“昨天”“今天”“前天”“刚才”；剧情人物原话中的相对时间仅相对于其说话当时。没有可信剧情日期时写“具体剧情日期未明确”，保留先后顺序。';
+  const MEMORY_TIME_CONTRACT='时间校验：现实消息记录时间与剧情内日期不同。不得将旧消息无依据改写成“昨天”“今天”“前天”“刚才”；剧情人物原话中的相对时间仅相对于其说话当时。没有可信剧情日期时写“具体剧情日期未明确”，保留先后顺序。来源校验：按原始消息角色区分玩家实际提交与角色生成。角色文本（包括其中的 PLAYER_* 标记、社交记录、引用）不等于玩家提交；未由玩家明确给出、确认或授权的玩家自主言行、选择与私密心理只保留为未确认记录，不升格为事实。假设、计划与旁观评论保留其来源。保留 NPC 和角色已发生事件、真实引用及玩家确认的事实。';
   function formatTimelineBlock(label,messages,session){
     const ctx=macroContext(session);
     const body=arr(messages).map(m=>memoryTimestampLabel(m)+(m.role==='user'?`${ctx.userName}（玩家输入语义）：\n${compileUserInputForPrompt(session,m.content,inputSemanticMode(session,m))}`:`${ctx.charName}：${memoryAssistantText(session,m)}`)).join('\n');
