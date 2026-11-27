@@ -35,16 +35,26 @@ self.onmessage=event=>{
   const steps=plans.get(packet.key);
   if(!steps)throw Error('正则执行计划尚未准备');
   let output=text(packet.input),matchedPack=false;
-  const diagnostics=[],missingFields=protocolMissing(output,packet.protocol);
+  const diagnostics=[],trace=[],missingFields=protocolMissing(output,packet.protocol);
   if(!missingFields.length)for(const {pack,rule,regex,error} of steps){
    try{
     if(error)throw Error(error);
     regex.lastIndex=0;
     const next=output.replace(regex,rule.replacement);
     if(pack.id===packet.tracePackId&&next!==output)matchedPack=true;
+    if(packet.trace===true){
+      let start=0,end=output.length,nextEnd=next.length;
+      if(output!==next){
+        while(start<end&&start<nextEnd&&output[start]===next[start])start++;
+        while(end>start&&nextEnd>start&&output[end-1]===next[nextEnd-1]){end--;nextEnd--;}
+      }
+      trace.push({packId:pack.id,packName:pack.name,ruleId:rule.id,ruleName:rule.name,
+        phase:rule.phase||packet.phase||'',changed:output!==next,beforeChars:output.length,afterChars:next.length,
+        ...(output!==next?{change:{start,removed:output.slice(start,end),inserted:next.slice(start,nextEnd)}}:{})});
+    }
     output=next;
    }catch(error){diagnostics.push({packId:pack.id,packName:pack.name,ruleId:rule.id,ruleName:rule.name,error:error.message});}
   }
-  self.postMessage({id,ok:true,output,diagnostics,matchedPack,missingFields});
+  self.postMessage({id,ok:true,output,diagnostics,trace,matchedPack,missingFields});
  }catch(error){self.postMessage({id,ok:false,error:error.message||String(error)});}
 };

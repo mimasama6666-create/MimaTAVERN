@@ -38,13 +38,13 @@
  // full row is materialized only once in a bounded, resumable migration batch.
  function transact(job){const next=queue.then(job).then(value=>{lastError='';return value});queue=next.catch(notice);return next;}
  function finished(tx){return new Promise((resolve,reject)=>{tx.oncomplete=()=>resolve();tx.onabort=()=>reject(tx.error||new Error('诊断日志事务已中止'));tx.onerror=()=>reject(tx.error||new Error('诊断日志事务失败'));});}
- function roughSize(row){try{return JSON.stringify(row).length*2}catch(_){return null;}}
+ function roughSize(row){try{return JSON.stringify(row).length*2+(Number(row?.requestArchive?.blob?.size)||0)}catch(_){return null;}}
  function metadata(row,prior=null){
    return {id:String(row.id),sessionId:String(row.sessionId||''),traceId:String(row.traceId||''),
      action:String(row.action||''),turnId:String(row.turnId||''),requestId:String(row.requestId||''),
      generationId:String(row.generationId||''),generationAttempt:Number(row.generationAttempt)||0,
      createdAt:String(row.createdAt||''),createdAtMs:Number.isFinite(Number(row.createdAtMs))&&Number(row.createdAtMs)>0?Number(row.createdAtMs):null,
-     status:String(row.status||''),model:String(row.model||''),phase:String(row.phase||''),
+     status:String(row.status||''),requestOperation:String(row.requestAudit?.operation||''),model:String(row.model||''),phase:String(row.phase||''),
      finishKind:String(row.finishKind||''),finishReason:String(row.finishReason||''),
      errorCode:String(row.error?.code||''),httpStatus:Number(row.transport?.httpStatus||row.error?.status)||0,
      requestSent:row.requestSent!==false,requestSerialized:row.requestSerialized===true||!!row.request,fetchInvoked:row.fetchInvoked===true,requestDispatchAttempted:row.requestDispatchAttempted===true,responseReceived:!!row.transport?.responseReceivedAt,manualRecovery:!!row.manualRecovery,
@@ -147,6 +147,14 @@
    Promise.resolve().then(async()=>{if(await migrated())await prune();}).catch(notice);
  }
  function issueId(){return 'd_'+Date.now().toString(36)+'_'+(window.crypto?.randomUUID?.()||Math.random().toString(36).slice(2));}
+ function compactRegexTrace(input){
+   const rows=Array.isArray(input)?input:[];
+   return {records:rows.slice(0,128).map(row=>({packId:pickString(row.packId,120),ruleId:pickString(row.ruleId,120),
+     phase:pickString(row.phase,20),changed:row.changed===true,beforeChars:Number(row.beforeChars)||0,afterChars:Number(row.afterChars)||0,
+     ...(row.error?{error:pickString(row.error,500)}:{}),
+     ...(row.change?{change:{start:Number(row.change.start)||0,removedChars:String(row.change.removed??'').length,insertedChars:String(row.change.inserted??'').length}}:{})})),
+     totalRules:rows.length,retainedRules:Math.min(rows.length,128),fullTextStored:false};
+ }
  function begin({sessionId,action,turnId,attemptId,traceId}={}){
    if(!sessionId)return null;
    const id=issueId(),row={id,sessionId:String(sessionId),turnId:pickString(turnId,100),action:pickString(action,40),createdAt:new Date().toISOString(),createdAtMs:Date.now(),status:'preparing',model:'',requestId:'',messageCount:0,request:null,requestTruncated:false,rawRejectedReply:'',rejectedReplyTruncated:false,error:null,finishKind:'',finishReason:'',settledAt:null};
@@ -157,6 +165,19 @@
  function event(id,data={}){
    if(!id||!data||!['generation_prepared','dispatch_attempt','request','fetch_invoked','transport_response','provider_result','settlement','manual_recovery','timing','preflight_failure','transformation_provenance','protocol_boundary'].includes(data.type))return Promise.resolve();
    return transact(async()=>{
+     // Compression finishes before opening a transaction; never let an IDB
+     // transaction auto-close while waiting for a stream. Only large requests
+     // use this separate Blob representation; normal metadata remains small.
+     let requestArchive=null;
+     if(data.type==='request'){
+       const raw=typeof data.serializedRequest==='string'?data.serializedRequest:JSON.stringify(data.request||{});
+       if(raw.length>MAX_REQUEST_CHARS){
+         const original=new Blob([raw],{type:'application/json'});
+         const gzip=typeof CompressionStream==='function';
+         const blob=gzip?await new Response(original.stream().pipeThrough(new CompressionStream('gzip'))).blob():original;
+         requestArchive={blob,encoding:gzip?'gzip':'utf8',rawChars:raw.length,rawBytes:original.size,storedBytes:blob.size};
+       }
+     }
      const db=await open();const tx=db.transaction([STORE,META],'readwrite'),st=tx.objectStore(STORE),ms=tx.objectStore(META),row=await waitRequest(st.get(id));
      // Deleting a record is final, even if a request still runs.
      if(row){
@@ -168,6 +189,9 @@
          row.model=pickString(data.model||row.model,160);
          row.ownerTraceId=pickString(data.ownerTraceId,120);
          if(data.protocolRef)row.protocolRef=pickString(data.protocolRef,96);
+         if(data.replyBoundaryContract)row.replyBoundaryContract=data.replyBoundaryContract;
+         if(data.requestPurity)row.requestPurity=data.requestPurity;
+         if(data.inputRegexTrace?.length){const compact=compactRegexTrace(data.inputRegexTrace);row.inputRegexTrace=compact.records;row.inputRegexTraceSummary={totalRules:compact.totalRules,retainedRules:compact.retainedRules,fullTextStored:false};}
        }else if(data.type==='dispatch_attempt'){
          row.generationId=pickString(data.generationId||row.generationId,120);
          row.generationAttempt=Number(data.generationAttempt)||row.generationAttempt||null;
@@ -183,10 +207,11 @@
          row.preparationElapsedMs=Number(data.preparationElapsedMs)||0;
          row.error={code:pickString(data.code,120),message:pickString(data.message,3000),details:pickString(data.details,6000),status:0};
        }else if(data.type==='request'){
-         const req=data.request||{},safe={model:String(req.model??''),messages:Array.isArray(req.messages)?req.messages.map(m=>({role:String(m.role??''),content:String(m.content??''),...(m.prefix===true?{prefix:true}:{})})):[]};
-         for(const key of ['stream','temperature','max_tokens','top_p','reasoning_effort'])if(Object.hasOwn(req,key))safe[key]=req[key];
-         // Always keep bounded, non-sensitive evidence even when messages exceed
-         // the request-preview size ceiling. Do not store arbitrary extra_body.
+         const req=data.request||{};
+         // Preserve the final serialization's key order and all actual body fields.
+         // This body contains no API headers or credentials added by the client.
+         const serialized=typeof data.serializedRequest==='string'?data.serializedRequest:JSON.stringify(req);
+         const safe=requestArchive?req:JSON.parse(serialized);
          row.requestMeta={model:safe.model,
            max_tokens:Number.isSafeInteger(req.max_tokens)&&req.max_tokens>=0?req.max_tokens:null,
            top_p:Number.isFinite(req.top_p)&&req.top_p>=0&&req.top_p<=1?req.top_p:null,
@@ -195,13 +220,17 @@
            stream:req.stream===true,
            gemini_thoughts:req.extra_body?.google?.thinking_config?.include_thoughts===true};
          // Exact protocol body, plus source metadata outside the messages. No credentials or headers.
-         const sourceKeys=['kind','sourceId','messageId','resourceId','name','section','path','slot','declaredRole','originalRole','depth','position','priority','positionAdaptation','authorVariables'];
+         const sourceKeys=['kind','sourceId','messageId','resourceId','name','section','path','slot','declaredRole','originalRole','depth','position','priority','positionAdaptation','authorVariables','authorityVersion','enabled','inputProjection','contentSha256'];
          row.messageSources=Array.isArray(data.messageSources)?data.messageSources.map(source=>Object.fromEntries(sourceKeys.filter(key=>Object.hasOwn(source||{},key)).map(key=>[key,source[key]]))):[];
-         const all=JSON.stringify(safe);
-         row.request=all.length<=MAX_REQUEST_CHARS?safe:null;
-         row.requestTruncated=all.length>MAX_REQUEST_CHARS;
+         const all=serialized;
+         row.requestAudit=data.requestAudit||null;
+         if(data.requestAudit?.summary)row.requestPurity=data.requestAudit.summary;
+         row.request=requestArchive?null:safe;
+         if(requestArchive)row.requestArchive=requestArchive;else delete row.requestArchive;
+         row.requestTruncated=false;
          row.requestChars=all.length;row.messageCount=safe.messages.length;row.model=safe.model;row.requestId=pickString(data.requestId,120);row.endpointOrigin=pickString(data.endpointOrigin,260);row.status='requesting';
          row.requestSerialized=true;
+         row.requestEvidenceState=requestArchive?'archived_complete':'complete';
          // Keep legacy conservative requestSent semantics for existing retry/recovery guards.
          row.requestSent=true;
          row.requestBytes=Number(data.requestBytes)||0;row.preparationElapsedMs=Number.isFinite(data.preparationElapsedMs)?data.preparationElapsedMs:null;
@@ -238,14 +267,19 @@
            providerRequestId:pickString(data.providerRequestId,200),cfRay:pickString(data.cfRay,200)};
        }else if(data.type==='provider_result'){
          row.finishKind=pickString(data.finishKind,50);row.finishReason=pickString(data.finishReason,120);row.responseChars=Number(data.responseChars)||0;row.status='provider_returned';
+         if(data.usage)row.providerUsage=data.usage;
+         if(data.localCompletion!==undefined)row.localCompletion=data.localCompletion===true;
        }else if(data.type==='protocol_boundary'){
          row.protocolBoundary={protocolRef:pickString(data.protocolRef,96),acceptedChars:Number(data.acceptedChars)||0,
-           tailChars:Number(data.tailChars)||0,localCompletion:data.localCompletion===true};
+           tailChars:Number(data.tailChars)||0,localCompletion:data.localCompletion===true,
+           status:pickString(data.status,60),source:pickString(data.source,40),terminal:pickString(data.terminal,400),
+           kind:pickString(data.kind,40),prefixProjectionChars:Number(data.prefixProjectionChars)||0,acceptedStart:Number(data.acceptedStart)||0,acceptedEnd:Number(data.acceptedEnd)||0,end:Number(data.end)};
        }else if(data.type==='manual_recovery'){
          // Keep the original rejection, finish flag and retained evidence intact.
          row.manualRecovery={restoredAt:new Date().toISOString(),messageId:pickString(data.messageId,120),action:pickString(data.action,40)};
        }else if(data.type==='settlement'){
          row.status=['committed','rejected','aborted','conflict'].includes(data.status)?data.status:'rejected';
+         if(data.localCompletion!==undefined)row.localCompletion=data.localCompletion===true;
          row.settledAt=new Date().toISOString();row.finishKind=pickString(data.finishKind||row.finishKind,50);row.finishReason=pickString(data.finishReason||row.finishReason,120);
          if(row.status!=='committed'){
            const raw=String(data.rawRejectedReply??'');row.rawRejectedReply=raw.slice(0,MAX_BAD_REPLY_CHARS);row.rejectedReplyTruncated=raw.length>MAX_BAD_REPLY_CHARS||data.rawLimited===true;
@@ -301,7 +335,7 @@
  // bytes under diagnosticId, outside canonical History/Memory, before admission.
  async function retainCandidate(id,raw,canonical=null){
    if(!id||typeof raw!=='string'||!raw.length)throw Error('E_CANDIDATE_SOURCE_INVALID');
-   const digest=async value=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value)))].map(v=>v.toString(16).padStart(2,'0')).join('');
+   const digest=async value=>(await window.MimaRequestHash.digestText(value)).sha256;
    const rawDigest=await digest(raw),canonicalDigest=typeof canonical==='string'?await digest(canonical):null;
    return transact(async()=>{const db=await open(),tx=db.transaction([STORE,CANDIDATES,META],'readwrite');
      const st=tx.objectStore(CANDIDATES),es=tx.objectStore(STORE),ms=tx.objectStore(META);
@@ -414,5 +448,24 @@
    for(const name of [STORE,CANDIDATES,META,MAINT])tx.objectStore(name).clear();await finished(tx);
  });}
  function status(){return {error:lastError,limitCount:LIMIT_COUNT,limitDays:LIMIT_DAYS,limitBytes:LIMIT_BYTES,database:DB};}
- window.MimaDiagnosticJournal=Object.freeze({begin,event,uiTiming,get,findGeneration,findFailedGeneration,recoveryCandidate,retainCandidate,discardCandidate,fullCandidate,candidatePreview,listSummaries,list,remove,clearSession,clearAll,status});
+ async function readRequestBody(recordOrId){
+   const row=typeof recordOrId==='object'?recordOrId:await get(recordOrId);
+   if(!row)throw Error('原请求记录已不存在');
+   let raw;
+   if(row.requestArchive?.blob){
+     const saved=row.requestArchive;
+     if(saved.encoding==='gzip'){
+       if(typeof DecompressionStream!=='function')throw Error('当前浏览器不能展开压缩请求；原始归档仍保留');
+       raw=await new Response(saved.blob.stream().pipeThrough(new DecompressionStream('gzip'))).text();
+     }else raw=await saved.blob.text();
+     if(raw.length!==saved.rawChars)throw Error('请求归档长度校验失败；未采用不完整正文');
+   }else if(row.request)raw=JSON.stringify(row.request);
+   else throw Error(row.requestTruncated?'旧版请求只保留摘要，完整原文未留存':'本记录没有完整请求正文');
+   const hashed=await window.MimaRequestHash.digestText(raw),digest=hashed.sha256;
+   if(row.requestArchive?.blob&&hashed.bytes!==row.requestArchive.rawBytes)throw Error('请求归档长度校验失败；未采用不完整正文');
+   const expected=row.requestAudit?.bodySha256||null;
+   if(expected&&digest&&expected!==digest)throw Error('请求归档 SHA-256 与实际发送记录不同；未冒充可核对正文');
+   return {body:JSON.parse(raw),sha256:digest,verified:!!expected&&!!digest&&digest===expected,bytes:hashed.bytes};
+ }
+ window.MimaDiagnosticJournal=Object.freeze({begin,event,uiTiming,get,readRequestBody,findGeneration,findFailedGeneration,recoveryCandidate,retainCandidate,discardCandidate,fullCandidate,candidatePreview,listSummaries,list,remove,clearSession,clearAll,status});
 })();

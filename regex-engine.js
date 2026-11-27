@@ -163,7 +163,7 @@
   function acquireWorker(){
     if(typeof Worker!=='function')throw regexError('E_REGEX_ISOLATION_UNAVAILABLE','此环境没有可终止的正则 Worker，原文保留');
     if(window.location?.protocol==='file:')throw regexError('E_REGEX_WORKER_ORIGIN','请通过 HTTP/HTTPS 打开咪嘛馆，以加载隔离正则线程');
-    return idleWorkers.pop()||{worker:new Worker(new URL('./regex-native-worker.js?v=20261125-v23-r3',document.baseURI),{name:'mima-native-regex'}),configurations:new Set(),sequence:0};
+    return idleWorkers.pop()||{worker:new Worker(new URL('./regex-native-worker.js?v=20261127-r28',document.baseURI),{name:'mima-native-regex'}),configurations:new Set(),sequence:0};
   }
   function releaseWorker(lease,healthy){
     if(!lease)return;
@@ -180,7 +180,7 @@
         if(packet.type==='configure')return finish(null,r);
         if(typeof r.output!=='string'||!Array.isArray(r.diagnostics))return finish(regexError('E_REGEX_BATCH_MALFORMED','正则线程返回不完整'));
         if(r.diagnostics.length){const e=regexError('E_REGEX_RULE_FAILED',r.diagnostics.map(d=>`${d.packName||'正则包'} / ${d.ruleName||'规则'}：${d.error}`).join('；'),{diagnostics:r.diagnostics});return finish(e);}
-        finish(null,{output:r.output,diagnostics:r.diagnostics,matchedPack:r.matchedPack,missingFields:r.missingFields||[]});};
+        finish(null,{output:r.output,diagnostics:r.diagnostics,trace:r.trace||[],matchedPack:r.matchedPack,missingFields:r.missingFields||[]});};
       lease.worker.onerror=event=>finish(regexError('E_REGEX_WORKER_FAILED','正则线程异常：'+(event.message||'未知错误')));
       timer=setTimeout(()=>finish(regexError('E_REGEX_BUDGET',`此条消息的正则执行超过 ${budgetMs} 毫秒；已停止该任务，原文完整保留`)),budgetMs);
       if(options.signal?.aborted){abort();return;}options.signal?.addEventListener('abort',abort,{once:true});
@@ -209,7 +209,7 @@
                 lease.configurations=new Set(receipt.keys);
               }
               result=await workerCall(lease,{type:'run',key:plan.key,input:item.input,
-                tracePackId:options.tracePackId,protocol:options.protocol},options);
+                tracePackId:options.tracePackId,protocol:options.protocol,trace:options.trace===true,phase:item.phase},options);
             }
           }catch(error){
             releaseWorker(lease,false);lease=null;
@@ -231,6 +231,7 @@
   async function applyAsync(input,packs=[],phase='display',diagnostics=null,options={}){
     const [result]=await applyBatchAsync([{input,phase}],packs,options);
     if(Array.isArray(diagnostics))diagnostics.push(...result.diagnostics);
+    if(Array.isArray(options.traceRecords))options.traceRecords.push(...result.trace||[]);
     return result.output;
   }
   window.MimaRegexEngine = { PHASES:[...PHASES], normalizeFlags, normalizeRule, normalizePack, protocolDisplayPacks, compileRule, validatePack, apply, applyAsync, applyBatchAsync, executionKey:(packs,phase='display')=>executionPlan(packs,phase).key };

@@ -809,7 +809,7 @@ async function renderSettingTemplatesTab(box,{allowDuringSave=false,commitAcknow
       <details class="mima-template-section" open data-default-open="true"><summary>自定义标签与结尾标签</summary>
        <label class="form-label" for="tpl-edit-protocol">输出标签格式</label><select id="tpl-edit-protocol" class="field" onchange="updateTemplateProtocolControls(true)">${templateReferencedOptions(regexPacks.filter(p=>!p.protocolResource?.schema.local&&(p.protocolResource||p.compactContract||MimaDisplayContract.isLegacyConverter(p)||p.id===ps.displayContract?.packId)),ps.displayContract?.packId,'不绑定标签格式')}</select>
        <label class="form-label" for="tpl-edit-protocol-preset">配套输出预设（可选）</label><select id="tpl-edit-protocol-preset" class="field">${templateReferencedOptions(presets,ps.displayContract?.presetId,'不绑定预设')}</select>
-       <label class="form-label" for="tpl-edit-protocol-terminal">提前结束标记（可空）</label><input id="tpl-edit-protocol-terminal" class="field" value="${templateEditorValue(ps.protocolEnd)}" placeholder="留空则由模型自然结束">${renderCheck('tpl-edit-protocol-strict','严格检查标签完整性',ps.protocolStrict===true||(ps.protocolStrict==null&&ps.displayContract?.numbered===true))}
+       <label class="form-label" for="tpl-edit-protocol-terminal">提前结束标记（可空）</label><input id="tpl-edit-protocol-terminal" class="field" value="${templateEditorValue(ps.protocolEnd)}" placeholder="留空：完整标签格式自动核对根级结尾">${renderCheck('tpl-edit-protocol-strict','严格检查标签完整性',ps.protocolStrict===true||(ps.protocolStrict==null&&ps.displayContract?.numbered===true))}
        ${renderCheck('tpl-edit-protocol-numbered','识别旧式编号格式',ps.displayContract?.numbered===true&&ps.displayContract?.version!==3)}
        <label class="form-label" for="tpl-edit-viewpoint">状态栏视角</label><input id="tpl-edit-viewpoint" class="field" value="${templateEditorValue(ps.protocolViewpoint)}" placeholder="默认当前角色">
        <label class="form-label" for="tpl-edit-worldbook-scope">世界书搜索范围</label><select id="tpl-edit-worldbook-scope" class="field">${templateProtocolScopeOptions(ps.displayContract?.packId,ps.worldbookProtocolRange)}</select>
@@ -2740,7 +2740,7 @@ function makeDisplayBinding(pack,presetId='',terminal='',numbered=false,previous
 }
 function renderRegexContractControl(box){
  const binding=currentSessionData?.promptSettings?.displayContract,current=regexPacks.find(p=>p.id===binding?.packId)?.protocolResource?.schema.local?{}:binding||{},section=document.createElement('section');section.className='settings-section mima-regex-contract';
- section.innerHTML=`<details class="mima-settings-fold"><summary>标签与结尾设置（可选）</summary><div class="mima-settings-fold-body"><p class="helper">直接勾选下方资源即可使用。局部标签可同时挂载；这里只选择完整格式、配套指令和结尾。</p><label class="form-label" for="regex-contract-pack">标签 / 状态栏格式</label><select id="regex-contract-pack" class="field"><option value="">不使用专用标签格式</option>${regexPacks.filter(p=>!p.protocolResource?.schema.local&&(p.protocolResource||p.compactContract||MimaDisplayContract.isLegacyConverter(p)||p.id===current.packId)).map(p=>`<option value="${escapeHtml(p.id)}" ${p.id===current.packId?'selected':''}>${escapeHtml(p.name)}${p.enabled===false?'（已停用）':''}</option>`).join('')}</select><p class="row-sub" id="regex-contract-sample"></p><label class="form-label" for="regex-contract-preset">配套输出预设（可选）</label><select id="regex-contract-preset" class="field">${optionList(presets,current.presetId,'不绑定预设')}</select><label class="check-row" id="regex-contract-check-row"><input id="regex-contract-numbered" type="checkbox" ${current.numbered?'checked':''}> 识别旧式编号格式（可选）</label><label class="check-row"><input id="regex-contract-strict" type="checkbox" ${currentSessionData?.promptSettings?.protocolStrict===true?'checked':''}> 严格检查标签完整性（失败时不自动保存）</label><label class="form-label" for="regex-contract-terminal">提前结束标记（可选）</label><input id="regex-contract-terminal" class="field" value="${escapeHtml(currentSessionData?.promptSettings?.protocolEnd||'')}" placeholder="留空则由模型自然结束"><p class="row-sub">填写外层闭合标签或独立一行的结束标记（必须收到该行的换行，代码块内不匹配）。普通正文和不完整标签默认正常保存。</p><label class="form-label" for="regex-contract-viewpoint">本轮状态栏视角</label><input id="regex-contract-viewpoint" class="field" value="${escapeHtml(currentSessionData?.promptSettings?.protocolViewpoint||'')}" placeholder="默认挂载角色；可填其他人物姓名"><details class="mima-settings-fold"><summary>查看格式样例</summary><pre class="prompt-pre" id="regex-contract-example"></pre></details><div class="toolbar"><button class="primary-btn" type="button" id="regex-contract-save">保存设置</button><button class="ghost-btn" type="button" id="regex-contract-detach">解除标签挂载</button></div></div></details>`;
+ section.innerHTML=`<details class="mima-settings-fold"><summary>标签与结尾设置（可选）</summary><div class="mima-settings-fold-body"><p class="helper">直接勾选下方资源即可使用。局部标签可同时挂载；这里只选择完整格式、配套指令和结尾。</p><label class="form-label" for="regex-contract-pack">标签 / 状态栏格式</label><select id="regex-contract-pack" class="field"><option value="">不使用专用标签格式</option>${regexPacks.filter(p=>!p.protocolResource?.schema.local&&(p.protocolResource||p.compactContract||MimaDisplayContract.isLegacyConverter(p)||p.id===current.packId)).map(p=>`<option value="${escapeHtml(p.id)}" ${p.id===current.packId?'selected':''}>${escapeHtml(p.name)}${p.enabled===false?'（已停用）':''}</option>`).join('')}</select><p class="row-sub" id="regex-contract-sample"></p><label class="form-label" for="regex-contract-preset">配套输出预设（可选）</label><select id="regex-contract-preset" class="field">${optionList(presets,current.presetId,'不绑定预设')}</select><label class="check-row" id="regex-contract-check-row"><input id="regex-contract-numbered" type="checkbox" ${current.numbered?'checked':''}> 识别旧式编号格式（可选）</label><label class="check-row"><input id="regex-contract-strict" type="checkbox" ${currentSessionData?.promptSettings?.protocolStrict===true?'checked':''}> 严格检查标签完整性（失败时不自动保存）</label><label class="form-label" for="regex-contract-terminal">手动结束标记（可选，优先于自动结束）</label><input id="regex-contract-terminal" class="field" value="${escapeHtml(currentSessionData?.promptSettings?.protocolEnd||'')}" placeholder="留空则由模型自然结束"><p class="row-sub">完整格式在根级闭合后结束本轮，与严格检查独立。普通正文和不完整格式仍按原接收方式保存。自定义标记须独立一行并收到换行，代码块内不匹配。</p><label class="check-row"><input id="regex-contract-attach-format" type="checkbox" ${currentSessionData?.promptSettings?.attachFormatInstructions===true?'checked':''}> 将格式合同与所选视角附加至模型请求（可在 Prompt 页查看完整文字）</label><label class="form-label" for="regex-contract-viewpoint">本轮状态栏视角</label><input id="regex-contract-viewpoint" class="field" value="${escapeHtml(currentSessionData?.promptSettings?.protocolViewpoint||'')}" placeholder="默认挂载角色；可填其他人物姓名"><details class="mima-settings-fold"><summary>查看格式样例</summary><pre class="prompt-pre" id="regex-contract-example"></pre></details><div class="toolbar"><button class="primary-btn" type="button" id="regex-contract-save">保存设置</button><button class="ghost-btn" type="button" id="regex-contract-detach">解除标签挂载</button></div></div></details>`;
  box.querySelector('#regex-pack-list').before(section);
  const legacy=document.createElement('button');legacy.className='ghost-btn';legacy.textContent='旧消息格式管理';legacy.title='可选：为旧消息选择原格式';legacy.onclick=reviewLegacyProtocols;section.querySelector('.toolbar').append(legacy);
  if(!currentSessionData){section.querySelectorAll('select,input,button').forEach(el=>el.disabled=true);return;}
@@ -2748,7 +2748,7 @@ function renderRegexContractControl(box){
  const update=(changed=false)=>{const pack=regexPacks.find(p=>p.id===packField.value),native=!!pack?.protocolResource;
   section.querySelector('#regex-contract-check-row').hidden=native||!pack;
   if(changed){presetField.value='';check.checked=false;}
-  status.textContent=native?'原生标签 · '+Object.keys(pack.protocolResource.schema.definitions||{}).length+' 项定义 · 自动解析与美化':pack?'普通正则转换；编号检查不是必需步骤。':'普通正则无需专用格式。';
+  status.textContent=native?'原生标签 · '+Object.keys(pack.protocolResource.schema.definitions||{}).length+' 项定义 · 自动解析与美化 · 根级结束 '+pack.protocolResource.schema.terminal+'（无需开启严格检查）':pack?'普通正则转换；编号检查不是必需步骤。':'普通正则无需专用格式。';
   if(sample.parentElement.open)sample.textContent=pack?.protocolResource?.sample||pack?.compactContract?.sample||presets.find(p=>p.id===presetField.value)?.content||'';
  };
  packField.onchange=()=>update(true);presetField.onchange=()=>update();sample.parentElement.addEventListener('toggle',()=>update());update();
@@ -2758,7 +2758,7 @@ function renderRegexContractControl(box){
    const selected=pack?makeDisplayBinding(pack,presetId,pack.compactContract?.terminal||(current.packId===pack.id?current.terminal:''),check.checked,current):null;
    const regexPackIds=arr(currentSessionData.regexPackIds).slice();if(selected&&!regexPackIds.includes(selected.packId))regexPackIds.push(selected.packId);
    const presetIds=[...new Set([...arr(currentSessionData.presetIds),...(selected&&presetId?[presetId]:[])])];
-   const saved=await patchCurrent({...(selected?{renderMode:'safe_html'}:{}),promptSettings:{...currentSessionData.promptSettings,displayContract:selected,protocolStrict:section.querySelector('#regex-contract-strict').checked,protocolEnd:terminalField.value.trim(),protocolViewpoint:section.querySelector('#regex-contract-viewpoint').value.trim()},regexPackIds,presetIds},true);
+   const saved=await patchCurrent({...(selected?{renderMode:'safe_html'}:{}),promptSettings:{...currentSessionData.promptSettings,displayContract:selected,protocolStrict:section.querySelector('#regex-contract-strict').checked,protocolEnd:terminalField.value.trim(),protocolViewpoint:section.querySelector('#regex-contract-viewpoint').value.trim(),attachFormatInstructions:section.querySelector('#regex-contract-attach-format').checked},regexPackIds,presetIds},true);
    if(saved&&owner===currentSessionId){refreshChatBox();renderSettings();toast('标签设置已保存');}
   }catch(error){toast(error.message);}
  };
@@ -6197,7 +6197,66 @@ function friendlyApiError(e){const i=describeApiError(e);return `${i.code}${i.st
 function chooseApiImport(){qs('api-config-file-input').value='';qs('api-config-file-input').click()}
 async function importApiConfigFile(file){if(!file)return;try{const raw=JSON.parse(await file.text()),src=raw.data||raw;const temperature=Number(src.temperature??localStorage.getItem(TEMP_KEY)??.85);MimaStandalone.replaceApiConfigSnapshot({apiBase:src.apiBase||src.baseUrl||src.base_url||'',outputLimitMode:src.outputLimitMode==='model'?'model':'global',globalMaxTokens:src.globalMaxTokens??src.maxTokens??0,modelOutputProfiles:src.modelOutputProfiles||{},modelCapacityProfiles:src.modelCapacityProfiles||{},contextWindowIdentity:src.contextWindowIdentity||'',outputLimitExplicit:true,apiKey:src.apiKey||src.api_key||src.key||'',model:src.model||'',chatEndpoint:src.chatEndpoint||'',modelsEndpoint:src.modelsEndpoint||'',extraHeaders:typeof src.extraHeaders==='string'?src.extraHeaders:src.extraHeaders?JSON.stringify(src.extraHeaders):'',sendTemperature:src.sendTemperature!==false,temperature,sendTopP:src.sendTopP===true,topP:src.topP??src.top_p??1,stream:!!(src.stream??src.streaming),...(Object.prototype.hasOwnProperty.call(src,'maxTokens')?{maxTokens:src.maxTokens}:{}),contextWindowTokens:Number(src.contextWindowTokens??src.context_window??0),capacityExplicit:true,continuationMode:src.continuationMode==='deepseek_prefix'?'deepseek_prefix':'assistant_tail',prefixReturnsSuffix:src.prefixReturnsSuffix===true,thinkingMode:src.thinkingMode||'normal',showThinking:src.showThinking!==false,reasoningEffort:src.reasoningEffort||'inherit',requestGeminiThoughts:src.requestGeminiThoughts===true});localStorage.setItem(TEMP_KEY,String(temperature));renderApiTab(qs('settings-content'));toast('API（接口）配置已导入到当前浏览器')}catch(e){toast(`API（接口）配置导入失败：${e.message}`)}}
 
-function renderPromptTab(box){box.innerHTML=`<section class="settings-section"><h3><span class="mima-oss-icon mima-oss-icon--flask" aria-hidden="true"></span> 本次正常新请求的提示词预览</h3><p class="helper">只预览、不调用 LLM。咪嘛馆在模型上下文容量允许时优先提供完整原始剧情；每轮各注入一份已启用 Persona / Preset 与预算内命中的 Worldbook。模型窗口不足时按完整轮次分批裁剪，默认每批10轮且至少保留最新20轮；未有可信来源范围的滚动摘要时暂停，不请求 Provider。原始 History 永远完整保留。v1.1.4 还会显示上游返回的缓存命中统计；没有统计不等于没有缓存。</p><div class="toolbar"><button class="primary-btn" onclick="refreshPromptInspector()">扫描本轮 Prompt（提示词）</button><button class="ghost-btn" onclick="switchSettingsTab('diagnostics')">查看真实请求和异常日志</button></div><div id="prompt-inspector"><div class="row-sub">点击上方按钮生成预览。</div></div></section>`}
+function renderPureRequestControls(box){
+ const ps=currentSessionData?.promptSettings||{},section=document.createElement('section');section.className='settings-section';
+ section.innerHTML=`<h3>纯净请求</h3><p class="helper">默认只发送已挂载资料、已启用记忆和真实历史。扫描后按最终请求核对来源与字节数；未知来源显示未核实。格式解析与单轮结束在本地执行。</p><label class="form-label" for="prompt-input-projection">API 中的玩家输入与历史</label><select id="prompt-input-projection" class="field"><option value="raw" ${ps.apiInputProjection!=='semantic'?'selected':''}>原样正文（默认，不添加输入标签）</option><option value="semantic" ${ps.apiInputProjection==='semantic'?'selected':''}>结构化语义（按每条消息保存的输入模式）</option></select><label class="check-row"><input id="prompt-attach-format" type="checkbox" ${ps.attachFormatInstructions===true?'checked':''}> 将格式合同、续写位置与所选状态栏视角附加至模型请求</label><p class="row-sub">选择结构化语义时保留台词、动作、舞台说明及私密心理的区分。输入模式在上下文设置中选择。关闭附加格式文字时，原格式及视角选择仍保留，本地检查继续生效。扫描下方实际消息可查看具体发送内容。</p><p class="row-sub">这些选项影响下一次按当前挂载生成；按原请求重说或重试沿用冻结快照，旧来源与指定后缀兼容清理会在实际请求诊断中标明。可选择「按当前挂载重说」应用新设置。</p><p id="prompt-purity-feedback" class="row-sub" role="status"></p>`;
+ box.prepend(section);
+ const save=async()=>{try{
+   const owner=currentSessionId;
+   const saved=await patchCurrent({promptSettings:{...currentSessionData.promptSettings,
+     apiInputProjection:section.querySelector('#prompt-input-projection').value,
+     attachFormatInstructions:section.querySelector('#prompt-attach-format').checked}},true);
+   if(saved&&owner===currentSessionId){section.querySelector('#prompt-purity-feedback').textContent='已保存，下次按当前挂载生成生效。';await refreshPromptInspector();}
+ }catch(error){section.querySelector('#prompt-purity-feedback').textContent='保存失败：'+error.message;}};
+ section.querySelectorAll('input,select').forEach(el=>{el.disabled=!currentSessionData;el.onchange=save;});
+}
+function requestAuditOperationLabel(value){
+ return {send:'发送',regenerate_original:'按原请求重说',regenerate_current:'按当前挂载重说',retry:'重试原轮',continue:'续写',auto_advance:'推进剧情'}[value]||value||'旧记录（操作来源未核实）';
+}
+function requestAuditSummaryText(audit){
+ if(!audit)return '来源未核实：此记录没有最终请求审计，不能把缺失数字视作 0。';
+ const p=audit.summary||{},count=p.verified?`${p.automaticNarrativeCount} 条 / ${p.automaticNarrativeBytes} 字节`:'未核实';
+ return `${audit.lineage==='frozen_history'?'冻结历史来源':'当前挂载来源'} · 程序自动文字：${count}。已确认的程序文字 ${p.knownAutomaticCount??'未核实'} 条；未核实来源 ${p.unknownCount??'未核实'} 条；用户显式启用格式 ${p.explicitFormatCount??'未核实'} 条 / ${p.explicitFormatBytes??'未核实'} 字节。`;
+}
+function renderActualApiMessages(root,d,{actual=false,record=null}={}){
+ const old=[...root.querySelectorAll('details')].find(el=>el.querySelector('summary')?.textContent==='查看本次新请求预览的完整消息队列');old?.remove();
+ const section=document.createElement('section');section.className='settings-section mima-request-audit';
+ const head=document.createElement('h4');head.textContent=actual?'本次发送给模型的完整消息':'实际 API 消息（发送前预览）';section.append(head);
+ const audit=d.requestAudit||null,note=document.createElement('p');note.className='helper';note.textContent=requestAuditSummaryText(audit);section.append(note);
+ const operation=document.createElement('p');operation.className='row-sub';
+ operation.textContent=actual?`操作：${requestAuditOperationLabel(audit?.operation||record?.action)} · ${record?.transport?.responseReceivedAt?'已收到响应':record?.fetchInvoked?'已尝试调用，送达状态未知':'仅已序列化，尚无调用证据'}${audit?.continuation?' · '+({complete_missing:'补齐原回复',separate:'独立下一轮'}[audit.continuation]||audit.continuation):''}`:'普通新发送预览；重说、续写、重试和推进的最终内容请在实际请求记录核对。';section.append(operation);
+ if(audit){
+   const hash=document.createElement('p');hash.className='row-sub';hash.style.wordBreak='break-all';
+   hash.textContent=`最终请求 ${audit.bodyBytes} bytes · SHA-256：${audit.bodySha256||'未核实'}；messages SHA-256：${audit.messagesSha256||'未核实'}。`;
+   if(actual)hash.textContent+=audit.preparedMatch==='matched'?'准备快照与最终序列化逐字节匹配。':audit.preparedMatch==='different'?'准备快照与最终序列化不同，请核对差异。':'没有可比对的准备快照，未核实。';
+   section.append(hash);
+   if(audit.lineage==='frozen_history'){
+     const frozen=document.createElement('p');frozen.className='helper';frozen.textContent='沿用原轮冻结消息，当前纯净设置不会改写旧请求。既有的指定旧后缀兼容清理仍保留；这里展示本次实际发出的内容。'+(audit.compatibilityChanges?.length?'本次有 '+audit.compatibilityChanges.length+' 条消息执行了兼容清理。':'');section.append(frozen);
+   }
+ }
+ const labels={preset:'用户挂载预设',persona:'Persona',world_info:'世界书',canonical_history:'用户输入 / 历史消息',director_note:'手动导演备注',memory:'已启用记忆',optional_format:'显式启用的格式合同',builtin:'程序内建文字',player_material:'用户资料',unknown:'未核实来源'};
+ for(const item of d.messagePreview||[]){
+   const source=item.source||d.messageSources?.[item.index]||{},row=audit?.rows?.[item.index],details=document.createElement('details'),summary=document.createElement('summary');
+   const content=typeof item.content==='string'?item.content:JSON.stringify(item.content);
+   const category=row?.category||source.kind||'unknown',verified=row?.verification==='verified';
+   summary.textContent=`#${item.index+1} ${item.role}${item.prefix===true?' · prefix=true':''} · ${labels[category]||'未核实来源'}${verified?'':' · 未核实'} · ${row?.bytes??new TextEncoder().encode(content).length} bytes`;
+   const meta=document.createElement('p');meta.className='row-sub';meta.style.wordBreak='break-word';
+   meta.textContent=`来源 ID：${row?.sourceId||source.sourceId||source.messageId||'未记录'} · ${row?.enabled===true?'已启用':row?.enabled===false?'来源标记为停用，需核对':'启用状态未核实'} · 进入本次${actual?'实际请求':'预览'}${row?.lineage==='frozen_history'?' · 冻结历史来源':''}${category==='optional_format'?' · 用户显式启用':''}${row?.inputProjection?' · 输入投影：'+row.inputProjection:''}${row?.sourceMatch==='different'?' · 最终文字与来源投影哈希不同，未核实':''}`;
+   details.append(summary,meta);details.ontoggle=()=>{if(details.open&&!details.querySelector('pre')){const pre=document.createElement('pre');pre.className='prompt-pre';pre.textContent=content;details.append(pre);}else if(!details.open)details.querySelector('pre')?.remove();};section.append(details);
+ }
+ if(d.apiBody){
+   const toolbar=document.createElement('div');toolbar.className='toolbar';
+   for(const [label,run]of [['复制完整请求',async()=>{await copyTextPortable(JSON.stringify(d.apiBody));toast('已复制完整请求');}],['下载完整请求',async()=>downloadText('咪嘛馆-实际请求.json',JSON.stringify(d.apiBody))]]){
+     const b=document.createElement('button');b.type='button';b.className='ghost-btn';b.textContent=label;b.onclick=()=>run().catch(error=>toast('操作失败：'+error.message));toolbar.append(b);
+   }section.append(toolbar);
+ }
+ if(!actual){
+   const trace=document.createElement('details'),summary=document.createElement('summary');summary.textContent='正则来源、执行阶段与本轮前后差异（仅本次主动扫描）';trace.append(summary);
+   trace.ontoggle=()=>{if(trace.open&&!trace.querySelector('pre')){const pre=document.createElement('pre');pre.className='prompt-pre';pre.textContent=JSON.stringify({input:d.inputPreview,rules:d.regexRules||[],prompt:d.regexTrace||[]},null,2);trace.append(pre);}else if(!trace.open)trace.querySelector('pre')?.remove();};section.append(trace);
+ }
+ if(actual)root.append(section);else root.prepend(section);
+}
+function renderPromptTab(box){box.innerHTML=`<section class="settings-section"><h3><span class="mima-oss-icon mima-oss-icon--flask" aria-hidden="true"></span> 本次正常新请求的提示词预览</h3><p class="helper">只预览、不调用 LLM。咪嘛馆在模型上下文容量允许时优先提供完整原始剧情；每轮各注入一份已启用 Persona / Preset 与预算内命中的 Worldbook。模型窗口不足时按完整轮次分批裁剪，默认每批10轮且至少保留最新20轮；未有可信来源范围的滚动摘要时暂停，不请求 Provider。原始 History 永远完整保留。v1.1.4 还会显示上游返回的缓存命中统计；没有统计不等于没有缓存。</p><div class="toolbar"><button class="primary-btn" onclick="refreshPromptInspector()">扫描本轮 Prompt（提示词）</button><button class="ghost-btn" onclick="switchSettingsTab('diagnostics')">核对各操作的实际请求</button></div><div id="prompt-inspector"><div class="row-sub">点击上方按钮生成预览。</div></div></section>`;renderPureRequestControls(box);}
 async function refreshPromptInspector(){
     const targetSessionId=currentSessionId,root=qs('prompt-inspector'),epoch=settingsRenderEpoch;
     if(!targetSessionId||!root)return;
@@ -6217,11 +6276,12 @@ async function refreshPromptInspector(){
     const cached=u?.cachedTokens;
     const cacheText=Number.isFinite(Number(cached))?Number(cached).toLocaleString():'—';
     const cacheNote=u?`最近一次上游 usage${u.model?` · ${escapeHtml(u.model)}`:''}${Number.isFinite(Number(cached))?`：缓存命中 ${Number(cached).toLocaleString()} tokens`:'：未提供 cached tokens 字段'}。`:'当前中转/模型尚未返回可识别的 usage 统计。';
-    root.innerHTML=`<div class="prompt-stats"><div class="stat-card"><div class="stat-num">${Number(d.estimatedInputTokens||0).toLocaleString()}</div><div class="stat-label">估算输入 Tokens</div></div><div class="stat-card"><div class="stat-num">${d.recentMessageCount}/${d.recentMessageLimit||'—'}</div><div class="stat-label">最近消息窗口</div></div><div class="stat-card"><div class="stat-num">${d.matchedWorldbookEntries.length}</div><div class="stat-label">世界书命中</div></div><div class="stat-card"><div class="stat-num">${cacheText}</div><div class="stat-label">最近缓存命中 Tokens</div></div><div class="stat-card"><div class="stat-num">${d.systemChars}</div><div class="stat-label">System 字符</div></div><div class="stat-card"><div class="stat-num">${d.finalMessageCount}</div><div class="stat-label">最终 Messages</div></div></div><div class="cache-insight-card"><strong>🧊 Cache Insight（缓存观察）</strong><div class="row-sub">${cacheNote} 缓存是否真正命中由上游 Provider 决定；咪嘛馆不会伪造“已缓存”。</div></div><div class="row-sub">${d.contextTrace?.uncoveredRawCount?`本轮有 ${d.contextTrace.uncoveredRawCount} 条待总结旧原文处于最近窗口外；相关检索 ${d.contextTrace.retrievedCount} 条，未覆盖 ${d.contextTrace.omittedCount} 条（原文仍在本地）。`:'旧原文覆盖无额外缺口。'} ${d.contextTrace?.budgetVerified?'上下文预算：使用玩家配置的模型窗口。':'模型上下文窗口未核实：大请求将拒绝发送；请填写服务商真实窗口，不会猜测 32K 或 100 万容量。'} · 分批移出 ${Number(d.contextTrace?.plannedTrimRounds||0)} 轮，保留至少 ${Number(d.contextTrace?.protectedRecentRounds||20)} 轮，记忆来源覆盖 ${d.contextTrace?.memoryCoverageProof?'已核对':'未验证'}。</div><div class="row-sub">🧹 历史 HTML 净化：${escapeHtml(d.historyHtmlProjection?.mode==='raw'?'已关闭':'已开启')} · 发送历史中转换 ${Number(d.historyHtmlProjection?.changedMessages||0)} / ${Number(d.historyHtmlProjection?.processedMessages||0)} 条角色消息 · 减少 ${Number(d.historyHtmlProjection?.savedChars||0).toLocaleString()} 字符 · 粗估减少 ${Number(d.historyHtmlProjection?.estimatedTokensSaved||0).toLocaleString()} Tokens（不是上游精确计费）。玩家消息与 System 预设不计入此项。</div><h4>本轮 Prompt 构成（字符数，非精确 Tokens）</h4><div class="hit-list">${(d.sections||[]).slice().sort((a,b)=>b.chars-a.chars).map(x=>`<div class="hit-item">${escapeHtml(x.name)}：${Number(x.chars||0).toLocaleString()} 字符</div>`).join('')||'<div class="hit-item">暂无项目</div>'}</div><h4>本轮记忆注入情况</h4><div class="hit-list">${(d.memoryTrace||[]).map(x=>`<div class="hit-item">${x.kind==='rolling'?'滚动剧情摘要':x.kind==='core'?'核心记忆':`事实记忆 第${x.startRound}–${x.endRound}轮`}：${x.injected?'✅ 预计注入本轮 System':'— 本轮未注入'} · ${Number(x.chars||0)} 字 · ${escapeHtml(x.reason||'unknown')}${!x.sourceCurrent&&x.injected?' · 旧剧情已修改，但保留玩家选择的记忆注入':''}</div>`).join('')||'<div class="hit-item">没有可用记忆记录</div>'}</div><div class="row-sub">这反映当前时间线的 Prompt 预览；旧轮冻结重说和失败重试仍按原请求快照发送，不自动追加新记忆。</div><h4>本轮世界书</h4><div class="row-sub">本轮预算：${Number(d.worldbookBudgetChars??0).toLocaleString()} 字符，实际占用：${Number(d.worldbookUsedChars??0).toLocaleString()} 字符。未注入条目请核对触发条件与跳过原因。</div><div class="hit-list">${d.matchedWorldbookEntries.length?d.matchedWorldbookEntries.map(x=>`<div class="hit-item">✅ ${escapeHtml(x.bookName)} / ${escapeHtml(x.entryName)} · Depth（深度） ${x.depth} · ${escapeHtml(x.position)} · ${escapeHtml(x.reason)}${x.hits?.length?` · 命中：${escapeHtml(x.hits.join(', '))}`:''}</div>`).join(''):'<div class="hit-item">本轮没有触发世界书条目；未触发条目不会进入本轮 Prompt。</div>'}</div><h4 style="margin-top:16px">预览 System 消息（玩家挂载与来源资料）</h4><pre class="prompt-pre">${escapeHtml(d.actualSystemPreview||'')}</pre><h4>旧版资料分栏（当前预览按来源列入消息队列）</h4><pre class="prompt-pre">${escapeHtml(d.userMaterialPreview||'（本轮无资料块）')}</pre><h4>面具加载与注入状态</h4><div class="hit-list">${(d.maskTrace||[]).map(x=>`<div class="hit-item">${escapeHtml(x.kind)} / ${escapeHtml(x.name||x.id||'未挂载')}：${escapeHtml(x.reason)} · ${x.injected?'已注入 System 资料':'未注入'}</div>`).join('')}</div><h4>本次新请求预计包含的预设（小值先发，0 最前）</h4><div class="row-sub">未挂载、已禁用和空内容均不会进入新的请求。这是发送前预览，不是服务商收包记录。数字只控制排列，无法保证模型服从或自动解决自由文本矛盾；请在下方完整消息队列核对。</div><div class="hit-list">${(d.presetTrace||[]).map(x=>`<div class="hit-item">${escapeHtml(x.name||x.id)}：${escapeHtml(x.reason)} · priority=${x.priority??'—'} · ${x.injected?`预计消息 #${x.sendIndex} · 将放入 System`:'未注入'}</div>`).join('')||'本轮未挂载预设'}</div><h4>世界书未注入原因</h4><div class="hit-list">${(d.worldbookMountTrace||[]).filter(x=>x.reason!=='enabled').map(x=>`<div class="hit-item">${escapeHtml(x.bookName||x.bookId)}：${escapeHtml(x.reason)}</div>`).join('')}${(d.skippedWorldbookEntries||[]).map(x=>`<div class="hit-item">${escapeHtml(x.bookName)} / ${escapeHtml(x.entryName)}：${escapeHtml(x.reason)}${x.reason==='budget'?`（需要 ${x.neededChars} 字符，剩余 ${x.remainingChars}）`:''}</div>`).join('')||'无额外跳过条目'}</div><h4>世界书深度注入（System 来源资料）</h4><div class="hit-list">${(d.depthInjections||[]).map(x=>`<div class="hit-item">${escapeHtml(x.bookName)} / ${escapeHtml(x.entryName)} · depth=${x.depth} · ${x.chars} 字符</div>`).join('')||'本轮无深度注入'}</div><details style="margin-top:12px"><summary>查看本次新请求预览的完整消息队列</summary><pre class="prompt-pre">${escapeHtml(d.messagePreview.map(x=>`#${x.index+1} ${x.role}\n${x.content}`).join('\n\n'))}</pre></details>`;
+    root.innerHTML=`<div class="prompt-stats"><div class="stat-card"><div class="stat-num">${Number(d.estimatedInputTokens||0).toLocaleString()}</div><div class="stat-label">估算输入 Tokens</div></div><div class="stat-card"><div class="stat-num">${d.recentMessageCount}/${d.recentMessageLimit||'—'}</div><div class="stat-label">最近消息窗口</div></div><div class="stat-card"><div class="stat-num">${d.matchedWorldbookEntries.length}</div><div class="stat-label">世界书命中</div></div><div class="stat-card"><div class="stat-num">${cacheText}</div><div class="stat-label">最近缓存命中 Tokens</div></div><div class="stat-card"><div class="stat-num">${d.systemChars}</div><div class="stat-label">System 字符</div></div><div class="stat-card"><div class="stat-num">${d.finalMessageCount}</div><div class="stat-label">最终 Messages</div></div></div><div class="cache-insight-card"><strong>🧊 Cache Insight（缓存观察）</strong><div class="row-sub">${cacheNote} 缓存是否真正命中由上游 Provider 决定；咪嘛馆不会伪造“已缓存”。</div></div><div class="row-sub">${d.contextTrace?.uncoveredRawCount?`本轮有 ${d.contextTrace.uncoveredRawCount} 条待总结旧原文处于最近窗口外；相关检索 ${d.contextTrace.retrievedCount} 条，未覆盖 ${d.contextTrace.omittedCount} 条（原文仍在本地）。`:'旧原文覆盖无额外缺口。'} ${d.contextTrace?.budgetVerified?'上下文预算：使用玩家配置的模型窗口。':'模型上下文窗口未核实：大请求将拒绝发送；请填写服务商真实窗口，不会猜测 32K 或 100 万容量。'} · 分批移出 ${Number(d.contextTrace?.plannedTrimRounds||0)} 轮，保留至少 ${Number(d.contextTrace?.protectedRecentRounds||20)} 轮，记忆来源覆盖 ${d.contextTrace?.memoryCoverageProof?'已核对':'未验证'}。</div><div class="row-sub">🧹 历史 HTML 净化：${escapeHtml(d.historyHtmlProjection?.mode==='raw'?'已关闭':'已开启')} · 发送历史中转换 ${Number(d.historyHtmlProjection?.changedMessages||0)} / ${Number(d.historyHtmlProjection?.processedMessages||0)} 条角色消息 · 减少 ${Number(d.historyHtmlProjection?.savedChars||0).toLocaleString()} 字符 · 粗估减少 ${Number(d.historyHtmlProjection?.estimatedTokensSaved||0).toLocaleString()} Tokens（不是上游精确计费）。玩家消息与 System 预设不计入此项。</div><h4>本轮 Prompt 构成（字符数，非精确 Tokens）</h4><div class="hit-list">${(d.sections||[]).slice().sort((a,b)=>b.chars-a.chars).map(x=>`<div class="hit-item">${escapeHtml(x.name)}：${Number(x.chars||0).toLocaleString()} 字符</div>`).join('')||'<div class="hit-item">暂无项目</div>'}</div><h4>本轮记忆注入情况</h4><div class="hit-list">${(d.memoryTrace||[]).map(x=>`<div class="hit-item">${x.kind==='rolling'?'滚动剧情摘要':x.kind==='core'?'核心记忆':`事实记忆 第${x.startRound}–${x.endRound}轮`}：${x.injected?'✅ 预计注入本轮 System':'— 本轮未注入'} · ${Number(x.chars||0)} 字 · ${escapeHtml(x.reason||'unknown')}${!x.sourceCurrent&&x.injected?' · 旧剧情已修改，但保留玩家选择的记忆注入':''}</div>`).join('')||'<div class="hit-item">没有可用记忆记录</div>'}</div><div class="row-sub">这反映当前时间线的 Prompt 预览；旧轮冻结重说和失败重试仍按原请求快照发送，不自动追加新记忆。</div><h4>本轮世界书</h4><div class="row-sub">本轮预算：${Number(d.worldbookBudgetChars??0).toLocaleString()} 字符，实际占用：${Number(d.worldbookUsedChars??0).toLocaleString()} 字符。未注入条目请核对触发条件与跳过原因。</div><div class="hit-list">${d.matchedWorldbookEntries.length?d.matchedWorldbookEntries.map(x=>`<div class="hit-item">✅ ${escapeHtml(x.bookName)} / ${escapeHtml(x.entryName)} · Depth（深度） ${x.depth} · ${escapeHtml(x.position)} · ${escapeHtml(x.reason)}${x.hits?.length?` · 命中：${escapeHtml(x.hits.join(', '))}`:''}</div>`).join(''):'<div class="hit-item">本轮没有触发世界书条目；未触发条目不会进入本轮 Prompt。</div>'}</div><h4 style="margin-top:16px">预览 System 消息（玩家挂载与来源资料）</h4><pre class="prompt-pre">${escapeHtml(d.actualSystemPreview||'')}</pre><h4>面具加载与注入状态</h4><div class="hit-list">${(d.maskTrace||[]).map(x=>`<div class="hit-item">${escapeHtml(x.kind)} / ${escapeHtml(x.name||x.id||'未挂载')}：${escapeHtml(x.reason)} · ${x.injected?'已注入 System 资料':'未注入'}</div>`).join('')}</div><h4>本次新请求预计包含的预设（小值先发，0 最前）</h4><div class="row-sub">未挂载、已禁用和空内容均不会进入新的请求。这是发送前预览，不是服务商收包记录。数字只控制排列，无法保证模型服从或自动解决自由文本矛盾；请在下方完整消息队列核对。</div><div class="hit-list">${(d.presetTrace||[]).map(x=>`<div class="hit-item">${escapeHtml(x.name||x.id)}：${escapeHtml(x.reason)} · priority=${x.priority??'—'} · ${x.injected?`预计消息 #${x.sendIndex} · 将放入 System`:'未注入'}</div>`).join('')||'本轮未挂载预设'}</div><h4>世界书未注入原因</h4><div class="hit-list">${(d.worldbookMountTrace||[]).filter(x=>x.reason!=='enabled').map(x=>`<div class="hit-item">${escapeHtml(x.bookName||x.bookId)}：${escapeHtml(x.reason)}</div>`).join('')}${(d.skippedWorldbookEntries||[]).map(x=>`<div class="hit-item">${escapeHtml(x.bookName)} / ${escapeHtml(x.entryName)}：${escapeHtml(x.reason)}${x.reason==='budget'?`（需要 ${x.neededChars} 字符，剩余 ${x.remainingChars}）`:''}</div>`).join('')||'无额外跳过条目'}</div><h4>世界书深度注入（System 来源资料）</h4><div class="hit-list">${(d.depthInjections||[]).map(x=>`<div class="hit-item">${escapeHtml(x.bookName)} / ${escapeHtml(x.entryName)} · depth=${x.depth} · ${x.chars} 字符</div>`).join('')||'本轮无深度注入'}</div><details style="margin-top:12px"><summary>查看本次新请求预览的完整消息队列</summary><pre class="prompt-pre">${escapeHtml(d.messagePreview.map(x=>`#${x.index+1} ${x.role}\n${x.content}`).join('\n\n'))}</pre></details>`;
+    renderActualApiMessages(root,d);
     const origin=d.playerInputProtocol;
     if(origin?.compiledMessageIds?.length||origin?.assistantTagMessageIds?.length){
       const info=document.createElement('p');info.className='helper';
-      info.textContent=`玩家输入格式：${origin.compiledMessageIds?.length||0} 条消息采用语义标签，本轮仅解释一次。${origin.assistantTagMessageIds?.length?`发现 ${origin.assistantTagMessageIds.length} 条角色历史含玩家输入标签；它们仍属于角色回复，并非玩家提交。请核对原文，必要时编辑或按当前挂载重说。`:''}`;
+      info.textContent=`玩家输入格式：${origin.compiledMessageIds?.length||0} 条消息按用户选择发送语义标签；来源说明仅在本地展示。${origin.assistantTagMessageIds?.length?`发现 ${origin.assistantTagMessageIds.length} 条角色历史含玩家输入标签；它们仍属于角色回复，并非玩家提交。请核对原文，必要时编辑或按当前挂载重说。`:''}`;
       root.insertBefore(info,root.firstChild);
     }
     if(d.inputPreview){
@@ -6229,7 +6289,7 @@ async function refreshPromptInspector(){
       const heading=document.createElement('summary');heading.textContent='查看玩家草稿发送前处理（原文 / 输入正则 / 实际 user 消息）';view.appendChild(heading);
       const note=document.createElement('p');note.className='helper';note.textContent='本轮预览不发送请求、不改变 History。下方完整消息队列中的 user content 才是实际的结构化结果。';view.appendChild(note);
       const text=document.createElement('pre');text.className='prompt-pre';text.textContent=`原文：\n${d.inputPreview.raw}\n\n输入正则后：\n${d.inputPreview.afterInputRegex}\n\n输入语义模式：${d.inputPreview.mode}`;view.appendChild(text);
-      root.insertBefore(view,root.querySelector('details'));
+      root.insertBefore(view,root.firstChild);
     }
 
 }
@@ -6430,7 +6490,7 @@ async function refreshDiagnosticsView(){
         let label={committed:'✅ 已提交',rejected:'⛔ 已拒绝',aborted:'⏹ 已取消',conflict:'⚠️ 提交冲突',requesting:'⏳ 请求中或异常退出',provider_returned:'⏳ 已返回，待结算',preparing:'⏳ 准备中'}[summary.status]||summary.status;
         const code=summary.errorCode||'',http=summary.httpStatus||0;
         if(summary.status==='rejected')label=summary.phase==='preflight'?'🧮 发送前已拦截 · 0 次模型请求':summary.finishKind==='blocked'||/REFUSAL/.test(code)?'⛔ 拒绝类回复':summary.finishKind==='truncated'||/TRUNCATED/.test(code)?'✂ 回复被截断':/STREAM_INTERRUPTED/.test(code)?'⚠ 连接中断':http>=400?'⚠ 请求失败 · HTTP '+http:'⚠ 未通过提交';
-        b.textContent=`${label} · ${new Date(summary.createdAt).toLocaleString()} · ${summary.action||'send'} · ${summary.model||(summary.phase==='preflight'?'预检未发送':'模型名称未记入日志')} · ${code||summary.finishReason||''}`;
+        b.textContent=`${label} · ${new Date(summary.createdAt).toLocaleString()} · ${requestAuditOperationLabel(summary.requestOperation||summary.action||'send')} · ${summary.model||(summary.phase==='preflight'?'预检未发送':'模型名称未记入日志')} · ${code||summary.finishReason||''}`;
         b.onclick=()=>{diagnosticViewState.selectedId=diagnosticViewState.selectedId===summary.id?null:summary.id;void refreshDiagnosticsView();};
         const row=document.createElement('div');row.className='diag-list-row';row.appendChild(b);
         if(diagnosticViewState.selectedId===summary.id)selectedRow=row;
@@ -6466,7 +6526,7 @@ async function refreshDiagnosticsView(){
     const info=document.createElement('div');info.className='row-sub';
     info.textContent=`会话：${record.sessionId||'—'} · Turn：${record.turnId||'—'} · Request：${record.requestId||'—'} · ${record.status} · ${record.model||'模型未记录'} · ${record.finishKind||'—'}/${record.finishReason||'—'} · HTTP：${Number(record.transport?.httpStatus||record.error?.status)||'—'}`;
     const replyBox=document.createElement('section');replyBox.className='diag-reply-panel';
-    const replyHead=document.createElement('strong');replyHead.textContent='本次收到的正文';
+    const replyHead=document.createElement('strong');replyHead.textContent='模型原始生成';
     const textStatus=document.createElement('p');textStatus.className='helper';textStatus.textContent='正在读取这条诊断的留存正文…';
     const replyPre=document.createElement('pre');replyPre.className='prompt-pre diag-reply-text';replyPre.hidden=true;
     replyBox.append(replyHead,textStatus,replyPre);
@@ -6480,7 +6540,9 @@ async function refreshDiagnosticsView(){
         retained=value;retainedLoaded=true;return value;
     }
     async function fullExport(){let candidate=null,recoveryReadError='';try{candidate=await readRetained();}catch(e){recoveryReadError=String(e?.message||e);}
-      return {...record,...(candidate?.raw?{recoveryPreview:candidate}:{}),...(recoveryReadError?{recoveryReadError}:{})};}
+      const {requestArchive,...exported}=record;
+      if(requestArchive&&!exported.request)exported.request=(await MimaDiagnosticJournal.readRequestBody(record)).body;
+      return {...exported,...(requestArchive?{requestArchive:{encoding:requestArchive.encoding,rawBytes:requestArchive.rawBytes,storedBytes:requestArchive.storedBytes}}:{}),...(candidate?.raw?{recoveryPreview:candidate}:{}),...(recoveryReadError?{recoveryReadError}:{})};}
     actionButton('删除这条',async()=>{
         if(!confirm('删除这条诊断记录？不会删除剧情消息。'))return;
         try{await MimaDiagnosticJournal.remove(record.id);diagnosticViewState.selectedId=null;await refreshDiagnosticsView();}catch(e){toast(`删除日志失败：${e.message}`);}
@@ -6498,7 +6560,7 @@ async function refreshDiagnosticsView(){
     wrap.appendChild(stats);
     if(record.protocolBoundary){
         const boundary=document.createElement('p');boundary.className='row-sub';
-        boundary.textContent=(record.protocolBoundary.localCompletion?'本轮按完整栏位在本机结束。':'本轮已按配置核对外层闭合。')+
+        boundary.textContent=(record.protocolBoundary.source==='schema_auto'?'自动核对完整格式的根级结尾。':'按用户手动结束标记核对。')+(record.protocolBoundary.localCompletion?'本机已结束接收；服务商完成状态另列。':'')+
           (record.protocolBoundary.tailChars?'已收到的越界文字 '+record.protocolBoundary.tailChars+' 字符，随诊断原文保存。':'');
         wrap.appendChild(boundary);
     }
@@ -6510,15 +6572,17 @@ async function refreshDiagnosticsView(){
     wrap.appendChild(delivery);
     const meta=document.createElement('div');meta.className='row-sub';meta.textContent='请求参数概要：'+JSON.stringify(record.requestMeta||{});wrap.appendChild(meta);
     if(record.requestTruncated){const warning=document.createElement('p');warning.className='helper';warning.textContent='请求超过诊断留存上限，客户端只保存来源摘要，不包含完整提示词。不会影响网络发送。';wrap.appendChild(warning);}
-    const request=record.request;
+    let request=record.request;
+    if(!request&&record.requestArchive){
+        try{request=(await MimaDiagnosticJournal.readRequestBody(record)).body;}
+        catch(error){if(fresh()){const warning=document.createElement('p');warning.className='helper';warning.textContent='完整请求归档仍保留，展开失败：'+error.message;wrap.append(warning);}}
+        if(!fresh()||record.id!==diagnosticViewState.selectedId)return;
+        if(request)record.request=request;
+    }
     if(request){
-        const details=document.createElement('details'),summary=document.createElement('summary');summary.textContent=`展开此条请求的客户端 messages（${request.messages?.length||0} 条）`;details.appendChild(summary);
-        details.addEventListener('toggle',()=>{if(details.open&&!details.querySelector('pre')){
-          const pre=document.createElement('pre');pre.className='prompt-pre';
-          pre.textContent=(request.messages||[]).map((m,i)=>`#${i} ${m.role}${m.prefix===true?' · prefix=true':''} · ${record.messageSources?.[i]?.kind||'未记录来源'} / ${record.messageSources?.[i]?.sourceId||record.messageSources?.[i]?.messageId||''}\n${m.content}`).join('\n\n');details.appendChild(pre);
-        }else if(!details.open)details.querySelector('pre')?.remove();});
-        wrap.appendChild(details);
-    }else{const none=document.createElement('p');none.className='helper';none.textContent='没有留存完整请求，或在组装请求前失败；不能据此判断服务商是否收到。';wrap.appendChild(none);}
+        renderActualApiMessages(wrap,{apiBody:request,requestAudit:record.requestAudit,
+          messageSources:record.messageSources,messagePreview:(request.messages||[]).map((m,index)=>({...m,index,source:record.messageSources?.[index]||{}}))},{actual:true,record});
+    }else{const none=document.createElement('p');none.className='helper';none.textContent='没有留存完整请求，或尚未组装请求。来源与逐字节对照未核实；请保留原诊断，不据此判定服务商已收到。';wrap.appendChild(none);}
     if(record.error){
         const errorDetails=document.createElement('details'),summary=document.createElement('summary');summary.textContent='技术错误详情（需要时展开）';
         const error=document.createElement('pre');error.className='prompt-pre';error.textContent=JSON.stringify(record.error,null,2);
@@ -6533,6 +6597,14 @@ async function refreshDiagnosticsView(){
             textStatus.textContent=candidate?.raw?`已收到 ${candidate.rawChars} 字符 · ${candidate.complete?'本机完整留存（不代表模型正常写完）':'现存片段，可能缺少后文'}`:record.status==='committed'?'本轮已保存到剧情 History；成功回复不另外留在失败正文仓库。':'本条没有留存可恢复的回复正文，原诊断仍保留。';
             replyPre.hidden=false;
             replyPre.textContent=candidate?.raw||(record.status==='committed'?'请回到剧情查看已保存回复。':'本条没有留存回复正文。');
+            const boundary=record.protocolBoundary;
+            if(candidate?.raw&&boundary?.status==='complete_verified'&&Number.isSafeInteger(boundary.acceptedEnd)&&boundary.acceptedEnd<=candidate.raw.length){
+              for(const [label,body] of [['本轮接收的角色片段',candidate.raw.slice(boundary.acceptedStart||0,boundary.acceptedEnd)],['隔离的越界尾部',candidate.raw.slice(boundary.acceptedEnd)]]){
+                const details=document.createElement('details'),summary=document.createElement('summary');summary.textContent=label+' · '+body.length+' 字符';details.append(summary);
+                details.ontoggle=()=>{if(details.open&&!details.querySelector('pre')){const pre=document.createElement('pre');pre.className='prompt-pre';pre.textContent=body||'（无）';details.append(pre);}else if(!details.open)details.querySelector('pre')?.remove();};replyBox.append(details);
+                actionButton('复制'+label,async()=>{try{await copyTextPortable(body);toast('已复制'+label);}catch(error){toast('复制失败：'+error.message);}});
+              }
+            }
         }catch(e){
             if(fresh()&&record.id===diagnosticViewState.selectedId&&wrap.isConnected){
                 textStatus.textContent='正文读取失败，原诊断未被删除：'+e.message;
