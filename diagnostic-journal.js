@@ -45,6 +45,7 @@
      generationId:String(row.generationId||''),generationAttempt:Number(row.generationAttempt)||0,
      createdAt:String(row.createdAt||''),createdAtMs:Number.isFinite(Number(row.createdAtMs))&&Number(row.createdAtMs)>0?Number(row.createdAtMs):null,
      status:String(row.status||''),requestOperation:String(row.requestAudit?.operation||''),model:String(row.model||''),phase:String(row.phase||''),
+     estimatedInputTokens:row.requestTokenEstimate?.inputTokens??row.requestAudit?.tokenEstimate?.inputTokens??null,
      finishKind:String(row.finishKind||''),finishReason:String(row.finishReason||''),
      errorCode:String(row.error?.code||''),httpStatus:Number(row.transport?.httpStatus||row.error?.status)||0,
      requestSent:row.requestSent!==false,requestSerialized:row.requestSerialized===true||!!row.request,fetchInvoked:row.fetchInvoked===true,requestDispatchAttempted:row.requestDispatchAttempted===true,responseReceived:!!row.transport?.responseReceivedAt,manualRecovery:!!row.manualRecovery,
@@ -201,7 +202,7 @@
          // This is a local transport invocation attempt, not proof the provider received bytes.
          row.fetchInvoked=true;row.requestDispatchAttempted=true;
        }else if(data.type==='preflight_failure'){
-         row.status='rejected';row.phase='preflight';row.requestSent=false;row.settledAt=new Date().toISOString();
+         row.status=data.aborted===true?'aborted':'rejected';row.phase='preflight';row.requestSent=false;row.settledAt=new Date().toISOString();
          row.model=pickString(data.model,160);row.endpointOrigin=pickString(data.endpointOrigin,260);
          row.configuredWindow=Number(data.configuredWindow)||0;row.sourceCount=Number(data.sourceCount)||0;
          row.preparationElapsedMs=Number(data.preparationElapsedMs)||0;
@@ -224,6 +225,7 @@
          row.messageSources=Array.isArray(data.messageSources)?data.messageSources.map(source=>Object.fromEntries(sourceKeys.filter(key=>Object.hasOwn(source||{},key)).map(key=>[key,source[key]]))):[];
          const all=serialized;
          row.requestAudit=data.requestAudit||null;
+         row.requestTokenEstimate=data.requestAudit?.tokenEstimate||window.MimaStandalone?.estimateRequestTokens?.(safe)||null;
          if(data.requestAudit?.summary)row.requestPurity=data.requestAudit.summary;
          row.request=requestArchive?null:safe;
          if(requestArchive)row.requestArchive=requestArchive;else delete row.requestArchive;

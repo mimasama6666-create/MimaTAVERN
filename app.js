@@ -226,6 +226,35 @@ let r19DraftTimer=null,r19ScrollTimer=null;
 const r19DraftReadBlocked=new Set();
 let r19LastUnknown=null;
 const r19DraftStatus=message=>{const el=qs('r19-draft-status');if(el)el.textContent=message;};
+let requestTokenTimer=null,requestTokenEpoch=0,requestTokenController=null,requestTokenKey=null,requestTokenReadyKey=null;
+function scheduleRequestTokenEstimate(){
+ const el=qs('r33-token-estimate');
+ if(!el)return;
+ const key=JSON.stringify([currentSessionId,sessionNavigationEpoch,qs('story-input')?.value||'',qs('director-note')?.value||'',MimaStandalone.getPromptInputRevision(currentSessionId),MimaStandalone.getApiConfig()]);
+ if(!document.hidden&&!currentGenerationOwner()&&key===requestTokenKey&&(requestTokenTimer||requestTokenController||requestTokenReadyKey===key))return;
+ const epoch=++requestTokenEpoch;requestTokenKey=key;requestTokenReadyKey=null;
+ clearTimeout(requestTokenTimer);requestTokenTimer=null;
+ requestTokenController?.abort();requestTokenController=null;
+ delete el.dataset.tokens;
+ if(!currentSessionId||!currentSessionData){el.textContent='';return;}
+ if(document.hidden||currentGenerationOwner()){el.textContent='输入估算待更新';return;}
+ el.textContent='正在估算输入…';
+ // Coalesce typing and settings updates; the preview owns a separate abort
+ // signal and never takes the generation lock or calls a model.
+ requestTokenTimer=setTimeout(async()=>{
+   requestTokenTimer=null;const id=currentSessionId,draft=qs('story-input')?.value||'',directorNote=qs('director-note')?.value||'';
+   const controller=new AbortController();requestTokenController=controller;
+   const fresh=()=>epoch===requestTokenEpoch&&key===requestTokenKey&&id===currentSessionId&&!document.hidden&&!currentGenerationOwner()&&el===qs('r33-token-estimate')&&draft===(qs('story-input')?.value||'')&&directorNote===(qs('director-note')?.value||'');
+   try{
+     const res=await fetchStory(`/sessions/${encodeURIComponent(id)}/token-estimate`,'POST',{draft,directorNote},false,null,controller.signal);
+     if(!fresh()||controller.signal.aborted)return;
+     const count=res.data?.inputTokens;
+     if(res.success&&Number.isSafeInteger(count)&&count>=0){requestTokenReadyKey=key;el.textContent=`本次输入约 ${count.toLocaleString()} tokens`;el.dataset.tokens=String(count);el.title='普通新发送的完整输入估算，包含预设、Persona、世界书、已启用记忆、历史和草稿。按字符数 ÷ 2.5 加每条消息 8 tokens 粗估；不含尚未生成的输出，实际分词与计费以服务商为准。';}
+     else{el.textContent='输入暂无法估算';el.title=res.msg||'完整请求预览未完成，未发送模型请求。';}
+   }catch(error){if(fresh()&&!controller.signal.aborted){el.textContent='输入暂无法估算';el.title=error.message;}}
+   finally{if(requestTokenController===controller)requestTokenController=null;}
+ },400);
+}
 function r19PersistDraft(id,immediate=true){
  if(!id||r19DraftReadBlocked.has(id))return;
  if(r19DraftTimer){clearTimeout(r19DraftTimer);r19DraftTimer=null;}
@@ -234,9 +263,10 @@ function r19PersistDraft(id,immediate=true){
  if(!immediate){r19DraftStatus('草稿待保存');r19DraftTimer=setTimeout(()=>r19PersistDraft(id,true),120);return;}
  try{localStorage.setItem(R19_DRAFT_PREFIX+id,JSON.stringify({version:1,text:draft.text,director:draft.director,updatedAt:Date.now()}));r19DraftStatus('草稿已保存');}
  catch(err){r19DraftStatus('草稿保存失败');console.error('草稿持久化失败；没有更改剧情',{sessionId:id,stage:'draft_save',error:err});}
+ if(id===currentSessionId)scheduleRequestTokenEstimate();
 }
 function r19ComposerInput(){if(!currentSessionId||r19DraftReadBlocked.has(currentSessionId))return;const text=qs('story-input')?.value||'',director=qs('director-note')?.value||'';
- sessionComposerDrafts.set(currentSessionId,{text,director});r19PersistDraft(currentSessionId,false);}
+ sessionComposerDrafts.set(currentSessionId,{text,director});r19PersistDraft(currentSessionId,false);scheduleRequestTokenEstimate();}
 function r19SavedDraft(id){
  if(sessionComposerDrafts.has(id)&&!r19DraftReadBlocked.has(id))return sessionComposerDrafts.get(id);
  try{const raw=localStorage.getItem(R19_DRAFT_PREFIX+id);if(!raw){r19DraftReadBlocked.delete(id);return {text:'',director:''};}
@@ -273,7 +303,9 @@ function r19Lifecycle(kind,extra={}){
 }
 window.addEventListener('pagehide',event=>{preserveComposerDraft();r19PersistReading();r19Lifecycle('pagehide',{persisted:!!event.persisted});});
 window.addEventListener('pageshow',event=>{r19Lifecycle('pageshow',{persisted:!!event.persisted});if(event.persisted&&currentSessionId){void reconcileCanonicalGenerationSession(currentSessionId).then(updateGenerationTaskViewerShortcut);}});
-document.addEventListener('visibilitychange',()=>{if(document.hidden){preserveComposerDraft();r19PersistReading();}r19Lifecycle('visibilitychange',{hidden:document.hidden});if(!document.hidden)queueMicrotask(maybeShowMimaReleaseNotice);});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){preserveComposerDraft();r19PersistReading();}r19Lifecycle('visibilitychange',{hidden:document.hidden});scheduleRequestTokenEstimate();if(!document.hidden)queueMicrotask(maybeShowMimaReleaseNotice);});
+window.addEventListener('mima:prompt-inputs-changed',()=>scheduleRequestTokenEstimate());
+window.addEventListener('focus',()=>{requestTokenReadyKey=null;scheduleRequestTokenEstimate();});
 
 let generationSerial = 0;
 
@@ -1560,6 +1592,7 @@ async function importSessionFile(file){
 function currentChar(){return masks.find(x=>x.id===currentSessionData?.loadedCharMaskId)||null}
 function currentUser(){return masks.find(x=>x.id===currentSessionData?.loadedUserMaskId)||null}
 function refreshHeader(){
+    scheduleRequestTokenEstimate();
     const char=currentChar(); qs('current-character').textContent=char?.name||(currentSessionData?.mode==='sandalphon'?'圣德芬':'未挂载角色');
     qs('current-title').textContent=currentSessionData?.title||'欢迎来到咪嘛馆';
     const av=qs('top-avatar'); av.replaceChildren(); const showGothicMark=()=>{const img=document.createElement('img');img.className='mima-gothic-mark';img.src='./assets/mima-gothic-heart.png';img.alt='';img.draggable=false;av.replaceChildren(img);};if(char?.avatar){const img=document.createElement('img');img.src=char.avatar;img.onerror=showGothicMark;av.appendChild(img)}else showGothicMark();
@@ -6179,6 +6212,7 @@ function saveApiSettings(){
         const c=collectApiForm();
         if(c.extraHeaders)JSON.parse(c.extraHeaders);
         MimaStandalone.saveApiConfig({...c,capacityExplicit:true});
+        scheduleRequestTokenEstimate();
         const actual=MimaStandalone.getApiConfig();
         if(actual.temperature!==temp||actual.topP!==topP||actual.sendTopP!==c.sendTopP||actual.maxTokens!==maxTokens||actual.contextWindowTokens!==windowSize||actual.model!==c.model||actual.apiBase!==c.apiBase||actual.chatEndpoint!==c.chatEndpoint||actual.stream!==c.stream)
             throw new Error('保存后的 API 数值与输入不一致');
@@ -6223,6 +6257,11 @@ function renderActualApiMessages(root,d,{actual=false,record=null}={}){
  const section=document.createElement('section');section.className='settings-section mima-request-audit';
  const head=document.createElement('h4');head.textContent=actual?'本次发送给模型的完整消息':'实际 API 消息（发送前预览）';section.append(head);
  const audit=d.requestAudit||null,note=document.createElement('p');note.className='helper';note.textContent=requestAuditSummaryText(audit);section.append(note);
+ const tokenEstimate=audit?.tokenEstimate||MimaStandalone.estimateRequestTokens(d.apiBody||(Array.isArray(d.messagePreview)?{messages:d.messagePreview}:null));
+ const tokens=document.createElement('p');tokens.className='row-sub request-token-summary';
+ const hasEstimate=Number.isSafeInteger(tokenEstimate?.inputTokens)&&tokenEstimate.inputTokens>=0;
+ if(hasEstimate)tokens.dataset.tokens=String(tokenEstimate.inputTokens);
+ tokens.textContent=`输入估算：${hasEstimate?'约 '+tokenEstimate.inputTokens.toLocaleString()+' tokens':'未记录'}。bytes 是 UTF-8 字节数，不是 tokens。估算按字符数 ÷ 2.5 加每条消息 8 tokens；实际用量以服务商返回为准。`;section.append(tokens);
  const operation=document.createElement('p');operation.className='row-sub';
  operation.textContent=actual?`操作：${requestAuditOperationLabel(audit?.operation||record?.action)} · ${record?.transport?.responseReceivedAt?'已收到响应':record?.fetchInvoked?'已尝试调用，送达状态未知':'仅已序列化，尚无调用证据'}${audit?.continuation?' · '+({complete_missing:'补齐原回复',separate:'独立下一轮'}[audit.continuation]||audit.continuation):''}`:'普通新发送预览；重说、续写、重试和推进的最终内容请在实际请求记录核对。';section.append(operation);
  if(audit){
@@ -6239,7 +6278,9 @@ function renderActualApiMessages(root,d,{actual=false,record=null}={}){
    const source=item.source||d.messageSources?.[item.index]||{},row=audit?.rows?.[item.index],details=document.createElement('details'),summary=document.createElement('summary');
    const content=typeof item.content==='string'?item.content:JSON.stringify(item.content);
    const category=row?.category||source.kind||'unknown',verified=row?.verification==='verified';
-   summary.textContent=`#${item.index+1} ${item.role}${item.prefix===true?' · prefix=true':''} · ${labels[category]||'未核实来源'}${verified?'':' · 未核实'} · ${row?.bytes??new TextEncoder().encode(content).length} bytes`;
+   const estimatedTokens=row?.estimatedTokens??tokenEstimate?.messageTokens?.[item.index];
+   const tokenLabel=Number.isSafeInteger(estimatedTokens)&&estimatedTokens>=0?'约 '+estimatedTokens.toLocaleString()+' tokens':'tokens 未记录';
+   summary.textContent=`#${item.index+1} ${item.role}${item.prefix===true?' · prefix=true':''} · ${labels[category]||'未核实来源'}${verified?'':' · 未核实'} · ${tokenLabel} · ${row?.bytes??new TextEncoder().encode(content).length} bytes`;
    const meta=document.createElement('p');meta.className='row-sub';meta.style.wordBreak='break-word';
    meta.textContent=`来源 ID：${row?.sourceId||source.sourceId||source.messageId||'未记录'} · ${row?.enabled===true?'已启用':row?.enabled===false?'来源标记为停用，需核对':'启用状态未核实'} · 进入本次${actual?'实际请求':'预览'}${row?.lineage==='frozen_history'?' · 冻结历史来源':''}${category==='optional_format'?' · 用户显式启用':''}${row?.inputProjection?' · 输入投影：'+row.inputProjection:''}${row?.sourceMatch==='different'?' · 最终文字与来源投影哈希不同，未核实':''}`;
    details.append(summary,meta);details.ontoggle=()=>{if(details.open&&!details.querySelector('pre')){const pre=document.createElement('pre');pre.className='prompt-pre';pre.textContent=content;details.append(pre);}else if(!details.open)details.querySelector('pre')?.remove();};section.append(details);
@@ -6274,8 +6315,9 @@ async function refreshPromptInspector(){
     }
     const d=res.data,u=d.upstreamUsage||MimaStandalone.getLastUsage?.()||null;
     const cached=u?.cachedTokens;
-    const cacheText=Number.isFinite(Number(cached))?Number(cached).toLocaleString():'—';
-    const cacheNote=u?`最近一次上游 usage${u.model?` · ${escapeHtml(u.model)}`:''}${Number.isFinite(Number(cached))?`：缓存命中 ${Number(cached).toLocaleString()} tokens`:'：未提供 cached tokens 字段'}。`:'当前中转/模型尚未返回可识别的 usage 统计。';
+    const hasCached=cached!==null&&cached!==undefined&&Number.isFinite(Number(cached));
+    const cacheText=hasCached?Number(cached).toLocaleString():'—';
+    const cacheNote=u?`最近一次上游 usage${u.model?` · ${escapeHtml(u.model)}`:''}${hasCached?`：缓存命中 ${Number(cached).toLocaleString()} tokens`:'：未提供 cached tokens 字段'}。`:'当前中转/模型尚未返回可识别的 usage 统计。';
     root.innerHTML=`<div class="prompt-stats"><div class="stat-card"><div class="stat-num">${Number(d.estimatedInputTokens||0).toLocaleString()}</div><div class="stat-label">估算输入 Tokens</div></div><div class="stat-card"><div class="stat-num">${d.recentMessageCount}/${d.recentMessageLimit||'—'}</div><div class="stat-label">最近消息窗口</div></div><div class="stat-card"><div class="stat-num">${d.matchedWorldbookEntries.length}</div><div class="stat-label">世界书命中</div></div><div class="stat-card"><div class="stat-num">${cacheText}</div><div class="stat-label">最近缓存命中 Tokens</div></div><div class="stat-card"><div class="stat-num">${d.systemChars}</div><div class="stat-label">System 字符</div></div><div class="stat-card"><div class="stat-num">${d.finalMessageCount}</div><div class="stat-label">最终 Messages</div></div></div><div class="cache-insight-card"><strong>🧊 Cache Insight（缓存观察）</strong><div class="row-sub">${cacheNote} 缓存是否真正命中由上游 Provider 决定；咪嘛馆不会伪造“已缓存”。</div></div><div class="row-sub">${d.contextTrace?.uncoveredRawCount?`本轮有 ${d.contextTrace.uncoveredRawCount} 条待总结旧原文处于最近窗口外；相关检索 ${d.contextTrace.retrievedCount} 条，未覆盖 ${d.contextTrace.omittedCount} 条（原文仍在本地）。`:'旧原文覆盖无额外缺口。'} ${d.contextTrace?.budgetVerified?'上下文预算：使用玩家配置的模型窗口。':'模型上下文窗口未核实：大请求将拒绝发送；请填写服务商真实窗口，不会猜测 32K 或 100 万容量。'} · 分批移出 ${Number(d.contextTrace?.plannedTrimRounds||0)} 轮，保留至少 ${Number(d.contextTrace?.protectedRecentRounds||20)} 轮，记忆来源覆盖 ${d.contextTrace?.memoryCoverageProof?'已核对':'未验证'}。</div><div class="row-sub">🧹 历史 HTML 净化：${escapeHtml(d.historyHtmlProjection?.mode==='raw'?'已关闭':'已开启')} · 发送历史中转换 ${Number(d.historyHtmlProjection?.changedMessages||0)} / ${Number(d.historyHtmlProjection?.processedMessages||0)} 条角色消息 · 减少 ${Number(d.historyHtmlProjection?.savedChars||0).toLocaleString()} 字符 · 粗估减少 ${Number(d.historyHtmlProjection?.estimatedTokensSaved||0).toLocaleString()} Tokens（不是上游精确计费）。玩家消息与 System 预设不计入此项。</div><h4>本轮 Prompt 构成（字符数，非精确 Tokens）</h4><div class="hit-list">${(d.sections||[]).slice().sort((a,b)=>b.chars-a.chars).map(x=>`<div class="hit-item">${escapeHtml(x.name)}：${Number(x.chars||0).toLocaleString()} 字符</div>`).join('')||'<div class="hit-item">暂无项目</div>'}</div><h4>本轮记忆注入情况</h4><div class="hit-list">${(d.memoryTrace||[]).map(x=>`<div class="hit-item">${x.kind==='rolling'?'滚动剧情摘要':x.kind==='core'?'核心记忆':`事实记忆 第${x.startRound}–${x.endRound}轮`}：${x.injected?'✅ 预计注入本轮 System':'— 本轮未注入'} · ${Number(x.chars||0)} 字 · ${escapeHtml(x.reason||'unknown')}${!x.sourceCurrent&&x.injected?' · 旧剧情已修改，但保留玩家选择的记忆注入':''}</div>`).join('')||'<div class="hit-item">没有可用记忆记录</div>'}</div><div class="row-sub">这反映当前时间线的 Prompt 预览；旧轮冻结重说和失败重试仍按原请求快照发送，不自动追加新记忆。</div><h4>本轮世界书</h4><div class="row-sub">本轮预算：${Number(d.worldbookBudgetChars??0).toLocaleString()} 字符，实际占用：${Number(d.worldbookUsedChars??0).toLocaleString()} 字符。未注入条目请核对触发条件与跳过原因。</div><div class="hit-list">${d.matchedWorldbookEntries.length?d.matchedWorldbookEntries.map(x=>`<div class="hit-item">✅ ${escapeHtml(x.bookName)} / ${escapeHtml(x.entryName)} · Depth（深度） ${x.depth} · ${escapeHtml(x.position)} · ${escapeHtml(x.reason)}${x.hits?.length?` · 命中：${escapeHtml(x.hits.join(', '))}`:''}</div>`).join(''):'<div class="hit-item">本轮没有触发世界书条目；未触发条目不会进入本轮 Prompt。</div>'}</div><h4 style="margin-top:16px">预览 System 消息（玩家挂载与来源资料）</h4><pre class="prompt-pre">${escapeHtml(d.actualSystemPreview||'')}</pre><h4>面具加载与注入状态</h4><div class="hit-list">${(d.maskTrace||[]).map(x=>`<div class="hit-item">${escapeHtml(x.kind)} / ${escapeHtml(x.name||x.id||'未挂载')}：${escapeHtml(x.reason)} · ${x.injected?'已注入 System 资料':'未注入'}</div>`).join('')}</div><h4>本次新请求预计包含的预设（小值先发，0 最前）</h4><div class="row-sub">未挂载、已禁用和空内容均不会进入新的请求。这是发送前预览，不是服务商收包记录。数字只控制排列，无法保证模型服从或自动解决自由文本矛盾；请在下方完整消息队列核对。</div><div class="hit-list">${(d.presetTrace||[]).map(x=>`<div class="hit-item">${escapeHtml(x.name||x.id)}：${escapeHtml(x.reason)} · priority=${x.priority??'—'} · ${x.injected?`预计消息 #${x.sendIndex} · 将放入 System`:'未注入'}</div>`).join('')||'本轮未挂载预设'}</div><h4>世界书未注入原因</h4><div class="hit-list">${(d.worldbookMountTrace||[]).filter(x=>x.reason!=='enabled').map(x=>`<div class="hit-item">${escapeHtml(x.bookName||x.bookId)}：${escapeHtml(x.reason)}</div>`).join('')}${(d.skippedWorldbookEntries||[]).map(x=>`<div class="hit-item">${escapeHtml(x.bookName)} / ${escapeHtml(x.entryName)}：${escapeHtml(x.reason)}${x.reason==='budget'?`（需要 ${x.neededChars} 字符，剩余 ${x.remainingChars}）`:''}</div>`).join('')||'无额外跳过条目'}</div><h4>世界书深度注入（System 来源资料）</h4><div class="hit-list">${(d.depthInjections||[]).map(x=>`<div class="hit-item">${escapeHtml(x.bookName)} / ${escapeHtml(x.entryName)} · depth=${x.depth} · ${x.chars} 字符</div>`).join('')||'本轮无深度注入'}</div><details style="margin-top:12px"><summary>查看本次新请求预览的完整消息队列</summary><pre class="prompt-pre">${escapeHtml(d.messagePreview.map(x=>`#${x.index+1} ${x.role}\n${x.content}`).join('\n\n'))}</pre></details>`;
     renderActualApiMessages(root,d);
     const origin=d.playerInputProtocol;
@@ -6490,7 +6532,7 @@ async function refreshDiagnosticsView(){
         let label={committed:'✅ 已提交',rejected:'⛔ 已拒绝',aborted:'⏹ 已取消',conflict:'⚠️ 提交冲突',requesting:'⏳ 请求中或异常退出',provider_returned:'⏳ 已返回，待结算',preparing:'⏳ 准备中'}[summary.status]||summary.status;
         const code=summary.errorCode||'',http=summary.httpStatus||0;
         if(summary.status==='rejected')label=summary.phase==='preflight'?'🧮 发送前已拦截 · 0 次模型请求':summary.finishKind==='blocked'||/REFUSAL/.test(code)?'⛔ 拒绝类回复':summary.finishKind==='truncated'||/TRUNCATED/.test(code)?'✂ 回复被截断':/STREAM_INTERRUPTED/.test(code)?'⚠ 连接中断':http>=400?'⚠ 请求失败 · HTTP '+http:'⚠ 未通过提交';
-        b.textContent=`${label} · ${new Date(summary.createdAt).toLocaleString()} · ${requestAuditOperationLabel(summary.requestOperation||summary.action||'send')} · ${summary.model||(summary.phase==='preflight'?'预检未发送':'模型名称未记入日志')} · ${code||summary.finishReason||''}`;
+        b.textContent=`${label} · ${new Date(summary.createdAt).toLocaleString()} · ${requestAuditOperationLabel(summary.requestOperation||summary.action||'send')} · ${summary.model||(summary.phase==='preflight'?'预检未发送':'模型名称未记入日志')} · ${code||summary.finishReason||''}${Number.isSafeInteger(summary.estimatedInputTokens)?' · 约 '+summary.estimatedInputTokens.toLocaleString()+' 输入 tokens':''}`;
         b.onclick=()=>{diagnosticViewState.selectedId=diagnosticViewState.selectedId===summary.id?null:summary.id;void refreshDiagnosticsView();};
         const row=document.createElement('div');row.className='diag-list-row';row.appendChild(b);
         if(diagnosticViewState.selectedId===summary.id)selectedRow=row;
@@ -6558,6 +6600,13 @@ async function refreshDiagnosticsView(){
     const stats=document.createElement('p');stats.className='row-sub';
     stats.textContent=`请求体：${record.requestBytes?Number(record.requestBytes).toLocaleString()+' bytes':'未记录'} · 准备：${record.preparationElapsedMs==null?'未记录':Number(record.preparationElapsedMs)+' ms'} · 等待响应头：${record.transport?Number(record.transport.fetchElapsedMs)+' ms':'未记录'}`;
     wrap.appendChild(stats);
+    const tokenStats=document.createElement('p');tokenStats.className='row-sub diag-token-stats';wrap.append(tokenStats);
+    const updateTokenStats=()=>{
+      const estimate=record.requestTokenEstimate||record.requestAudit?.tokenEstimate||(record.request?MimaStandalone.estimateRequestTokens(record.request):null);
+      const usage=MimaStandalone.extractUsageMetrics({usage:record.providerUsage},record.model);
+      const actual=usage?[['输入',usage.inputTokens],['输出',usage.outputTokens],['合计',usage.totalTokens],['缓存命中',usage.cachedTokens]].filter(([,n])=>n!==null).map(([name,n])=>name+' '+n.toLocaleString()).join(' · '):'';
+      tokenStats.textContent=`输入估算：${estimate?'约 '+estimate.inputTokens.toLocaleString()+' tokens':'未记录，完整请求可读后计算'}；${actual?'服务商实际 tokens：'+actual:'服务商未返回实际 token 用量'}。`;
+    };updateTokenStats();
     if(record.protocolBoundary){
         const boundary=document.createElement('p');boundary.className='row-sub';
         boundary.textContent=(record.protocolBoundary.source==='schema_auto'?'自动核对完整格式的根级结尾。':'按用户手动结束标记核对。')+(record.protocolBoundary.localCompletion?'本机已结束接收；服务商完成状态另列。':'')+
@@ -6580,6 +6629,7 @@ async function refreshDiagnosticsView(){
         if(request)record.request=request;
     }
     if(request){
+        updateTokenStats();
         renderActualApiMessages(wrap,{apiBody:request,requestAudit:record.requestAudit,
           messageSources:record.messageSources,messagePreview:(request.messages||[]).map((m,index)=>({...m,index,source:record.messageSources?.[index]||{}}))},{actual:true,record});
     }else{const none=document.createElement('p');none.className='helper';none.textContent='没有留存完整请求，或尚未组装请求。来源与逐字节对照未核实；请保留原诊断，不据此判定服务商已收到。';wrap.appendChild(none);}
@@ -7006,6 +7056,7 @@ function toggleUIState(generating){
     input.placeholder=owner&&owner.userSaved?'可以继续写下一条，等生成完成再发送…':'写下你的动作、语言或剧情……';
     if(qs('director-note'))qs('director-note').disabled=r19DraftReadBlocked.has(currentSessionId);
     qs('generation-reconcile')?.classList.toggle('hidden',!visible||!!currentGenerationOwner());
+    scheduleRequestTokenEstimate();
 }
 function generationActionLabel(action){return action==='regenerate'?'正在重新生成':action==='continue'?'正在续写':action==='auto_advance'?'正在推进剧情':'正在生成剧情'}
 function syncGenerationMinimizedBadge(percent=0){const badge=qs('generation-minimized-badge'),ring=badge?.querySelector('.generation-minimized-ring'),pct=qs('generation-minimized-percent');if(!badge||!ring||!pct)return;const n=Math.max(2,Math.min(100,Number(percent)||2));badge.style.setProperty('--generation-mini-progress',`${n}%`);ring.style.setProperty('--generation-mini-progress',`${n}%`);pct.textContent=`${Math.round(n)}%`;}
@@ -8194,6 +8245,7 @@ function r19CaptureReadingAnchor(box){
  return candidate?{id:candidate.dataset.msgId,offset:candidate.getBoundingClientRect().top-view.top,scrollTop:box.scrollTop}:{id:null,offset:0,scrollTop:box.scrollTop};
 }
 function refreshChatBox(options={}){
+    scheduleRequestTokenEstimate();
  const box=qs('story-chat-box'),renderedSessionId=currentSessionId,renderedEpoch=sessionNavigationEpoch,renderedLayoutEpoch=readingLayoutEpoch;
  if(!box)return;
  const messages=currentSessionData?.messages||[];

@@ -66,6 +66,17 @@
     return Number.isFinite(n) ? Math.max(0.1, Math.min(2, n)) : 0.85;
   };
   const estimateTokens = t => Math.ceil(String(t || '').length / 2.5);
+  // Read-only display estimate. Never changes context admission, request text,
+  // history selection or provider parameters; exact usage comes from Provider.
+  function estimateRequestTokens(body){
+    if(!Array.isArray(body?.messages))return null;
+    const messageTokens=arr(body?.messages).map(message=>{
+      const content=message?.content;
+      const textTokens=Array.isArray(content)?content.reduce((sum,part)=>sum+(part?.type==='image_url'?2500:estimateTokens(part?.text||'')),0):estimateTokens(typeof content==='string'?content:JSON.stringify(content??''));
+      return textTokens+8;
+    });
+    return {version:1,method:'characters_2_5_message_8',inputTokens:messageTokens.reduce((sum,n)=>sum+n,0),messageCount:messageTokens.length,messageTokens};
+  }
 
   function fingerprint(data){const str=JSON.stringify(data);let h=2166136261;for(let i=0;i<str.length;i++){h^=str.charCodeAt(i);h=Math.imul(h,16777619);}return 'fnv1a32:'+((h>>>0).toString(16).padStart(8,'0'))+':'+str.length;}
   // SHA-256 of the actual CSS bytes (not an updatedAt-only hint). The digest is
@@ -2291,6 +2302,7 @@
     const builtinKinds=new Set(['builtin','input_protocol','history_provenance']);
     const lineage=options.lineage==='frozen_history'?'frozen_history':'current';
     const categories={},roles={};let knownAutomaticCount=0,knownAutomaticBytes=0,unknownCount=0,unknownBytes=0,explicitFormatCount=0,explicitFormatBytes=0;
+    const tokenEstimate=estimateRequestTokens(body);
     const rows=candidates.map((message,index)=>{
       const source=message.source,declaredKind=String(source.kind||''),id=String(source.sourceId||source.messageId||'');
       const builtin=builtinKinds.has(declaredKind),category=builtin?'builtin':kinds.has(declaredKind)?declaredKind:'unknown';
@@ -2307,14 +2319,14 @@
       if(category==='optional_format'&&verified){explicitFormatCount++;explicitFormatBytes+=bytes;}
       return Object.freeze({index,role,prefix:message.prefix===true,category,declaredKind,sourceId:id||null,
         resourceId:source.resourceId||null,section:source.section||null,name:source.name||null,
-        enabled:verified?true:source.enabled===false?false:null,entersRequest:true,bytes,chars:content.length,
+        enabled:verified?true:source.enabled===false?false:null,entersRequest:true,bytes,chars:content.length,estimatedTokens:tokenEstimate.messageTokens[index],
         contentSha256,expectedSourceSha256:source.contentSha256||null,sourceMatch:sourceMatches?'matched':source.contentSha256?'different':'unverified',
         lineage,inputProjection:source.inputProjection||null,
         verification:verified?'verified':lineage==='frozen_history'?'unverified_frozen_source':'unverified_source'});
     });
     const audited={version:1,basis:'final_api_body',operation:options.operation||'send',lineage,
       continuation:options.continuation||null,compatibilityChanges:options.compatibilityChanges||[],
-      bodySha256,messagesSha256,bodyBytes,contentBytes:rows.reduce((n,row)=>n+row.bytes,0),
+      bodySha256,messagesSha256,bodyBytes,contentBytes:rows.reduce((n,row)=>n+row.bytes,0),tokenEstimate,
       messageCount:rows.length,categories,roles,rows:Object.freeze(rows),
       prepared:prepared?{bodySha256:prepared.bodySha256||null,messagesSha256:prepared.messagesSha256||null,bodyBytes:prepared.bodyBytes??null}:null,
       preparedMatch:!prepared||!bodySha256||!prepared.bodySha256?'unverified':prepared.bodySha256===bodySha256&&prepared.messagesSha256===messagesSha256&&prepared.bodyBytes===bodyBytes?'matched':'different',
@@ -2326,7 +2338,7 @@
     return Object.freeze(audited);
   }
   async function assemble(sessionInput,options={}){
-    const session=normalizeSession(sessionInput),activation=await collectWorldbookEntriesAsync(session,options.signal);
+    const session=options.tokenEstimateOnly===true&&options.normalizedSession===true?sessionInput:normalizeSession(sessionInput),activation=await collectWorldbookEntriesAsync(session,options.signal);
     const budget=Math.max(1000,Number(session.promptSettings?.worldbookBudgetChars||16000)),budgeted=enforceBudget(activation.matched,budget),matched=budgeted.kept;
     const worldbookMountTrace=arr(session.worldbookIds).map(id=>{const book=getWorldbook(id);return {bookId:id,bookName:book?.name||'',mounted:true,enabled:book?.enabled!==false&&!!book,reason:!book?'missing_book':book.enabled===false?'disabled_book':'enabled'};});
     const maskTrace=[{kind:'character',id:session.loadedCharMaskId},{kind:'user',id:session.loadedUserMaskId}].map(x=>{const mask=x.id?getMask(x.id):null;return {kind:x.kind,id:x.id||null,loaded:!!mask,enabled:!!mask&&mask.enabled!==false,injected:!!enabledMask(x.id),reason:!x.id?'not_mounted':!mask?'missing_mask':mask.enabled===false?'disabled':'included',name:mask?.name||'',chars:mask&&mask.enabled!==false?formatMask(mask,x.kind).length:0};});
@@ -2337,7 +2349,22 @@
     const promptCap=promptBudget(),visibleHistory=session.messages.filter(m=>m.role!=='director');
     const ordinaryHistory=visibleHistory;
     const promptPacks=options.replyProtocol?frozenMountedPacks(session,options.replyProtocol):activeRegexPacks(session);
-    const projectionPackets=await window.MimaRegexEngine.applyBatchAsync(
+    let projectionPackets;
+    const previewCache=options.tokenEstimateOnly===true?options.promptProjectionCache:null;
+    if(previewCache){
+      const key=window.MimaRegexEngine.executionKey(promptPacks,'prompt'),pending=[];
+      projectionPackets=ordinaryHistory.map((m,index)=>{
+        const input=String(m.content??''),saved=previewCache.get(m.id);
+        if(saved?.key===key&&saved.input===input)return {output:saved.output};
+        pending.push({m,index,input});return null;
+      });
+      const projected=await window.MimaRegexEngine.applyBatchAsync(pending.map(x=>({input:x.input,phase:'prompt'})),promptPacks,{signal:options.signal});
+      assertTokenPreviewActive(options.signal);
+      pending.forEach((x,i)=>{
+        projectionPackets[x.index]=projected[i];
+        if(x.m.metadata?.source!=='prompt_preview_draft')previewCache.set(x.m.id,{key,input:x.input,output:projected[i].output});
+      });
+    }else projectionPackets=await window.MimaRegexEngine.applyBatchAsync(
       ordinaryHistory.map(m=>({input:String(m.content??''),phase:'prompt'})),promptPacks,{signal:options.signal,trace:options.inspectRegex===true});
     const promptProjection=new Map(ordinaryHistory.map((m,i)=>[m.id,projectionPackets[i].output]));
 
@@ -2477,7 +2504,7 @@
     const retrievalBudget=Math.min(Math.floor(retrievalCap*.38),Math.max(0,retrievalCap-baselineTokens-600));
     const candidateHistory=projectedAway.length?[]:uncoveredOlder;
     const retrieved=retrieveRawGap(session,candidateHistory,0,anchor,retrievalBudget,projectMessage);
-    const trace={pendingRawCount:pendingRaw.length,uncoveredRawCount:uncoveredOlder.length,retrievedCount:retrieved.chosen.length,
+    const trace=options.tokenEstimateOnly===true?null:{pendingRawCount:pendingRaw.length,uncoveredRawCount:uncoveredOlder.length,retrievedCount:retrieved.chosen.length,
       fullHistoryPreferred:true,allHistoryIncluded:uncoveredOlder.length===0,temporarilyOmittedTurnIds:projectedAway.map(m=>m.id),canonicalHistoryCount,
       omittedCount:retrieved.omitted.length,retrievedIds:retrieved.chosen.map(x=>x.m.id),omittedIds:retrieved.omitted.slice(0,60).map(x=>x.id),
       sourceFingerprint:memorySourceFingerprint(session.messages.filter(m=>m.metadata?.source!=='prompt_preview_draft'),session.messages.filter(m=>m.metadata?.source!=='prompt_preview_draft').length),sourceCount:session.messages.filter(m=>m.metadata?.source!=='prompt_preview_draft').length,
@@ -2494,6 +2521,10 @@
     const depthApplied=applyDepth([...olderMessages,...recent],depthOnly,session);
     const ordered=[...sections,...depthApplied.messages];
     const messages=ordered.map(({role,content})=>({role,content}));
+    // The live counter needs the exact projected message queue, not audit
+    // hashes, traces or a duplicate full-text inspector. All normal assembly
+    // and context selection above remain shared with the actual send path.
+    if(options.tokenEstimateOnly===true)return {tokenEstimate:estimateRequestTokens({messages})};
     const projectionContents=ordered.map(x=>typeof x.content==='string'?x.content:JSON.stringify(x.content??null));
     const projectionDigests=await window.MimaRequestHash.digestTexts(projectionContents,{signal:options.signal});
     const messageSources=ordered.map((x,index)=>{
@@ -2726,7 +2757,15 @@
     return new ApiError(`E_API_HTTP_${status||0}`,message||`API 请求失败 HTTP ${status}`,{status,hint:apiErrorHint('',Number(status)||0,message),details});
   }
   function emitProgress(fn,payload){if(typeof fn==='function'){try{fn(payload)}catch(_){}}}
-  function finiteUsageNumber(...values){for(const v of values){if(v===null||v===undefined||v==='')continue;const n=Number(v);if(Number.isFinite(n)&&n>=0)return Math.floor(n)}return null;}
+  function finiteUsageNumber(...values){for(const v of values){if((typeof v!=='number'&&typeof v!=='string')||(typeof v==='string'&&!v.trim()))continue;const n=Number(v);if(Number.isFinite(n)&&n>=0)return Math.floor(n)}return null;}
+  function mergeProviderUsage(previous,incoming){
+    const merged={...previous,...incoming};
+    for(const [key,value]of Object.entries(incoming)){
+      if(value===null)merged[key]=previous?.[key]??null;
+      else if(value&&typeof value==='object'&&!Array.isArray(value))merged[key]=mergeProviderUsage(previous?.[key],value);
+    }
+    return merged;
+  }
   function extractUsageMetrics(payload,model=''){
     const u=payload?.usage||payload?.usageMetadata||payload?.usage_metadata||null;if(!u||typeof u!=='object')return null;
     const inputTokens=finiteUsageNumber(u.prompt_tokens,u.input_tokens,u.promptTokenCount,u.prompt_token_count,u.inputTokenCount);
@@ -2861,7 +2900,8 @@
       let payload;try{payload=JSON.parse(payloadText)}catch(_){badEvents++;return}
       if(eventType==='error'||payload?.error){throw new ApiError('E_API_UPSTREAM',String(payload?.error?.message||payload?.message||'上游通过 SSE 返回错误事件'),{status:Number(payload?.error?.status||payload?.status)||res.status,details:`stage: stream_event; events: ${eventCount}`})}
       eventCount++;finalPayload=payload;
-      if(payload?.usage&&typeof payload.usage==='object')streamProviderUsage=clone(payload.usage);
+      const reportedUsage=payload?.usage||payload?.usageMetadata||payload?.usage_metadata;
+      if(reportedUsage&&typeof reportedUsage==='object')streamProviderUsage=mergeProviderUsage(streamProviderUsage,reportedUsage);
       const ending=finishState(payload);
       const refusal=payload?.choices?.[0]?.delta?.refusal??payload?.choices?.[0]?.message?.refusal;
       if(refusal!==undefined&&refusal!==null&&String(refusal).trim()){refusalSeen=true;finishReason='refusal';finishKind='blocked';}
@@ -2874,7 +2914,7 @@
         }else if(!known||nextKnown){finishReason=ending.reason;finishKind=ending.kind;}
       }
       publishMeta();
-      const observed=captureUsageMetrics(payload,model,null);if(observed)streamUsage=observed;
+      const observed=streamProviderUsage?captureUsageMetrics({usage:streamProviderUsage},model,null):null;if(observed)streamUsage=observed;
       const thought=extractProviderThought(payload,true),usageTokens=thinkingUsageTokens(payload);
       if(usageTokens!==null)reasoningTokens=usageTokens;
       if(thought){
@@ -3299,7 +3339,7 @@
     const ending=finishState(data);
     observedFinish=ending;
     if(options.resultMeta){options.resultMeta.finishReason=ending.reason;options.resultMeta.finishKind=ending.kind;options.resultMeta.refused=!!data?.choices?.[0]?.message?.refusal;options.resultMeta.requestId=requestId;}
-    try{options.onDiagnostic?.({type:'provider_result',finishKind:ending.kind,finishReason:ending.reason,usage:data?.usage||null,responseChars:0});}catch(e){console.error('诊断事件回调失败',e);}
+    try{options.onDiagnostic?.({type:'provider_result',finishKind:ending.kind,finishReason:ending.reason,usage:data?.usage||data?.usageMetadata||data?.usage_metadata||null,responseChars:0});}catch(e){console.error('诊断事件回调失败',e);}
     const receivedRaw=contentPiece(data?.choices?.[0]?.message?.content??data?.choices?.[0]?.text??'');
     options.onRawReceivedText?.(receivedRaw);
     options.onReceivedText?.(prefixResponseText(receivedRaw,body,cfg,true));
@@ -3320,8 +3360,8 @@
       kind:'provider_returned',source:returned?.source||null,text:returned?.text||'',reasoningTokens:thinkingUsageTokens(data),
       observedThinkingMs:null,firstContentWaitMs:null,totalResponseMs:Math.max(0,Date.now()-fetchStartedAt),
       timingNote:'非流式响应不可分辨思考用时，显示的是完整响应等待时间'};}
-    try{options.onDiagnostic?.({type:'provider_result',finishKind:ending.kind,finishReason:ending.reason,usage:data?.usage||null,responseChars:reply.length});}catch(e){console.error('诊断事件回调失败',e);}
-    if(options.resultMeta){options.resultMeta.finishReason=ending.reason;options.resultMeta.finishKind=ending.kind;options.resultMeta.refused=!!data?.choices?.[0]?.message?.refusal;options.resultMeta.usage=data?.usage||null;options.resultMeta.requestId=requestId;}
+    try{options.onDiagnostic?.({type:'provider_result',finishKind:ending.kind,finishReason:ending.reason,usage:data?.usage||data?.usageMetadata||data?.usage_metadata||null,responseChars:reply.length});}catch(e){console.error('诊断事件回调失败',e);}
+    if(options.resultMeta){options.resultMeta.finishReason=ending.reason;options.resultMeta.finishKind=ending.kind;options.resultMeta.refused=!!data?.choices?.[0]?.message?.refusal;options.resultMeta.usage=data?.usage||data?.usageMetadata||data?.usage_metadata||null;options.resultMeta.requestId=requestId;}
     let structurallyComplete=false;
     if(options.replyBoundary&&['complete','unknown'].includes(ending.kind)){
       const decision=await options.replyBoundary(reply,true);
@@ -4665,15 +4705,15 @@
       attemptId:retryPending?.id||''});
     let diagnosticCandidate='',admissionCandidate='';
     let unsavedUserInput=false,commitStarted=false,submittedMessageId=null,inputRegexTrace=[];
+    let sourceBeforeReply,target=null,opts,cfg,built=null,requestBody=null,snapshot=null,messages,pending,version=null,
+      continuationMode=null,replyPacks=null,preparedRequestAudit=null;
+    try{
     if(action==='send'&&!retryPending){
       if(!String(userText||'').trim())throw new ApiError('E_STORY_EMPTY_INPUT','还没有输入内容猫！',{hint:'请输入动作、语言或剧情后再发送。'});
       const originalUserText=String(userText||'');const transformedUserText=await applyRegexForSessionAsync(session,originalUserText,'input',null,{signal});
       const userMsg=makeMessage('user',transformedUserText,session,{source:'manual_send',submissionTraceId:String(options.diagnosticTraceId||''),regexInputApplied:transformedUserText!==originalUserText,inputSemanticMode:inputSemanticMode(session),inputSemanticParserVersion:window.MimaUserInputSemanticParser?.version||'1.1.8-v5-classification-escaped'});userMsg.rawContent=originalUserText;session.messages.push(userMsg);submittedMessageId=userMsg.id;
       unsavedUserInput=true;
     }
-    let sourceBeforeReply,target=null,opts,cfg,built=null,requestBody=null,snapshot=null,messages,pending,version=null,
-      continuationMode=null,replyPacks=null,preparedRequestAudit=null;
-    try{
     // “重说”必须在任何摘要/异步保存之前锁定目标消息 ID，避免后续状态变化后误替换上一轮剧情。
     const requestedTargetId=action==='regenerate'?text(options?.targetMessageId):'';
     const lockedTargetId=action==='regenerate'?(resolveRegenerationTarget(session,requestedTargetId)?.id||null):null;
@@ -4786,11 +4826,12 @@
       percent:38,detail:'本轮请求已持久准备；正在进行恢复账本核对。'});
     if(unsavedUserInput){unsavedUserInput=false;emitProgress(progress,{phase:'saved_user',sessionId:id,messageId:submittedMessageId,recordRevision:session.recordRevision,traceId:String(options.diagnosticTraceId||''),generationId:pending.id,attempt:pending.attempt,percent:38,detail:'主人消息与本轮请求已安全写入本地剧情。'});}
     }catch(preparationError){
+      const aborted=signal?.aborted===true||preparationError?.name==='AbortError';
       // Distinguish local, zero-Provider-call rejection from network/Provider
       // failure and retain it by traceId even if the prompt never existed.
       if(diagnosticId){
         const liveCfg=getApiConfig();
-        try{await journal.event(diagnosticId,{type:'preflight_failure',code:preparationError?.code||'E_STORY_PREFLIGHT',
+        try{await journal.event(diagnosticId,{type:'preflight_failure',aborted,code:aborted?'E_ABORTED':preparationError?.code||'E_STORY_PREFLIGHT',
           message:preparationError?.message||String(preparationError),details:preparationError?.details||'',
           model:liveCfg.model,endpointOrigin:(()=>{try{return new URL(liveCfg.apiBase).origin}catch{return ''}})(),
           configuredWindow:Number(liveCfg.contextWindowTokens)||0,sourceCount:session.messages.length,
@@ -4803,6 +4844,7 @@
         try{session=await saveSession(session);emitProgress(progress,{phase:'saved_user',sessionId:id,messageId:submittedMessageId,recordRevision:session.recordRevision,traceId:String(options.diagnosticTraceId||''),percent:14,detail:'主人消息已保留；本轮请求准备失败，尚未发送。'});}
         catch(storageError){console.error('请求准备失败且玩家消息保存失败；未覆盖新时间线',{sessionId:id,error:storageError});}
       }
+      if(aborted)throw new DOMException('生成已停止','AbortError');
       throw preparationError;
     }
     const identity={sessionId:id,generationId:pending.id,attempt:pending.attempt};
@@ -5519,17 +5561,52 @@
     return saveSession(s);
   }
   async function addOpening(id,content){const source=getSession(id),s=source?normalizeSession(clone(source)):null;if(!s)throw new Error('未找到剧本');if(!String(content||'').trim())throw new Error('开场白为空');const msg=makeMessage('assistant',content,s,{source:'character_first_message'});msg.renderedContent='';s.messages.push(msg);return saveSession(s);}
+  function assertTokenPreviewActive(signal){
+    if(signal?.aborted)throw new DOMException('输入估算已取消','AbortError');
+  }
+  let tokenPreviewResult=null,tokenPreviewContext=null;
+  async function estimatePromptTokens(id,opts={}){
+    assertTokenPreviewActive(opts.signal);
+    const head=await window.MimaLocalStore.loadResourceRevision(id);
+    assertTokenPreviewActive(opts.signal);
+    let session=getSession(id);
+    if(!session||session.recordRevision!==head.sessionRecordRevision||state.__resourceSignature!==head.resourceSignature){
+      await refreshPersistedSession(id);assertTokenPreviewActive(opts.signal);session=getSession(id);
+    }
+    if(!session)throw new ApiError('E_STORY_SESSION_MISSING','原剧情已不存在，未读取其他剧情');
+    const config=JSON.stringify(getApiConfig()),resourceSignature=state.__resourceSignature;
+    const basis=JSON.stringify([id,session.recordRevision,resourceSignature]);
+    const key=JSON.stringify([basis,config,String(opts.draft||''),String(opts.directorNote||'')]);
+    if(tokenPreviewResult?.key===key)return clone(tokenPreviewResult.value);
+    // One session's unchanged prompt projections only. Drafts, mounted rules,
+    // memory and canonical edits are never reused under a different revision.
+    if(tokenPreviewContext?.basis!==basis)tokenPreviewContext={basis,projections:new Map()};
+    const value=await previewPrompt(id,{...opts,countTokensOnly:true,promptProjectionCache:tokenPreviewContext.projections});
+    assertTokenPreviewActive(opts.signal);
+    const latest=await window.MimaLocalStore.loadResourceRevision(id);
+    assertTokenPreviewActive(opts.signal);
+    if(latest.sessionRecordRevision!==session.recordRevision||latest.resourceSignature!==resourceSignature||JSON.stringify(getApiConfig())!==config)
+      throw new ApiError('E_TOKEN_PREVIEW_STALE','估算期间资料已更新，请等待重新估算');
+    tokenPreviewResult={key,value};return clone(value);
+  }
   async function previewPrompt(id,opts={}){
-    const s=getSession(id);if(!s)throw new Error('未找到剧本');const c=normalizeSession(clone(s));
+    const s=getSession(id);if(!s)throw new Error('未找到剧本');
+    const countOnly=opts.countTokensOnly===true;
+    // All canonical records are already normalized. The read-only counter
+    // needs its own appendable arrays, never clones of version/snapshot blobs.
+    const c=countOnly?{...s,messages:s.messages.slice(),displayProtocols:arr(s.displayProtocols).slice()}:normalizeSession(clone(s));
+    assertTokenPreviewActive(opts.signal);
     const draft=String(opts.draft||'');let inputAfterRegex=draft;const inputRegexTrace=[];
     if(draft.trim()){
-      inputAfterRegex=await applyRegexForSessionAsync(c,draft,'input',null,{trace:true,traceRecords:inputRegexTrace});
+      inputAfterRegex=await applyRegexForSessionAsync(c,draft,'input',null,{signal:opts.signal,trace:!countOnly,traceRecords:inputRegexTrace});
       const msg=makeMessage('user',inputAfterRegex,c,{source:'prompt_preview_draft',regexInputApplied:inputAfterRegex!==draft,inputSemanticMode:inputSemanticMode(c),inputSemanticParserVersion:window.MimaUserInputSemanticParser?.version||'1.1.8-v5-classification-escaped'});
       msg.rawContent=draft;c.messages.push(msg);
     }
     const version=await freezeDisplayProtocol(c);
     if(version&&!replyProtocol(c,version.id))c.displayProtocols.push(version);
-    const built=await assemble(c,{directorNote:opts.directorNote||'',replyProtocol:version?.contract||null,inspectRegex:true});
+    const built=await assemble(c,{directorNote:opts.directorNote||'',replyProtocol:version?.contract||null,inspectRegex:!countOnly,tokenEstimateOnly:countOnly,normalizedSession:countOnly,promptProjectionCache:opts.promptProjectionCache,signal:opts.signal});
+    assertTokenPreviewActive(opts.signal);
+    if(countOnly)return built.tokenEstimate;
     const apiBody=makeApiBody(built.messages,getApiConfig(),getApiConfig().temperature??0.85,{storyThinking:true});
     const inspector=built.inspector;
     inspector.apiBody=apiBody;
@@ -5577,6 +5654,7 @@
     return m;
   }
   async function handle(endpoint,method='GET',body=null,signal=null,progress=null){
+    const revisionAtStart=state.storeRevision,signatureAtStart=state.__resourceSignature;
     try{
       const path=String(endpoint||'').split('?')[0];
       if(window.MimaCssMigrationReadOnly===true){
@@ -5760,6 +5838,7 @@
       m=pathIdMatch(path,/^\/sessions\/([^/]+)\/recover-stream-ledger$/);if(m&&method==='POST')return ok(await restoreFailedStreamLedger(m[1],body||{}));
       m=pathIdMatch(path,/^\/sessions\/([^/]+)\/recover-reply\/html-repair$/);if(m&&method==='POST')return ok(await prepareRejectedHtmlRepair(m[1],body?.diagnosticId));
       m=pathIdMatch(path,/^\/sessions\/([^/]+)\/prompt-preview$/);if(m&&method==='POST'){await refreshPersistedSession(m[1]);return ok(await previewPrompt(m[1],body||{}));}
+      m=pathIdMatch(path,/^\/sessions\/([^/]+)\/token-estimate$/);if(m&&method==='POST')return ok(await estimatePromptTokens(m[1],{draft:body?.draft,directorNote:body?.directorNote,signal}));
       m=pathIdMatch(path,/^\/sessions\/([^/]+)\/opening$/);if(m&&method==='POST')return ok(await addOpening(m[1],body?.content||''));
       m=pathIdMatch(path,/^\/sessions\/([^/]+)\/messages\/([^/]+)\/short-protocol$/);
       if(m&&method==='GET')return ok(await checkProtocolMessage(m[1],m[2]));
@@ -5873,6 +5952,8 @@
       if(e?.name==='AbortError')return{success:false,aborted:true,code:'E_ABORTED',msg:'生成已停止'};
       const err=e instanceof ApiError?e:asApiError(e,'E_STORY_RUNTIME');
       return fail(err.message||String(err),{repairDraftId:e?.htmlRepairDraftId||'',recoveryDraft:e?.recoveryDraft||null,partialDraftTruncated:typeof err.partialDraft==='string'&&err.partialDraft.length>24000,code:err.code||'E_STORY_RUNTIME',status:err.status||0,hint:err.hint||apiErrorHint(err.code,err.status,err.message),details:err.details||'',partialDraft:typeof err.partialDraft==='string'?err.partialDraft.slice(0,24000):''});
+    }finally{
+      if(state.storeRevision!==revisionAtStart||state.__resourceSignature!==signatureAtStart)window.dispatchEvent(new CustomEvent('mima:prompt-inputs-changed',{detail:{revision:state.storeRevision}}));
     }
   }
 
@@ -6011,5 +6092,5 @@
 
   window.MimaMemoryContracts=Object.freeze({normalizeManualMemory});
   // Normalized CSS presets contain scalar fields; copy their records without serializing History or immutable CSS strings.
-  window.MimaStandalone={getPlayTools:()=>({theaterCards:state.theaterCards.map(p=>({...p})),quickCommands:state.quickCommands.map(p=>({...p}))}),init,handle,previewMemoryPlan,memorySourceParts,memoryWorkPlan,runRecordedMemory,memorySourceFingerprint,memoryFactSignature,manualReplyFingerprint,isManuallyRecoveredReply,getApiConfig,saveApiConfig,validateApiConfigSnapshot,replaceApiConfigSnapshot,captureApiConfigBytes,restoreApiConfigBytes,apiCapacityIdentity,effectiveRequestConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,makeApiBody,auditRequestBody,validateStoryReply,classifyStoryReply,applyRegexForSession,applyRegexForSessionAsync,applyRegexBatchForSessionAsync,applyDisplayBatchForSessionAsync,nativeDisplayProjection,activeDisplayContract,protocolDisplayResources,continuationSource,validateSessionReply,hasActiveRegexForSession,resolveMacrosForSession,compileUserInputForPrompt,exportLibrary,importLibrary,previewLibraryImport,validateLibrary,assemble,getLastUsage,getPhoneResources:()=>({masks:clone(state.masks),presets:clone(state.presets),worldbooks:clone(state.worldbooks),themeSettings:clone(state.themeSettings),storeRevision:state.storeRevision}),getThemeSettings:()=>({...clone(state.themeSettings),selectionRevision:state.__cssSelectionRevision}),cssSelectionIdentity,getResourceCategoryList:kind=>categorySpec[kind]?categoryView(state,kind):[],getStoreRevision:()=>state.storeRevision,getAppearanceRevision:()=>state.__appearanceRevision,getCssAppearance:()=>({themeSettings:clone(state.themeSettings),cssPresets:state.cssPresets.map(p=>({...p}))}),getState:()=>clone(state)};
+  window.MimaStandalone={getPlayTools:()=>({theaterCards:state.theaterCards.map(p=>({...p})),quickCommands:state.quickCommands.map(p=>({...p}))}),init,handle,previewMemoryPlan,memorySourceParts,memoryWorkPlan,runRecordedMemory,memorySourceFingerprint,memoryFactSignature,manualReplyFingerprint,isManuallyRecoveredReply,getApiConfig,saveApiConfig,validateApiConfigSnapshot,replaceApiConfigSnapshot,captureApiConfigBytes,restoreApiConfigBytes,apiCapacityIdentity,effectiveRequestConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,makeApiBody,auditRequestBody,estimateRequestTokens,extractUsageMetrics,validateStoryReply,classifyStoryReply,applyRegexForSession,applyRegexForSessionAsync,applyRegexBatchForSessionAsync,applyDisplayBatchForSessionAsync,nativeDisplayProjection,activeDisplayContract,protocolDisplayResources,continuationSource,validateSessionReply,hasActiveRegexForSession,resolveMacrosForSession,compileUserInputForPrompt,exportLibrary,importLibrary,previewLibraryImport,validateLibrary,assemble,getLastUsage,getPhoneResources:()=>({masks:clone(state.masks),presets:clone(state.presets),worldbooks:clone(state.worldbooks),themeSettings:clone(state.themeSettings),storeRevision:state.storeRevision}),getThemeSettings:()=>({...clone(state.themeSettings),selectionRevision:state.__cssSelectionRevision}),cssSelectionIdentity,getResourceCategoryList:kind=>categorySpec[kind]?categoryView(state,kind):[],getPromptInputRevision:id=>({recordRevision:getSession(id)?.recordRevision??null,resourceSignature:state.__resourceSignature,unverifiedResourceRevision:state.__resourceSignature==null?state.storeRevision:null}),getStoreRevision:()=>state.storeRevision,getAppearanceRevision:()=>state.__appearanceRevision,getCssAppearance:()=>({themeSettings:clone(state.themeSettings),cssPresets:state.cssPresets.map(p=>({...p}))}),getState:()=>clone(state)};
 })();

@@ -880,7 +880,7 @@
     });
   }
   // Version-only probe for rare resource-edit/template paths. No CSS/Persona bytes.
-  async function loadResourceRevision(){
+  async function loadResourceRevision(sessionId=undefined){
     await ensureSessionPartition();const db=await openDb();return new Promise((resolve,reject)=>{
       const tx=db.transaction(STORE,'readonly'),kv=tx.objectStore(STORE),b=kv.get(BASE_REVISION_KEY),
         a=kv.get(APPEARANCE_META_KEY),p=kv.get(PRESETS_KEY),t=kv.get(TEMPLATE_META_KEY),h=kv.get(SESSION_HEAD_KEY),c=kv.get(CSS_SELECTION_KEY);
@@ -891,6 +891,11 @@
           assertAppearanceMeta(a.result,base).storeRevision,assertPresetsOverlay(p.result).storeRevision,
           verifiedTemplateMeta(t.result,base).storeRevision,verifiedCssSelection(c.result).selectionRevision),
           storeRevision:globalRevisionLight(base,a.result,p.result,t.result,h.result)};
+        if(sessionId!==undefined){
+          const row=verifiedSessionHead(h.result).directory.find(s=>s.id===sessionId);
+          const removed=new Set(assertAppearanceMeta(a.result,base).deletedCssIds);
+          result.sessionRecordRevision=row?row.recordRevision+(removed.has(row.customCssId)?1:0):null;
+        }
       }catch(e){issue=e;tx.abort()}};
       for(const req of [b,a,p,t,h,c]){req.onsuccess=inspect;req.onerror=()=>{issue=req.error;tx.abort()}};
       tx.oncomplete=()=>{db.close();resolve(result)};
