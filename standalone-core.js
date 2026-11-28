@@ -300,6 +300,7 @@
       promptSettings: normalizePromptSettings({...originalSettings,...(legacyMode!==null?{legacyInputSemanticMode:legacyMode}:{})}),
       manualMemory: normalizeManualMemory(s.manualMemory || {}),
       customCssId: s.customCssId || null, customCssEnabled: s.customCssEnabled !== false,
+      customCssSelectionRevision:Math.max(0,Number(s.customCssSelectionRevision)||0),
       regexPackIds: list(s.regexPackIds),
       renderMode: s.renderMode || 'text'
     };
@@ -1287,25 +1288,17 @@
       return result;
     }).then(result=>{p.recordRevision=result.recordRevision;return result;});
   }
+  function publishGlobalCssSelection(head){
+    if(Number(head.selectionRevision)<Number(state.__cssSelectionRevision||0))return clone(state.themeSettings);
+    if(head.selectionRevision===state.__cssSelectionRevision&&(head.globalCssPresetId||null)===(state.themeSettings.globalCssPresetId||null)&&head.globalCssEnabled===state.themeSettings.globalCssEnabled&&head.updatedAt===state.themeSettings.updatedAt)return clone(state.themeSettings);
+    state={...state,__cssSelectionRevision:head.selectionRevision,__resourceSignature:null,
+      themeSettings:{...state.themeSettings,globalCssPresetId:head.globalCssPresetId,globalCssEnabled:head.globalCssEnabled,updatedAt:head.updatedAt}};
+    return clone(state.themeSettings);
+  }
   async function commitGlobalCssSelection(body={}){
-    const expected=body.expected||{},candidate=body.candidate||{},identity=body.identity;
-    const next=await commitAppearanceEdit(stored=>{
-      const current=stored.themeSettings||{};
-      if((current.globalCssPresetId||null)!==(expected.globalCssPresetId||null)||
-         (current.globalCssEnabled!==false)!==(expected.globalCssEnabled!==false)||
-         (current.updatedAt||'')!==(expected.updatedAt||''))
-        throw new ApiError('E_CSS_SELECTION_STALE','全局外观已在其他窗口改变，本次不覆盖');
-      const actual=stored.cssPresets.find(p=>p.id===candidate.globalCssPresetId);
-      if(!actual||actual.scope!=='app'||!identity||cssSelectionIdentity(actual)!==identity)
-        throw new ApiError('E_CSS_CANDIDATE_CHANGED','候选全局 CSS 已变化，本次不应用旧版本');
-      const appliedAt=new Date(Math.max(Date.now(),(Date.parse(current.updatedAt)||0)+1)).toISOString();
-      stored.themeSettings=window.MimaThemeEngine?.normalizeSettings?
-        window.MimaThemeEngine.normalizeSettings({...current,globalCssPresetId:actual.id,globalCssEnabled:true,updatedAt:appliedAt}):
-        {...current,globalCssPresetId:actual.id,globalCssEnabled:true,updatedAt:appliedAt};
-      return clone(stored.themeSettings);
-    });
-    const head=await window.MimaLocalStore.loadGlobalCssSelection();
-    state.__cssSelectionRevision=head.selectionRevision;
+    const head=await window.MimaLocalStore.commitGlobalCssSelection(body.expected||{},body.candidate||{},body.identity,
+      (actual,identity)=>cssSelectionIdentity(actual)===identity);
+    const next=publishGlobalCssSelection(head);
     try{window.MimaThemeEngine?.apply?.(next);}catch(error){console.error('E_THEME_APPLY_AFTER_CSS_SELECTION',error);}
     return next;
   }
@@ -2747,8 +2740,9 @@
     if(e?.name==='AbortError')return e;
     if(e instanceof ApiError)return e;
     const m=e?.message||String(e);
-    const localCode=e?.code||/^E_HTML_[A-Z0-9_]+/.exec(m)?.[0];
+    const localCode=e?.code||/^E_(?:HTML|CSS)_[A-Z0-9_]+/.exec(m)?.[0];
     if(localCode&&String(localCode).startsWith('E_HTML_'))return new ApiError(localCode,m,{details:e?.details||'',hint:'这是本机 HTML 检查或修复阶段的问题；未修改剧情。请检查提示中的结构、选择器或模板。'});
+    if(typeof localCode==='string'&&/^E_CSS_/.test(localCode))return new ApiError(localCode,m,{hint:'本机样式的选择或保存状态已变化；原样式保留，未调用模型。请核对当前外观后再操作。'});
     if(typeof localCode==='string'&&/^E_(?:REGEX|COMPACT|DISPLAY)_/.test(localCode))return new ApiError(localCode,m);
     if(e instanceof TypeError||/Failed to fetch|NetworkError|Load failed|fetch failed/i.test(m))return new ApiError('E_API_NETWORK_CORS',m);
     return new ApiError(fallback,m);
@@ -5654,7 +5648,7 @@
     return m;
   }
   async function handle(endpoint,method='GET',body=null,signal=null,progress=null){
-    const revisionAtStart=state.storeRevision,signatureAtStart=state.__resourceSignature;
+    const revisionAtStart=state.storeRevision,signatureAtStart=state.__resourceSignature,cssSelectionAtStart=state.__cssSelectionRevision;
     try{
       const path=String(endpoint||'').split('?')[0];
       if(window.MimaCssMigrationReadOnly===true){
@@ -5696,15 +5690,13 @@
       }
       if(path==='/theme'&&method==='GET')return ok(clone(state.themeSettings));
       if(path==='/theme/css-selection'&&method==='POST')return ok(await commitGlobalCssSelection(body||{}));
-      if(path==='/theme/css-selection-head'&&method==='GET')return ok(await window.MimaLocalStore.loadGlobalCssSelection());
+      if(path==='/theme/css-selection-head'&&method==='GET'){const head=await window.MimaLocalStore.loadGlobalCssSelection();publishGlobalCssSelection(head);return ok(head);}
       if(path==='/theme/css-disable'&&method==='POST'){
         const head=await window.MimaLocalStore.commitGlobalCssDisable({
           ...(body?.expected||{}),
           ...(body?.expected?.selectionRevision===undefined?{}:{selectionRevision:body.expected.selectionRevision})
         },body?.clearSelection!==false);
-        state={...state,__cssSelectionRevision:head.selectionRevision,
-          themeSettings:{...state.themeSettings,globalCssPresetId:head.globalCssPresetId,
-            globalCssEnabled:head.globalCssEnabled,updatedAt:head.updatedAt}};
+        publishGlobalCssSelection(head);
         try{window.MimaThemeEngine?.apply?.(state.themeSettings);}catch(error){console.error('E_THEME_APPLY_AFTER_CSS_DISABLE',error);}
         return ok(clone(state.themeSettings));
       }
@@ -5819,13 +5811,10 @@
           return {deleted:result.deleted,...(result.deleted?{id,organization:result.organization}:{})};};
         const task=sessionSaveTail.then(change,change);sessionSaveTail=task.then(()=>{},()=>{});return ok(await task);
       }
+      m=pathIdMatch(path,/^\/sessions\/([^/]+)\/css-selection-head$/);if(m&&method==='GET')return ok(await window.MimaLocalStore.loadSessionCssSelection(m[1]));
       m=pathIdMatch(path,/^\/sessions\/([^/]+)\/css-disable$/);if(m&&method==='POST'){
-        const session=getSession(m[1]);if(!session)throw new ApiError('E_STORY_SESSION_MISSING','原剧情不存在，未改变其他剧情');
-        if(body?.expected&&(session.recordRevision!==body.expected.recordRevision||
-          (session.customCssId||null)!==(body.expected.customCssId||null)||
-          (session.customCssEnabled!==false)!==(body.expected.customCssEnabled!==false)))
-          throw new ApiError('E_CSS_SELECTION_STALE','原剧情 CSS 已改变，本次取消未覆盖新选择');
-        return ok(await saveSession({...session,customCssId:body?.clearSelection?null:session.customCssId,customCssEnabled:false}));
+        const result=await window.MimaLocalStore.commitSessionCssDisable(m[1],body?.expected||{},body?.clearSelection===true);
+        return ok(publishSession(normalizeSession(result.session),result.storeRevision));
       }
       m=pathIdMatch(path,/^\/sessions\/([^/]+)\/css-selection$/);if(m&&method==='POST'){
         const id=m[1],result=await window.MimaLocalStore.commitSessionCssSelection(id,body?.expected||{},body?.candidate||{},body?.identity,
@@ -5953,7 +5942,7 @@
       const err=e instanceof ApiError?e:asApiError(e,'E_STORY_RUNTIME');
       return fail(err.message||String(err),{repairDraftId:e?.htmlRepairDraftId||'',recoveryDraft:e?.recoveryDraft||null,partialDraftTruncated:typeof err.partialDraft==='string'&&err.partialDraft.length>24000,code:err.code||'E_STORY_RUNTIME',status:err.status||0,hint:err.hint||apiErrorHint(err.code,err.status,err.message),details:err.details||'',partialDraft:typeof err.partialDraft==='string'?err.partialDraft.slice(0,24000):''});
     }finally{
-      if(state.storeRevision!==revisionAtStart||state.__resourceSignature!==signatureAtStart)window.dispatchEvent(new CustomEvent('mima:prompt-inputs-changed',{detail:{revision:state.storeRevision}}));
+      if(state.storeRevision!==revisionAtStart||state.__resourceSignature!==signatureAtStart||state.__cssSelectionRevision!==cssSelectionAtStart)window.dispatchEvent(new CustomEvent('mima:prompt-inputs-changed',{detail:{revision:state.storeRevision}}));
     }
   }
 
@@ -6092,5 +6081,5 @@
 
   window.MimaMemoryContracts=Object.freeze({normalizeManualMemory});
   // Normalized CSS presets contain scalar fields; copy their records without serializing History or immutable CSS strings.
-  window.MimaStandalone={getPlayTools:()=>({theaterCards:state.theaterCards.map(p=>({...p})),quickCommands:state.quickCommands.map(p=>({...p}))}),init,handle,previewMemoryPlan,memorySourceParts,memoryWorkPlan,runRecordedMemory,memorySourceFingerprint,memoryFactSignature,manualReplyFingerprint,isManuallyRecoveredReply,getApiConfig,saveApiConfig,validateApiConfigSnapshot,replaceApiConfigSnapshot,captureApiConfigBytes,restoreApiConfigBytes,apiCapacityIdentity,effectiveRequestConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,makeApiBody,auditRequestBody,estimateRequestTokens,extractUsageMetrics,validateStoryReply,classifyStoryReply,applyRegexForSession,applyRegexForSessionAsync,applyRegexBatchForSessionAsync,applyDisplayBatchForSessionAsync,nativeDisplayProjection,activeDisplayContract,protocolDisplayResources,continuationSource,validateSessionReply,hasActiveRegexForSession,resolveMacrosForSession,compileUserInputForPrompt,exportLibrary,importLibrary,previewLibraryImport,validateLibrary,assemble,getLastUsage,getPhoneResources:()=>({masks:clone(state.masks),presets:clone(state.presets),worldbooks:clone(state.worldbooks),themeSettings:clone(state.themeSettings),storeRevision:state.storeRevision}),getThemeSettings:()=>({...clone(state.themeSettings),selectionRevision:state.__cssSelectionRevision}),cssSelectionIdentity,getResourceCategoryList:kind=>categorySpec[kind]?categoryView(state,kind):[],getPromptInputRevision:id=>({recordRevision:getSession(id)?.recordRevision??null,resourceSignature:state.__resourceSignature,unverifiedResourceRevision:state.__resourceSignature==null?state.storeRevision:null}),getStoreRevision:()=>state.storeRevision,getAppearanceRevision:()=>state.__appearanceRevision,getCssAppearance:()=>({themeSettings:clone(state.themeSettings),cssPresets:state.cssPresets.map(p=>({...p}))}),getState:()=>clone(state)};
+  window.MimaStandalone={getPlayTools:()=>({theaterCards:state.theaterCards.map(p=>({...p})),quickCommands:state.quickCommands.map(p=>({...p}))}),init,handle,previewMemoryPlan,memorySourceParts,memoryWorkPlan,runRecordedMemory,memorySourceFingerprint,memoryFactSignature,manualReplyFingerprint,isManuallyRecoveredReply,getApiConfig,saveApiConfig,validateApiConfigSnapshot,replaceApiConfigSnapshot,captureApiConfigBytes,restoreApiConfigBytes,apiCapacityIdentity,effectiveRequestConfig,buildEndpoints,listModels,listModelsWithConfig,testApi,callModel,callModelWithConfig,makeApiBody,auditRequestBody,estimateRequestTokens,extractUsageMetrics,validateStoryReply,classifyStoryReply,applyRegexForSession,applyRegexForSessionAsync,applyRegexBatchForSessionAsync,applyDisplayBatchForSessionAsync,nativeDisplayProjection,activeDisplayContract,protocolDisplayResources,continuationSource,validateSessionReply,hasActiveRegexForSession,resolveMacrosForSession,compileUserInputForPrompt,exportLibrary,importLibrary,previewLibraryImport,validateLibrary,assemble,getLastUsage,getPhoneResources:()=>({masks:clone(state.masks),presets:clone(state.presets),worldbooks:clone(state.worldbooks),themeSettings:clone(state.themeSettings),storeRevision:state.storeRevision}),getThemeSettings:()=>({...clone(state.themeSettings),selectionRevision:state.__cssSelectionRevision}),cssSelectionIdentity,getResourceCategoryList:kind=>categorySpec[kind]?categoryView(state,kind):[],getPromptInputRevision:id=>({recordRevision:getSession(id)?.recordRevision??null,resourceSignature:state.__resourceSignature,unverifiedResourceRevision:state.__resourceSignature==null?[state.storeRevision,state.__cssSelectionRevision]:null}),getStoreRevision:()=>state.storeRevision,getAppearanceRevision:()=>state.__appearanceRevision,getCssAppearance:()=>({themeSettings:clone(state.themeSettings),cssPresets:state.cssPresets.map(p=>({...p}))}),getState:()=>clone(state)};
 })();

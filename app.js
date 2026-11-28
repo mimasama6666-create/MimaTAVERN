@@ -2,10 +2,11 @@
 // isolated, while unrelated previously working CSS is allowed to render.
 const CSS_PAINT_RECEIPT_KEY='mima-css-paint-receipt-v2';
 const cssRecoveryState=(()=>{
- const value={version:2,blocked:[],pending:null,legacyUnknown:false};
+ const value={version:2,blocked:[],pending:null,legacyUnknown:false,disables:[]};
  try{
   const saved=JSON.parse(sessionStorage.getItem(CSS_PAINT_RECEIPT_KEY)||'null');
   if(saved?.version===2){value.blocked=Array.isArray(saved.blocked)?saved.blocked.filter(x=>x&&['global','story'].includes(x.surface)&&typeof x.candidate?.id==='string'):[];value.pending=saved.pending||null;value.unsettled=Array.isArray(saved.unsettled)?saved.unsettled:[];value.legacyUnknown=saved.legacyUnknown===true;}
+  if(Array.isArray(saved?.disables))value.disables=saved.disables.filter(x=>x&&typeof x.key==='string'&&['global','story'].includes(x.surface)&&Array.isArray(x.targets)&&(x.surface==='global'||typeof x.sessionId==='string'));
   const interrupted=[...(value.unsettled||[]),...(value.pending?[value.pending]:[])];value.unsettled=[];
   for(const tx of interrupted){
    if(!tx||tx.phase==='committed')continue;
@@ -41,17 +42,30 @@ const cssIdentityMemo=new WeakMap();
 function cssIdentityCached(p){
  if(!p)return null;
  const old=cssIdentityMemo.get(p);
- if(old&&old.css===p.css&&old.scope===p.scope&&old.surface===p.surface&&old.release===p.atelierReleaseKey&&old.updatedAt===p.updatedAt&&old.id===p.id)return old.identity;
+ if(old&&old.css===p.css&&old.scope===p.scope&&old.surface===p.surface&&old.release===p.atelierReleaseKey&&old.updatedAt===p.updatedAt&&old.id===p.id&&old.contentHash===p.contentHash&&old.contentRevision===p.contentRevision)return old.identity;
  const identity=MimaStandalone.cssSelectionIdentity(p);
- cssIdentityMemo.set(p,{css:p.css,scope:p.scope,surface:p.surface,release:p.atelierReleaseKey,updatedAt:p.updatedAt,id:p.id,identity});
+ cssIdentityMemo.set(p,{css:p.css,scope:p.scope,surface:p.surface,release:p.atelierReleaseKey,updatedAt:p.updatedAt,id:p.id,contentHash:p.contentHash,contentRevision:p.contentRevision,identity});
  return identity;
 }
+function rememberVerifiedCssIdentity(p){
+ if(typeof p.css!=='string'||!/^[a-f0-9]{64}$/.test(p.contentHash||''))return;
+ const meta={...p,css:undefined};cssIdentityCached(meta);
+ cssIdentityMemo.set(p,{...cssIdentityMemo.get(meta),css:p.css});
+}
 function cssRecoverySave(){try{sessionStorage.setItem(CSS_PAINT_RECEIPT_KEY,JSON.stringify(cssRecoveryState));}catch(error){console.warn('[CSS recovery] receipt persistence failed',error);}}
+const cssDisableLocal=new Set(),cssDisableChecked=new Set();let cssDisableReconcileTask=null;
+function clearCssDisableIntent(surface,sessionId=null){
+ const removed=cssRecoveryState.disables.filter(x=>x.surface===surface&&(surface==='global'||x.sessionId===sessionId));
+ for(const x of removed){cssDisableLocal.delete(x.key);cssDisableChecked.delete(x.key);}
+ cssRecoveryState.disables=cssRecoveryState.disables.filter(x=>!removed.includes(x));cssRecoverySave();
+}
 function cssRecoveryCandidate(p){return p?{id:p.id,identity:cssIdentityCached(p)}:null;}
 const cssReceiptPage=globalThis.crypto?.randomUUID?.()||String(Date.now())+':'+Math.random();
 const cssActiveCommits=new Set();let cssRecoveryReadTask=null;
 function cssRecoveryMatches(item,surface,candidate,sessionId){return !!candidate&&item.surface===surface&&(surface==='global'||item.sessionId===sessionId)&&item.candidate?.id===candidate.id&&(item.legacy||item.candidate.identity===candidate.identity);}
 function cssRecoveryResolve(surface,p,sessionId,retry=null){
+ const closing=cssRecoveryState.disables.find(x=>x.surface===surface&&(surface==='global'||x.sessionId===sessionId));
+ if(closing&&p&&closing.targets.some(x=>x.id===p.id&&(!x.hash||!p.contentHash||x.hash===p.contentHash)))return null;
  const seen=new Set();
  while(p){
   const candidate=cssRecoveryCandidate(p);
@@ -135,11 +149,12 @@ async function reconcileCssRecovery(){
 }
 function cssRecoveryMarkup(){
  const blocks=cssRecoveryState.blocked.filter(x=>x.surface==='global'||x.sessionId===currentSessionId),safe=cssRecoveryState.legacyUnknown||emergencyCssVisualBypass||window.MimaCssRecoveryBypass||new URLSearchParams(location.search).get('noCss')==='1';
- if(!blocks.length&&!safe&&!cssRecoveryState.unsettled.length)return '';
+ const closing=cssRecoveryState.disables.filter(x=>x.surface==='global'||x.sessionId===currentSessionId);
+ if(!blocks.length&&!safe&&!cssRecoveryState.unsettled.length&&!closing.length)return '';
  const labels={committed_visual_uncertain:'已保存，显示安全待确认；当前保留安全外观',not_committed:'上次应用中断，未确认保存该候选；保留原样式',superseded:'保存状态已有新变化，旧候选保持隔离',read_failed:'保存状态读取失败，尚未确认结果；保留恢复记录',needs_reconciliation:'正在核对上次中断的保存状态',safety_hold:'已临时停用，等待主动应用',visual_failed:'显示检查未通过，保留原外观'};
- return `<div class="mima-category-empty" role="status">${safe?'<p class="row-sub">CSS 安全模式已开启。退出后仍保留已知故障样式的隔离。</p><button class="ghost-btn" onclick="exitCssSafetyMode()">退出 CSS 安全模式</button>':''}${blocks.map(x=>`<p class="row-sub">${x.surface==='global'?'全局':'当前剧情'} · ${escapeHtml(cssPresets.find(p=>p.id===x.candidate.id)?.name||'原样式')}：${labels[x.status]||'上次显示中断；可在下方主动重试'}</p>`).join('')}${cssRecoveryState.unsettled.length?'<button class="ghost-btn" onclick="recheckCssRecovery()">重新核对保存状态</button>':''}</div>`;
+ return `<div class="mima-category-empty" role="status">${safe?'<p class="row-sub">CSS 安全模式已开启。退出后仍保留已知故障样式的隔离。</p><button class="ghost-btn" onclick="exitCssSafetyMode()">退出 CSS 安全模式</button>':''}${blocks.map(x=>`<p class="row-sub">${x.surface==='global'?'全局':'当前剧情'} · ${escapeHtml(cssPresets.find(p=>p.id===x.candidate.id)?.name||'原样式')}：${labels[x.status]||'上次显示中断；可在下方主动重试'}</p>`).join('')}${closing.map(x=>`<p class="row-sub">${x.surface==='global'?'全局':'当前剧情'} CSS 关闭尚待核对；已保留关闭请求${x.error?'：'+escapeHtml(x.error):'。'}</p>`).join('')}${(cssRecoveryState.unsettled.length||closing.length)?'<button class="ghost-btn" onclick="recheckCssRecovery()">重新核对保存状态</button>':''}</div>`;
 }
-async function recheckCssRecovery(){return queueCssSelection(async()=>{const result=await reconcileCssRecovery();await applyCustomCss();refreshCssLibraryView();toast(result.status==='READ_FAILED'?'保存状态仍未读到，恢复记录已保留':'已核对保存状态；待确认的样式可在下方主动重试');return result;});}
+async function recheckCssRecovery(){return queueCssSelection(async()=>{await reconcileCssDisableIntents(true);const result=await reconcileCssRecovery();await applyCustomCss();refreshCssLibraryView();toast(result.status==='READ_FAILED'?'保存状态仍未读到，恢复记录已保留':'已核对保存状态；待确认的样式可在下方主动重试');return result;});}
 async function exitCssSafetyMode(){return queueCssSelection(async()=>{cssRecoveryState.legacyUnknown=false;emergencyCssVisualBypass=false;window.MimaCssRecoveryBypass=false;clearCssSafetyUrl();cssRecoverySave();const result=await applyCustomCss();refreshCssLibraryView();return result;});}
 
 /**
@@ -4868,6 +4883,7 @@ async function preloadAtelierVisualResources(project,signal){
  // Font rules remain lazy; only the browser's actually used font workset loads.
 }
 let emergencyCssVisualBypass=false,cssPaintController=null,cssPaintPromise=null,cssPaintIdentity=null,lastCssThemeSettings=null,cssPaintRollback=null;
+let cssSelectionPending=0,cssSelectionContext=null,cssPassiveRepaintPending=false,cssCanonicalReady=false;
 // Temporary per-layer holds prevent unrelated paint events from reviving a CSS
 // which the user is in the middle of explicitly disabling.
 const cssDisableVisualHold={story:null,global:null};
@@ -4899,6 +4915,20 @@ function assertCssVisible(){if(typeof getComputedStyle!=='function')return;
  }
 }
 function applyCustomCss(options={}){
+ if(!cssCanonicalReady)return Promise.resolve({status:'DEFERRED',reason:'canonical-not-ready'});
+ // Passive notifications must not replace a user-selected candidate with the
+ // previous canonical selection while its paint/storage transaction is active.
+ if(!options.commitIntent&&cssSelectionContext&&cssSelectionContext.sessionId===currentSessionId&&cssSelectionContext.navigation===sessionNavigationEpoch){
+  cssPassiveRepaintPending=true;return Promise.resolve({status:'DEFERRED',reason:'css-selection-in-progress'});
+ }
+ if(!window.MimaCssMigrationReadOnly&&!options.commitIntent&&!options.disableReconciled&&(cssDisableReconcileTask||cssRecoveryState.disables.some(x=>!cssDisableLocal.has(x.key)&&!cssDisableChecked.has(x.key)))){
+  return reconcileCssDisableIntents().then(()=>applyCustomCss({...options,disableReconciled:true}));
+ }
+ const oldHold=cssDisableVisualHold.story;
+ if(oldHold&&oldHold.sessionId!==currentSessionId){
+  const oldTag=ensureCustomCssStyle();oldTag.textContent='';oldTag.media=oldHold.oldMedia;
+  cssDisableVisualHold.story=null;
+ }
  const bodyIntent=++cssBodyApplyEpoch;
  const settingForLoad=MimaStandalone.getThemeSettings?.()||{};
  const cssSafe=emergencyCssVisualBypass||window.MimaCssRecoveryBypass===true||new URLSearchParams(location.search).get('noCss')==='1';
@@ -5039,7 +5069,12 @@ async function ensureCssBody(id){
    const latest=cssPresets.find(p=>p.id===id);
    if(!latest||latest.contentHash!==r.data.contentHash||latest.contentRevision!==r.data.contentRevision)
      throw Error('E_CSS_BODY_STALE: CSS 读取期间版本变化，未挂载旧正文');
-   latest.css=r.data.css;return latest;
+   latest.css=r.data.css;
+   // loadCssContent already verified these exact bytes using the async hasher.
+   // Preserve the previously verified metadata identity instead of hashing the
+   // same multi-MB original synchronously again for recovery bookkeeping.
+   rememberVerifiedCssIdentity(latest);
+   return latest;
   })().finally(()=>cssBodyRequests.delete(id));cssBodyRequests.set(id,task);
  }
  return cssBodyRequests.get(id);
@@ -5054,7 +5089,7 @@ function trimIdleCssBodies(){
 }
 function replaceCssCatalog(rows){
  const old=new Map(cssPresets.filter(p=>typeof p.css==='string').map(p=>[p.id,p]));
- cssPresets=rows.map(p=>{const previous=old.get(p.id);return previous&&previous.contentHash===p.contentHash&&previous.contentRevision===p.contentRevision?{...p,css:previous.css}:p;});
+ cssPresets=rows.map(p=>{const previous=old.get(p.id);if(previous&&previous.contentHash===p.contentHash&&previous.contentRevision===p.contentRevision){const row={...p,css:previous.css};rememberVerifiedCssIdentity(row);return row;}return p;});
  trimIdleCssBodies();
 }
 async function reloadCssLibrary(){
@@ -5070,7 +5105,18 @@ function refreshCssLibraryView(){
  renderCssPresetLibrary(qs('css-preset-list'));
 }
 let globalCssSelectionEpoch=0,cssSelectionTail=Promise.resolve();
-function queueCssSelection(action){const job=cssSelectionTail.then(action);cssSelectionTail=job.catch(()=>{});return job;}
+function queueCssSelection(action){
+ cssSelectionPending++;
+ const job=cssSelectionTail.then(async()=>{
+  cssSelectionContext={sessionId:currentSessionId,navigation:sessionNavigationEpoch};
+  try{return await action();}
+  finally{
+   cssSelectionContext=null;cssSelectionPending--;
+   if(!cssSelectionPending&&cssPassiveRepaintPending){cssPassiveRepaintPending=false;await applyCustomCss({disableReconciled:true});}
+  }
+ });
+ cssSelectionTail=job.catch(()=>{});return job;
+}
 function cancelSupersededCssPreparation(){
  // Invalidate lazy body reads now, not after a queued multi-MB paint finishes.
  ++cssBodyApplyEpoch;
@@ -5089,7 +5135,16 @@ async function recoverCssCommit(generation,detail){
  toast(result.status==='READ_FAILED'?'CSS 保存结果尚未确认，已保留恢复记录与安全外观；可重新核对':saved?'CSS 已保存，显示安全待确认；可主动重新应用':'CSS 未提交或已被新设置替代，已读取当前保存状态：'+detail);
  return {status:result.status==='READ_FAILED'?'UNKNOWN':saved?'SAVED_VISUAL_UNCERTAIN':'FAILED',error:detail};
 }
-function applyGlobalCssPreset(id,options={}){return queueGlobalCssSelection(intent=>{cssDisableVisualHold.global=null;return commitGlobalCssPreset(id,options,intent);});}
+function resumeDisabledCssLayer(surface,owner=null){
+ const hold=cssDisableVisualHold[surface];
+ if(!hold||surface==='story'&&hold.sessionId!==owner)return;
+ const tag=surface==='global'?ensureGlobalCssStyle():ensureCustomCssStyle();
+ tag.textContent='';tag.media=hold.oldMedia;cssDisableVisualHold[surface]=null;
+}
+function applyGlobalCssPreset(id,options={}){
+ if(!cssPresets.some(p=>p.id===id&&p.scope==='app'))return Promise.resolve({status:'FAILED',error:'全局样式已不存在，请刷新列表'});
+ clearCssDisableIntent('global');return queueGlobalCssSelection(intent=>{resumeDisabledCssLayer('global');return commitGlobalCssPreset(id,options,intent);});
+}
 async function applySavedCssResource(id,target=null){
  await reloadCssLibrary();const p=cssPresets.find(x=>x.id===id);if(!p)return {status:'FAILED',error:'已保存的 CSS 未读到'};
  const globalTarget=target?.surface==='global';
@@ -5106,15 +5161,18 @@ async function applySavedCssResource(id,target=null){
 }
 async function commitGlobalCssPreset(id,{render=true}={},intent){
  const preset=cssPresets.find(x=>x.id===id&&x.scope==='app');if(!preset)return {status:'FAILED'};
- const expected=MimaStandalone.getThemeSettings?.()||{};
+ const head=await fetchStory('/theme/css-selection-head');
+ if(!head?.success)return {status:'FAILED',error:head?.msg||'全局样式保存状态读取失败'};
+ if(intent!==globalCssSelectionEpoch)return {status:'STALE'};
+ const expected=head.data;
  const identity=cssIdentityCached(preset);
  const retry=resumeCssAfterExplicitEnable('global',preset,null);if(!retry)return {status:'SAFETY_MODE'};
- const visual=await applyCustomCss({globalPreset:preset,commitIntent:'global',expected:{globalCssPresetId:expected.globalCssPresetId||null,globalCssEnabled:expected.globalCssEnabled,updatedAt:expected.updatedAt||''},retry});
+ const visual=await applyCustomCss({globalPreset:preset,commitIntent:'global',expected,retry});
  if(visual?.status!=='APPLIED'){refreshCssLibraryView();return visual;}
  if(intent!==globalCssSelectionEpoch||cssPaintEpoch!==visual.generation){cssRecoveryClearPending(visual.generation);if(intent===globalCssSelectionEpoch)await applyCustomCss();return {status:'STALE'};}
  try{
   cssRecoveryPhase(visual.generation,'commit_unknown');
-  const r=await fetchStory('/theme/css-selection','POST',{expected:{globalCssPresetId:expected.globalCssPresetId||null,globalCssEnabled:expected.globalCssEnabled,updatedAt:expected.updatedAt||''},candidate:{globalCssPresetId:id},identity});
+  const r=await fetchStory('/theme/css-selection','POST',{expected,candidate:{globalCssPresetId:id},identity});
   if(!r.success)throw Error(r.msg||'候选全局 CSS 已变化，未保存');
  }catch(e){return recoverCssCommit(visual.generation,e.message);}
  cssRecoveryCommitResult(visual.generation,true);
@@ -5125,10 +5183,13 @@ async function commitGlobalCssPreset(id,{render=true}={},intent){
 function unapplyGlobalCssPreset(){
  const intent=++globalCssSelectionEpoch;
  const tx=stageCssDisable('global');
- return commitUnapplyGlobalCssPreset(intent,tx);
+ return queueCssSelection(()=>commitUnapplyGlobalCssPreset(intent,tx));
 }
 async function commitUnapplyGlobalCssPreset(intent,tx){
- const expected=MimaStandalone.getThemeSettings?.()||{};
+ if(tx.status!=='READY')return tx;
+ const read=await fetchStory('/theme/css-selection-head');
+ if(!read?.success){const failure={status:'UNKNOWN',error:read?.msg||'全局样式保存状态读取失败'};await settleCssDisableFailure(tx,failure);return failure;}
+ const expected=read.data;
  const snapshot={globalCssPresetId:expected.globalCssPresetId||null,globalCssEnabled:expected.globalCssEnabled,selectionRevision:expected.selectionRevision};
  if(tx.status!=='READY')return tx;
  const response=await saveCssDisable('/theme/css-disable',{expected:snapshot,clearSelection:true},'global',null);
@@ -5262,25 +5323,26 @@ async function saveCssPresetEditor(){
 let storyCssSelectionEpoch=0;
 function applyCssPreset(id){
  const dedicated=cssPresets.find(x=>x.id===id);
+ if(!dedicated)return Promise.resolve({status:'FAILED',error:'样式已不存在，请刷新列表'});
  if(dedicated?.scope==='assistant'||dedicated?.surface==='assistant')return MimaAssistantStudio.applyCssPreset(id);
  if(dedicated?.scope==='novel'||dedicated?.surface==='novel')return MimaNovelStudio.applyCssPreset(id);
  if(cssPresets.find(x=>x.id===id)?.scope==='app')return applyGlobalCssPreset(id);
  const intent=++storyCssSelectionEpoch,owner=currentSessionId;
- cancelSupersededCssPreparation();
+ clearCssDisableIntent('story',owner);cancelSupersededCssPreparation();
  const navigation=sessionNavigationEpoch;
- return queueCssSelection(()=>{if(intent!==storyCssSelectionEpoch||owner!==currentSessionId||navigation!==sessionNavigationEpoch)return {status:'STALE'};if(cssDisableVisualHold.story?.sessionId===owner)cssDisableVisualHold.story=null;return commitStoryCssPreset(id,intent,owner);});
+ return queueCssSelection(()=>{if(intent!==storyCssSelectionEpoch||owner!==currentSessionId||navigation!==sessionNavigationEpoch)return {status:'STALE'};resumeDisabledCssLayer('story',owner);return commitStoryCssPreset(id,intent,owner);});
 }
 async function commitStoryCssPreset(id,intent,owner){
  const p=cssPresets.find(x=>x.id===id);if(!p)return {status:'FAILED',error:'CSS 不存在'};
  if(!isStoryCss(p))return {status:'STALE',error:'请选择剧情外观；助手和小说有各自独立的外观入口'};
  const old=currentSessionData,navigation=sessionNavigationEpoch;
  if(!owner||old?.id!==owner)return {status:'STALE'};
- const expected={recordRevision:old.recordRevision,customCssId:old.customCssId||null,customCssEnabled:old.customCssEnabled};
+ const expected={recordRevision:old.recordRevision,customCssId:old.customCssId||null,customCssEnabled:old.customCssEnabled,customCssSelectionRevision:Number(old.customCssSelectionRevision)||0};
  const identity=cssIdentityCached(p);
  const retry=resumeCssAfterExplicitEnable('story',p,owner);if(!retry)return {status:'SAFETY_MODE'};
  const visual=await applyCustomCss({sessionPreset:p,commitIntent:'story',expected,retry});
  if(visual?.status!=='APPLIED'){refreshCssLibraryView();return visual;}
- const valid=()=>intent===storyCssSelectionEpoch&&cssPaintEpoch===visual.generation&&currentSessionId===owner&&sessionNavigationEpoch===navigation&&currentSessionData?.recordRevision===expected.recordRevision&&
+ const valid=()=>intent===storyCssSelectionEpoch&&cssPaintEpoch===visual.generation&&currentSessionId===owner&&sessionNavigationEpoch===navigation&&(currentSessionData?.customCssId||null)===(expected.customCssId||null)&&(currentSessionData?.customCssEnabled!==false)===(expected.customCssEnabled!==false)&&
   cssPresets.some(x=>x.id===id&&cssIdentityCached(x)===identity);
  if(!valid()){cssRecoveryClearPending(visual.generation);if(intent===storyCssSelectionEpoch)await applyCustomCss();return {status:'STALE'};}
  cssRecoveryPhase(visual.generation,'commit_unknown');
@@ -5289,7 +5351,7 @@ async function commitStoryCssPreset(id,intent,owner){
   return recoverCssCommit(visual.generation,res?.msg||'存储拒绝');
  }
  cssRecoveryCommitResult(visual.generation,true);
- if(currentSessionId===owner&&sessionNavigationEpoch===navigation&&currentSessionData?.recordRevision===expected.recordRevision)currentSessionData=res.data;
+ if(currentSessionId===owner&&sessionNavigationEpoch===navigation&&Number(res.data.recordRevision)>=Number(currentSessionData?.recordRevision||0))currentSessionData=res.data;
  if(intent!==storyCssSelectionEpoch||currentSessionId!==owner||sessionNavigationEpoch!==navigation)return {status:'STALE',committed:true};
  if(cssPaintEpoch!==visual.generation)await applyCustomCss();
  try{await refreshSessionSummaryList()}catch(e){console.error('CSS 选择保存后列表刷新失败',e)}
@@ -5298,37 +5360,94 @@ async function commitStoryCssPreset(id,intent,owner){
 function unapplyCss(){
  const intent=++storyCssSelectionEpoch,owner=currentSessionId,navigation=sessionNavigationEpoch;
  if(!owner||currentSessionData?.id!==owner)return Promise.resolve({status:'FAILED',error:'请先打开剧情'});
- const expected={recordRevision:currentSessionData.recordRevision,customCssId:currentSessionData.customCssId||null,customCssEnabled:currentSessionData.customCssEnabled};
  const tx=stageCssDisable('story',owner);
- return (async()=>{
+ return queueCssSelection(async()=>{
   if(tx.status!=='READY')return tx;
-  if(intent!==storyCssSelectionEpoch||owner!==currentSessionId||navigation!==sessionNavigationEpoch)return {status:'STALE'};
+  const read=await fetchStory(`/sessions/${encodeURIComponent(owner)}/css-selection-head`);
+  if(!read?.success){const failure={status:'UNKNOWN',error:read?.msg||'原剧情样式保存状态读取失败'};await settleCssDisableFailure(tx,failure);return failure;}
+  const expected=read.data;
   const response=await saveCssDisable(`/sessions/${encodeURIComponent(owner)}/css-disable`,{expected,clearSelection:true},'story',owner);
   if(response.status!=='SAVED'){await settleCssDisableFailure(tx,response);return response;}
   if(currentSessionId===owner&&navigation===sessionNavigationEpoch&&response.canonical)currentSessionData=response.canonical;
   await finishCssDisable(tx);
   if(intent===storyCssSelectionEpoch&&owner===currentSessionId&&navigation===sessionNavigationEpoch){refreshCssLibraryView();toast('当前剧情已取消 CSS，样式原件仍保留在库中');}
   return {status:'APPLIED',saved:true};
- })();
+ });
 }
 
 // Disabling must not compile the other CSS layer (which may itself be broken),
 // nor persist a success before the target style is visibly disconnected.
 // The high-priority exit has NO await before detaching the stylesheet.
 // media=not all changes the cascade without re-parsing multi-MB source text.
+function beginCssDisableIntent(surface,sessionId,existing){
+ const targets=new Map(),add=(p,revision)=>{if(p?.id)targets.set(p.id+':'+revision,{id:p.id,hash:p.contentHash||null,selectionRevision:revision});};
+ const theme=MimaStandalone.getThemeSettings?.()||{},revision=surface==='global'?Number(theme.selectionRevision)||0:Number(currentSessionData?.customCssSelectionRevision)||0;
+ add(cssPresets.find(p=>p.id===(surface==='global'?theme.globalCssPresetId:currentSessionData?.customCssId)),revision);add(existing?.p,revision);
+ for(const tx of [cssRecoveryState.pending,...cssRecoveryState.unsettled].filter(Boolean)){
+  if(tx.commitIntent!==surface||tx.phase!=='commit_unknown'||surface==='story'&&tx.sessionId!==sessionId)continue;
+  const candidate=tx.candidates?.[surface];if(!candidate?.id)continue;
+  const expectedRevision=surface==='global'?Number(tx.expected?.selectionRevision)||0:Number(tx.expected?.customCssSelectionRevision)||0;
+  add(cssPresets.find(p=>p.id===candidate.id),expectedRevision+1);
+ }
+ clearCssDisableIntent(surface,sessionId);
+ const receipt={key:cssReceiptPage+':disable:'+String(surface)+':'+String(Date.now())+':'+Math.random().toString(36).slice(2),surface,sessionId,
+  targets:[...targets.values()],status:'pending'};
+ cssRecoveryState.disables.push(receipt);cssDisableLocal.add(receipt.key);cssRecoverySave();return receipt;
+}
+async function reconcileCssDisableIntents(force=false){
+ if(cssDisableReconcileTask)return cssDisableReconcileTask;
+ const jobs=cssRecoveryState.disables.filter(x=>!cssDisableLocal.has(x.key)&&(force||!cssDisableChecked.has(x.key)));
+ if(!jobs.length)return {status:'SETTLED'};
+ const work=async()=>{
+  const outcomes=[];
+  for(const receipt of jobs){
+   if(!cssRecoveryState.disables.includes(receipt))continue;
+   cssDisableChecked.add(receipt.key);
+   const surface=receipt.surface,owner=receipt.sessionId;
+   try{
+    const path=surface==='global'?'/theme/css-selection-head':`/sessions/${encodeURIComponent(owner)}/css-selection-head`;
+    const read=await fetchStory(path);if(!read?.success)throw Error(read?.msg||'关闭状态未能读取');
+    const head=read.data,id=surface==='global'?head.globalCssPresetId:head.customCssId,enabled=surface==='global'?head.globalCssEnabled:head.customCssEnabled;
+    let canonical=null;
+    if(enabled!==false||id){
+     const revision=surface==='global'?head.selectionRevision:Number(head.customCssSelectionRevision)||0;
+     const target=receipt.targets.find(x=>x.id===id&&x.selectionRevision===revision);
+     const catalog=target?await MimaLocalStore.loadCssCatalog():null;
+     const preset=catalog?.find(p=>p.id===id);
+     // A later choice or edited source in another tab supersedes this close.
+     if(!target||!target.hash||preset?.contentHash!==target.hash){
+      cssRecoveryState.disables=cssRecoveryState.disables.filter(x=>x!==receipt);outcomes.push({surface,status:'SUPERSEDED'});continue;
+     }
+     if(!cssRecoveryState.disables.includes(receipt))continue;
+     const response=await saveCssDisable(surface==='global'?'/theme/css-disable':`/sessions/${encodeURIComponent(owner)}/css-disable`,{expected:head,clearSelection:true},surface,owner);
+     if(response.status!=='SAVED')throw Error(response.error||'关闭状态未能保存');
+     canonical=response.canonical;
+    }
+    if(surface==='story'&&currentSessionId===owner){
+     if(!canonical){const fresh=await fetchStory(`/sessions/${encodeURIComponent(owner)}/canonical-view`);if(!fresh?.success)throw Error(fresh?.msg||'关闭已保存，剧情显示状态未能读取');canonical=fresh.data;}
+     if(Number(canonical.recordRevision)>=Number(currentSessionData?.recordRevision||0))currentSessionData=canonical;
+    }
+    cssRecoveryState.disables=cssRecoveryState.disables.filter(x=>x!==receipt);outcomes.push({surface,status:'SAVED'});
+   }catch(error){receipt.status='unknown';receipt.error=String(error.message||error).slice(0,250);outcomes.push({surface,status:'UNKNOWN'});}
+  }
+  cssRecoverySave();return {status:outcomes.some(x=>x.status==='UNKNOWN')?'UNKNOWN':'RECONCILED',outcomes};
+ };
+ const task=cssSelectionContext?work():queueCssSelection(work);cssDisableReconcileTask=task;
+ try{return await task;}finally{if(cssDisableReconcileTask===task)cssDisableReconcileTask=null;}
+}
 function stageCssDisable(surface,sessionId=null){
  ++cssBodyApplyEpoch;
  const owner=surface==='story'?sessionId:null,hold={sessionId:owner,token:Symbol('css-disable')};
  if(surface==='story'&&currentSessionId!==owner)return {status:'STALE'};
  const tag=surface==='global'?ensureGlobalCssStyle():ensureCustomCssStyle();
+ hold.oldMedia=cssDisableVisualHold[surface]?.oldMedia??tag.media;
  const existing=cssMounted.get(tag.id),theme=surface==='global'?(MimaStandalone.getThemeSettings?.()||{}):null;
- const priorProject=surface==='global'?window.MimaAtelierCore?.getApplied?.():null;
- const priorPreset=surface==='global'?cssPresets.find(p=>p.id===theme.globalCssPresetId&&p.scope==='app')||existing?.p:null;
- const tx={status:'READY',surface,sessionId:owner,hold,tag,existing,theme,priorPreset,priorProject,
-  oldText:existing?.css??tag.textContent,oldMedia:tag.media,oldThemeCache:lastCssThemeSettings};
+ const tx={status:'READY',surface,sessionId:owner,hold,tag,existing,theme,
+  oldText:existing?.css??tag.textContent,oldMedia:hold.oldMedia,oldThemeCache:lastCssThemeSettings};
  cssDisableVisualHold[surface]=hold;
  ++cssPaintEpoch;cssPaintRollback=null;cssPaintIdentity=null;
  tag.media='not all';
+ tx.receipt=beginCssDisableIntent(surface,owner,existing);
  window.MimaThemeCanvas?.sync();
  cssPaintController?.abort();
  r19Lifecycle('css_disable_visual',{surface,sessionId:owner});
@@ -5336,6 +5455,7 @@ function stageCssDisable(surface,sessionId=null){
  return tx;
 }
 async function finishCssDisable(tx){
+ if(tx.receipt){cssDisableLocal.delete(tx.receipt.key);cssRecoveryState.disables=cssRecoveryState.disables.filter(x=>x.key!==tx.receipt.key);cssRecoverySave();}
  if(cssDisableVisualHold[tx.surface]!==tx.hold)return;
  if(tx.surface==='story'&&currentSessionId!==tx.sessionId){cssDisableVisualHold.story=null;return;}
  // Keep the sheet disconnected until its full text is cleared.
@@ -5363,6 +5483,7 @@ async function finishCssDisable(tx){
  }
 }
 async function settleCssDisableFailure(tx,response){
+ if(tx.receipt){cssDisableLocal.delete(tx.receipt.key);if(response.status==='FAILED')cssRecoveryState.disables=cssRecoveryState.disables.filter(x=>x.key!==tx.receipt.key);else{tx.receipt.status='unknown';tx.receipt.error=String(response.error||'保存结果未确认').slice(0,250);cssDisableChecked.add(tx.receipt.key);}cssRecoverySave();}
  if(cssDisableVisualHold[tx.surface]!==tx.hold)return;
  if(tx.surface==='story'&&currentSessionId!==tx.sessionId){cssDisableVisualHold.story=null;return;}
  if(response.status==='FAILED'){
@@ -5389,9 +5510,9 @@ async function saveCssDisable(path,body,surface,owner){
  // canonical snapshot, including CSS identity, before any visual rollback.
  try{
   const read=surface==='global'?await fetchStory('/theme/css-selection-head'):
-    await fetchStory('/css-selection/canonical-view','POST',{sessionIds:owner?[owner]:[]});
+    await fetchStory(`/sessions/${encodeURIComponent(owner)}/canonical-view`);
   if(!read?.success)throw Error(read?.msg||'独立资料校验失败');
-  const canonical=surface==='global'?read.data:read.data.sessions.find(x=>x.id===owner);
+  const canonical=read.data;
   if(!canonical)return {status:'UNKNOWN',error:'原剧情未读到'};
   if(surface==='global'?canonical.globalCssEnabled===false&&!canonical.globalCssPresetId:canonical.customCssEnabled===false&&!canonical.customCssId){
    return {status:'SAVED',canonical};
@@ -8910,7 +9031,8 @@ async function mimaBoot(){
             missing.code='E_STARTUP_STORE_SCRIPT_MISSING';throw missing;
         }
         await MimaStandalone.init();
-        if(!window.MimaCssMigrationReadOnly)await reconcileCssRecovery();
+        cssCanonicalReady=true;
+        if(!window.MimaCssMigrationReadOnly){await reconcileCssDisableIntents();await reconcileCssRecovery();}
         stage='bind_application';
         if(!mimaStartupBound){
             const inputIds=['story-input','session-file-input','png-inspector-input','persona-file-input','worldbook-file-input','regex-file-input','font-file-input','css-file-input','api-config-file-input','library-file-input','full-settings-file-input'];

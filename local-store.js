@@ -179,6 +179,27 @@
   async function loadGlobalCssSelection(){
     await ensureSessionPartition();return verifiedCssSelection(await get(CSS_SELECTION_KEY));
   }
+  // Select only the canonical CSS head and catalog metadata, never every CSS
+  // body or unrelated appearance fields. The exact candidate remains fenced.
+  async function commitGlobalCssSelection(expected,candidate,identity,validateIdentity){
+    await ensureCssMigrated();const db=await openDb();return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE),h=kv.get(CSS_SELECTION_KEY),c=kv.get(CSS_CATALOG_KEY);
+      let result,issue;
+      const inspect=()=>{if([h,c].some(r=>r.readyState!=='done'))return;try{
+        const head=verifiedCssSelection(h.result);
+        if((head.globalCssPresetId||null)!==(expected?.globalCssPresetId||null)||head.globalCssEnabled!==(expected?.globalCssEnabled!==false)||
+          (expected?.selectionRevision!==undefined?head.selectionRevision!==expected.selectionRevision:head.updatedAt!==(expected?.updatedAt||'')))
+          throw Error('E_CSS_SELECTION_STALE: 全局样式选择已改变，本次未覆盖新选择');
+        const selected=validCssCatalog(c.result).entries.find(p=>p.id===candidate?.globalCssPresetId);
+        if(!selected||selected.scope!=='app'||typeof validateIdentity!=='function'||!validateIdentity(selected,identity))throw Error('E_CSS_CANDIDATE_CHANGED');
+        result={...head,globalCssPresetId:selected.id,globalCssEnabled:true,selectionRevision:head.selectionRevision+1,
+          updatedAt:new Date(Math.max(Date.now(),(Date.parse(head.updatedAt)||0)+1)).toISOString()};
+        kv.put(result,CSS_SELECTION_KEY);
+      }catch(e){issue=e;tx.abort()}};
+      for(const r of[h,c]){r.onsuccess=inspect;r.onerror=()=>{issue=r.error;tx.abort()}};
+      tx.oncomplete=()=>{db.close();resolve(result)};tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_CSS_SELECTION_ABORT'))};
+    });
+  }
 
   // Once promoted, a single verified catalog owns CSS metadata and each ID owns
   // precisely one full source record. The old appearance and canonical records
@@ -642,7 +663,7 @@
   function sessionDirectoryRow(s){
     return {id:s.id,title:s.title,mode:s.mode,canonLevel:s.canonLevel,status:s.status,
       createdAt:s.createdAt,updatedAt:s.updatedAt,messageCount:Array.isArray(s.messages)?s.messages.length:0,
-      recordRevision:Number(s.recordRevision)||0,customCssId:s.customCssId||null,customCssEnabled:s.customCssEnabled!==false,presetIds:s.presetIds||[],worldbookIds:s.worldbookIds||[],
+      recordRevision:Number(s.recordRevision)||0,customCssSelectionRevision:Number(s.customCssSelectionRevision)||0,customCssId:s.customCssId||null,customCssEnabled:s.customCssEnabled!==false,presetIds:s.presetIds||[],worldbookIds:s.worldbookIds||[],
       regexPackIds:s.regexPackIds||[],loadedUserMaskId:s.loadedUserMaskId||null,loadedCharMaskId:s.loadedCharMaskId||null};
   }
   function verifiedSessionHead(head,baseRev=null){
@@ -905,6 +926,20 @@
   async function loadSessionDirectory(){
     await ensureSessionPartition();const head=verifiedSessionHead(await get(SESSION_HEAD_KEY));
     return head.directory.map(d=>({...d}));
+  }
+  async function loadSessionCssSelection(id){
+    await ensureSessionPartition();const db=await openDb();return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readonly'),kv=tx.objectStore(STORE),h=kv.get(SESSION_HEAD_KEY),a=kv.get(APPEARANCE_META_KEY);
+      let result,issue;
+      const inspect=()=>{if([h,a].some(r=>r.readyState!=='done'))return;try{
+        const head=verifiedSessionHead(h.result),row=head.directory.find(s=>s.id===id);
+        if(!row)throw Error('E_STORY_SESSION_MISSING');
+        const removed=new Set(assertAppearanceMeta(a.result,head.baseRevision).deletedCssIds),deleted=removed.has(row.customCssId);
+        result={id,recordRevision:row.recordRevision+(deleted?1:0),customCssSelectionRevision:Number(row.customCssSelectionRevision)||0,customCssId:deleted?null:row.customCssId,customCssEnabled:deleted?false:row.customCssEnabled};
+      }catch(e){issue=e;tx.abort()}};
+      for(const r of[h,a]){r.onsuccess=inspect;r.onerror=()=>{issue=r.error;tx.abort()}};
+      tx.oncomplete=()=>{db.close();resolve(result)};tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_CSS_SELECTION_READ_ABORT'))};
+    });
   }
   async function loadCssSelectionSnapshot(ids=[]){
     await ensureCssMigrated();const selected=[...new Set(ids)];
@@ -1257,14 +1292,16 @@
           throw Error('E_STORY_SESSION_MISSING');
         const app=assertAppearance(a.result),deleted=new Set(app.deletedCssIds||[]);
         const projected=deleted.has(session.customCssId)?{...session,customCssId:null,customCssEnabled:false,recordRevision:(Number(session.recordRevision)||0)+1}:session;
-        if(Number(projected.recordRevision||0)!==Number(expected?.recordRevision)||
+        if(!Number.isSafeInteger(expected?.recordRevision)||expected.recordRevision<0||Number(projected.recordRevision||0)<expected.recordRevision||
           (projected.customCssId||null)!==(expected?.customCssId||null)||
-          (projected.customCssEnabled!==false)!==(expected?.customCssEnabled!==false))throw Error('E_CSS_SELECTION_STALE');
+          (projected.customCssEnabled!==false)!==(expected?.customCssEnabled!==false)||
+          (Object.hasOwn(expected,'customCssSelectionRevision')&&(Number(projected.customCssSelectionRevision)||0)!==expected.customCssSelectionRevision))throw Error('E_CSS_SELECTION_STALE');
         const selected=validCssCatalog(c.result).entries.find(x=>x.id===candidate?.customCssId);
         if(!selected||!['story','global','chat'].includes(selected.scope)||['novel','assistant'].includes(selected.surface)||typeof validateIdentity!=='function'||!validateIdentity(selected,cssIdentity))
           throw Error('E_CSS_CANDIDATE_CHANGED');
         const globalRev=globalRevisionLight(b.result.revision,appearanceMeta(app),p.result,t.result,head),stamp=new Date().toISOString();
         const value={...projected,customCssId:candidate.customCssId,customCssEnabled:!!candidate.customCssEnabled,
+          customCssSelectionRevision:(Number(projected.customCssSelectionRevision)||0)+1,
           recordRevision:Number(projected.recordRevision||0)+1,updatedAt:stamp};
         const directory=head.directory.slice();directory[index]=sessionDirectoryRow(value);
         kv.put(value,SESSION_PREFIX+id);kv.put({...head,directory,storeRevision:head.storeRevision+1,updatedAt:stamp},SESSION_HEAD_KEY);
@@ -1272,6 +1309,33 @@
       }catch(e){issue=e;tx.abort()}};
       for(const req of [h,r,a,c,b,p,t]){req.onsuccess=inspect;req.onerror=()=>{issue=req.error;tx.abort()}};
       tx.oncomplete=()=>{db.close();resolve(result)};tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_SESSION_CSS_SELECTION_ABORT'))};
+    });
+  }
+  // A CSS-only edit patches the latest target row in one transaction. Concurrent
+  // History/Memory writes are retained; a different CSS selection still fences it.
+  async function commitSessionCssDisable(id,expected={},clearSelection=false){
+    await ensureSessionPartition();const db=await openDb();return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readwrite'),kv=tx.objectStore(STORE),h=kv.get(SESSION_HEAD_KEY),r=kv.get(SESSION_PREFIX+id),
+        a=kv.get(APPEARANCE_META_KEY),b=kv.get(BASE_REVISION_KEY),p=kv.get(PRESETS_KEY),t=kv.get(TEMPLATE_META_KEY);
+      let result,issue;
+      const inspect=()=>{if([h,r,a,b,p,t].some(q=>q.readyState!=='done'))return;try{
+        const head=verifiedSessionHead(h.result),index=head.ids.indexOf(id),session=r.result;
+        if(index<0||!session||session.id!==id||Number(session.recordRevision||0)!==head.directory[index].recordRevision)throw Error('E_STORY_SESSION_MISSING');
+        const removed=new Set(assertAppearanceMeta(a.result,head.baseRevision).deletedCssIds),deleted=removed.has(session.customCssId);
+        const projected=deleted?{...session,customCssId:null,customCssEnabled:false,recordRevision:Number(session.recordRevision||0)+1}:session;
+        if((Object.hasOwn(expected,'recordRevision')&&(!Number.isSafeInteger(expected.recordRevision)||expected.recordRevision<0||Number(projected.recordRevision||0)<expected.recordRevision))||
+          (Object.hasOwn(expected,'customCssId')&&(projected.customCssId||null)!==(expected.customCssId||null))||
+          (Object.hasOwn(expected,'customCssEnabled')&&(projected.customCssEnabled!==false)!==(expected.customCssEnabled!==false))||
+          (Object.hasOwn(expected,'customCssSelectionRevision')&&(Number(projected.customCssSelectionRevision)||0)!==expected.customCssSelectionRevision))throw Error('E_CSS_SELECTION_STALE');
+        const value={...projected,customCssId:clearSelection?null:projected.customCssId,customCssEnabled:false,
+          customCssSelectionRevision:(Number(projected.customCssSelectionRevision)||0)+1,
+          recordRevision:Number(projected.recordRevision||0)+1,updatedAt:new Date().toISOString()};
+        const directory=head.directory.slice();directory[index]=sessionDirectoryRow(value);
+        kv.put(value,SESSION_PREFIX+id);kv.put({...head,directory,storeRevision:head.storeRevision+1,updatedAt:value.updatedAt},SESSION_HEAD_KEY);
+        result={session:value,storeRevision:globalRevisionLight(b.result.revision,a.result,p.result,t.result,head)+1};
+      }catch(e){issue=e;tx.abort()}};
+      for(const q of[h,r,a,b,p,t]){q.onsuccess=inspect;q.onerror=()=>{issue=q.error;tx.abort()}};
+      tx.oncomplete=()=>{db.close();resolve(result)};tx.onabort=()=>{db.close();reject(issue||tx.error||Error('E_SESSION_CSS_DISABLE_ABORT'))};
     });
   }
   // Re-use a transaction's verified scoped read for memory and repair edits.
@@ -2911,5 +2975,5 @@
     if(text.length!==receipt.persistedChars)throw new Error('E_GENERATION_FRAGMENT_INCOMPLETE');
     return {receipt,text,complete:true};
   }
-  window.MimaLocalStore={commitBulkDelete,loadSessionRecord,commitMaskRecord,maskCasToken,loadResourceSnapshot,loadResourceSnapshotReadOnly,hasVerifiedCssCatalog,hasLegacyCssSources,loadResourceRevision,loadAppearanceWithRevision,presetCasToken,loadSessionDirectory,loadCssSelectionSnapshot,commitSessionRecord,deleteSessionRecord,commitSessionCssSelection,commitSettingTemplates,validateSessionOrganization,loadSessionOrganization,commitSessionOrganization,commitPreset,putHtmlRepairDraft,getHtmlRepairDraft,loadAppearance,loadGlobalCssSelection,loadCssCatalog,loadCssContent,commitGlobalCssDisable,commitAppearance,mergeAppearance,exportPlayToolRecords,importPlayToolRecords,listPlayToolLocal,getPlayToolLocal:key=>get('play_tools_v1:'+key),putPlayToolLocal:(key,value)=>set('play_tools_v1:'+key,value),generationReceipt,generationAppendFragment,generationStatus,generationRead,getRollingPreflight,putRollingPreflight,clearRollingPreflight,commitHtmlRepair,putHtmlRepairCandidate,getHtmlRepairCandidate,setHtmlRepairCandidateState,listMemoryStages,inspectLegacyMemoryStages,putMemoryRejectedDraft,listMemoryRejectedDrafts,memoryReferenceContract,putFactRangeCandidate,listFactRangeCandidates,commitVerifiedFactRanges,getMergeStage,putMergeStage,getMergeDraft,createMergeDraft,updateMergeDraft,commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,loadSettingsSnapshotSummary,clearSettingsSnapshot,beginSettingsSnapshotV2,stageSettingsSnapshotFontV2,completeSettingsSnapshotV2,discardFailedSettingsSnapshotV2,hasIncompleteSettingsSnapshotV2,loadSettingsSnapshotFontV2,pruneOldSettingsSnapshotsV2,getMemoryJob,getMemoryStage,putMemoryStage,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
+  window.MimaLocalStore={commitGlobalCssSelection,loadSessionCssSelection,commitSessionCssDisable,commitBulkDelete,loadSessionRecord,commitMaskRecord,maskCasToken,loadResourceSnapshot,loadResourceSnapshotReadOnly,hasVerifiedCssCatalog,hasLegacyCssSources,loadResourceRevision,loadAppearanceWithRevision,presetCasToken,loadSessionDirectory,loadCssSelectionSnapshot,commitSessionRecord,deleteSessionRecord,commitSessionCssSelection,commitSettingTemplates,validateSessionOrganization,loadSessionOrganization,commitSessionOrganization,commitPreset,putHtmlRepairDraft,getHtmlRepairDraft,loadAppearance,loadGlobalCssSelection,loadCssCatalog,loadCssContent,commitGlobalCssDisable,commitAppearance,mergeAppearance,exportPlayToolRecords,importPlayToolRecords,listPlayToolLocal,getPlayToolLocal:key=>get('play_tools_v1:'+key),putPlayToolLocal:(key,value)=>set('play_tools_v1:'+key,value),generationReceipt,generationAppendFragment,generationStatus,generationRead,getRollingPreflight,putRollingPreflight,clearRollingPreflight,commitHtmlRepair,putHtmlRepairCandidate,getHtmlRepairCandidate,setHtmlRepairCandidateState,listMemoryStages,inspectLegacyMemoryStages,putMemoryRejectedDraft,listMemoryRejectedDrafts,memoryReferenceContract,putFactRangeCandidate,listFactRangeCandidates,commitVerifiedFactRanges,getMergeStage,putMergeStage,getMergeDraft,createMergeDraft,updateMergeDraft,commitFactMerge,undoFactMerge,updateRollingMemory,dismissMemoryJob,loadState,saveState,commitState,validateLibrary,exportAll,importAll,saveSettingsSnapshot,loadSettingsSnapshot,loadSettingsSnapshotSummary,clearSettingsSnapshot,beginSettingsSnapshotV2,stageSettingsSnapshotFontV2,completeSettingsSnapshotV2,discardFailedSettingsSnapshotV2,hasIncompleteSettingsSnapshotV2,loadSettingsSnapshotFontV2,pruneOldSettingsSnapshotsV2,getMemoryJob,getMemoryStage,putMemoryStage,beginMemoryJob,checkpointMemoryJob,settleMemoryJob,interruptMemoryJob,commitMemoryJob,heartbeatMemoryJob,reviewMemoryCandidate};
 })();
